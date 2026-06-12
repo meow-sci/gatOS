@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Lib.Harmony" Version="2.4.2" />
+	  <PackageReference Include="Samboy063.Tomlet" Version="6.1.0">
+		  <ExcludeAssets>runtime</ExcludeAssets>
+	  </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\StarMap.API\StarMap.API.csproj" />
+    <ProjectReference Include="..\StarMap.Types\StarMap.Types.csproj" />
+  </ItemGroup>
+
+	<ItemGroup Condition="'$(Configuration)' == 'Debug'">
+		<Reference Include="..\..\Import\KSA.dll" />
+	</ItemGroup>
+
+	<ItemGroup Condition="'$(Configuration)' != 'Debug'">
+		<PackageReference Include="StarMap.KSA.Dummy" Version="1.0.22">
+			<ExcludeAssets>runtime</ExcludeAssets>
+		</PackageReference>
+	</ItemGroup>
+
+</Project>
