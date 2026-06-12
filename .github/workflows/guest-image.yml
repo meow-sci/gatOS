@@ -1,0 +1,62 @@
+name: Guest image
+
+# Builds the gatOS guest image (guest/build-image.sh) and publishes the
+# artifacts as the GitHub release `guest-v<N>` (N = guest/GUEST_VERSION).
+# Consumers obtain them with guest/fetch-guest.{sh,ps1} (OS_PLAN.md T2.5/T2.6, D9).
+#
+# Re-running against an existing tag REPLACES that release's assets — pushes to
+# main touching guest/** refresh the pinned release in place; cutting a new
+# immutable guest release is a manual `GUEST_VERSION` bump commit.
+#
+# The smoke test inside build-image.sh runs under KVM when the runner exposes
+# /dev/kvm (standard ubuntu-latest runners do), else TCG.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'guest/**'
+      - '.github/workflows/guest-image.yml'
+
+permissions:
+  contents: write    # create/update the guest-v<N> release
+
+concurrency:
+  group: guest-image
+  cancel-in-progress: false
+
+jobs:
+  build-guest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            qemu-system-x86 qemu-utils e2fsprogs openssh-client curl python3
+
+      - name: Build guest image (with boot smoke test)
+        run: sudo --preserve-env=GATOS_SMOKE_TIMEOUT guest/build-image.sh
+
+      - name: Publish guest-v<N> release
+        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="guest-v$(cat guest/GUEST_VERSION)"
+          ALPINE="$(sed -n 's/^alpine_version = "\(.*\)"$/\1/p' guest/out/manifest.toml)"
+          ASSETS=(guest/out/base.qcow2 guest/out/vmlinuz-virt guest/out/initramfs-virt
+                  guest/out/manifest.toml guest/out/id_ed25519 guest/out/id_ed25519.pub
+                  guest/out/host_key_fingerprint.txt guest/out/sha256sums.txt)
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" "${ASSETS[@]}" --repo "$GITHUB_REPOSITORY" \
+              --title "gatOS guest image v$(cat guest/GUEST_VERSION)" \
+              --notes "Alpine $ALPINE guest image for gatOS (built by guest-image.yml from guest/ at $GITHUB_SHA). Fetch with guest/fetch-guest.sh — do not download by hand."
+          fi
