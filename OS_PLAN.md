@@ -637,7 +637,10 @@ Files: `gatOS.Vm/PortAllocator.cs`, `gatOS.Vm/QemuLocator.cs`.
   residual race (acceptable: VM start fails → retried once with fresh ports by VmHost).
 - `QemuLocator.Find()` → `QemuBinaries(string SystemEmulator, string QemuImg)`:
   - Windows: `GatOsPaths.BundledQemuDir/win-x64/qemu-system-x86_64.exe` (+`qemu-img.exe`);
-    error if missing.
+    error if missing (as built: also the typed `QemuNotFoundException` — not
+    `InvalidOperationException` — when `GatOsPaths.ModDir` is unset, i.e. headless test hosts,
+    so the test skip-gate works on Windows; tests resolve `vendor/qemu/win-x64` via
+    `QemuLocator.OverridePath`, see the T11.1 as-built note).
   - Linux/macOS: probe PATH (`qemu-system-x86_64`, `qemu-img`); on macOS also
     `/opt/homebrew/bin` (as built: and `/usr/local/bin` — the game process PATH may lack the
     brew prefix). Returns a typed error (`QemuNotFoundException` with a per-OS
@@ -1471,6 +1474,29 @@ Files: `tools/fetch-qemu.sh`, `tools/fetch-qemu.ps1`, `tools/qemu-win64-files.tx
   the minimal set **empirically**: start from the full set, delete, boot-test on Windows, record
   the final list in `qemu-win64-files.txt`; expect ~90 MB per analysis §3.10).
 - The list file is committed; binaries are not.
+
+> (As built — **done early**, pulled ahead to unblock M6 in-game testing and `GATOS_IT=1` on
+> Windows (same pattern as T6.5). Deviations, each verified on the Windows game machine:
+> **Pin = `qemu-w64-setup-20260501.exe`** (QEMU 11.0.50 snapshot `v11.0.0-12631-g54e84cdc7a`;
+> Weil publishes only date-stamped snapshot installers, ≥ 11.0 satisfied), verified by
+> **sha512, not sha256** — that is what upstream publishes (`.sha512` next to the installer).
+> **Pins live in `tools/qemu-win64-files.txt`** (`#pin:` header lines) so both scripts parse
+> one source of truth and cannot drift. **The DLL set is not hand-picked**: it is the exact
+> transitive PE import-table closure of the two exes over the DLLs shipped at the installer
+> root (`tools/Get-QemuImportClosure.ps1`, 104 DLLs — the Weil build load-time links GTK/SDL/
+> spice/gstreamer, so they cannot be dropped). **share/ set determined empirically** per the
+> plan (delete + boot-test the real guest): `bios-256k.bin`, `efi-virtio.rom`, `kvmvapic.bin`,
+> `linuxboot_dma.bin`, `vgabios-stdvga.bin`. The plan's guess that `vgabios*.bin` is unneeded
+> with `-display none` was **wrong**: q35 instantiates the default VGA (and the vapic option
+> ROM) regardless; `multiboot_dma.bin`/`pvh.bin`/`pxe-virtio.rom` are confirmed unneeded.
+> Total 113 files ≈ 123 MB (vs the ~90 MB estimate); QEMU `COPYING`/`COPYING.LIB` ship in the
+> bundle. **fetch-qemu.ps1 bootstraps a portable 7-Zip** when none is installed (NSIS needs
+> full `7z.exe`): administrative MSI extract (`msiexec /a`, no install, no elevation), MSI
+> sha256 pinned and cross-checked against the winget community manifest; `fetch-qemu.sh`
+> requires `7z`/`7zz` on PATH. Both scripts are idempotent (stamp under `vendor/qemu/`) and a
+> from-scratch run reproduces the boot-tested tree bit-for-bit. **Headless test resolution**:
+> `VendoredQemuSetup` (`[SetUpFixture]` in `gatOS.Vm.Tests` + `gatOS.Ssh.Tests`) points
+> `QemuLocator.OverridePath` at `vendor/qemu/win-x64` on Windows when present.)
 
 ## T11.2 — THIRD-PARTY-NOTICES + GPL source mirroring
 
