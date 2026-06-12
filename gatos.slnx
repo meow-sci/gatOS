@@ -1,0 +1,18 @@
+<Solution>
+    <Configurations>
+        <Platform Name="Any CPU" />
+        <Platform Name="x64" />
+        <Platform Name="x86" />
+    </Configurations>
+    <Project Path="gatOS.Logging/gatOS.Logging.csproj" />
+    <Project Path="gatOS.Logging.Tests/gatOS.Logging.Tests.csproj" />
+    <Project Path="gatOS.NineP/gatOS.NineP.csproj" />
+    <Project Path="gatOS.NineP.Tests/gatOS.NineP.Tests.csproj" />
+    <Project Path="gatOS.SimFs/gatOS.SimFs.csproj" />
+    <Project Path="gatOS.SimFs.Tests/gatOS.SimFs.Tests.csproj" />
+    <Project Path="gatOS.Vm/gatOS.Vm.csproj" />
+    <Project Path="gatOS.Vm.Tests/gatOS.Vm.Tests.csproj" />
+    <Project Path="gatOS.Ssh/gatOS.Ssh.csproj" />
+    <Project Path="gatOS.Ssh.Tests/gatOS.Ssh.Tests.csproj" />
+    <Project Path="gatOS.GameMod/gatOS.GameMod.csproj" />
+</Solution>

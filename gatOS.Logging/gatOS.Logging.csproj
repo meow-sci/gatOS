@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <AssemblyName>gatOS.Logging</AssemblyName>
+        <RootNamespace>gatOS.Logging</RootNamespace>
+        <Description>Game-free logging shim used by every gatOS library (Console-backed by default; GameMod swaps in a game-backed logger).</Description>
+    </PropertyGroup>
+
+</Project>

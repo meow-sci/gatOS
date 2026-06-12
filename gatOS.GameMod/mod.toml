@@ -1,0 +1,7 @@
+name = "gatOS"
+description = "A real, minimal Alpine Linux running in a QEMU microVM, surfaced through purrTTY terminals, with live KSA vehicle telemetry exposed as a /sim filesystem."
+version = "0.1.0"
+author = "meow sci"
+
+[StarMap]
+EntryAssembly = "gatOS.GameMod"

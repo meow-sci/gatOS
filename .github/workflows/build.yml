@@ -1,0 +1,73 @@
+name: Build and test
+
+# One Linux job builds the whole solution and runs the test suite on every push.
+# Release packaging (QEMU fetch/trim, guest bundle, dist zip) is added at M11 (T11.4).
+#
+# The KSA reference assemblies are licensed game files in the private repo
+# meow-sci/ksa-game-assemblies (DLLs under current/dll/). Only gatOS.GameMod
+# references them; the rest of the solution builds without. Access uses the
+# KSA_GAME_ASSEMBLIES_PAT repo secret (a fine-grained read-only PAT, same
+# pattern as purrtty).
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+      - 'feature/**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write    # test-reporter publishes results as a check run
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # Directory.Build.props resolves this before any per-OS default.
+      KSA_DLL_DIR: ${{ github.workspace }}/.tmp/ksa-game-assemblies/current/dll
+    steps:
+      - name: Checkout gatOS
+        uses: actions/checkout@v6
+
+      - name: Checkout private KSA assemblies
+        uses: actions/checkout@v6
+        with:
+          repository: meow-sci/ksa-game-assemblies
+          path: .tmp/ksa-game-assemblies
+          token: ${{ secrets.KSA_GAME_ASSEMBLIES_PAT }}
+          persist-credentials: false
+          ref: main
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build
+        run: dotnet build gatos.slnx -c Release --nologo -v quiet
+
+      - name: Test
+        id: test
+        run: dotnet test gatos.slnx --nologo -v quiet --logger trx --results-directory .tmp/test-results
+
+      - name: Report test results
+        uses: dorny/test-reporter@v3
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        with:
+          name: test results
+          path: .tmp/test-results/*.trx
+          reporter: dotnet-trx
+
+      - name: Upload test results artifact
+        uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        with:
+          name: test-results
+          path: .tmp/test-results

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <AssemblyName>gatOS.Vm</AssemblyName>
+        <RootNamespace>gatOS.Vm</RootNamespace>
+        <Description>QEMU lifecycle, disks, QGA, ports + shared filesystem paths (game-free). Filled in at M3.</Description>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\gatOS.Logging\gatOS.Logging.csproj" />
+    </ItemGroup>
+
+</Project>

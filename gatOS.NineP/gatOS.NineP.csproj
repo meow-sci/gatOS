@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <AssemblyName>gatOS.NineP</AssemblyName>
+        <RootNamespace>gatOS.NineP</RootNamespace>
+        <Description>9P2000.L codec + server + VFS abstraction (game-free). Filled in at M7.</Description>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\gatOS.Logging\gatOS.Logging.csproj" />
+    </ItemGroup>
+
+</Project>

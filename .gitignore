@@ -1,17 +1,25 @@
-.zig-cache/
-zig-out/
+# --- build output ---
 bin/
 obj/
-node_modules/
-.idea/
-*.tsbuildinfo
 dist/
-imgui.ini
+.testresults/
+*.trx
 *.log
 *.db
-*.trx
-.testresults/
-.DS_Store
+
+# --- IDE / OS ---
+.idea/
 .vs/
+.vscode/
+.DS_Store
+*.tsbuildinfo
+imgui.ini
+
+# --- scratch ---
 .tmp/
 tmpclaude*
+
+# --- gatOS: large/generated artifacts that are NOT committed (OS_PLAN.md D9, T0.1) ---
+guest/out/          # built guest image: base.qcow2, kernel, initrd, manifest, keys
+vendor/qemu/        # fetched + trimmed QEMU win-x64 bundle (tools/fetch-qemu.*)
+spike/              # M1 throwaway de-risking code (kept locally, see OS_PLAN.md M1)

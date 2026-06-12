@@ -1,0 +1,77 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <AssemblyName>gatOS.GameMod</AssemblyName>
+        <RootNamespace>gatOS.GameMod</RootNamespace>
+        <Description>The KSA game mod: VM lifecycle, telemetry sampler, shell registration, config, diagnostics.</Description>
+        <Product>gatOS</Product>
+        <Company>meow sci</Company>
+        <Copyright>Copyright © meow sci</Copyright>
+        <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+        <ModNamespace>gatOS.GameMod</ModNamespace>
+        <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+        <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <!-- Only gatOS.GameMod may reference KSA/Brutal/StarMap assemblies (OS_PLAN.md §2.1). -->
+    <ItemGroup>
+        <ProjectReference Include="..\gatOS.Ssh\gatOS.Ssh.csproj" />
+        <ProjectReference Include="..\gatOS.SimFs\gatOS.SimFs.csproj" />
+        <ProjectReference Include="..\gatOS.Vm\gatOS.Vm.csproj" />
+        <ProjectReference Include="..\gatOS.Logging\gatOS.Logging.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="ModMenu.Attributes" Version="1.0.1" />
+        <PackageReference Include="Tomlyn" Version="0.19.0" />
+        <PackageReference Include="Lib.Harmony" Version="2.4.2">
+            <PrivateAssets>all</PrivateAssets>
+        </PackageReference>
+        <PackageReference Include="StarMap.API" Version="0.3.6">
+            <PrivateAssets>all</PrivateAssets>
+        </PackageReference>
+    </ItemGroup>
+
+    <!-- Vendored purrTTY contract: shared at runtime via the StarMap ALC (D6), referenced at
+         compile time here. Private=false — purrTTY ships these; gatOS must not duplicate them
+         into the same ALC. -->
+    <ItemGroup>
+        <Reference Include="purrTTY.CustomShellContract">
+            <HintPath>$(MSBuildThisFileDirectory)../vendor/purrTTY/purrTTY.CustomShellContract.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="purrTTY.Logging">
+            <HintPath>$(MSBuildThisFileDirectory)../vendor/purrTTY/purrTTY.Logging.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+    </ItemGroup>
+
+    <!-- KSA DLL references (condition-guarded so game-free CI without the assemblies still builds
+         the rest of the solution; this project compiles only when KSAFolder resolves). -->
+    <ItemGroup>
+        <Reference Include="Brutal.Core.Common" Condition="Exists('$(KSAFolder)/Brutal.Core.Common.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Core.Common.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Brutal.Core.Logging" Condition="Exists('$(KSAFolder)/Brutal.Core.Logging.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Core.Logging.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Brutal.Core.Numerics" Condition="Exists('$(KSAFolder)/Brutal.Core.Numerics.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Core.Numerics.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="KSA" Condition="Exists('$(KSAFolder)/KSA.dll')">
+            <HintPath>$(KSAFolder)/KSA.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Update="mod.toml">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
+</Project>

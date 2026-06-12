@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <AssemblyName>gatOS.Ssh</AssemblyName>
+        <RootNamespace>gatOS.Ssh</RootNamespace>
+        <Description>SshShellSession : ICustomShell + VmConnectionBroker (game-free; refs vendored purrTTY contract). Filled in at M4.</Description>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\gatOS.Vm\gatOS.Vm.csproj" />
+        <ProjectReference Include="..\gatOS.Logging\gatOS.Logging.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="SSH.NET" Version="2025.1.0" />
+    </ItemGroup>
+
+    <!-- Vendored purrTTY contract (pinned inter-mod ABI; see vendor/purrTTY/README.md, OS_PLAN.md T0.5).
+         Private=true: copied to output. The dist (T6.5) decides what actually ships; at runtime
+         gatOS shares purrTTY's loaded copies over the StarMap ALC (D6). -->
+    <ItemGroup>
+        <Reference Include="purrTTY.CustomShellContract">
+            <HintPath>$(MSBuildThisFileDirectory)../vendor/purrTTY/purrTTY.CustomShellContract.dll</HintPath>
+            <Private>true</Private>
+        </Reference>
+        <Reference Include="purrTTY.Logging">
+            <HintPath>$(MSBuildThisFileDirectory)../vendor/purrTTY/purrTTY.Logging.dll</HintPath>
+            <Private>true</Private>
+        </Reference>
+    </ItemGroup>
+
+</Project>

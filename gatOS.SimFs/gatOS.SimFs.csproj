@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <AssemblyName>gatOS.SimFs</AssemblyName>
+        <RootNamespace>gatOS.SimFs</RootNamespace>
+        <Description>/sim node tree + snapshot store (game-free). Filled in at M8.</Description>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\gatOS.NineP\gatOS.NineP.csproj" />
+        <ProjectReference Include="..\gatOS.Logging\gatOS.Logging.csproj" />
+    </ItemGroup>
+
+</Project>
