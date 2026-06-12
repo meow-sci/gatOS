@@ -122,6 +122,22 @@ KSA game process (C#) — both mods load in-process         QEMU subprocess (own
   [virtiofsd is Linux-only](https://gitlab.com/virtio-fs/virtiofsd),
   [vsock requires host-Linux vhost](https://wiki.qemu.org/Features/VirtioVsock)). One transport
   that behaves identically on every host mirrors purrTTY's renderer-neutral-seam philosophy.
+  - *Re-verified 2026-06-11, because "virtio works on QEMU on Windows" search results challenge
+    this.* Two things that DO exist and are unrelated: virtio **devices** (virtio-net/-blk/-serial
+    — used here, fine on Windows hosts) and
+    [virtio-win](https://github.com/virtio-win/kvm-guest-drivers-windows) (drivers for Windows
+    **guests** on Linux hosts — opposite direction). What Windows hosts lack is the **host-side
+    backends**: QEMU's in-process 9p server is compile-gated to Linux/macOS/FreeBSD in
+    [meson.build](https://github.com/qemu/qemu/blob/master/meson.build) (`virtio-9p (virtfs)
+    requires Linux or macOS or FreeBSD`; the 2022 Windows patch series on #974 never merged);
+    vhost-user — virtiofs's transport — is Linux-only by *mechanism* (unix-socket fd-passing +
+    shared guest-RAM mapping); vhost-vsock needs a Linux host kernel module. And even where
+    virtio-9p exists, QEMU's built-in server exports a host **directory** — it cannot serve
+    gatOS's synthetic in-process C# tree; the only fsdev that ever delegated to an external server
+    (`proxy`) was deprecated in 8.1 and is removed from master. The kernel client's `trans=tcp` is
+    the one stock path to an out-of-QEMU 9p server, and at telemetry/SSH data rates slirp's
+    overhead (sub-ms loopback latency) is imperceptible — there is no Windows performance win
+    being left on the table.
 
 ### 3.2 Host acceleration matrix
 
