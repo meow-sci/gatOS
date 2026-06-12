@@ -137,18 +137,63 @@ dist** (LoadFrom + reflection): init, registration, registry-created session boo
 tip release with M5) **and T6.7** (WHPX-enabled run; `HypervisorPlatform` is off on the game
 machine).
 
-Everything past M6 is **not yet implemented** — the library projects (`NineP`, `SimFs`) hold
-placeholder/skeleton types only — with one exception pulled forward: **T11.1 QEMU win-x64 bundle
-tooling is DONE** (`tools/fetch-qemu.{ps1,sh}` populate `vendor/qemu/win-x64/` from the pinned
-Weil installer; pin + trimmed file list live in `tools/qemu-win64-files.txt`, derivation helper
-`tools/Get-QemuImportClosure.ps1`; see the T11.1 as-built note in `OS_PLAN.md`). On Windows,
-headless tests resolve that vendored bundle via `QemuLocator.OverridePath` (`VendoredQemuSetup`
-in `gatOS.Vm.Tests`/`gatOS.Ssh.Tests`), and `QemuLocator.Find()` throws the typed
-`QemuNotFoundException` (not `InvalidOperationException`) when `GatOsPaths.ModDir` is unset, so
-the test skip-gate works. The full `GATOS_IT=1` suite is verified green on the Windows 11 game
-machine (TCG fallback — WHPX needs the off-by-default `HypervisorPlatform` Windows feature; guest
-boot ≈ 7 s under TCG). Track real progress against the milestone table in `OS_PLAN.md` Part 3;
-do not document planned code here as if it exists.
+**M7 — gatOS.NineP (the 9P2000.L server): DONE.** Three layers, all game-free. `Vfs/`: the
+seam SimFs implements — `VfsNode`/`VfsDirectory`/`VfsFile` (ctor takes `(name, qidPath)`; the
+tree assigns qids) + per-open `IVfsFileHandle`; **sizes are truthful** — `VfsFile.Size` is
+abstract (no fake-4096; spike rule 1 makes it ENODATA-fatal) and an opened fid stats its
+handle's own `Size`; `StaticTextFile` snapshots its provider per open; `DelegateDirectory`
+covers fixed and dynamic dirs; `VfsErrorException(errno)` surfaces a chosen `Rlerror` (anything
+else → EIO). `Protocol/`: `MessageType` (diod numbers), `NinePReader`/`NinePWriter`
+(`BinaryPrimitives`, string = `len[2]`+UTF-8, `PatchUInt32` for count back-patching), `Qid`,
+`LinuxErrno`, `ProtocolException` (malformed frame ⇒ close connection). `Server/`:
+`NinePServer` (listens on **loopback** — slirp delivers guest→10.0.2.2 to 127.0.0.1, no
+firewall prompt; `StartAsync(port 0)` → `Port`) runs one `Session` per connection: every
+message dispatched as its own task with a per-tag CTS (a parked blocking read never stalls the
+loop), responses serialized by a write lock, fids hold walk *paths* (so `..` needs no parent
+pointers), readdir **includes `.`/`..`** with next-ordinal cookies and a per-fid listing
+snapshot for stable paging, reads clamp to msize−11, Twrite → EACCES, unknown types →
+EOPNOTSUPP; **Tflush**: cancel + suppress the old reply, await the handler, then Rflush — a
+flushed tag is never answered. `gatOS.NineP.Tests` = 40 tests: codec round-trips, hand-built
+golden Rversion/Rgetattr/Rreaddir frames (`NinePServerOptions.AttrTime` injectable), and the
+conformance suite driven by a **public managed test client** (`TestClient/NinePTestClient`,
+tag-correlated, reused by SimFs.Tests via project reference).
+
+**M8 — gatOS.SimFs (the `/sim` tree): DONE.** `Snapshots/`: the immutable game-free records
+(`SimSnapshot`/`VesselSnapshot`/…, plan shapes verbatim) and `SnapshotStore` — volatile
+`Current` + a TCS swapped per `Publish` (lock-free reads, capture-and-recheck in
+`WaitForNextAsync`, intermediate snapshots are *skipped, never replayed*). `SimFsTree.Build(store)`
+→ `/time/{ut,warp}`, `/vessels/active` (alias listing the active vessel's children directly —
+`active/…` and `by-id/…` walk to **identical qids**), `/vessels/by-id/<sanitized>/…` (id/name/
+situation/parent, position/{cci,lat,lon}, velocity, attitude, altitude, mass, orbit + battery
+only-when-present, engines/<n>, tanks/<resource>, stream), `/events`; dynamic nodes are
+transient but qids are interned by relpath; ids sanitized to `[A-Za-z0-9._-]` with `~N`
+collision suffixes; vanished vessels → ENOENT. `Formats` is the **frozen user-facing surface**:
+G9 invariant doubles, `0`/`1` flags, space-separated vector/quat, one value + LF per scalar
+file, relaxed-escaping NDJSON lines. The two spike-mandated file models: `StreamFile` =
+growing-log (per-open buffer seeded with the current line so size is never 0, pump task appends
+per observed publish, 0 bytes at the frontier — `tail -f` follows, `cat` samples; 256 KiB cap
+drops whole lines + `{"notice":"dropped"}`), `EventsFile` = blocking-event (read parks for the
+next event, delivers, then owes two 0-byte reads; size claims 1 — the only always-truthful
+value for variable-length lines). `gatOS.SimFs.Tests` = 38 tests incl. the **M7+M8 exit**:
+`Integration/SimMountIntegrationTests` (GATOS_IT) boots the real guest with
+`SimPortProvider = () => server.Port`, the guest's `sim-mount` supervisor mounts `/sim` on its
+own, and the real v9fs client proves live scalars, the alias, `tail -f stream`, the blocking
+events read, and Tflush-survival — this **supersedes the planned ubuntu mount-smoke.sh**
+(T7.5/T8.4 as-built notes). Verified on this machine: full `GATOS_IT=1` suite 172/172.
+
+Everything past M8 is **not yet implemented** — next is M9 (game-thread `TelemetrySampler` +
+`EventDiffer` + wiring the `NinePServer` into `Mod.OnFullyLoaded`) — with one exception pulled
+forward: **T11.1 QEMU win-x64 bundle tooling is DONE** (`tools/fetch-qemu.{ps1,sh}` populate
+`vendor/qemu/win-x64/` from the pinned Weil installer; pin + trimmed file list live in
+`tools/qemu-win64-files.txt`, derivation helper `tools/Get-QemuImportClosure.ps1`; see the
+T11.1 as-built note in `OS_PLAN.md`). On Windows, headless tests resolve that vendored bundle
+via `QemuLocator.OverridePath` (`VendoredQemuSetup` in `gatOS.Vm.Tests`/`gatOS.Ssh.Tests`/
+`gatOS.SimFs.Tests`), and `QemuLocator.Find()` throws the typed `QemuNotFoundException` (not
+`InvalidOperationException`) when `GatOsPaths.ModDir` is unset, so the test skip-gate works.
+The full `GATOS_IT=1` suite is verified green on the Windows 11 game machine (TCG fallback —
+WHPX needs the off-by-default `HypervisorPlatform` Windows feature; guest boot ≈ 7 s under
+TCG). Track real progress against the milestone table in `OS_PLAN.md` Part 3; do not document
+planned code here as if it exists.
 
 ## Build and Test Commands
 
@@ -203,14 +248,16 @@ tools/                          fetch-qemu.{sh,ps1} + qemu-win64-files.txt (pin 
 
 ```
 gatOS.Logging                    (no deps)            game-free logging shim
-gatOS.NineP    → Logging                              9P2000.L codec + server (M7)
-gatOS.SimFs    → NineP, Logging                       /sim node tree + snapshot store (M8)
+gatOS.NineP    → Logging                              9P2000.L codec + server + VFS (M7, built)
+gatOS.SimFs    → NineP, Logging                       /sim tree, snapshot store, stream/events (M8, built)
 gatOS.Vm       → Logging, Tomlyn                      QEMU lifecycle, disks, ports, GatOsPaths (M3, built)
 gatOS.Ssh      → Vm, Logging, vendor/purrTTY, SSH.NET SshShellSession : ICustomShell (M4, built)
 gatOS.GameMod  → Ssh, SimFs, Vm, Logging, vendor/purrTTY,
                   KSA DLLs, StarMap.API, Lib.Harmony, ModMenu.Attributes, Tomlyn   the KSA mod (M6, built)
 ```
 Each library has a matching `*.Tests` NUnit project (`gatOS.GameMod` has none — it is game-coupled).
+Test-only edges: `gatOS.SimFs.Tests` references `gatOS.NineP.Tests` (the shared managed 9p test
+client), plus `gatOS.Vm`/`gatOS.Ssh` for its in-VM integration fixture.
 
 > **THE dependency rule (binding):** only `gatOS.GameMod` may reference KSA / Brutal / StarMap
 > assemblies. Everything else must build and test on a bare host with no game DLLs present. This is

@@ -1177,11 +1177,16 @@ On a real Windows 11 machine (and ideally one AMD box):
 
 ---
 
-# M7 — gatOS.NineP: the 9P2000.L server
+# M7 — gatOS.NineP: the 9P2000.L server — **DONE**
 
 > Game-free. Build against the **spike learnings** (T1.2 NOTES are required reading).
 > Reference spec: diod `protocol.md`. Everything little-endian. Strings = `len[2]` + UTF-8.
 > This milestone can run in parallel with M3–M6 (different agent, no shared files).
+
+> (As built: where this section and spike/NOTES.md T1.2 disagreed, the spike won — sizes are
+> truthful (T7.1 note), readdir includes `.`/`..` (T7.4 note). Exit proven by the 40-test
+> conformance suite **plus** the T8.4 in-VM mount against the real guest kernel — the planned
+> ubuntu-host mount-smoke.sh was superseded, see the T7.5 note. 0 warnings, all green.)
 
 ## T7.1 — VFS abstraction (the seam SimFs implements)
 
@@ -1213,6 +1218,14 @@ public interface IVfsFileHandle : IDisposable
 ```
 Plus ready-made impls: `StaticTextFile(Func<string> contentProvider)` (content snapshotted per
 **open**, served by offset — so `cat` gets a consistent read), `DelegateDirectory`.
+
+> (As built: the snippet's `Size => 4096` fake-size default was **dropped** — spike rule 1 makes
+> it ENODATA-fatal on the ≥6.11 guest kernel. `VfsFile.Size` is abstract and truthful, and
+> `IVfsFileHandle` carries its own `Size` so Tgetattr on an *opened* fid reports that open's
+> snapshot (StaticTextFile's handle stats its captured bytes; stream handles stat their
+> produced frontier). Nodes take `(name, qidPath)` in the ctor — the tree assigns qids — and
+> `VfsErrorException(errno)` lets VFS callbacks surface a specific `Rlerror` (M8 uses ENOENT
+> for vanished vessels); any other exception maps to EIO.)
 
 ## T7.2 — Wire codec
 
@@ -1295,6 +1308,20 @@ two concurrent fids on one connection; malformed frame → connection closed wit
 crash. These tests are the conformance suite and must be thorough (this is the highest-risk
 component).
 
+> (As built: the listener binds **loopback**, not `IPAddress.Any` — slirp delivers guest
+> traffic to `10.0.2.2` as host-side connections to `127.0.0.1`, so loopback suffices and the
+> Windows Firewall dialog never fires (verified in-VM, T8.4). Readdir **includes `.` and
+> `..`** per spike T1.2 (this table's "kernel synthesizes" guess was wrong) with a per-fid
+> listing snapshot (rebuilt at offset 0) so dynamic-dir paging stays consistent. Fid identity
+> is a walk *path* (list of nodes root→target) so `..` works without parent pointers. Flush:
+> the flushed handler is canceled and its reply suppressed; Rflush is sent only after the
+> handler task finishes — a flushed tag is never answered (spike T1.2). Every message runs as
+> its own task with a per-tag CTS; responses serialize through a write lock. Tag reuse while
+> in flight closes the connection. `NinePServerOptions.AttrTime` is injectable, which the
+> golden-byte fixtures (`ServerGoldenByteTests`: full hand-assembled Rgetattr/Rreaddir frames)
+> rely on. The test client lives in `gatOS.NineP.Tests` as a public type and is reused by
+> `gatOS.SimFs.Tests` via a project reference.)
+
 ## T7.5 — Linux-mount smoke test (CI)
 
 `gatOS.NineP.Tests/scripts/mount-smoke.sh` + a CI job step (ubuntu runner, sudo available):
@@ -1306,12 +1333,24 @@ then assert `cat hello`, `ls -la` sizes, `timeout 3 tail -f stream | head -2`, u
 Wrap in `if ! modprobe …; then echo "::warning:: 9p modules unavailable, skipping"; fi` so the
 suite degrades gracefully on exotic runners.
 
+> (As built: **superseded** — no mount-smoke.sh, no SampleHost. The kernel-client smoke is the
+> T8.4 in-VM integration test (`gatOS.SimFs.Tests/Integration/SimMountIntegrationTests.cs`),
+> which mounts the server from the **pinned guest kernel over slirp** — the production path,
+> not the CI runner's kernel — and runs under the existing `GATOS_IT=1` gate on every host
+> including Windows (where a local 9p mount is impossible). CI already runs it via build.yml's
+> GATOS_IT step; no new workflow steps, no sudo mounts, one less project.)
+
 ---
 
-# M8 — gatOS.SimFs: the `/sim` tree
+# M8 — gatOS.SimFs: the `/sim` tree — **DONE**
 
 > Game-free: SimFs defines the **snapshot types** and builds the VFS; the game-side sampler
 > (M9) produces snapshots. Headless tests use hand-built snapshots.
+
+> (As built: the T8.3 sketch below predates the spike and described one block-at-frontier
+> model for both files; the implementation follows spike/NOTES.md T1.2 instead — `stream` is
+> **growing-log** (never blocks), `events` is **blocking-event** (zeros-owed) — see the T8.3
+> note. Exit proven end-to-end in-VM (T8.4 note). 0 warnings, all green.)
 
 ## T8.1 — Snapshot model + store
 
@@ -1401,6 +1440,15 @@ Mechanics:
 **Tests:** build tree from a fixture snapshot; walk every path via the M7 test client; check
 formatted contents; vessel add/remove reflected in readdir; active-vessel switch.
 
+> (As built: plus `position/cci` (the value was already in the snapshot record and the
+> analysis §3.6 tree had it). `battery/` appears only when `BatteryChargeFraction` is non-null
+> (mirroring `orbit/`); tanks get the same sanitize+`~N` collision suffixing as vessel ids
+> (duplicate resources are kept distinct, not aggregated); `engines/` and `tanks/` are always
+> listed (possibly empty). The `active` alias *lists the active vessel's children directly*,
+> so `active/…` and `by-id/…` walk to identical qids — one logical file, one guest inode. The
+> qid intern map is `ConcurrentDictionary<relpath, ulong>` inside the builder; a vessel whose
+> id vanished answers ENOENT on open/stat of already-walked fids via `VfsErrorException`.)
+
 ## T8.3 — Streaming files (`stream`, `events`)
 
 Files: `gatOS.SimFs/StreamFile.cs`.
@@ -1426,6 +1474,23 @@ Per-open-handle semantics (the subtle part — encode exactly):
 **Tests:** headless publisher at 10 Hz + M7 client: sequential reads stream lines; parked read
 wakes on publish; Tflush during park; backpressure trim path.
 
+> (As built: the per-open-handle sketch above (block at the frontier) predates the spike and
+> was **not** implemented — a frontier-blocking stream makes the kernel's buffer-fill loop
+> stall `cat` for minutes and breaks `tail -f` (spike T1.2 rule 3). Instead:
+> **`StreamFile` = growing-log.** Each open seeds its buffer with the current snapshot's line
+> (first stat is never 0 — size 0 suppresses reads entirely, rule 1; `cat` = sample-now,
+> `tail -f` = follow), a per-handle pump task appends one line per *observed* publish
+> (`WaitForNextAsync` coalesces under load — `seq` makes gaps visible), reads at the frontier
+> return 0 immediately, `Size` = bytes produced. The 256 KiB cap, whole-line trim,
+> serve-from-oldest-retained for behind readers and the `{"notice":"dropped"}` marker are as
+> planned. **`EventsFile` = blocking-event**: fresh read parks on `WaitForNextAsync`, delivers
+> the `NewEvents` lines (chunked by count if needed), then owes exactly two 0-byte reads so
+> the syscall completes (rule 2); offsets are ignored (sequential per fid); only post-open
+> events are delivered. Reported size is **1** — with variable-length JSON lines it is the
+> only claim that can never exceed a delivery ("one line" in the spike was a fixed 16-byte
+> line); verified against the real kernel in T8.4. Handle disposal (clunk) cancels the pump /
+> unparks the read via a handle-owned CTS.)
+
 ## T8.4 — End-to-end headless: real kernel mount of fake telemetry
 
 Extend the T7.5 CI smoke: SampleHost v2 = `NinePServer(SimFsTree.Build(store))` + a fake
@@ -1433,6 +1498,19 @@ sampler publishing a scripted flight (altitude ramp). Assert from the mounted fs
 `cat /mnt/vessels/by-id/test-1/altitude/radar` twice → increasing values;
 `timeout 3 tail -f stream | head -3` → 3 JSON lines that `jq` parses.
 **This is the M8 exit: the entire host-side stack proven without the game.**
+
+> (As built: implemented as the **in-VM** `GATOS_IT=1` fixture
+> `gatOS.SimFs.Tests/Integration/SimMountIntegrationTests.cs` (see the T7.5 note for why).
+> The real guest boots with `SimPortProvider = () => server.Port` — exercising the T3.3
+> `gatos.simport` cmdline and the guest's `sim-mount` supervisor end-to-end (the mount
+> happens with **zero test-side setup**). Over SSH (`VmConnectionBroker`): `/sim/time/ut`
+> ticking; `by-id` listing; consecutive radar-altitude opens increasing; the `active` alias;
+> `timeout 15 tail -f stream | head -n 3` → three rising-`seq` NDJSON lines; a parked
+> `head -n 1 /sim/events` delivered by the scripted once-per-second event; `timeout 2 cat
+> /sim/events` killed mid-park (kernel Tflush) leaving the mount fully usable; `find /sim
+> -type f` enumerating the whole tree. Verified green on the Windows game machine (TCG, 11 s
+> total) and in the full `GATOS_IT=1` suite (172/172). This also empirically confirmed the
+> EventsFile size=1 claim and the loopback-listener choice against the real kernel client.)
 
 ---
 

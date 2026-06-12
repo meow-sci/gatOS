@@ -16,10 +16,13 @@ tail -f /sim/vessels/active/stream | jq .vel.surface
 ## Status
 
 Early development, building milestone by milestone. Working today: the guest image pipeline, the
-QEMU VM lifecycle, SSH shell sessions (purrTTY's custom-shell contract, with live resize), and the
-in-game mod integration (lazy VM boot, config, diagnostics menu + status window). Still to come:
-the 9p `/sim` telemetry filesystem and the game-thread sampler. See `OS_PLAN.md` for the roadmap
-and `OS_ANALYSIS.md` (in this repo and `../purrtty`) for the architecture rationale.
+QEMU VM lifecycle, SSH shell sessions (purrTTY's custom-shell contract, with live resize), the
+in-game mod integration (lazy VM boot, config, diagnostics menu + status window), and the whole
+`/sim` telemetry stack — a C# 9P2000.L server plus the `/sim` file tree (scalars, NDJSON
+`stream`/`events` files) — proven end-to-end against the real guest kernel with scripted
+telemetry. Still to come: the game-thread sampler that feeds it live vehicle data in-game (M9).
+See `OS_PLAN.md` for the roadmap and `OS_ANALYSIS.md` (in this repo and `../purrtty`) for the
+architecture rationale.
 
 ## In game
 
