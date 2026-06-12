@@ -1,6 +1,10 @@
 using System.Diagnostics;
 using gatOS.GameMod.Configuration;
 using gatOS.Logging;
+using gatOS.NineP.Server;
+using gatOS.NineP.Vfs;
+using gatOS.SimFs;
+using gatOS.SimFs.Snapshots;
 using gatOS.Ssh;
 using gatOS.Vm;
 using purrTTY.Core.Terminal;
@@ -42,6 +46,13 @@ public sealed partial class Mod
     private AssetStatus? _assets;
     private int _resetInFlight;
     private bool _uiDead;
+
+    // The /sim stack (T9.3): store + tree are immutable after init; the server reference is
+    // volatile because Restart SimFs swaps it from a background task while the render thread
+    // reads it (threading rule 5) and the sampler/VM boot consult it on their own threads.
+    private SnapshotStore? _simStore;
+    private VfsDirectory? _simRoot;
+    private volatile NinePServer? _simServer;
 
     // Written by background actions, read by the render thread (status window).
     private volatile string? _lastActionNote;
@@ -90,6 +101,14 @@ public sealed partial class Mod
             _assets = ModAssets.Validate();
             _config = GatOsConfig.LoadOrCreate(GatOsPaths.ConfigFile);
 
+            // T9.3: the /sim stack. The 9p server binds an ephemeral loopback port now, so a
+            // VM booted at any later moment finds gatos.simport=<port> on its kernel cmdline
+            // and the guest's sim-mount supervisor mounts /sim on its own. The store stays at
+            // SimSnapshot.Empty until the sampler's first publish.
+            _simStore = new SnapshotStore();
+            _simRoot = SimFsTree.Build(_simStore);
+            StartSimServer(port: 0);
+
             _disks = new DiskManager();
             var vmHost = new VmHost(new VmHostOptions
             {
@@ -101,8 +120,9 @@ public sealed partial class Mod
                 BootTimeout = _config.BootTimeoutSeconds > 0
                     ? TimeSpan.FromSeconds(_config.BootTimeoutSeconds)
                     : null,
-                // SimPortProvider arrives with the 9p server (M8); absent keeps the guest's
-                // sim-mount supervisor idle (gatos.simport=0).
+                // A failed/missing server returns null → the guest supervisor idles
+                // (gatos.simport=0); the rest of gatOS works without /sim.
+                SimPortProvider = () => _simServer is { Port: > 0 } server ? server.Port : null,
             });
             _broker = new VmConnectionBroker(vmHost);
 
@@ -117,11 +137,9 @@ public sealed partial class Mod
         }
     }
 
-    /// <summary>Per-frame game-thread hook — the M9 telemetry sampler ticks here; idle until then.</summary>
+    /// <summary>Per-frame game-thread hook: the telemetry sampler ticks here (T9.1, rule 1).</summary>
     [StarMapBeforeGui]
-    public void OnBeforeUi(double dt)
-    {
-    }
+    public void OnBeforeUi(double dt) => SampleTelemetry(dt);
 
     /// <summary>Draws the diagnostics UI (T6.4); a no-op when built without the KSA assemblies.</summary>
     [StarMapAfterGui]
@@ -156,15 +174,21 @@ public sealed partial class Mod
             IsInitialized = false;
             var broker = _broker;
             _broker = null;
-            if (broker is null)
-                return;
+            if (broker is not null)
+            {
+                if (broker.DisposeAsync().AsTask().Wait(UnloadWaitBudget))
+                    ModLog.Log.Info("gatOS unloaded; VM stopped.");
+                else
+                    ModLog.Log.Warn(
+                        $"The VM stop did not finish within {UnloadWaitBudget.TotalSeconds:0} s at unload; "
+                        + "QEMU will die with the game process (the overlay is crash-consistent qcow2).");
+            }
 
-            if (broker.DisposeAsync().AsTask().Wait(UnloadWaitBudget))
-                ModLog.Log.Info("gatOS unloaded; VM stopped.");
-            else
-                ModLog.Log.Warn(
-                    $"The VM stop did not finish within {UnloadWaitBudget.TotalSeconds:0} s at unload; "
-                    + "QEMU will die with the game process (the overlay is crash-consistent qcow2).");
+            // The 9p server goes after the VM: its mounts die with the guest anyway.
+            var simServer = _simServer;
+            _simServer = null;
+            if (simServer is not null && !simServer.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)))
+                ModLog.Log.Warn("The /sim server did not stop within 5 s at unload.");
         }
         catch (Exception ex)
         {
@@ -261,6 +285,61 @@ public sealed partial class Mod
                 Interlocked.Exchange(ref _resetInFlight, 0);
             }
         });
+    }
+
+    /// <summary>
+    ///     Menu action (T9.3 debug aid): bounces the /sim 9p server <b>on the same port</b> —
+    ///     the port is baked into a running guest's kernel cmdline, so a rebind elsewhere
+    ///     would orphan the mount. The guest's sim-mount supervisor remounts within ~4 s.
+    /// </summary>
+    internal void RestartSimFs()
+    {
+        Note("Restarting SimFs…");
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var old = _simServer;
+                _simServer = null;
+                var port = old is { Port: > 0 } ? old.Port : 0;
+                if (old is not null)
+                    await old.DisposeAsync();
+                StartSimServer(port);
+                Note(_simServer is null ? "SimFs failed to restart (see the log)." : null);
+            }
+            catch (Exception ex)
+            {
+                Note($"SimFs restart failed: {ex.Message}");
+                ModLog.Log.Error("SimFs restart failed.", ex);
+            }
+        });
+    }
+
+    /// <summary>One status-window line for the /sim server (read on the render thread).</summary>
+    internal string SimFsStatusText()
+    {
+        var server = _simServer;
+        return server is null
+            ? "not running"
+            : $"port {server.Port}, {server.ActiveSessions} connection(s)";
+    }
+
+    private void StartSimServer(int port)
+    {
+        if (_simRoot is not { } root)
+            return;
+        try
+        {
+            var server = new NinePServer(root);
+            server.StartAsync(port).GetAwaiter().GetResult(); // a synchronous bind (T7.4)
+            _simServer = server;
+        }
+        catch (Exception ex)
+        {
+            // /sim is an optional luxury: shells and VM management work without it.
+            _simServer = null;
+            ModLog.Log.Error($"The /sim 9p server failed to start: {ex.Message}", ex);
+        }
     }
 
     /// <summary>Menu action: opens the gatOS data dir (disks, logs, config) in the OS file manager.</summary>
@@ -369,7 +448,9 @@ public sealed partial class Mod
         }
     }
 
-    // Game-coupled seams, implemented in Game/Mod.Game.cs (compiled only with the KSA assemblies).
+    // Game-coupled seams, implemented in the Game/ partial files (compiled only with the KSA
+    // assemblies; the calls drop out otherwise).
     partial void InstallGameLogging();
     partial void DrawGameUi();
+    partial void SampleTelemetry(double dt);
 }

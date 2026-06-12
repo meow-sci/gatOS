@@ -43,6 +43,12 @@ public sealed partial class Mod
     private VmStatus? _qemuLogStatusMark;
     private string? _newestQemuLog;
 
+    // Game-thread-only sampler state (T9.1). The sampler type is ours (loads without game
+    // assemblies); only its method bodies touch KSA types, which is exactly what the
+    // NoInlining + catch-at-call-site discipline below is for.
+    private TelemetrySampler? _telemetry;
+    private bool _samplerDead;
+
     /// <summary>The "gatOS" entry in the ModMenu bar (same mechanism as purrTTY's).</summary>
     [ModMenuEntry("gatOS")]
     public static void DrawMenu()
@@ -63,11 +69,37 @@ public sealed partial class Mod
         }
     }
 
-    // NoInlining on both partial impls: their bodies reference game assemblies, and a missing
+    // NoInlining on the partial impls: their bodies reference game assemblies, and a missing
     // assembly must fail at the call site (where Mod.cs catches it), not at the JIT of the
     // calling method — inlining would hoist the type resolution into the caller.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     partial void InstallGameLogging() => ModLog.SetLogger(new BrutalModLogger());
+
+    /// <summary>
+    ///     T9.1: ticks the telemetry sampler on the game thread. A sampler failure disables
+    ///     sampling for the session (one error log, no per-frame spam) — `/sim` then serves
+    ///     the last published snapshot; everything else keeps working.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void SampleTelemetry(double dt)
+    {
+        if (_samplerDead || _simStore is not { } store)
+            return;
+
+        try
+        {
+            _telemetry ??= new TelemetrySampler(store, Config.SampleRateHz);
+            var state = CurrentVmStatus.State;
+            var active = state is VmState.Starting or VmState.Running
+                         || (_simServer?.ActiveSessions ?? 0) > 0;
+            _telemetry.Tick(dt, active);
+        }
+        catch (Exception ex)
+        {
+            _samplerDead = true;
+            ModLog.Log.Error($"gatOS telemetry sampling disabled after an error: {ex.Message}");
+        }
+    }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     partial void DrawGameUi()
@@ -101,6 +133,8 @@ public sealed partial class Mod
             StopVm();
 
         ImGui.Separator();
+        if (ImGui.MenuItem("Restart SimFs", default, false, IsInitialized))
+            RestartSimFs();
         if (ImGui.MenuItem("Open Data Folder"))
             OpenDataFolder();
         if (ImGui.MenuItem("Reset Disk...", default, false, IsInitialized))
@@ -134,6 +168,8 @@ public sealed partial class Mod
             ImGui.Text(status.SshPort?.ToString() ?? "—");
             Row("Sim port");
             ImGui.Text(status.SimPort?.ToString() ?? "—");
+            Row("SimFs");
+            ImGui.Text(SimFsStatusText());
             Row("Uptime");
             ImGui.Text(FormatUptime(status));
             Row("Guest");

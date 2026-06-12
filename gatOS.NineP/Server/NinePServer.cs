@@ -38,6 +38,12 @@ public sealed class NinePServer : IAsyncDisposable
     /// <summary>The bound port (valid after <see cref="StartAsync"/>; 0 before).</summary>
     public int Port { get; private set; }
 
+    /// <summary>
+    ///     Currently connected sessions (the guest's v9fs mount holds exactly one). Drives the
+    ///     sampler's idle gate and the diagnostics window (T9.1/T9.3).
+    /// </summary>
+    public int ActiveSessions => _sessions.Count;
+
     /// <summary>Binds the listener (port 0 = ephemeral) and starts accepting connections.</summary>
     public Task StartAsync(int port = 0)
     {
