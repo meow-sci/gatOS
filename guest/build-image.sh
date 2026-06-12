@@ -117,8 +117,8 @@ configure_rootfs() {
 
     echo gatos > "$ROOTFS/etc/hostname"
     echo "nameserver 10.0.2.3" > "$ROOTFS/etc/resolv.conf"        # slirp DNS
-    printf '%s/x86_64\n%s/x86_64\n' "$MIRROR_MAIN" "$MIRROR_COMMUNITY" \
-        > "$ROOTFS/etc/apk/repositories"                          # in-guest `apk add`
+    printf '%s\n%s\n' "$MIRROR_MAIN" "$MIRROR_COMMUNITY" \
+        > "$ROOTFS/etc/apk/repositories"   # in-guest `apk add`; apk appends <arch>/ itself
     sed -i -E 's/^root:[^:]*:/root:!:/' "$ROOTFS/etc/shadow"      # lock root password (key-only)
     mkdir -p "$ROOTFS/sim"
     rm -rf "$ROOTFS"/var/cache/apk/*
@@ -267,6 +267,12 @@ smoke_test() {
     local got
     got="$(ssh "${sshopts[@]}" root@127.0.0.1 'echo ok')"
     [ "$got" = ok ] || { tail -40 "$SMOKE_TMP/serial.log" >&2 || true; die "ssh 'echo ok' failed (got: '$got')"; }
+
+    # apk fetches <repo-line>/<arch>/APKINDEX.tar.gz — a baked arch suffix doubles the
+    # path segment and every in-guest `apk update` 404s. Hermetic check (no network).
+    if ssh "${sshopts[@]}" root@127.0.0.1 'grep -q "/x86_64$" /etc/apk/repositories'; then
+        die "/etc/apk/repositories has a trailing arch segment (apk appends <arch>/ itself)"
+    fi
 
     # Verify the host key actually presented matches the pinned manifest value (D8).
     local pinned scanned
