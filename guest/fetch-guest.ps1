@@ -1,5 +1,5 @@
 # Fetch the pinned guest image release into guest/out/ (OS_PLAN.md T2.5).
-# Windows twin of fetch-guest.sh — same pin (guest/GUEST_VERSION -> tag guest-v<N>),
+# Windows twin of fetch-guest.sh - same pin (guest/GUEST_VERSION -> tag guest-v<N>),
 # same no-op rule, same checksum verification.
 $ErrorActionPreference = 'Stop'
 
@@ -13,7 +13,7 @@ $assets    = @('base.qcow2', 'vmlinuz-virt', 'initramfs-virt', 'manifest.toml',
 
 $manifest = Join-Path $out 'manifest.toml'
 if ((Test-Path $manifest) -and (Select-String -Path $manifest -Pattern "^guest_version = $version$" -Quiet)) {
-    Write-Host "guest/out/ already at guest_version=$version — nothing to do"
+    Write-Host "guest/out/ already at guest_version=$version - nothing to do"
     exit 0
 }
 
