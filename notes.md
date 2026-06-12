@@ -76,3 +76,31 @@ What was built
   CLAUDE.md now documents M7/M8 as reality (frontier moved to "everything past M8"), OS_PLAN.md carries as-built notes wherever the spike overrode
   the sketches, and the README status mentions the proven /sim stack. Next milestone: M9 — the game-thread TelemetrySampler/EventDiffer and wiring
   the NinePServer into Mod.OnFullyLoaded, which lights up /sim with live vehicle data in-game.
+
+
+
+# usages
+
+● That's the exact use case /sim was built for. Best option — full-screen, latest value only, no scroll:
+
+  watch -n 0.2 cat /sim/vessels/by-id/Rocket/velocity/orbital
+
+  watch redraws the screen each interval instead of appending, so you just see the current value. Ctrl-C exits cleanly (that lands as a 9p Tflush,
+  which the server handles). The sampler publishes at 10 Hz by default (sample_rate_hz in gatos.toml), so polling faster than -n 0.1 buys nothing.
+
+  A couple of alternatives depending on taste:
+
+  Single-line ticker (no full-screen takeover, overwrites one line in place):
+
+  while :; do printf '\r%-14s' "$(cat /sim/vessels/by-id/Rocket/velocity/orbital)"; sleep 0.2; done
+
+  Follow-style stream (scrolling, but carries the whole telemetry line; nice with jq after apk add jq):
+
+  tail -f /sim/vessels/by-id/Rocket/stream | jq .vel.orb
+
+  The stream file emits one JSON line per published snapshot, so this is the truest "near-realtime" — watch/cat sample on each poll, while tail -f
+  follows every update (paced by tail's ~1 s stat-poll, so it arrives in little bursts).
+
+  Two conveniences worth knowing: /sim/vessels/active/ is an alias for whatever vessel you're currently controlling (so watch -n 0.2 cat
+  /sim/vessels/active/velocity/orbital keeps working across vessel switches), and cat /sim/events blocks and prints flight events (situation
+  changes, SoI changes, warp changes) as they happen — a nice second terminal to leave open.
