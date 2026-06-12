@@ -39,6 +39,14 @@ public static class QemuLocator
 
         if (OperatingSystem.IsWindows())
         {
+            // Headless (tests, tooling): ModDir is never set, so there is no bundled QEMU to
+            // find — report that as the typed not-found error, not a programming error.
+            if (GatOsPaths.ModDir is null)
+                throw new QemuNotFoundException(
+                    "No bundled QEMU: GatOsPaths.ModDir is not set (headless host). Windows resolves "
+                    + "QEMU only from the mod dist (D5); tests use QemuLocator.OverridePath "
+                    + "(populated from vendor/qemu/win-x64 by tools/fetch-qemu.ps1).");
+
             var bundled = Path.Combine(GatOsPaths.BundledQemuDir, "win-x64");
             return FromDirectory(bundled,
                 $"The bundled QEMU is missing from '{bundled}'. The gatOS mod install is incomplete — "

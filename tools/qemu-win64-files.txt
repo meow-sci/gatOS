@@ -1,0 +1,129 @@
+# tools/qemu-win64-files.txt - the trimmed QEMU win-x64 bundle (OS_PLAN.md T11.1).
+# Consumed by tools/fetch-qemu.ps1 / fetch-qemu.sh: every non-comment line is a path
+# relative to the extracted installer root, copied verbatim into vendor/qemu/win-x64/.
+# The #pin: lines below are the single source of truth both scripts parse.
+#
+# Derivation (re-run when bumping the pin):
+#  - DLLs: exact transitive PE import-table closure of qemu-system-x86_64.exe +
+#    qemu-img.exe over the DLLs shipped at the installer root (tools/Get-QemuImportClosure.ps1).
+#  - share/: determined empirically per the plan (delete + boot-test against the real
+#    guest, q35 + virtio-net + -display none + -kernel): multiboot_dma.bin, pvh.bin and
+#    pxe-virtio.rom are NOT needed; kvmvapic.bin and vgabios-stdvga.bin ARE (QEMU
+#    instantiates the default VGA and the vapic option ROM even with -display none).
+#  - COPYING/COPYING.LIB: QEMU license texts, shipped alongside the redistributed binaries.
+#
+#pin: url=https://qemu.weilnetz.de/w64/qemu-w64-setup-20260501.exe
+#pin: sha512=3d6b996bb904666f3b7ff62bed233b2d21dffe96f512af0a7151cfcc828bc5c8f9b62623cf2a9d363a3ae48111761f4630cce776eacb9b70d83e61e6ae50de47
+brlapi-0.8.dll
+COPYING
+COPYING.LIB
+libaom.dll
+libatk-1.0-0.dll
+libavif-16.dll
+libbrotlicommon.dll
+libbrotlidec.dll
+libbrotlienc.dll
+libbz2-1.dll
+libcacard-0.dll
+libcairo-2.dll
+libcairo-gobject-2.dll
+libcapstone.dll
+libcrypto-3-x64.dll
+libcurl-4.dll
+libdatrie-1.dll
+libdav1d-7.dll
+libdb-6.2.dll
+libdeflate.dll
+libepoxy-0.dll
+libexpat-1.dll
+libfdt-1.dll
+libffi-8.dll
+libfontconfig-1.dll
+libfreetype-6.dll
+libfribidi-0.dll
+libgcc_s_seh-1.dll
+libgdk_pixbuf-2.0-0.dll
+libgdk-3-0.dll
+libgio-2.0-0.dll
+libglib-2.0-0.dll
+libgmodule-2.0-0.dll
+libgmp-10.dll
+libgnutls-30.dll
+libgobject-2.0-0.dll
+libgraphite2.dll
+libgstapp-1.0-0.dll
+libgstbase-1.0-0.dll
+libgstreamer-1.0-0.dll
+libgtk-3-0.dll
+libharfbuzz-0.dll
+libhogweed-6.dll
+libhwy.dll
+libiconv-2.dll
+libidn2-0.dll
+libintl-8.dll
+libjack64.dll
+libjbig-0.dll
+libjpeg-8.dll
+libjxl.dll
+libjxl_cms.dll
+liblcms2-2.dll
+libLerc.dll
+liblz4.dll
+liblzma-5.dll
+liblzo2-2.dll
+libncursesw6.dll
+libnettle-8.dll
+libnfs-14.dll
+libnspr4.dll
+libopus-0.dll
+liborc-0.4-0.dll
+libp11-kit-0.dll
+libpango-1.0-0.dll
+libpangocairo-1.0-0.dll
+libpangoft2-1.0-0.dll
+libpangowin32-1.0-0.dll
+libpcre2-8-0.dll
+libpixman-1-0.dll
+libplc4.dll
+libplds4.dll
+libpng16-16.dll
+libpsl-5.dll
+librav1e.dll
+libsasl2-3.dll
+libsharpyuv-0.dll
+libslirp-0.dll
+libsnappy.dll
+libspice-server-1.dll
+libssh.dll
+libssh2-1.dll
+libssl-3-x64.dll
+libssp-0.dll
+libstdc++-6.dll
+libSvtAv1Enc-4.dll
+libsystre-0.dll
+libtasn1-6.dll
+libthai-0.dll
+libtiff-6.dll
+libtre-5.dll
+libu2f-emu-0.dll
+libunistring-5.dll
+libusb-1.0.dll
+libusbredirparser-1.dll
+libvirglrenderer-1.dll
+libwebp-7.dll
+libwebpdemux-2.dll
+libwinpthread-1.dll
+libyuv.dll
+libzstd.dll
+nss3.dll
+nssutil3.dll
+qemu-img.exe
+qemu-system-x86_64.exe
+SDL2.dll
+SDL2_image.dll
+share/bios-256k.bin
+share/efi-virtio.rom
+share/kvmvapic.bin
+share/linuxboot_dma.bin
+share/vgabios-stdvga.bin
+zlib1.dll

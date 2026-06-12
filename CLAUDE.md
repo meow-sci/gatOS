@@ -108,10 +108,19 @@ registration timing without a refresh hook), launching via
 (next push to purrtty `main`) — M6 in-game testing needs a purrTTY install carrying both changes.
 
 Everything past M5 is **not yet implemented** — the library projects (`NineP`, `SimFs`) and
-`GameMod` hold placeholder/skeleton types only — with one exception pulled forward from M6:
+`GameMod` hold placeholder/skeleton types only — with two exceptions pulled forward:
 **T6.5 dist packaging is DONE** (`CopyCustomContent` in `gatOS.GameMod.csproj`; see Build and
-Test Commands). Track real progress against the milestone table in `OS_PLAN.md` Part 3; do
-not document planned code here as if it exists.
+Test Commands) and **T11.1 QEMU win-x64 bundle tooling is DONE** (`tools/fetch-qemu.{ps1,sh}`
+populate `vendor/qemu/win-x64/` from the pinned Weil installer; pin + trimmed file list live
+in `tools/qemu-win64-files.txt`, derivation helper `tools/Get-QemuImportClosure.ps1`; see the
+T11.1 as-built note in `OS_PLAN.md`). On Windows, headless tests resolve that vendored bundle
+via `QemuLocator.OverridePath` (`VendoredQemuSetup` in `gatOS.Vm.Tests`/`gatOS.Ssh.Tests`),
+and `QemuLocator.Find()` throws the typed `QemuNotFoundException` (not
+`InvalidOperationException`) when `GatOsPaths.ModDir` is unset, so the test skip-gate works.
+The full `GATOS_IT=1` suite is verified green on the Windows 11 game machine (TCG fallback —
+WHPX needs the off-by-default `HypervisorPlatform` Windows feature; guest boot ≈ 7 s under
+TCG). Track real progress against the milestone table in `OS_PLAN.md` Part 3; do not document
+planned code here as if it exists.
 
 ## Build and Test Commands
 
@@ -133,8 +142,10 @@ wipe-cleaned each deploy; `guest/`+`qemu/` copy incrementally (`SkipUnchangedFil
 Every task ends with **both** the build and the test suite green. Keep test output minimal (no
 Console spew from passing tests). Integration tests that need a real VM are gated by the `GATOS_IT=1`
 env var and self-skip (`Assert.Ignore`) otherwise, so plain `dotnet test` never needs QEMU.
-To run them locally: `guest/fetch-guest.sh` once (or build the image), have QEMU installed, then
-`GATOS_IT=1 dotnet test gatos.slnx`. With `GATOS_IT=1`, missing prerequisites are hard failures,
+To run them locally: `guest/fetch-guest.sh` once (or build the image), have QEMU available —
+on Linux/macOS a system install, on Windows run `tools/fetch-qemu.ps1` once (tests pick up
+`vendor/qemu/win-x64/` automatically) — then `GATOS_IT=1 dotnet test gatos.slnx`
+(PowerShell: `$env:GATOS_IT='1'; dotnet test gatos.slnx`). With `GATOS_IT=1`, missing prerequisites are hard failures,
 not skips (see `gatOS.Vm.Tests/TestEnv.cs`); tests needing only `qemu-img` (DiskManager) also run
 un-gated whenever QEMU is present. CI runs the full suite with `GATOS_IT=1` under KVM.
 
@@ -148,11 +159,12 @@ OS_IDEA.md / OS_ANALYSIS.md / OS_PLAN.md   goals / research / execution plan
 LICENSE                         MIT (the mod's own code)
 THIRD-PARTY-NOTICES.md          QEMU GPLv2, Alpine, SSH.NET, Tomlyn, …
 vendor/purrTTY/                 pinned contract DLLs (committed) — see its README for the pin
-vendor/qemu/                    NOT in git — fetched win-x64 QEMU (tools/fetch-qemu.*, M11)
+vendor/qemu/                    NOT in git — fetched win-x64 QEMU (tools/fetch-qemu.*, T11.1, built)
 guest/                          guest image pipeline (M2, built): build-image.sh,
                                 fetch-guest.{sh,ps1}, GUEST_VERSION pin, rootfs-overlay/,
                                 README.md; guest/out/ NOT in git (fetch or build it)
-tools/                          fetch-qemu.{sh,ps1} (M11)
+tools/                          fetch-qemu.{sh,ps1} + qemu-win64-files.txt (pin + bundle list)
+                                + Get-QemuImportClosure.ps1 (T11.1, built)
 .github/workflows/build.yml     CI: build + full test suite (GATOS_IT=1, KVM, fetched guest)
 .github/workflows/guest-image.yml  CI: build + publish guest-v<N> release (guest/** pushes)
 ```
