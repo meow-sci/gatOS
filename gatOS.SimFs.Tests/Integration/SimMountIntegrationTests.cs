@@ -29,8 +29,9 @@ public sealed class SimMountIntegrationTests
 {
     private static readonly TimeSpan MountTimeout = TimeSpan.FromSeconds(60);
 
-    private string _tempRoot = null!;
-    private CancellationTokenSource _publisher = null!;
+    // Nullable: SetUp aborts before assignment when the test self-skips (no GATOS_IT).
+    private string? _tempRoot;
+    private CancellationTokenSource? _publisher;
 
     [SetUp]
     public void SetUp()
@@ -44,10 +45,10 @@ public sealed class SimMountIntegrationTests
     [TearDown]
     public void TearDown()
     {
-        _publisher.Cancel();
-        _publisher.Dispose();
+        _publisher?.Cancel();
+        _publisher?.Dispose();
         GatOsPaths.OverrideDataDirForTests(null);
-        if (Directory.Exists(_tempRoot))
+        if (_tempRoot is not null && Directory.Exists(_tempRoot))
             Directory.Delete(_tempRoot, recursive: true);
     }
 
@@ -59,7 +60,7 @@ public sealed class SimMountIntegrationTests
         var store = new SnapshotStore();
         await using var server = new NinePServer(SimFsTree.Build(store));
         await server.StartAsync();
-        _ = Task.Run(() => PublishFlightAsync(store, _publisher.Token));
+        _ = Task.Run(() => PublishFlightAsync(store, _publisher!.Token));
 
         var host = new VmHost(new VmHostOptions
         {
