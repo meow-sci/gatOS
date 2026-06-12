@@ -817,9 +817,13 @@ faking QGA/QMP failure.
 
 ---
 
-# M4 — gatOS.Ssh: the ICustomShell implementation
+# M4 — gatOS.Ssh: the ICustomShell implementation — **DONE**
 
 > Game-free; references vendor/purrTTY DLLs + SSH.NET + gatOS.Vm.
+> (As built: the session is fake-testable through internal `IShellBroker`/`IShellChannel`
+> seams — the M3 seam pattern — implemented by `VmConnectionBroker` and the `SshShellChannel`
+> adapter (which owns the per-session SshClient+ShellStream pair). 19 unit tests run without
+> SSH.NET or a VM; the two `GATOS_IT=1` integration fixtures boot the real guest.)
 
 ## T4.1 — VmConnectionBroker
 
@@ -844,6 +848,13 @@ public sealed class VmConnectionBroker(VmHost vmHost) : IAsyncDisposable
 
 **Tests:** integration (`GATOS_IT=1`): ConnectAsync against a real VM; `RunCommand("echo ok")`.
 
+> (As built: a pin mismatch raises the dedicated `HostKeyMismatchException`;
+> `ConnectOnceAsync` is internal so the integration test drives the pin against the live guest
+> with tampered endpoints. `DisposeAsync` stops the VM — the broker owns the shared `VmHost`.
+> The broker also implements the internal `IShellBroker` seam: `OpenShellAsync` =
+> ConnectAsync + `CreateShellStream` wrapped in `SshShellChannel`, and `VmStatusChanged`
+> forwards `VmHost.StatusChanged` so sessions can watch for Faulted.)
+
 ## T4.2 — SshShellSession : ICustomShell
 
 Files: `gatOS.Ssh/SshShellSession.cs`, `gatOS.Ssh/ShellInputQueue.cs`.
@@ -866,7 +877,14 @@ The contract mapping (from OS_ANALYSIS §3.5, now concrete):
 
 Concurrency: all mutable state behind one lock; events raised outside it.
 
-## T4.3 — Headless integration test: full session
+> (As built: `ShellInputQueue` splits the callbacks — overflow logs once per episode and only
+> drops; the first **write failure** terminates the session (exit 1) and later chunks are
+> dropped; the queue never self-joins (the failure path reaches Dispose on the writer thread).
+> One `Terminate` path raises `Terminated` exactly once; teardown is deferred to the thread
+> pool when triggered from a connection-layer callback (no SSH.NET re-entrancy) but runs
+> synchronously from `StopAsync`/`Dispose`. Channel events are hooked before the session
+> publishes its refs so an instantly-dying channel is not missed, and a `Dispose` that lands
+> mid-`StartAsync` backs out and closes the late-arriving channel.)
 
 `gatOS.Ssh.Tests/SshShellSessionIntegrationTests.cs` (`GATOS_IT=1`):
 1. Start session (80×24) → collect output until prompt regex (`# ` within 90 s).
@@ -876,6 +894,11 @@ Concurrency: all mutable state behind one lock; events raised outside it.
 5. Open a **second** session concurrently → both interactive (one VM, two channels).
 6. Stop both; VM still Running; `VmHost.StopAsync` clean.
 Also a unit test: ctor+Dispose without StartAsync does nothing (registry-probe safety).
+
+> (As built: every expectation is anchored to output produced after its own command (per-step
+> marks), and `echo M_$((6*7))` → `M_42`-style arithmetic markers keep expected text out of the
+> echoed command line. Verified on the dev Mac under TCG: the full script completes in ~8 s
+> wall-clock after boot; the whole Ssh suite incl. both VM boots ≈ 15 s.)
 
 ---
 

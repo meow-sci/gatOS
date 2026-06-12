@@ -77,8 +77,28 @@ seams + an internal `VmHost` ctor (`InternalsVisibleTo`) make the state machine 
 case): boot→Running→clean QGA stop ≈ 10 s end-to-end. CI installs QEMU, opens `/dev/kvm`, fetches
 the pinned guest and runs the whole suite with `GATOS_IT=1`.
 
-Everything past M3 is **not yet implemented** — the library projects (`NineP`, `SimFs`, `Ssh`)
-and `GameMod` hold placeholder/skeleton types only. Track real progress against the milestone
+**M4 — gatOS.Ssh (the ICustomShell implementation): DONE.** `VmConnectionBroker`
+(`gatOS.Ssh/VmConnectionBroker.cs`) owns the shared `VmHost` (disposing the broker stops the VM)
+and hands out one **new connected `SshClient` per session**, pinning the guest host key against
+the manifest sha256 (mismatch → `HostKeyMismatchException`; one retry on connection-refused).
+`SshShellSession` (`gatOS.Ssh/SshShellSession.cs`) implements the vendored
+`purrTTY.Core.Terminal.ICustomShell`: trivial ctor (purrTTY's registry probe-instantiates and
+disposes, T0.5); `StartAsync` boots the VM lazily and opens an `xterm-256color` PTY at the launch
+size (a pre-start resize wins; failures map to `CustomShellStartException` carrying
+`VmStartException.UserMessage`); input flows through `ShellInputQueue` (bounded 1 MiB, dedicated
+writer thread, overflow drops + logs once per episode — purrTTY's `PtyInputQueue` discipline;
+the first write failure terminates the session); `NotifyTerminalResize` →
+`ShellStream.ChangeWindowSize` (live SIGWINCH, verified in-guest); one `Terminate` path raises
+`Terminated` exactly once (clean close 0; connection error / VM fault / write failure 1 —
+sessions watch `VmHost.StatusChanged` for Faulted). **Stopping a session never stops the VM.**
+Internal `IShellBroker`/`IShellChannel` seams (+ the `SshShellChannel` adapter owning the
+client+stream pair) keep the session unit-testable without SSH.NET: `gatOS.Ssh.Tests` = 19
+fake-driven unit tests + 2 `GATOS_IT=1` fixtures against the real guest (broker echo-ok +
+tampered-pin rejection; full session: prompt, `stty size` 24 80, live resize → 30 120, `$TERM`,
+two concurrent sessions on one VM, session stops leave the VM Running).
+
+Everything past M4 is **not yet implemented** — the library projects (`NineP`, `SimFs`) and
+`GameMod` hold placeholder/skeleton types only. Track real progress against the milestone
 table in `OS_PLAN.md` Part 3; do not document planned code here as if it exists.
 
 ## Build and Test Commands
@@ -123,7 +143,7 @@ gatOS.Logging                    (no deps)            game-free logging shim
 gatOS.NineP    → Logging                              9P2000.L codec + server (M7)
 gatOS.SimFs    → NineP, Logging                       /sim node tree + snapshot store (M8)
 gatOS.Vm       → Logging, Tomlyn                      QEMU lifecycle, disks, ports, GatOsPaths (M3, built)
-gatOS.Ssh      → Vm, Logging, vendor/purrTTY, SSH.NET SshShellSession : ICustomShell (M4)
+gatOS.Ssh      → Vm, Logging, vendor/purrTTY, SSH.NET SshShellSession : ICustomShell (M4, built)
 gatOS.GameMod  → Ssh, SimFs, Vm, Logging, vendor/purrTTY,
                   KSA DLLs, StarMap.API, Lib.Harmony, ModMenu.Attributes, Tomlyn   the KSA mod (M6)
 ```
