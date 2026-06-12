@@ -12,7 +12,71 @@
         <ModNamespace>gatOS.GameMod</ModNamespace>
         <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
         <GenerateDocumentationFile>false</GenerateDocumentationFile>
+        <DistDir>$(SelectedDistModDir)gatOS\</DistDir>
     </PropertyGroup>
+
+    <!-- Deploys the complete mod folder to $(DistDir) on every build (T6.5; mirrors purrTTY's
+         CopyCustomContent). SelectedDistModDir resolves in Directory.Build.props:
+         GATOS_DIST_DIR override (CI zips it), else the per-OS KSA mods dir. -->
+    <Target Name="CopyCustomContent" AfterTargets="AfterBuild">
+
+        <!-- Wipe the managed payload (top-level files + licenses dir) so a redeploy never
+             leaves stale DLLs from a previous version in the game's mod ALC. The guest/ and
+             qemu/ subdirs are deliberately NOT wiped: they hold large, content-stable blobs
+             (~59 MB guest image, ~90 MB win-x64 QEMU) that are instead copied with
+             SkipUnchangedFiles, keeping the per-build deploy cost near zero. -->
+        <ItemGroup>
+            <StaleDistFile Include="$(DistDir)*"/>
+        </ItemGroup>
+        <Delete Files="@(StaleDistFile)"/>
+        <RemoveDir Directories="$(DistDir)third-party-licenses"/>
+        <MakeDir Directories="$(DistDir)"/>
+
+        <!-- mod.toml + deps.json (StarMap's ModAssemblyLoadContext resolves the mod's own
+             dependencies through an AssemblyDependencyResolver, which reads the deps.json). -->
+        <Copy SourceFiles="$(TargetDir)mod.toml" DestinationFolder="$(DistDir)" Condition="Exists('$(TargetDir)mod.toml')"/>
+        <Copy SourceFiles="$(ProjectDepsFilePath)" DestinationFolder="$(DistDir)" Condition="Exists('$(ProjectDepsFilePath)')"/>
+
+        <!-- Managed payload: everything in the build output EXCEPT the loader-supplied
+             assemblies (StarMap provides 0Harmony + StarMap.API to every mod ALC; shipping a
+             second copy risks type-identity splits). The KSA reference assemblies never reach
+             the output (Private=false). A glob with a deny-list — rather than purrTTY's
+             allow-list — means a newly added NuGet dependency ships automatically instead of
+             failing at runtime in-game. Includes the vendored purrTTY contract DLLs: with
+             purrTTY installed they are shadowed by mod.toml ImportedAssemblies (dependency
+             ALCs are consulted first); without purrTTY they are the fallback that lets gatOS
+             load and idle. -->
+        <ItemGroup>
+            <ModManagedDll Include="$(TargetDir)*.dll"
+                           Exclude="$(TargetDir)0Harmony.dll;$(TargetDir)StarMap.API.dll"/>
+        </ItemGroup>
+        <Copy SourceFiles="@(ModManagedDll)" DestinationFolder="$(DistDir)"/>
+
+        <!-- Licenses (THIRD-PARTY-NOTICES.md is the QEMU/Alpine/SSH.NET obligations file;
+             third-party-licenses/ full texts arrive with M11 packaging). -->
+        <Copy SourceFiles="$(MSBuildThisFileDirectory)..\LICENSE;$(MSBuildThisFileDirectory)..\THIRD-PARTY-NOTICES.md" DestinationFolder="$(DistDir)"/>
+        <ItemGroup>
+            <ThirdPartyLicenseFile Include="$(MSBuildThisFileDirectory)..\third-party-licenses\*"/>
+        </ItemGroup>
+        <Copy SourceFiles="@(ThirdPartyLicenseFile)" DestinationFolder="$(DistDir)third-party-licenses" Condition="'@(ThirdPartyLicenseFile)' != ''"/>
+
+        <!-- Guest image artifacts (guest/fetch-guest.sh or guest/build-image.sh). A Message,
+             not a Warning: MSBuildTreatWarningsAsErrors would turn a Warning into a failed
+             build on a fresh clone, but plain builds must never require the guest. -->
+        <ItemGroup>
+            <GuestArtifact Include="$(MSBuildThisFileDirectory)..\guest\out\**\*"/>
+        </ItemGroup>
+        <Copy SourceFiles="@(GuestArtifact)" DestinationFolder="$(DistDir)guest\%(RecursiveDir)" SkipUnchangedFiles="true" Condition="'@(GuestArtifact)' != ''"/>
+        <Message Importance="High" Condition="'@(GuestArtifact)' == ''"
+                 Text="gatOS dist: guest/out/ is empty — the deployed mod folder has NO guest image. Run guest/fetch-guest.sh (or build-image.sh) and rebuild before testing in-game."/>
+
+        <!-- Bundled win-x64 QEMU (tools/fetch-qemu, T11.1) — only present once M11 lands or a
+             dev fetched it; unix hosts use the system QEMU (QemuLocator). -->
+        <ItemGroup>
+            <QemuWinArtifact Include="$(MSBuildThisFileDirectory)..\vendor\qemu\win-x64\**\*"/>
+        </ItemGroup>
+        <Copy SourceFiles="@(QemuWinArtifact)" DestinationFolder="$(DistDir)qemu\win-x64\%(RecursiveDir)" SkipUnchangedFiles="true" Condition="'@(QemuWinArtifact)' != ''"/>
+    </Target>
 
     <!-- Only gatOS.GameMod may reference KSA/Brutal/StarMap assemblies (OS_PLAN.md §2.1). -->
     <ItemGroup>
@@ -33,17 +97,21 @@
         </PackageReference>
     </ItemGroup>
 
-    <!-- Vendored purrTTY contract: shared at runtime via the StarMap ALC (D6), referenced at
-         compile time here. Private=false — purrTTY ships these; gatOS must not duplicate them
-         into the same ALC. -->
+    <!-- Vendored purrTTY contract (D6): with purrTTY installed these resolve from purrTTY's ALC
+         (mod.toml ImportedAssemblies — StarMap's ModAssemblyLoadContext consults dependency mods
+         BEFORE the mod-local AssemblyDependencyResolver, so the local copies below never load and
+         type identity is purrTTY's). Private=true so the copies land in the build output AND in
+         gatOS.GameMod.deps.json — without the deps.json entry the resolver cannot find them, and
+         the no-purrTTY fallback (T6.1: register into a registry nobody consumes) would crash
+         instead of idling. -->
     <ItemGroup>
         <Reference Include="purrTTY.CustomShellContract">
             <HintPath>$(MSBuildThisFileDirectory)../vendor/purrTTY/purrTTY.CustomShellContract.dll</HintPath>
-            <Private>false</Private>
+            <Private>true</Private>
         </Reference>
         <Reference Include="purrTTY.Logging">
             <HintPath>$(MSBuildThisFileDirectory)../vendor/purrTTY/purrTTY.Logging.dll</HintPath>
-            <Private>false</Private>
+            <Private>true</Private>
         </Reference>
     </ItemGroup>
 

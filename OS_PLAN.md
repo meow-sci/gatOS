@@ -321,9 +321,14 @@ ProjectReference.
      <HintPath>$(MSBuildThisFileDirectory)../vendor/purrTTY/purrTTY.Logging.dll</HintPath>
    </Reference>
    ```
-   (As built: `Private=true` in `gatOS.Ssh` (copied to output so headless tests run), but
-   `Private=false` in `gatOS.GameMod` — purrTTY ships these assemblies and gatOS shares its
-   loaded copies over the StarMap ALC (D6), so the mod dist must not duplicate them; see T6.5.)
+   (As built: `Private=true` in **both** projects. `gatOS.Ssh` needs the copies so headless
+   tests run. `gatOS.GameMod` was `Private=false` until T6.5, when the real StarMap loader
+   source showed that is wrong: `ModAssemblyLoadContext` resolves a mod's own dependencies via
+   an `AssemblyDependencyResolver` over the mod's deps.json, and `Private=false` refs get no
+   deps.json entry — the T6.1 no-purrTTY fallback could never load. `Private=true` puts the
+   vendored copies in the dist **and** deps.json; D6's type-identity sharing still holds
+   because the loader consults dependency-mod ALCs (mod.toml `ImportedAssemblies`) *before*
+   the local resolver, so with purrTTY installed the local copies never load.)
 
 Key facts about the contract (verified against purrtty today; namespace
 `purrTTY.Core.Terminal`):
@@ -1066,6 +1071,26 @@ In `gatOS.GameMod.csproj`, mirror purrTTY's `CopyCustomContent` target with
 
 **Accept:** `dotnet build gatOS.GameMod` deploys a complete `gatOS/` folder into the KSA
 mods dir on the dev machine.
+
+> (As built — **done early**, pulled ahead of T6.1 to unblock in-game testing. Deviations from
+> the list above, each verified against a real deploy:
+> **Glob + deny-list, not an allow-list**: the managed payload is `$(TargetDir)*.dll` minus the
+> loader-supplied `0Harmony.dll`/`StarMap.API.dll`, so a new NuGet dependency ships
+> automatically — the hand-list above already missed SSH.NET's transitive
+> `BouncyCastle.Cryptography` + `Microsoft.Extensions.DependencyInjection.Abstractions`
+> (+ the lifted `Microsoft.Extensions.Logging.Abstractions`), which all ship now.
+> **Vendored purrTTY DLLs ship via `Private=true`** (see the D6 as-built note, §2 above) — copied
+> from the build output, not from `vendor/`, so deps.json entries exist and the no-purrTTY
+> fallback actually resolves.
+> **Missing guest emits a High-importance `Message`, not a `Warning`**:
+> `MSBuildTreatWarningsAsErrors` (zero-warning policy) would turn the planned warning into a
+> failed build on a fresh clone, and plain builds must never require the guest.
+> **`guest/` and `qemu/win-x64/` are not wiped**: the wipe covers the managed payload (the part
+> with stale-DLL/ALC hazards); the large content-stable blobs (59 MB guest, ~90 MB QEMU) copy
+> with `SkipUnchangedFiles="true"` so `dotnet test` runs don't recopy them every build.
+> `THIRD-PARTY-NOTICES.md` ships alongside `LICENSE`; `third-party-licenses/` copies when it
+> exists (M11 creates it). Verified: stale dist DLLs are deleted on rebuild, guest survives,
+> 0 warnings, full suite green.)
 
 ## T6.6 — In-game validation pass #1 (the M6 exit)
 

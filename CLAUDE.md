@@ -108,8 +108,10 @@ registration timing without a refresh hook), launching via
 (next push to purrtty `main`) — M6 in-game testing needs a purrTTY install carrying both changes.
 
 Everything past M5 is **not yet implemented** — the library projects (`NineP`, `SimFs`) and
-`GameMod` hold placeholder/skeleton types only. Track real progress against the milestone
-table in `OS_PLAN.md` Part 3; do not document planned code here as if it exists.
+`GameMod` hold placeholder/skeleton types only — with one exception pulled forward from M6:
+**T6.5 dist packaging is DONE** (`CopyCustomContent` in `gatOS.GameMod.csproj`; see Build and
+Test Commands). Track real progress against the milestone table in `OS_PLAN.md` Part 3; do
+not document planned code here as if it exists.
 
 ## Build and Test Commands
 
@@ -117,7 +119,16 @@ table in `OS_PLAN.md` Part 3; do not document planned code here as if it exists.
 dotnet build gatos.slnx                          # build the whole solution
 dotnet test  gatos.slnx --nologo -v quiet        # full suite (5 test projects)
 dotnet build gatOS.Vm                            # one project
+dotnet build gatOS.GameMod                       # also deploys the mod folder (see below)
 ```
+
+Every `gatOS.GameMod` build deploys the complete mod folder via its `CopyCustomContent`
+target (T6.5): managed payload (all output DLLs except loader-supplied 0Harmony/StarMap.API),
+mod.toml + deps.json, licenses, `guest/out/**` → `<dist>/gatOS/guest/` (High-importance
+message when missing — fetch or build the guest first for an in-game-usable dist), and
+`vendor/qemu/win-x64/**` when present. Destination: `GATOS_DIST_DIR` (CI) else the per-OS KSA
+mods dir (`SelectedDistModDir` in `Directory.Build.props`). The managed payload is
+wipe-cleaned each deploy; `guest/`+`qemu/` copy incrementally (`SkipUnchangedFiles`).
 
 Every task ends with **both** the build and the test suite green. Keep test output minimal (no
 Console spew from passing tests). Integration tests that need a real VM are gated by the `GATOS_IT=1`
@@ -222,7 +233,12 @@ host.
   **`"gatos"`**, guest hostname **`gatos`**.
 - The vendored purrTTY contract DLLs (`vendor/purrTTY/`) are the **pinned inter-mod ABI** —
   refresh only deliberately (see `vendor/purrTTY/README.md`). At runtime gatOS shares purrTTY's
-  loaded copies over the StarMap ALC (D6), so `GameMod` references them with `<Private>false</Private>`.
+  loaded copies over the StarMap ALC (D6) via mod.toml `ImportedAssemblies` — the loader
+  consults dependency-mod ALCs before the mod-local resolver. `GameMod` references them with
+  `<Private>true</Private>` anyway: that puts the vendored copies in the dist **and** in
+  deps.json (StarMap resolves a mod's own files through `AssemblyDependencyResolver`, which
+  only sees deps.json entries), so gatOS still loads — registering into a registry nobody
+  consumes — when purrTTY is absent.
 - Commits: small, per-task, message starts with the task id (e.g. `T3.4: qemu readiness probe`).
 
 ## Instruction Maintenance Mandate (MUST)
