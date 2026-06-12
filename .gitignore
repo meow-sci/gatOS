@@ -20,6 +20,10 @@ imgui.ini
 tmpclaude*
 
 # --- gatOS: large/generated artifacts that are NOT committed (OS_PLAN.md D9, T0.1) ---
-guest/out/          # built guest image: base.qcow2, kernel, initrd, manifest, keys
-vendor/qemu/        # fetched + trimmed QEMU win-x64 bundle (tools/fetch-qemu.*)
-spike/              # M1 throwaway de-risking code (kept locally, see OS_PLAN.md M1)
+# gitignore has no trailing comments — keep annotations on their own lines.
+# built guest image: base.qcow2, kernel, initrd, manifest, keys
+guest/out/
+# fetched + trimmed QEMU win-x64 bundle (tools/fetch-qemu.*)
+vendor/qemu/
+# M1 throwaway de-risking code (kept locally, see OS_PLAN.md M1)
+spike/
