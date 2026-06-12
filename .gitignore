@@ -1,0 +1,17 @@
+.zig-cache/
+zig-out/
+bin/
+obj/
+node_modules/
+.idea/
+*.tsbuildinfo
+dist/
+imgui.ini
+*.log
+*.db
+*.trx
+.testresults/
+.DS_Store
+.vs/
+.tmp/
+tmpclaude*
