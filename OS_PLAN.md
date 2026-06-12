@@ -321,7 +321,9 @@ ProjectReference.
      <HintPath>$(MSBuildThisFileDirectory)../vendor/purrTTY/purrTTY.Logging.dll</HintPath>
    </Reference>
    ```
-   (`Private=true` — copied to output; the dist decides what ships, see T6.5.)
+   (As built: `Private=true` in `gatOS.Ssh` (copied to output so headless tests run), but
+   `Private=false` in `gatOS.GameMod` — purrTTY ships these assemblies and gatOS shares its
+   loaded copies over the StarMap ALC (D6), so the mod dist must not duplicate them; see T6.5.)
 
 Key facts about the contract (verified against purrtty today; namespace
 `purrTTY.Core.Terminal`):
