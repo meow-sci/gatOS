@@ -13,7 +13,16 @@
         <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
         <GenerateDocumentationFile>false</GenerateDocumentationFile>
         <DistDir>$(SelectedDistModDir)gatOS\</DistDir>
+        <!-- The Game/ sources (ImGui status window, ModMenu entry, Brutal-backed logger) compile
+             only when the KSA reference assemblies are present. CI without the private game DLLs
+             still builds this project: the partial-method seams in Mod.cs simply drop out
+             (see .github/workflows/build.yml). -->
+        <KsaAssembliesPresent Condition="Exists('$(KSAFolder)/KSA.dll')">true</KsaAssembliesPresent>
     </PropertyGroup>
+
+    <ItemGroup Condition="'$(KsaAssembliesPresent)' != 'true'">
+        <Compile Remove="Game\**\*.cs"/>
+    </ItemGroup>
 
     <!-- Deploys the complete mod folder to $(DistDir) on every build (T6.5; mirrors purrTTY's
          CopyCustomContent). SelectedDistModDir resolves in Directory.Build.props:
@@ -128,6 +137,18 @@
         </Reference>
         <Reference Include="Brutal.Core.Numerics" Condition="Exists('$(KSAFolder)/Brutal.Core.Numerics.dll')">
             <HintPath>$(KSAFolder)/Brutal.Core.Numerics.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Brutal.Core.Strings" Condition="Exists('$(KSAFolder)/Brutal.Core.Strings.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Core.Strings.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Brutal.ImGui" Condition="Exists('$(KSAFolder)/Brutal.ImGui.dll')">
+            <HintPath>$(KSAFolder)/Brutal.ImGui.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Brutal.ImGui.Abstractions" Condition="Exists('$(KSAFolder)/Brutal.ImGui.Abstractions.dll')">
+            <HintPath>$(KSAFolder)/Brutal.ImGui.Abstractions.dll</HintPath>
             <Private>false</Private>
         </Reference>
         <Reference Include="KSA" Condition="Exists('$(KSAFolder)/KSA.dll')">

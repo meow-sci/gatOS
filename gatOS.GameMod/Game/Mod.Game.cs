@@ -1,0 +1,268 @@
+using Brutal.ImGuiApi;
+using gatOS.GameMod.Game;
+using gatOS.Logging;
+using gatOS.Vm;
+using ModMenu;
+using float2 = Brutal.Numerics.float2;
+using float4 = Brutal.Numerics.float4;
+
+namespace gatOS.GameMod;
+
+/// <summary>
+///     The game-coupled half of <see cref="Mod"/> (OS_PLAN.md T6.4): the ModMenu entry, the ImGui
+///     status window, the reset-disk confirm modal, and the game-backed logging swap. This file
+///     compiles only when the KSA reference assemblies are present (compile gate in
+///     gatOS.GameMod.csproj); without them the partial-method calls in Mod.cs drop out.
+/// </summary>
+/// <remarks>
+///     Threading rule 5: everything here runs on the render thread and reads only cached/volatile
+///     state — <see cref="Mod.CurrentVmStatus"/> is a volatile snapshot, and the one filesystem
+///     lookup (newest QEMU log) is cached and refreshed only when the VM status object changes.
+/// </remarks>
+public sealed partial class Mod
+{
+    private const string StatusWindowId = "gatOS Status##gatos_status";
+    private const string ResetDiskPopupId = "Reset gatOS Disk##gatos_reset_disk_modal";
+
+    /// <summary>
+    ///     Game-typed statics live in a nested class, not on <see cref="Mod"/> itself: field
+    ///     types resolve at <i>type load</i>, and the Mod type must stay loadable without the
+    ///     game assemblies (nested types — like method bodies — resolve lazily on first use).
+    /// </summary>
+    private static class Palette
+    {
+        internal static readonly float4 Ok = new(0.5f, 1f, 0.5f, 1f);
+        internal static readonly float4 Warn = new(1f, 0.8f, 0.3f, 1f);
+        internal static readonly float4 Error = new(1f, 0.4f, 0.4f, 1f);
+        internal static readonly float4 Idle = new(0.7f, 0.7f, 0.7f, 1f);
+    }
+
+    // Render-thread-only UI state (fields live here so a no-KSA build has no unread fields).
+    private bool _statusWindowVisible;
+    private bool _resetDiskModalRequested;
+    private VmStatus? _qemuLogStatusMark;
+    private string? _newestQemuLog;
+
+    /// <summary>The "gatOS" entry in the ModMenu bar (same mechanism as purrTTY's).</summary>
+    [ModMenuEntry("gatOS")]
+    public static void DrawMenu()
+    {
+        if (_instance is not { } mod)
+        {
+            ImGui.TextDisabled("gatOS did not initialize (see the game log)");
+            return;
+        }
+
+        try
+        {
+            mod.DrawMenuContent();
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS menu draw error: {ex.Message}");
+        }
+    }
+
+    // NoInlining on both partial impls: their bodies reference game assemblies, and a missing
+    // assembly must fail at the call site (where Mod.cs catches it), not at the JIT of the
+    // calling method — inlining would hoist the type resolution into the caller.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void InstallGameLogging() => ModLog.SetLogger(new BrutalModLogger());
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void DrawGameUi()
+    {
+        try
+        {
+            RenderResetDiskModal();
+            if (_statusWindowVisible)
+                DrawStatusWindow();
+        }
+        catch (Exception ex)
+        {
+            // A diagnostics-UI bug must never break the game's frame.
+            ModLog.Log.Debug($"gatOS UI draw error: {ex.Message}");
+        }
+    }
+
+    private void DrawMenuContent()
+    {
+        var state = CurrentVmStatus.State;
+
+        if (ImGui.MenuItem("Status", default, _statusWindowVisible))
+            _statusWindowVisible = !_statusWindowVisible;
+
+        ImGui.Separator();
+        var canStart = IsInitialized && state is VmState.Stopped or VmState.Faulted;
+        if (ImGui.MenuItem("Start VM", default, false, canStart))
+            StartVm();
+        var canStop = state is VmState.Starting or VmState.Running;
+        if (ImGui.MenuItem("Shut Down VM", default, false, canStop))
+            StopVm();
+
+        ImGui.Separator();
+        if (ImGui.MenuItem("Open Data Folder"))
+            OpenDataFolder();
+        if (ImGui.MenuItem("Reset Disk...", default, false, IsInitialized))
+            _resetDiskModalRequested = true;
+    }
+
+    private void DrawStatusWindow()
+    {
+        var status = CurrentVmStatus;
+        var open = true;
+        ImGui.SetNextWindowSize(new float2(560f, 0f), ImGuiCond.FirstUseEver);
+        if (ImGui.Begin(StatusWindowId, ref open, ImGuiWindowFlags.AlwaysAutoResize))
+            DrawStatusContent(status);
+        ImGui.End();
+        if (!open)
+            _statusWindowVisible = false;
+    }
+
+    private void DrawStatusContent(VmStatus status)
+    {
+        if (ImGui.BeginTable("##gatos_status_rows", 2, ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn("##label", ImGuiTableColumnFlags.WidthFixed, 150f);
+            ImGui.TableSetupColumn("##value", ImGuiTableColumnFlags.WidthStretch, 3f);
+
+            Row("VM state");
+            ImGui.TextColored(StateColor(status.State), status.State.ToString());
+            Row("Accelerator");
+            ImGui.Text(status.EffectiveAccel ?? "—");
+            Row("SSH port");
+            ImGui.Text(status.SshPort?.ToString() ?? "—");
+            Row("Sim port");
+            ImGui.Text(status.SimPort?.ToString() ?? "—");
+            Row("Uptime");
+            ImGui.Text(FormatUptime(status));
+            Row("Guest");
+            ImGui.Text(Assets?.Manifest is { } m ? $"v{m.GuestVersion} (Alpine {m.AlpineVersion})" : "—");
+            Row("Config");
+            ImGui.Text($"{Config.MemoryMb} MB RAM, {Config.Cpus} vCPU"
+                       + (Config.RestrictNetwork ? ", network restricted" : ""));
+            Row("Newest QEMU log");
+            ImGui.TextWrapped(NewestQemuLog(status) ?? "—");
+            ImGui.EndTable();
+        }
+
+        if (OperatingSystem.IsWindows() && status.EffectiveAccel == "tcg")
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(Palette.Warn, "Running under TCG software emulation.");
+            ImGui.TextWrapped("For full speed, enable the Windows Hypervisor Platform feature and "
+                              + "reboot (admin prompt: DISM /Online /Enable-Feature "
+                              + "/FeatureName:HypervisorPlatform).");
+        }
+
+        if (status.FaultReason is { } fault)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(Palette.Error, "Last fault:");
+            ImGui.TextWrapped(fault);
+        }
+
+        ImGui.Spacing();
+        if (Assets is { Ok: true })
+        {
+            ImGui.TextColored(Palette.Ok, "Mod assets: OK");
+        }
+        else
+        {
+            ImGui.TextColored(Palette.Error, "Mod assets: problems found");
+            ImGui.TextWrapped(Assets?.Error ?? "Asset validation did not run.");
+        }
+
+        if (LastActionNote is { } note)
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled(note);
+        }
+    }
+
+    private void RenderResetDiskModal()
+    {
+        if (_resetDiskModalRequested)
+        {
+            _resetDiskModalRequested = false;
+            ImGui.OpenPopup(ResetDiskPopupId);
+        }
+
+        var open = true;
+        ImGui.SetNextWindowSize(new float2(520f, 0f), ImGuiCond.Appearing);
+        if (!ImGui.BeginPopupModal(ResetDiskPopupId, ref open, ImGuiWindowFlags.AlwaysAutoResize))
+            return;
+
+        ImGui.TextWrapped("Reset the gatOS disk? This stops the VM and permanently deletes "
+                          + "everything installed or saved inside the guest (packages, files, "
+                          + "shell history). The base system is kept — the next session boots a "
+                          + "factory-fresh gatOS.");
+        ImGui.Spacing();
+
+        var availW = ImGui.GetContentRegionAvail().X;
+        const float gap = 8f;
+        var buttonWidth = (availW - gap) / 2f;
+
+        if (ImGui.Button(" Reset Disk ##gatos_confirm_reset", new float2(buttonWidth, 0f)))
+        {
+            ResetDisk();
+            ImGui.CloseCurrentPopup();
+        }
+
+        ImGui.SameLine(0, gap);
+        if (ImGui.Button(" Cancel ##gatos_cancel_reset", new float2(buttonWidth, 0f)) || !open)
+            ImGui.CloseCurrentPopup();
+
+        ImGui.EndPopup();
+    }
+
+    /// <summary>
+    ///     The newest <c>qemu-*.log</c> under the logs dir — a directory listing, so cached and
+    ///     refreshed only when the <see cref="VmStatus"/> snapshot object changes (state
+    ///     transitions swap the record reference) or on the first draw.
+    /// </summary>
+    private string? NewestQemuLog(VmStatus status)
+    {
+        if (ReferenceEquals(_qemuLogStatusMark, status))
+            return _newestQemuLog;
+
+        _qemuLogStatusMark = status;
+        try
+        {
+            _newestQemuLog = Directory.EnumerateFiles(GatOsPaths.LogsDir, "qemu-*.log")
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .FirstOrDefault();
+        }
+        catch (Exception ex)
+        {
+            _newestQemuLog = null;
+            ModLog.Log.Debug($"Could not list the QEMU logs: {ex.Message}");
+        }
+
+        return _newestQemuLog;
+    }
+
+    private static void Row(string label)
+    {
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text(label);
+        ImGui.TableNextColumn();
+    }
+
+    private static float4 StateColor(VmState state) => state switch
+    {
+        VmState.Running => Palette.Ok,
+        VmState.Faulted => Palette.Error,
+        VmState.Starting or VmState.Stopping => Palette.Warn,
+        _ => Palette.Idle,
+    };
+
+    private static string FormatUptime(VmStatus status)
+    {
+        if (status.State != VmState.Running || status.StartedUtc is not { } started)
+            return "—";
+        var up = DateTime.UtcNow - started;
+        return $"{(int)up.TotalHours:00}:{up.Minutes:00}:{up.Seconds:00}";
+    }
+}
