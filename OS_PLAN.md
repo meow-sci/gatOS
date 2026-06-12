@@ -80,7 +80,7 @@ These are decided; do not re-litigate:
 | D2 | VM lifecycle | **Lazy boot** on first gatOS session open; VM survives session closes; shut down at mod unload (game exit). One VM per game process for MVP. Per-save disk selection is M10. |
 | D3 | Network posture | **Open slirp NAT by default** (real apk mirrors work). `restrict = true` available in `gatos.toml` (M12 wires it to `-netdev user,restrict=on` + `guestfwd` for 9p). |
 | D4 | Sim write access | **Read-only `/sim` for MVP.** Writable control files are M12, gated on a gameplay decision. |
-| D5 | QEMU distribution | **Bundle QEMU for win-x64** in the mod dist (trimmed Weil build, fetched+pinned by script, not committed to git). **Linux/macOS: system QEMU required** (`qemu-system-x86_64` on PATH; clear in-game error with install hint if missing). |
+| D5 | QEMU distribution | **Bundle QEMU for win-x64 AND linux-x64** in the mod dist (fetched+pinned by script, not committed to git): the published mod is fully self-contained on both KSA platforms — zero player prerequisites. Win-x64 = trimmed Weil build (T11.1); linux-x64 = portable rpath-patched bundle (T11.6). PATH remains the fallback when a bundle is absent; macOS (dev only) stays system-QEMU. *(Revised 2026-06-12 — originally "Linux: system QEMU required with an install-hint error"; self-containment promoted to a requirement.)* |
 | D6 | Inter-mod contract | gatOS takes a **compile-time reference to vendored copies** of `purrTTY.CustomShellContract.dll` + `purrTTY.Logging.dll` (pinned, in `vendor/purrTTY/`), and at **runtime** shares purrTTY's loaded copies via StarMap ALC `ImportedAssemblies` (§ T6.1). `Optional = true`: without purrTTY installed, gatOS loads its own copies and idles headless (VM/9p still functional, no terminal UI). |
 | D7 | SSH library | **SSH.NET (Renci.SshNet) ≥ 2025.1.0** (has `ShellStream.ChangeWindowSize`). Fallbacks if it disappoints: Tmds.Ssh, or `ssh.exe` under purrTTY's ConPTY. |
 | D8 | Guest auth | Image-build-time **baked ed25519 keypair** (private key ships in the mod dist, `hostfwd` bound to 127.0.0.1 only). Pre-generated dropbear host key, fingerprint pinned in the manifest. Per-install key rotation is M12. |
@@ -199,7 +199,7 @@ Threading rules (binding for every task):
 | **M8** gatOS.SimFs | `/sim` tree, snapshot store, stream/events files | Headless: mounted `/sim` shows fake telemetry; `tail -f stream` works |
 | **M9** Telemetry sampler | Game-thread sampler → live `/sim` in-game | In-game: `watch -n1 cat /sim/vessels/active/altitude/radar` |
 | **M10** Persistence | Overlay-per-profile, base versioning, reset UX | OS state survives game restart; reset works; update keeps overlays valid |
-| **M11** Packaging & CI | QEMU fetch/trim, guest in dist, licenses, release workflow | One-zip release installs and runs on a clean Windows machine |
+| **M11** Packaging & CI | QEMU fetch/trim (win-x64 + linux-x64, D5), guest in dist, licenses, release workflow | One-zip release installs and runs on clean Windows **and Linux** machines with no prerequisites |
 | **M12** Polish (à la carte) | restrict mode, control files, multi-computer, Debian, savevm, key rotation, WHP UX | per item |
 
 ### 3.1 Dependency graph between milestones
@@ -1512,9 +1512,11 @@ Files: `tools/fetch-qemu.sh`, `tools/fetch-qemu.ps1`, `tools/qemu-win64-files.tx
 
 ## T11.3 — Dist assembly + size budget
 
-- Extend T6.5's target: fail loudly (`<Error>`) on `Release` config if `guest/out` or
-  `vendor/qemu/win-x64` is missing (CI must never publish a hollow dist).
-- Record the dist zip size in CI output; budget alarm (warning) at >300 MB.
+- Extend T6.5's target: fail loudly (`<Error>`) on `Release` config if `guest/out`,
+  `vendor/qemu/win-x64` **or `vendor/qemu/linux-x64` (T11.6)** is missing (CI must never
+  publish a hollow dist).
+- Record the dist zip size in CI output; budget alarm (warning) at >450 MB (both QEMU
+  bundles + guest; was 300 MB pre-T11.6).
 
 ## T11.4 — Release workflow
 
@@ -1523,15 +1525,51 @@ Extend `.github/workflows/build.yml` to the full purrtty `release.yml` shape:
   `feature/*` → build+test only. mod.toml version stamping identical (sed on
   `gatOS.GameMod/mod.toml`).
 - Steps added before dist build: `guest/fetch-guest.sh` (pinned guest release) and
-  `tools/fetch-qemu.sh` (cache both with `actions/cache` keyed on pin values).
+  `tools/fetch-qemu.sh` for **both RIDs** (T11.1 win-x64 + T11.6 linux-x64; cache all with
+  `actions/cache` keyed on pin values).
 - `GATOS_IT=1` integration tests run in this job (KVM on the runner; TCG fallback tolerated).
 - Asset: `gatOS-<version>.zip` containing the `gatOS/` folder.
 
 ## T11.5 — Clean-machine install test (M11 exit)
 
 On a Windows machine with nothing preinstalled: download release zip + purrTTY release, unzip
-both into the KSA mods dir, launch, run the T6.6 checklist. Repeat on Linux with distro qemu
-installed. Document any friction in README install section.
+both into the KSA mods dir, launch, run the T6.6 checklist. Repeat on a Linux machine with
+**no QEMU installed** (the T11.6 bundle must carry it; also verify the bundled binaries kept
+their execute bits through zip → unzip). Document any friction in README install section.
+
+## T11.6 — QEMU linux-x64 bundle (D5 revision: self-contained Linux dist)
+
+Goal: a Linux player needs zero prerequisites — parity with Windows. There is no official
+portable Linux QEMU (it dynamically links a distro-specific closure: glib, pixman, libslirp,
+zstd, …), so we produce one. Expected dist growth ≈ +100–150 MB uncompressed.
+
+- **Spike the approach first** (half a day, in preference order):
+  1. **rpath-patched bundle (plan A):** build/obtain QEMU ≥ 11.0 on the oldest supported
+     baseline (glibc 2.31 — the same floor purrtty's native libghostty linux build targets),
+     collect `qemu-system-x86_64` + `qemu-img` + the full `.so` closure (`lddtree`), patch
+     `DT_RUNPATH` to `$ORIGIN` (`patchelf`), include the BIOS blobs; keep glibc itself OUT of
+     the bundle (loader/libc must come from the host — bundling ld.so is AppImage territory).
+  2. Static build (musl/zig) — qemu-system with static glib is historically painful; only if
+     plan A's glibc-floor testing fails.
+  3. AppImage — last resort (runtime fuse dependency contradicts "zero prerequisites").
+- Boot-test the bundle on at least Ubuntu LTS, Fedora, and Arch (one rolling, two stable),
+  with and without `/dev/kvm` access (TCG fallback must work).
+- Tooling mirrors T11.1/D9: `tools/build-qemu-linux.sh` builds + trims + publishes a pinned
+  `qemu-linux-v<N>` release of this repo (CI job, like `guest-image.yml`);
+  `tools/fetch-qemu.sh` fetches it checksum-verified into `vendor/qemu/linux-x64/`
+  (not committed). Record the trimmed file list like `qemu-win64-files.txt`.
+- `QemuLocator`: linux probe order becomes bundled `qemu/linux-x64/` first (deterministic,
+  tested pin), then PATH (fallback keeps dev machines and bundle-less builds working).
+  Restore/verify execute bits before spawn (`File.SetUnixFileMode`) — zip round-trips
+  through Windows tooling can drop them.
+- T6.5's dist target: add `vendor/qemu/linux-x64/**` → `<dist>/gatOS/qemu/linux-x64/`
+  (same `SkipUnchangedFiles` pattern as win-x64).
+- Accel prerequisites are unchanged by bundling: `/dev/kvm` group membership stays an
+  optional speed-up (TCG otherwise); the in-game hint shifts from "install qemu" to
+  "add your user to the kvm group for full speed".
+- GPL: T11.2's corresponding-source mirroring must also cover the exact source + build
+  scripts for this Linux build (it is our own binary, not a redistributed one — the
+  obligation is squarely ours).
 
 ---
 

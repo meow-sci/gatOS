@@ -27,3 +27,22 @@ Step-by-step to M6 readiness
   the ALC anyway.
 
   Once steps 1–4 pass and the tip release exists, M6 (T6.1 mod.toml + lifecycle skeleton) can start with no open questions.
+
+
+  # what to verify
+
+  What to verify on the game machine
+
+  1. Guest artifacts present in the deployed mod folder — already true on this Mac:
+  ls ~/repos/meow-sci/mods/mods/gatOS/guest/
+  1. should show 8 files: base.qcow2, vmlinuz-virt, initramfs-virt, manifest.toml, id_ed25519(.pub), host_key_fingerprint.txt, sha256sums.txt. ✅ verified just now.
+  2. It's the dir KSA actually loads from — gatOS/ sits next to your working purrTTY/ deploy in the same mods dir, so whatever KSA sees purrTTY through (direct or symlink), it sees
+  gatOS the same way. ✅
+  3. QEMU reachable — which qemu-system-x86_64 qemu-img → both at /opt/homebrew/bin, which QemuLocator probes on macOS. ✅ (On the Windows machine: tools/fetch-qemu.ps1 once —
+  T11.1 is built; tests and QemuLocator pick up vendor/qemu/win-x64 automatically, verified there with the full GATOS_IT=1 suite. ✅)
+  4. Optional full proof without launching the game: GATOS_IT=1 dotnet test gatOS.Ssh.Tests — boots the real guest from these same artifacts through the same DiskManager/VmHost/SSH
+  path the mod will use, including the host-key pin. If that's green (it was, all through M4/M5), the only untested link left is the T6.2 glue itself.
+  5. After any future guest change: bump/fetch updates guest/out/, and the next build re-copies it (the guest/ subdir copies incrementally by timestamp/size, so this is automatic).
+
+  The one thing you cannot verify before M6 is the runtime wiring in step 4 of the pattern — mod-dir self-location and first-run install into the data dir — because that code is
+  T6.1/T6.2. Everything it consumes is now verified in place.

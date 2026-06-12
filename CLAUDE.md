@@ -159,7 +159,8 @@ OS_IDEA.md / OS_ANALYSIS.md / OS_PLAN.md   goals / research / execution plan
 LICENSE                         MIT (the mod's own code)
 THIRD-PARTY-NOTICES.md          QEMU GPLv2, Alpine, SSH.NET, Tomlyn, …
 vendor/purrTTY/                 pinned contract DLLs (committed) — see its README for the pin
-vendor/qemu/                    NOT in git — fetched win-x64 QEMU (tools/fetch-qemu.*, T11.1, built)
+vendor/qemu/                    NOT in git — fetched QEMU bundles: win-x64 (T11.1, built;
+                                tools/fetch-qemu.*) + linux-x64 planned (T11.6, D5 revision)
 guest/                          guest image pipeline (M2, built): build-image.sh,
                                 fetch-guest.{sh,ps1}, GUEST_VERSION pin, rootfs-overlay/,
                                 README.md; guest/out/ NOT in git (fetch or build it)

@@ -23,13 +23,16 @@ the architecture rationale.
 ## Requirements
 
 - **The purrTTY mod** — gatOS uses it as the terminal UI (it can also load headless without it).
-- **QEMU:**
-  - **Windows:** a trimmed QEMU build is bundled with the mod. Hardware acceleration uses the
+- **QEMU:** bundled with the mod on both player platforms (D5) — no installation needed.
+  - **Windows:** trimmed win-x64 build in the dist. Hardware acceleration uses the
     **Windows Hypervisor Platform** optional feature (available on Windows Home; enabling it needs a
     reboot). Without it, gatOS falls back to slower pure emulation (TCG), which is still playable for
     shell work.
-  - **Linux / macOS:** install QEMU yourself (`qemu-system-x86_64` on `PATH`); gatOS prints an
-    install hint if it is missing.
+  - **Linux:** portable linux-x64 bundle in the dist (lands with M11/T11.6; until then, install
+    QEMU from your distro). Acceleration wants `/dev/kvm` access (add your user to the `kvm`
+    group); TCG fallback otherwise. A system QEMU on `PATH` is still honored when the bundle is
+    absent.
+  - **macOS (dev only):** `brew install qemu`.
 
 ## Build & test (developers)
 
