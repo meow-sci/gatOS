@@ -1,0 +1,8 @@
+# gatOS guest inittab (busybox init — no openrc; see OS_PLAN.md T2.2).
+# No getty: the serial console is a log file; access is SSH (or QGA for control).
+::sysinit:/sbin/init-gatos
+::respawn:/usr/sbin/dropbear -F -E -s
+::respawn:/sbin/qga-gatos
+::respawn:/sbin/sim-mount
+::ctrlaltdel:/sbin/reboot
+::shutdown:/sbin/shutdown-gatos

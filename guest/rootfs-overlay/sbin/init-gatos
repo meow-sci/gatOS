@@ -1,0 +1,38 @@
+#!/bin/sh
+# gatOS guest early init (busybox ::sysinit). Every step is best-effort so a
+# single failure can never keep dropbear (the only way in) from starting.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+# Kernel filesystems. devtmpfs is normally mounted already (initramfs hands it over).
+mount -t proc -o nodev,nosuid,noexec proc /proc 2>/dev/null
+mount -t sysfs -o nodev,nosuid,noexec sysfs /sys 2>/dev/null
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mkdir -p /dev/pts /dev/shm
+mount -t devpts -o gid=5,mode=620 devpts /dev/pts 2>/dev/null
+mount -t tmpfs -o nodev,nosuid tmpfs /dev/shm 2>/dev/null
+mount -t tmpfs tmpfs /run 2>/dev/null
+mount -t tmpfs tmpfs /tmp 2>/dev/null
+
+mount -o remount,rw / 2>/dev/null
+
+# Device nodes + drivers for the fixed QEMU hardware (q35 + virtio-net + virtio-serial).
+mdev -s 2>/dev/null
+modprobe -a virtio_net virtio_console 2>/dev/null
+
+# /dev/virtio-ports/<name> symlinks — mdev creates only /dev/vportNpM; qemu-ga
+# wants the stable by-name path (udev would normally provide it).
+for d in /sys/class/virtio-ports/vport*; do
+    [ -f "$d/name" ] || continue
+    mkdir -p /dev/virtio-ports
+    ln -sf "/dev/${d##*/}" "/dev/virtio-ports/$(cat "$d/name")"
+done
+
+hostname -F /etc/hostname 2>/dev/null
+
+# Static slirp network — no DHCP (faster + deterministic; QEMU user-mode net only:
+# guest is always 10.0.2.15, host gateway 10.0.2.2, DNS 10.0.2.3).
+ifconfig lo up 2>/dev/null
+ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up 2>/dev/null
+route add default gw 10.0.2.2 2>/dev/null
+
+mkdir -p /sim

@@ -1,0 +1,12 @@
+#!/bin/sh
+# qemu-guest-agent launcher (respawned by busybox init). Waits for the QGA
+# virtio-serial port instead of exec'ing qemu-ga directly: when the device is
+# absent (or slow to probe) a fast-exiting qemu-ga would trip init's respawn
+# throttling; this loop keeps the respawn quiet and robust.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+P=/dev/virtio-ports/org.qemu.guest_agent.0
+while [ ! -e "$P" ]; do
+    sleep 2
+done
+exec /usr/bin/qemu-ga -m virtio-serial -p "$P"

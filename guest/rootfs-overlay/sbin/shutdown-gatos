@@ -1,0 +1,7 @@
+#!/bin/sh
+# busybox init ::shutdown hook — best-effort clean unmounts before poweroff/reboot.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+umount /sim 2>/dev/null
+sync
+umount -a -r 2>/dev/null

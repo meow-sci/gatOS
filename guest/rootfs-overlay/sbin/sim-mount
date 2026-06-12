@@ -1,0 +1,21 @@
+#!/bin/sh
+# 9p /sim remount supervisor (OS_PLAN.md T2.2; respawned by busybox init).
+# The host passes gatos.simport=<port> on the kernel cmdline; absent or 0 means
+# the 9p server is disabled (M3 passes 0 until M8 wires the real server).
+# Mount options validated against the M1 spike (spike/NOTES.md T1.2).
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+PORT="$(sed -n 's/.*gatos\.simport=\([0-9][0-9]*\).*/\1/p' /proc/cmdline)"
+if [ -z "$PORT" ] || [ "$PORT" = 0 ]; then
+    # 9p disabled: idle forever (a fast exit would make init throttle the respawn).
+    exec sleep 2147483647
+fi
+
+modprobe 9p 2>/dev/null
+mkdir -p /sim
+while :; do
+    if ! mountpoint -q /sim; then
+        mount -t 9p -o "trans=tcp,port=$PORT,version=9p2000.L,cache=none" 10.0.2.2 /sim 2>/dev/null
+    fi
+    sleep 2
+done
