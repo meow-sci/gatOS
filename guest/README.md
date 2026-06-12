@@ -1,0 +1,96 @@
+# guest/ — the gatOS guest image pipeline (M2)
+
+Everything needed to produce (or fetch) the Alpine Linux guest that gatOS boots in QEMU.
+Architecture/background: `OS_ANALYSIS.md` §3.8; task specs: `OS_PLAN.md` M2; hard-won boot facts:
+`spike/NOTES.md`.
+
+## What gets built
+
+`build-image.sh` produces `guest/out/` (never committed — D9):
+
+| Artifact | What it is |
+|---|---|
+| `base.qcow2` | zstd-compressed qcow2; **partitionless ext4 root** (mount it as `/dev/vda`, no partition table) |
+| `vmlinuz-virt` | Alpine `linux-virt` kernel, used via QEMU direct kernel boot (no bootloader in the image) |
+| `initramfs-virt` | trimmed initramfs (`features="base virtio ext4"`), regenerated from the overlay's `mkinitfs.conf` |
+| `manifest.toml` | the host-side boot contract: kernel cmdline, ssh user/key, host-key pin, guest version |
+| `id_ed25519`(+`.pub`) | session keypair; the pub is baked into root's `authorized_keys` (D8 — loopback-only hostfwd makes this safe) |
+| `host_key_fingerprint.txt` | sha256 **hex of the raw ssh-ed25519 host public key blob** — what `gatOS.Ssh` pins against (D8) |
+| `sha256sums.txt` | checksums over all of the above |
+
+The guest is deliberately tiny: **no openrc** — busybox init runs `rootfs-overlay/etc/inittab`,
+which supervises exactly four things: `init-gatos` (sysinit: mounts, static slirp network
+10.0.2.15/gw 10.0.2.2, device nodes), dropbear (`-s`, key-only), `qga-gatos` (qemu-guest-agent once
+its virtio-serial port appears), and `sim-mount` (the 9p `/sim` remount supervisor — reads
+`gatos.simport=<port>` from the kernel cmdline; absent or `0` means no 9p server, it idles).
+
+## Consuming prebuilt artifacts (the normal path)
+
+```sh
+guest/fetch-guest.sh        # Linux/macOS
+guest/fetch-guest.ps1       # Windows
+```
+
+Downloads the GitHub release `guest-v<N>` (N = `guest/GUEST_VERSION`) of `meow-sci/gatOS` into
+`guest/out/`, verifies `sha256sums.txt`, and no-ops if `out/manifest.toml` already matches the pin.
+
+## Building from scratch
+
+Linux (CI does exactly this; needs root for chroot + rootfs ownership):
+
+```sh
+sudo apt-get install -y ca-certificates curl qemu-system-x86 qemu-utils e2fsprogs openssh-client python3
+sudo guest/build-image.sh                 # build + boot smoke test
+sudo guest/build-image.sh --skip-smoke    # build only
+```
+
+macOS (build in Docker, smoke-test natively with brew QEMU):
+
+```sh
+docker run --rm --platform linux/amd64 -v "$PWD":/repo -w /repo ubuntu:24.04 \
+  bash -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+             ca-certificates curl qemu-utils e2fsprogs openssh-client python3 >/dev/null \
+           && guest/build-image.sh --skip-smoke'
+guest/build-image.sh --smoke-only         # boots out/ artifacts with host qemu (TCG)
+```
+
+(A Lima VM works too — anything that gives you a root shell on x86_64-capable Linux with the
+packages above. The build itself is ~2 minutes plus downloads.)
+
+The script is fully pinned: Alpine branch, apk-tools-static and alpine-keys versions + sha256.
+Alpine stable branches keep only the newest package revision, so a security bump upstream 404s the
+bootstrap download — the script's error tells you to refresh the two pins (one commit).
+
+## Boot contract (what gatOS.Vm must do — M3)
+
+- Direct kernel boot with the manifest's `kernel_cmdline`, appending `gatos.simport=<9p port or 0>`.
+- Disk: a qcow2 **overlay** backed by `base.qcow2` as virtio (`root=/dev/vda`); never boot the base
+  image directly with writes enabled (the smoke test uses `snapshot=on`).
+- slirp usernet with `hostfwd=tcp:127.0.0.1:<port>-:22`; guest reaches the host at `10.0.2.2`,
+  DNS `10.0.2.3` (static — the guest does no DHCP).
+- QGA virtio-serial port named `org.qemu.guest_agent.0` (optional: the guest idles happily
+  without it).
+- SSH: `root` + `out/id_ed25519`; verify the host key against `host_key_sha256` (sha256 hex of the
+  raw key blob) from the manifest.
+
+## Measured boot times (T2.4)
+
+Cold boot → first SSH banner accepted, 256 MB / 2 vCPU, this image:
+
+| Host | Accel | Boot |
+|---|---|---|
+| GitHub `ubuntu-latest` (CI) | KVM | see guest-image.yml run log |
+| Apple Silicon dev machine (x86_64 emulation) | TCG | **5 s** |
+
+The bar (OS_PLAN.md T2.4) is <2 s accelerated; TCG is the universal worst case and stays usable
+for shell work. (The M1 spike's hand-built image — openrc-free but with a stock initramfs — took
+10 s on the same machine; the trimmed initramfs + no-DHCP static network halved it.)
+
+## Releasing a new guest version
+
+1. Change whatever needs changing under `guest/`; pushes to `main` touching `guest/**` rebuild and
+   **replace the assets of the currently pinned release** (`guest-v<N>` stays a moving target until
+   it ships in a mod release).
+2. To cut a new immutable version: bump `guest/GUEST_VERSION`, commit; CI publishes `guest-v<N+1>`.
+   Old releases stay up — existing overlays keep backing onto the base image they were created from
+   (M10 handles migration).
