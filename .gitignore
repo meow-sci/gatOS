@@ -25,7 +25,8 @@ tmpclaude*
 guest/out/
 # fetched + trimmed QEMU win-x64 bundle (tools/fetch-qemu.*)
 vendor/qemu/
-# M1 throwaway de-risking code (kept locally, see OS_PLAN.md M1) — except NOTES.md,
-# the committed record of the spike's learnings that M2/M3/M4/M7/M8 must read.
+# M1 throwaway de-risking code was deleted at the end of M2 (OS_PLAN.md M1); the rule
+# stays so local experiments under spike/ never land in git. NOTES.md is the committed
+# record of the spike's learnings that M3/M4/M7/M8 must read.
 spike/*
 !spike/NOTES.md

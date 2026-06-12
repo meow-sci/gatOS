@@ -34,14 +34,28 @@ shim, `GatOsPaths`, the vendored purrTTY contract, and CI are in place and green
 **M1 — de-risking spike: DONE.** All three gates passed against a real Alpine 3.24 guest (kernel
 6.18): 9p synthetic files `cat`/`tail -f`/Ctrl-C-Tflush from the kernel's v9fs client against a
 hand-rolled C# 9P2000.L server; SSH.NET 2025.1.0 shell with **live resize** against dropbear; a
-known-good QEMU invocation with 10 s TCG cold-boot-to-sshd. The spike code itself is gitignored
-throwaway; **`spike/NOTES.md` (committed) records the learnings and is REQUIRED READING before
-M2/M3/M4/M7/M8 work** — notably: i_size must be truthful (the analysis §3.6 fake-size advice is
+known-good QEMU invocation. The spike's throwaway code was deleted when M2 landed (per plan);
+**`spike/NOTES.md` (committed) records the learnings and is REQUIRED READING before
+M3/M4/M7/M8 work** — notably: i_size must be truthful (the analysis §3.6 fake-size advice is
 wrong on ≥6.11 kernels), a read() completes only on buffer-full or two consecutive 0-byte Rreads,
 and "growing-log" (`tail -f`) vs "blocking-event" (`cat`) synthetic files are two distinct models
 the M7 VFS must support.
 
-Everything past M1 is **not yet implemented** — the library projects (`NineP`, `SimFs`, `Vm`,
+**M2 — guest image pipeline: DONE.** `guest/build-image.sh` reproducibly builds the guest from
+pinned Alpine 3.24 mirrors — no setup-alpine, no openrc; busybox init runs the hand-written
+`guest/rootfs-overlay/` (static slirp net 10.0.2.15, dropbear key-only, qemu-ga via wrapper,
+`sim-mount` 9p supervisor driven by the `gatos.simport=<port>` kernel cmdline, 0/absent = idle).
+Artifacts in `guest/out/` (never committed): partitionless-ext4 `base.qcow2` (zstd qcow2),
+`vmlinuz-virt`, trimmed `initramfs-virt` (`features="base virtio ext4"`), `manifest.toml` (the
+host boot contract: kernel cmdline, ssh user/key, host-key pin = sha256 hex of the raw key blob),
+baked ed25519 session keypair, `sha256sums.txt`. Build needs root on Linux (macOS dev: Docker;
+both documented in `guest/README.md`); a built-in smoke test (also `--smoke-only`) boots the
+artifacts, checks `ssh 'echo ok'`, **verifies the host-key pin**, and powers off — measured cold
+boot→sshd **5 s under TCG** on the dev Mac. `.github/workflows/guest-image.yml` builds and
+publishes GitHub release `guest-v<N>` (N = `guest/GUEST_VERSION`); consumers obtain artifacts via
+`guest/fetch-guest.{sh,ps1}` (checksum-verified, no-op when current).
+
+Everything past M2 is **not yet implemented** — the library projects (`NineP`, `SimFs`, `Vm`,
 `Ssh`) and `GameMod` hold placeholder/skeleton types only. Track real progress against the
 milestone table in `OS_PLAN.md` Part 3; do not document planned code here as if it exists.
 
@@ -69,9 +83,12 @@ LICENSE                         MIT (the mod's own code)
 THIRD-PARTY-NOTICES.md          QEMU GPLv2, Alpine, SSH.NET, Tomlyn, …
 vendor/purrTTY/                 pinned contract DLLs (committed) — see its README for the pin
 vendor/qemu/                    NOT in git — fetched win-x64 QEMU (tools/fetch-qemu.*, M11)
-guest/                          guest image build pipeline (M2); guest/out/ NOT in git
+guest/                          guest image pipeline (M2, built): build-image.sh,
+                                fetch-guest.{sh,ps1}, GUEST_VERSION pin, rootfs-overlay/,
+                                README.md; guest/out/ NOT in git (fetch or build it)
 tools/                          fetch-qemu.{sh,ps1} (M11)
 .github/workflows/build.yml     CI: build + test on every push
+.github/workflows/guest-image.yml  CI: build + publish guest-v<N> release (guest/** pushes)
 ```
 
 ### Projects and the dependency rule

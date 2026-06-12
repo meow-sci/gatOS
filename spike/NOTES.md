@@ -124,11 +124,8 @@ kill → guest EIO, clean `umount`, remount after restart works. Mount used:
 
 ## Re-running the spike
 
-```sh
-cd spike
-./boot.sh                                   # boots the installed guest (≈10 s to sshd on TCG)
-ssh -i id_ed25519 -p 2222 root@127.0.0.1    # password-less root via the spike key
-(cd Spike9p && dotnet run)                  # 9p server on 0.0.0.0:5640
-(cd SpikeSsh && dotnet run -- ../id_ed25519)        # resize proof
-(cd SpikeSsh && dotnet run -- ../id_ed25519 death)  # then kill qemu to see error events
-```
+The throwaway spike code (`install.exp`, `boot.sh`, `Spike9p/`, `SpikeSsh/`, the hand-built
+qcow2) was **deleted when M2 landed**, per OS_PLAN.md M1. To boot a guest today, use the real
+pipeline: `guest/fetch-guest.sh` (or build per `guest/README.md`), then
+`guest/build-image.sh --smoke-only`. The T1.2/T1.3 wire/API behaviors above are locked in as
+M7/M4 acceptance criteria — reproduce them there, not here.

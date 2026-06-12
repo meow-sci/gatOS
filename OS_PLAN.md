@@ -461,22 +461,28 @@ Files: `spike/SpikeSsh/` console app.
 booting anything (no setup-alpine; fully scripted ≠ T1.1's hand-built image).
 
 **Spec (implement exactly; bash, `set -euo pipefail`, root required — document `sudo`):**
-1. Pin `ALPINE_VERSION=3.22` and `ALPINE_MIRROR=https://dl-cdn.alpinelinux.org/alpine` at the
-   top. Download `apk-tools-static` for the pinned version, verify its published sha256.
+1. Pin `ALPINE_VERSION=3.24` (as built; the spike validated 3.24/kernel 6.18) and
+   `ALPINE_MIRROR=https://dl-cdn.alpinelinux.org/alpine` at the top. Download `apk-tools-static`
+   **and `alpine-keys`** at pinned versions, verify pinned sha256s (the keys seed
+   `$ROOTFS/etc/apk/keys` so apk verifies everything else it installs).
 2. ```bash
    ./apk.static --arch x86_64 \
      -X $MIRROR/v$VER/main -X $MIRROR/v$VER/community \
      -U --root "$ROOTFS" --initdb add \
-     alpine-baselayout busybox busybox-suid musl musl-utils alpine-keys apk-tools \
-     linux-virt dropbear dropbear-scp openssh-sftp-server qemu-guest-agent ca-certificates
+     alpine-baselayout alpine-release busybox busybox-suid musl musl-utils alpine-keys \
+     apk-tools linux-virt dropbear dropbear-scp openssh-sftp-server qemu-guest-agent \
+     ca-certificates
    ```
    Deliberately **no openrc** — busybox init + a hand-written inittab (T2.2) for minimal boot.
-   (If `linux-virt` post-install needs openrc files, add the minimal extra packages it demands —
-   record in the script comments.)
+   (As built: no extra packages were needed for `linux-virt`; `alpine-release` was added because
+   modern Alpine splits `/etc/alpine-release`+`/etc/os-release` out of baselayout and the
+   manifest stamps the exact release.)
 3. Generate keys into `guest/out/`:
    `ssh-keygen -t ed25519 -N '' -f out/id_ed25519 -C gatos`;
-   `dropbearkey -t ed25519 -f "$ROOTFS/etc/dropbear/dropbear_ed25519_host_key"`, capture its
-   SHA256 fingerprint to `out/host_key_fingerprint.txt`.
+   `dropbearkey -t ed25519` via **chroot** (host needs no dropbear) for
+   `/etc/dropbear/dropbear_ed25519_host_key`; record the pin as **sha256 hex of the raw
+   ssh-ed25519 public key blob** to `out/host_key_fingerprint.txt` (this is exactly what
+   SSH.NET's `HostKeyReceived.HostKey` hashes to in M4).
 4. Install `out/id_ed25519.pub` as `$ROOTFS/root/.ssh/authorized_keys` (mode 0600, dir 0700).
 5. Copy `guest/rootfs-overlay/` over the rootfs (T2.2 defines its contents).
 6. Write `$ROOTFS/etc/hostname` = `gatos`; `/etc/motd` = short gatOS banner;
@@ -492,35 +498,44 @@ Files under `guest/rootfs-overlay/`:
 ```
 ::sysinit:/sbin/init-gatos
 ::respawn:/usr/sbin/dropbear -F -E -s
-::respawn:/usr/bin/qemu-ga -m virtio-serial -p /dev/virtio-ports/org.qemu.guest_agent.0
+::respawn:/sbin/qga-gatos
 ::respawn:/sbin/sim-mount
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/sbin/shutdown-gatos
 ```
 - dropbear flags: `-F` foreground (respawn-managed), `-E` log to stderr, `-s` disable password
   auth (key-only).
+- (As built) qemu-ga runs via the **`sbin/qga-gatos`** wrapper: it waits for
+  `/dev/virtio-ports/org.qemu.guest_agent.0` to exist, then execs
+  `qemu-ga -m virtio-serial -p <port>`. Exec'ing qemu-ga directly trips busybox init's
+  respawn-throttling whenever the device is absent (e.g. a launch without virtio-serial) or slow
+  to probe. `init-gatos` creates the `/dev/virtio-ports/<name>` symlinks (mdev only makes
+  `/dev/vportNpM`).
 
-**`sbin/init-gatos`** (mode 0755): mount `proc`/`sysfs`/`devtmpfs`, `mdev -s`, hostname from
+**`sbin/init-gatos`** (mode 0755): mount `proc`/`sysfs`/`devtmpfs`/`devpts`/`tmpfs`es,
+`mdev -s` + `modprobe virtio_net virtio_console` + virtio-port symlinks, hostname from
 `/etc/hostname`, `ifconfig lo up`, **static slirp network** (no DHCP — faster + deterministic):
 `ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up; route add default gw 10.0.2.2`,
-`mount -o remount,rw /` (belt-and-braces), create `/sim` dir.
+`mount -o remount,rw /` (belt-and-braces), create `/sim` dir. Every step best-effort so dropbear
+always starts.
 
 **`sbin/sim-mount`** (mode 0755) — the 9p remount supervisor (analysis §3.6):
 ```sh
 #!/bin/sh
 # Mount /sim from the host 9p server; retry forever. PORT injected via kernel cmdline.
-PORT="$(sed -n 's/.*gatos\.simport=\([0-9]*\).*/\1/p' /proc/cmdline)"
-[ -z "$PORT" ] && exec sleep 2147483647    # no port given: idle (9p disabled)
+PORT="$(sed -n 's/.*gatos\.simport=\([0-9][0-9]*\).*/\1/p' /proc/cmdline)"
+# absent OR 0 ⇒ 9p disabled (T3.3 appends gatos.simport=0 until M8): idle, don't exit
+[ -z "$PORT" ] || [ "$PORT" = 0 ] && exec sleep 2147483647
 modprobe 9p 2>/dev/null
 while :; do
   if ! mountpoint -q /sim; then
-    mount -t 9p -o trans=tcp,port=$PORT,version=9p2000.L,cache=none,uname=root,aname=/ 10.0.2.2 /sim
+    mount -t 9p -o trans=tcp,port=$PORT,version=9p2000.L,cache=none 10.0.2.2 /sim
   fi
   sleep 2
 done
 ```
-(The host passes `gatos.simport=<p9>` on the kernel command line — see T3.3. Verify the exact
-mount option set against the T1.2 spike notes.)
+(The host passes `gatos.simport=<p9>` on the kernel command line — see T3.3. Mount options are
+the exact spike-validated set — no `uname`/`aname` needed, spike/NOTES.md T1.2.)
 
 **`sbin/shutdown-gatos`**: `umount -a -r` best effort.
 
@@ -541,21 +556,24 @@ mount option set against the T1.2 spike notes.)
    ```toml
    schema = 1
    guest_version = <N from guest/GUEST_VERSION>
-   alpine_version = "3.22.x"
+   alpine_version = "3.24.x"
    kernel = "vmlinuz-virt"
    initrd = "initramfs-virt"
    base_image = "base.qcow2"
-   kernel_cmdline = "console=ttyS0 root=/dev/vda rw quiet modules=virtio,ext4"
+   kernel_cmdline = "console=ttyS0 root=/dev/vda rw quiet rootfstype=ext4 modules=virtio,ext4"
    ssh_user = "root"
    ssh_key = "id_ed25519"
-   host_key_sha256 = "<fingerprint>"
+   host_key_sha256 = "<sha256 hex of the raw host public key blob>"
    built_utc = "<stamp>"
    ```
-   (`root=/dev/vda` — whole-disk ext4, no partitions.)
-5. Smoke-test inside the script: boot the produced artifacts with the T1.1 cmdline shape
-   (TCG is fine in CI), wait for TCP :2222 to accept, then `ssh ... 'echo ok; poweroff'`
-   (with `StrictHostKeyChecking=no -i out/id_ed25519`). Fail the script if not `ok` within
-   180 s.
+   (`root=/dev/vda` — whole-disk ext4, no partitions; `rootfstype=ext4` from the spike's
+   known-good cmdline.)
+5. Smoke-test inside the script: boot the produced artifacts (dynamically allocated host port,
+   `snapshot=on` so base.qcow2 stays pristine; KVM when `/dev/kvm` is usable, else TCG), wait
+   for the SSH banner, `ssh 'echo ok'`, **verify the presented host key hashes to the
+   manifest's `host_key_sha256`** (ssh-keyscan), then `poweroff` and wait for QEMU exit. Fail
+   if not ok within 180 s (env-overridable). Also runs standalone via
+   `build-image.sh --smoke-only` (e.g. natively on macOS against Docker-built artifacts).
 
 **Accept:** script runs clean twice from scratch on a Linux host; second run reproduces a
 working image. Total `out/` size recorded (~expect 60–120 MB).
@@ -589,7 +607,9 @@ rootfs before extracting**), confirm no DHCP wait, no openrc. Record final numbe
 `guest-v<N>` with the `out/` artifacts + `sha256sums.txt`. Bumping `GUEST_VERSION` is a manual
 commit. Smoke test runs under KVM if `/dev/kvm` exists on the runner, else TCG.
 
-**Accept:** `guest-v1` release exists with all six artifacts; `fetch-guest.sh` round-trips.
+**Accept:** `guest-v1` release exists with all eight artifacts (base.qcow2, vmlinuz-virt,
+initramfs-virt, manifest.toml, id_ed25519, id_ed25519.pub, host_key_fingerprint.txt,
+sha256sums.txt); `fetch-guest.sh` round-trips.
 
 ---
 
