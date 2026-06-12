@@ -5,3 +5,13 @@ author = "meow sci"
 
 [StarMap]
 EntryAssembly = "gatOS.GameMod"
+
+# D6: with purrTTY installed, StarMap resolves these two assemblies from purrTTY's ALC
+# (it exports them via ExportedAssemblies) — one Assembly, one Type identity, one shared
+# CustomShellRegistry.Instance that purrTTY's menus read. Optional: without purrTTY the
+# vendored copies in this mod folder load instead and gatOS idles (registration lands in
+# a registry nobody consumes; the VM stays manageable from the gatOS menu).
+[[StarMap.ModDependencies]]
+ModId = "purrTTY"
+Optional = true
+ImportedAssemblies = ["purrTTY.CustomShellContract", "purrTTY.Logging"]
