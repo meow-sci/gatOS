@@ -14,6 +14,19 @@
         <ProjectReference Include="..\gatOS.Ssh\gatOS.Ssh.csproj" />
     </ItemGroup>
 
+    <!-- Plain assembly references do not flow transitively like package references do, and the
+         tests consume contract types (ShellOutputEventArgs, CustomShellStartOptions, …). -->
+    <ItemGroup>
+        <Reference Include="purrTTY.CustomShellContract">
+            <HintPath>$(MSBuildThisFileDirectory)../vendor/purrTTY/purrTTY.CustomShellContract.dll</HintPath>
+            <Private>true</Private>
+        </Reference>
+        <Reference Include="purrTTY.Logging">
+            <HintPath>$(MSBuildThisFileDirectory)../vendor/purrTTY/purrTTY.Logging.dll</HintPath>
+            <Private>true</Private>
+        </Reference>
+    </ItemGroup>
+
     <ItemGroup>
         <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
         <PackageReference Include="NUnit" Version="4.2.2" />
