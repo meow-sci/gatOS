@@ -59,11 +59,35 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # M3 integration tests (GATOS_IT=1) boot the real guest image with a real QEMU.
+      # KVM is available on GitHub's Linux runners once the device node is opened up;
+      # if it is ever absent, VmHost's accel ladder falls back to TCG and the tests
+      # still pass (slower).
+      - name: Install QEMU
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils
+
+      - name: Enable KVM for the runner user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          ls -l /dev/kvm || echo "::warning::no /dev/kvm — integration tests will run under TCG"
+
+      - name: Fetch pinned guest artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: guest/fetch-guest.sh
+
       - name: Build
         run: dotnet build gatos.slnx -c Release --nologo -v quiet
 
       - name: Test
         id: test
+        env:
+          GATOS_IT: "1"
         run: dotnet test gatos.slnx --nologo -v quiet --logger trx --results-directory .tmp/test-results
 
       - name: Report test results

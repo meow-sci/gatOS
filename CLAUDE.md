@@ -55,9 +55,31 @@ boot→sshd **5 s under TCG** on the dev Mac. `.github/workflows/guest-image.yml
 publishes GitHub release `guest-v<N>` (N = `guest/GUEST_VERSION`); consumers obtain artifacts via
 `guest/fetch-guest.{sh,ps1}` (checksum-verified, no-op when current).
 
-Everything past M2 is **not yet implemented** — the library projects (`NineP`, `SimFs`, `Vm`,
-`Ssh`) and `GameMod` hold placeholder/skeleton types only. Track real progress against the
-milestone table in `OS_PLAN.md` Part 3; do not document planned code here as if it exists.
+**M3 — gatOS.Vm (QEMU lifecycle): DONE.** `VmHost` (`gatOS.Vm/VmHost.cs`) is the coalesced async
+state machine (Stopped→Starting→Running→Stopping/Faulted): `EnsureStartedAsync` runs one shared
+boot for concurrent callers (base install → overlay + `DiskLock` → 3 loopback ports → spawn →
+SSH-banner readiness raced against process death; one retry on a hostfwd port clash), `StopAsync`
+walks the shutdown ladder **QGA `guest-shutdown` → QMP `quit` → kill** and always releases the
+disk lock; an unexpected exit while Running flips to Faulted (retryable) and frees the lock.
+Supporting cast (all `gatOS.Vm/`, all game-free): `GatOsPaths`; `PortAllocator`; `QemuLocator`
+(bundled `win-x64/` on Windows per D5, PATH + Homebrew prefixes on unix); `GuestManifest`
+(Tomlyn-parsed `manifest.toml` — the host↔guest boot contract); `DiskManager`+`DiskLock`
+(versioned `base-v<N>.qcow2` install, kernel/initrd/manifest/ssh-key under `disks/guest-v<N>/`,
+overlays with **bare relative backing refs**, PID lock files with stale reclaim, never
+`qemu-img commit`); `QemuCommandBuilder` (per-OS accel ladders `whpx|kvm|hvf→tcg`, **non-x64
+hosts collapse to tcg**, `-cpu host` vs `max`, injectable `OperatingSystemFacts`); `QemuProcess`
+(3 s survival window, `AccelFailureClassifier` + one forced-tcg retry, `logs/qemu-*.log`
+retention ×5, 100-line stderr ring, minimal QMP quit); `ReadinessProbe` (reads the `SSH-` banner —
+a bare TCP connect is meaningless, slirp accepts from t=0); `QgaClient` (0xFF-sentinel
+`guest-sync-delimited` preamble, all failures soft). `IQemuProcess`/`IDiskManager`/`IQgaClient`
+seams + an internal `VmHost` ctor (`InternalsVisibleTo`) make the state machine fake-testable;
+`gatOS.Vm.Tests/Integration/` boots the real fetched guest. Measured on the dev Mac (TCG, worst
+case): boot→Running→clean QGA stop ≈ 10 s end-to-end. CI installs QEMU, opens `/dev/kvm`, fetches
+the pinned guest and runs the whole suite with `GATOS_IT=1`.
+
+Everything past M3 is **not yet implemented** — the library projects (`NineP`, `SimFs`, `Ssh`)
+and `GameMod` hold placeholder/skeleton types only. Track real progress against the milestone
+table in `OS_PLAN.md` Part 3; do not document planned code here as if it exists.
 
 ## Build and Test Commands
 
@@ -69,8 +91,11 @@ dotnet build gatOS.Vm                            # one project
 
 Every task ends with **both** the build and the test suite green. Keep test output minimal (no
 Console spew from passing tests). Integration tests that need a real VM are gated by the `GATOS_IT=1`
-env var and self-skip (`Assert.Ignore`) otherwise, so plain `dotnet test` never needs QEMU (this
-convention arrives with M3).
+env var and self-skip (`Assert.Ignore`) otherwise, so plain `dotnet test` never needs QEMU.
+To run them locally: `guest/fetch-guest.sh` once (or build the image), have QEMU installed, then
+`GATOS_IT=1 dotnet test gatos.slnx`. With `GATOS_IT=1`, missing prerequisites are hard failures,
+not skips (see `gatOS.Vm.Tests/TestEnv.cs`); tests needing only `qemu-img` (DiskManager) also run
+un-gated whenever QEMU is present. CI runs the full suite with `GATOS_IT=1` under KVM.
 
 ## Repository layout & project map
 
@@ -87,7 +112,7 @@ guest/                          guest image pipeline (M2, built): build-image.sh
                                 fetch-guest.{sh,ps1}, GUEST_VERSION pin, rootfs-overlay/,
                                 README.md; guest/out/ NOT in git (fetch or build it)
 tools/                          fetch-qemu.{sh,ps1} (M11)
-.github/workflows/build.yml     CI: build + test on every push
+.github/workflows/build.yml     CI: build + full test suite (GATOS_IT=1, KVM, fetched guest)
 .github/workflows/guest-image.yml  CI: build + publish guest-v<N> release (guest/** pushes)
 ```
 
@@ -97,7 +122,7 @@ tools/                          fetch-qemu.{sh,ps1} (M11)
 gatOS.Logging                    (no deps)            game-free logging shim
 gatOS.NineP    → Logging                              9P2000.L codec + server (M7)
 gatOS.SimFs    → NineP, Logging                       /sim node tree + snapshot store (M8)
-gatOS.Vm       → Logging                              QEMU lifecycle, disks, ports, GatOsPaths (M3)
+gatOS.Vm       → Logging, Tomlyn                      QEMU lifecycle, disks, ports, GatOsPaths (M3, built)
 gatOS.Ssh      → Vm, Logging, vendor/purrTTY, SSH.NET SshShellSession : ICustomShell (M4)
 gatOS.GameMod  → Ssh, SimFs, Vm, Logging, vendor/purrTTY,
                   KSA DLLs, StarMap.API, Lib.Harmony, ModMenu.Attributes, Tomlyn   the KSA mod (M6)

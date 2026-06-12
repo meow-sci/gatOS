@@ -613,11 +613,14 @@ sha256sums.txt); `fetch-guest.sh` round-trips.
 
 ---
 
-# M3 — gatOS.Vm: the QEMU lifecycle layer
+# M3 — gatOS.Vm: the QEMU lifecycle layer — **DONE**
 
 > Game-free. All integration tests gated by env `GATOS_IT=1` and skipped otherwise
 > (`Assert.Ignore`) so plain `dotnet test` never needs QEMU. CI sets `GATOS_IT=1` (ubuntu
 > runners have `/dev/kvm`; tests must still pass via TCG fallback if not).
+> (As built: `build.yml` installs qemu-system-x86 + qemu-utils, opens `/dev/kvm` via a udev
+> rule, runs `guest/fetch-guest.sh`, and runs the whole suite with `GATOS_IT=1`. With the gate
+> set, missing prerequisites are hard failures, not skips — `gatOS.Vm.Tests/TestEnv.cs`.)
 
 ## T3.1 — PortAllocator + QemuLocator
 
@@ -631,7 +634,8 @@ Files: `gatOS.Vm/PortAllocator.cs`, `gatOS.Vm/QemuLocator.cs`.
   - Windows: `GatOsPaths.BundledQemuDir/win-x64/qemu-system-x86_64.exe` (+`qemu-img.exe`);
     error if missing.
   - Linux/macOS: probe PATH (`qemu-system-x86_64`, `qemu-img`); on macOS also
-    `/opt/homebrew/bin`. Returns a typed error (`QemuNotFoundException` with a per-OS
+    `/opt/homebrew/bin` (as built: and `/usr/local/bin` — the game process PATH may lack the
+    brew prefix). Returns a typed error (`QemuNotFoundException` with a per-OS
     install-hint message) — GameMod surfaces this text in-UI later.
 - `QemuLocator.GetVersion(path)`: parse `qemu-system-x86_64 --version` → `Version`; warn (log)
   if < 11.0 on Windows (WHPX fixes — analysis §3.2).
@@ -647,7 +651,11 @@ Spec:
 - `EnsureBaseInstalled()`: copy `GuestAssetsDir/base.qcow2` →
   `DisksDir/base-v<guestVersion>.qcow2` (+ kernel/initrd/manifest alongside under
   `DisksDir/guest-v<N>/`) if not present. **Never delete old base versions automatically**
-  (existing overlays back onto them).
+  (existing overlays back onto them). (As built: the manifest is parsed by
+  `gatOS.Vm/GuestManifest.cs` — Tomlyn lives in gatOS.Vm, not just GameMod, because
+  manifest.toml is the boot contract; the ssh private key is installed into
+  `DisksDir/guest-v<N>/` too (0600) and `VmEndpoints.PrivateKeyPath` points there;
+  `EnsureBaseInstalled` returns an `InstalledGuest` record with the resolved paths.)
 - `CreateOverlay(string profile)` → path `DisksDir/<profile>.qcow2`:
   `qemu-img create -f qcow2 -b base-v<N>.qcow2 -F qcow2 <profile>.qcow2` run with
   **working directory = DisksDir** so the stored backing ref is the **bare relative filename**
@@ -681,7 +689,10 @@ public sealed record VmLaunchSpec(
 `Build(VmLaunchSpec)` → `(string exePath, IReadOnlyList<string> args)` using **per-OS accel
 ladders** (do NOT pass foreign accel names — qemu errors on unknown accelerators):
 Windows `whpx,tcg`; Linux `kvm,tcg`; macOS `hvf,tcg` — emitted as repeated `-accel` flags
-(first available wins). Args (one list entry each; never string-join — Process `ArgumentList`):
+(first available wins). (As built: on a non-x64 host the ladder collapses to `tcg` —
+KVM/WHPX/HVF only virtualize same-arch guests, e.g. Apple Silicon dev Macs run the x86-64
+guest under TCG, spike/NOTES.md.) Args (one list entry each; never string-join — Process
+`ArgumentList`):
 
 ```
 -M q35  -cpu <"host" when first accel != tcg, else "max">  -m {MemoryMb} -smp {Cpus}
@@ -717,7 +728,11 @@ Files: `gatOS.Vm/QemuProcess.cs`.
   `No accelerator found`), rebuild with the next ladder entry forced via `AccelOverride` and
   retry (max one retry → `tcg`). Record `EffectiveAccel` for diagnostics. (The in-qemu `-accel a -accel b`
   list already falls back at init; this C# retry catches the cases where it doesn't —
-  e.g. WHP feature absent errors — and tells us what actually ran.)
+  e.g. WHP feature absent errors, or `-cpu host` rejected after an in-qemu fallback to tcg —
+  and tells us what actually ran.) (As built: `StartAsync` waits out the full 3 s survival
+  window — `WhenAny(exit, delay)` — adding ≤3 s before the readiness probe starts; tune in M6
+  if boot latency matters. `EffectiveAccel` is best-effort: the forced accel after a retry,
+  else the first ladder entry; an in-qemu silent fallback is not detectable from outside.)
 - `Stop(TimeSpan grace)`: see shutdown ladder in T3.7.
 - Keep a ring buffer (last 100 lines) of stderr for error surfacing.
 
@@ -781,6 +796,10 @@ Behavior:
 **Tests:** state machine unit tests with a fake QemuProcess/probe (interface-extract
 `IQemuProcess` for this); concurrent EnsureStarted callers get the same boot. Integration
 (`GATOS_IT=1`): full real boot → Running → StopAsync → Stopped, on CI under KVM.
+(As built: `IDiskManager` and `IQgaClient` are extracted too; the test seams enter through an
+internal `VmHost` ctor + `InternalsVisibleTo`. The T3.1 residual port race is closed here:
+a start failing on `Could not set up host forwarding`/`Address already in use` is retried
+once with fresh ports inside `BootAsync`.)
 
 ## T3.7 — Shutdown ladder
 
