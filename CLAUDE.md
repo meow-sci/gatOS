@@ -29,10 +29,21 @@ and the decisions locked in (Part 1).
 ## Current status (what is actually built)
 
 **M0 — repository scaffold: DONE.** The solution, all 11 projects, shared build config, the logging
-shim, `GatOsPaths`, the vendored purrTTY contract, and CI are in place and green. Everything past
-M0 is **not yet implemented** — the library projects (`NineP`, `SimFs`, `Vm`, `Ssh`) and `GameMod`
-hold placeholder/skeleton types only. Track real progress against the milestone table in
-`OS_PLAN.md` Part 3; do not document planned code here as if it exists.
+shim, `GatOsPaths`, the vendored purrTTY contract, and CI are in place and green.
+
+**M1 — de-risking spike: DONE.** All three gates passed against a real Alpine 3.24 guest (kernel
+6.18): 9p synthetic files `cat`/`tail -f`/Ctrl-C-Tflush from the kernel's v9fs client against a
+hand-rolled C# 9P2000.L server; SSH.NET 2025.1.0 shell with **live resize** against dropbear; a
+known-good QEMU invocation with 10 s TCG cold-boot-to-sshd. The spike code itself is gitignored
+throwaway; **`spike/NOTES.md` (committed) records the learnings and is REQUIRED READING before
+M2/M3/M4/M7/M8 work** — notably: i_size must be truthful (the analysis §3.6 fake-size advice is
+wrong on ≥6.11 kernels), a read() completes only on buffer-full or two consecutive 0-byte Rreads,
+and "growing-log" (`tail -f`) vs "blocking-event" (`cat`) synthetic files are two distinct models
+the M7 VFS must support.
+
+Everything past M1 is **not yet implemented** — the library projects (`NineP`, `SimFs`, `Vm`,
+`Ssh`) and `GameMod` hold placeholder/skeleton types only. Track real progress against the
+milestone table in `OS_PLAN.md` Part 3; do not document planned code here as if it exists.
 
 ## Build and Test Commands
 
