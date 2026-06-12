@@ -127,9 +127,15 @@ host.
 
 ## Conventions (decided — do not re-litigate; see OS_PLAN.md Part 1)
 
-- **.NET 10 / C# 13**, `Nullable enable`, `ImplicitUsings enable`, warnings-as-errors except CS1591
-  (all from `Directory.Build.props`). Doc-comment `cref`s must resolve from the project's own
-  references — use `<c>…</c>` for cross-assembly names a project doesn't reference.
+- **.NET 10 / C# 13**, `Nullable enable`, `ImplicitUsings enable` (all from
+  `Directory.Build.props`). **Zero-warning policy: no build warnings of any kind are allowed.**
+  Compiler (CS) warnings are errors except CS1591, and `MSBuildTreatWarningsAsErrors` makes
+  MSBuild-level warnings (e.g. MSB3277 reference-version conflicts) errors too. Fix the cause,
+  never suppress: e.g. when a NuGet transitive pin conflicts with the KSA/purrTTY 10.x assemblies,
+  lift it with a direct `PackageReference` in the project that owns the dependency (see SSH.NET →
+  `Microsoft.Extensions.Logging.Abstractions` 10.0.0 in `gatOS.Ssh.csproj`). Doc-comment `cref`s
+  must resolve from the project's own references — use `<c>…</c>` for cross-assembly names a
+  project doesn't reference.
 - KSA reference DLLs resolve through `KSAFolder` (env `KSA_DLL_DIR` → sibling `ksa-game-assemblies`
   checkout → per-OS default), referenced with `<Private>false</Private>` and guarded by
   `Condition="Exists(...)"`.

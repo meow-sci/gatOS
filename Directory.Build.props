@@ -4,6 +4,9 @@
         <LangVersion>13.0</LangVersion>
         <Nullable>enable</Nullable>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <!-- Zero-warning policy: MSBuild-level warnings (e.g. MSB3277 reference-version
+             conflicts) are errors too, not just compiler (CS) warnings. -->
+        <MSBuildTreatWarningsAsErrors>true</MSBuildTreatWarningsAsErrors>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <ImplicitUsings>enable</ImplicitUsings>
         <WarningsAsErrors/>

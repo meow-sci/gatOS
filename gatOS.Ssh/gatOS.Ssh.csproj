@@ -14,6 +14,11 @@
 
     <ItemGroup>
         <PackageReference Include="SSH.NET" Version="2025.1.0" />
+        <!-- SSH.NET pulls Microsoft.Extensions.Logging.Abstractions 8.0.3 transitively, but the
+             vendored purrTTY.Logging and the KSA game assemblies are built against 10.0.0
+             (mirrors purrTTY.Logging's own direct reference). Lifting it here resolves the
+             MSB3277 version conflict in GameMod and matches what the game ships at runtime. -->
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
     </ItemGroup>
 
     <!-- Vendored purrTTY contract (pinned inter-mod ABI; see vendor/purrTTY/README.md, OS_PLAN.md T0.5).
