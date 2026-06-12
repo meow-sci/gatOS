@@ -1,0 +1,32 @@
+namespace gatOS.NineP.Protocol;
+
+/// <summary>
+///     The Linux errno values this server sends in <c>Rlerror</c> (OS_PLAN.md T7.2).
+///     9P2000.L carries numeric Linux errnos directly — no string errors.
+/// </summary>
+public static class LinuxErrno
+{
+    /// <summary>No such file or directory.</summary>
+    public const uint ENOENT = 2;
+
+    /// <summary>I/O error (also the fallback for unexpected VFS exceptions).</summary>
+    public const uint EIO = 5;
+
+    /// <summary>Bad file descriptor (fid unknown or not open as required).</summary>
+    public const uint EBADF = 9;
+
+    /// <summary>Permission denied (write attempts on the read-only tree).</summary>
+    public const uint EACCES = 13;
+
+    /// <summary>Not a directory (walking through a file).</summary>
+    public const uint ENOTDIR = 20;
+
+    /// <summary>Is a directory (Tread on a directory fid).</summary>
+    public const uint EISDIR = 21;
+
+    /// <summary>Invalid argument (malformed but parseable requests).</summary>
+    public const uint EINVAL = 22;
+
+    /// <summary>Operation not supported (unimplemented message types, xattrs, auth).</summary>
+    public const uint EOPNOTSUPP = 95;
+}
