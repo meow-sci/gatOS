@@ -7,7 +7,11 @@ name: Build and test
 # meow-sci/ksa-game-assemblies (DLLs under current/dll/). Only gatOS.GameMod
 # references them; the rest of the solution builds without. Access uses the
 # KSA_GAME_ASSEMBLIES_PAT repo secret (a fine-grained read-only PAT, same
-# pattern as purrtty).
+# pattern as purrtty). If the secret is not configured on this repo, the
+# checkout is skipped and the condition-guarded KSA references simply drop
+# out — the whole solution (incl. GameMod) still builds and all tests are
+# game-free, so CI stays meaningful. Configure the secret to restore
+# full-fidelity GameMod compilation against the real game DLLs.
 
 on:
   push:
@@ -30,18 +34,23 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # Directory.Build.props resolves this before any per-OS default.
+      # Directory.Build.props resolves this before any per-OS default. When the
+      # PAT is missing the dir simply doesn't exist and the guarded references
+      # drop out (verified: `dotnet build -p:KSA_DLL_DIR=/nonexistent` is green).
       KSA_DLL_DIR: ${{ github.workspace }}/.tmp/ksa-game-assemblies/current/dll
+      # secrets.* is not allowed directly in step `if:`; surface it via env.
+      KSA_PAT: ${{ secrets.KSA_GAME_ASSEMBLIES_PAT }}
     steps:
       - name: Checkout gatOS
         uses: actions/checkout@v6
 
       - name: Checkout private KSA assemblies
+        if: env.KSA_PAT != ''
         uses: actions/checkout@v6
         with:
           repository: meow-sci/ksa-game-assemblies
           path: .tmp/ksa-game-assemblies
-          token: ${{ secrets.KSA_GAME_ASSEMBLIES_PAT }}
+          token: ${{ env.KSA_PAT }}
           persist-credentials: false
           ref: main
 
