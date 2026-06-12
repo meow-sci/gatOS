@@ -6,10 +6,14 @@ namespace gatOS.Vm.Tests;
 public sealed class QemuLocatorTests
 {
     private string _tempDir = null!;
+    private string? _savedOverride;
 
     [SetUp]
     public void SetUp()
     {
+        // Save/restore rather than reset-to-null: the assembly-level setup may have pointed
+        // OverridePath at the repo's vendored QEMU (VendoredQemuSetup) for the whole run.
+        _savedOverride = QemuLocator.OverridePath;
         _tempDir = Path.Combine(Path.GetTempPath(), "gatos-qemu-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_tempDir);
     }
@@ -17,7 +21,7 @@ public sealed class QemuLocatorTests
     [TearDown]
     public void TearDown()
     {
-        QemuLocator.OverridePath = null;
+        QemuLocator.OverridePath = _savedOverride;
         if (Directory.Exists(_tempDir))
             Directory.Delete(_tempDir, recursive: true);
     }
@@ -42,6 +46,19 @@ public sealed class QemuLocatorTests
     public void Find_Throws_WhenOverrideDirectoryIsIncomplete()
     {
         QemuLocator.OverridePath = _tempDir; // empty dir: neither binary present
+        Assert.Throws<QemuNotFoundException>(() => QemuLocator.Find());
+    }
+
+    [Test]
+    public void Find_OnWindowsWithoutModDir_ThrowsTypedNotFound()
+    {
+        if (!OperatingSystem.IsWindows())
+            Assert.Ignore("Windows-only: the bundled-QEMU branch.");
+
+        QemuLocator.OverridePath = null;
+        Assert.That(GatOsPaths.ModDir, Is.Null, "headless tests must not set ModDir");
+        // Must be the typed error (so TestEnv's skip gate catches it), never the
+        // InvalidOperationException that GatOsPaths.BundledQemuDir would throw.
         Assert.Throws<QemuNotFoundException>(() => QemuLocator.Find());
     }
 
