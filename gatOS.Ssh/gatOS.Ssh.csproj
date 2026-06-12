@@ -4,12 +4,16 @@
         <OutputType>Library</OutputType>
         <AssemblyName>gatOS.Ssh</AssemblyName>
         <RootNamespace>gatOS.Ssh</RootNamespace>
-        <Description>SshShellSession : ICustomShell + VmConnectionBroker (game-free; refs vendored purrTTY contract). Filled in at M4.</Description>
+        <Description>SshShellSession : ICustomShell + VmConnectionBroker over SSH.NET (game-free; refs vendored purrTTY contract).</Description>
     </PropertyGroup>
 
     <ItemGroup>
         <ProjectReference Include="..\gatOS.Vm\gatOS.Vm.csproj" />
         <ProjectReference Include="..\gatOS.Logging\gatOS.Logging.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="gatOS.Ssh.Tests" />
     </ItemGroup>
 
     <ItemGroup>
