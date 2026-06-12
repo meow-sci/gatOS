@@ -902,10 +902,14 @@ Also a unit test: ctor+Dispose without StartAsync does nothing (registry-probe s
 
 ---
 
-# M5 — Upstream purrTTY changes (executed in the `purrtty` repo)
+# M5 — Upstream purrTTY changes (executed in the `purrtty` repo) — **DONE**
 
 > Two small changes; keep them independent commits. They ship in a normal purrTTY tip release
 > **before** M6 in-game testing. Follow purrtty's CLAUDE.md mandate (update its docs).
+
+> (As built: purrtty commits `9fb5e13` (T5.1) and `a56966a` (T5.2) on its current working
+> branch; full purrtty suite green (325 tests, 0 warnings). The **tip release cut is the one
+> remaining step** — it happens on the next push to purrtty `main`, which is the user's call.)
 
 ## T5.1 — Export the contract assemblies over the mod ALC
 
@@ -920,6 +924,9 @@ both resolved from the same ALC for one coherent type identity. Per the StarMap 
 matrix, with both sides listing, the share set is the intersection.)
 
 **Accept:** purrTTY builds + runs unchanged; existing tests green.
+
+> (As built: exactly the snippet above, plus a mod.toml comment documenting the why; verified
+> against CI's version stamping (a line-anchored sed on `version = `, untouched).)
 
 ## T5.2 — New Tab / New Window menus enumerate registered custom shells
 
@@ -945,6 +952,17 @@ refresh hook.
 **Accept:** purrTTY test suite green; in-game smoke: Game Console still opens; a dummy shell
 registered from a test mod appears in both menus. Update purrtty CLAUDE.md (menu section) +
 tip release cut.
+
+> (As built: the loop lives in a `DrawRegisteredCustomShellItems` helper called from **both**
+> `DrawShellItems` paths (normal + the detection-still-running fallback), so a registered shell
+> is launchable even before the WSL/unix-shell snapshot lands. Probe-freedom was verified
+> against the init order: `InitializeTerminal` runs `EnsureGameShellsDiscovered()` synchronously
+> before publishing `MenuController`, and the menus are unreachable until `MenuController` is
+> non-null — so `GetAvailableShells()` on the draw path can never trigger discovery. purrtty
+> CLAUDE.md updated (menu section, custom-shell how-to, and the allocation-free claim now
+> carves out this LINQ read, which only runs while a New Tab/New Window menu is open). The
+> in-game smoke (Game Console + a cross-mod shell in both menus) rides M6's first in-game test;
+> headlessly the suite is green.)
 
 ---
 
