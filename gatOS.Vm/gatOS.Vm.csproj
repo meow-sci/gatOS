@@ -4,11 +4,20 @@
         <OutputType>Library</OutputType>
         <AssemblyName>gatOS.Vm</AssemblyName>
         <RootNamespace>gatOS.Vm</RootNamespace>
-        <Description>QEMU lifecycle, disks, QGA, ports + shared filesystem paths (game-free). Filled in at M3.</Description>
+        <Description>QEMU lifecycle, disks, QGA, ports + shared filesystem paths (game-free).</Description>
     </PropertyGroup>
 
     <ItemGroup>
         <ProjectReference Include="..\gatOS.Logging\gatOS.Logging.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- Parses the guest manifest.toml (the host↔guest boot contract, T2.3/T3.2). -->
+        <PackageReference Include="Tomlyn" Version="2.6.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="gatOS.Vm.Tests" />
     </ItemGroup>
 
 </Project>
