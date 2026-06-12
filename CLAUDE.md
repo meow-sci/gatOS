@@ -124,8 +124,8 @@ overwritten), build `VmHost`+`VmConnectionBroker` (**no boot**, D2), register sh
 (purrTTY absence detected after the fact: the contract assembly resolving from gatOS's own folder
 means the vendored fallback loaded). `Unload` = `broker.DisposeAsync().AsTask().Wait(15 s)` (the
 dispose is the 10 s-grace QGA→QMP→kill ladder). T6.4 diagnostics: `[ModMenuEntry("gatOS")]` menu
-(Status/Start VM/Shut Down VM/Open Data Folder/Reset Disk…+confirm-modal) and an ImGui status
-window (state, accel + WHPX DISM hint when tcg-on-Windows, ports, uptime, guest version, config,
+(Status/Start VM/Shut Down VM/Restart SimFs (M9)/Open Data Folder/Reset Disk…+confirm-modal) and
+an ImGui status window (state, accel + WHPX DISM hint when tcg-on-Windows, ports, uptime, guest version, config,
 newest qemu log — cached per `VmStatus` transition — fault reason, asset status, action note); all
 actions `Task.Run`, draw code reads volatile state only (rule 5). Two load-order subtleties worth
 keeping: game-typed *statics* live in a nested `Palette` class (field types resolve at type load;
@@ -181,9 +181,34 @@ own, and the real v9fs client proves live scalars, the alias, `tail -f stream`, 
 events read, and Tflush-survival — this **supersedes the planned ubuntu mount-smoke.sh**
 (T7.5/T8.4 as-built notes). Verified on this machine: full `GATOS_IT=1` suite 172/172.
 
-Everything past M8 is **not yet implemented** — next is M9 (game-thread `TelemetrySampler` +
-`EventDiffer` + wiring the `NinePServer` into `Mod.OnFullyLoaded`) — with one exception pulled
-forward: **T11.1 QEMU win-x64 bundle tooling is DONE** (`tools/fetch-qemu.{ps1,sh}` populate
+**M9 — live `/sim` telemetry: CODE DONE; T9.3 in-game pass pending.** The pure pieces live in
+game-free `gatOS.SimFs/Telemetry/` (as-built deviation — GameMod has no test project):
+`EventDiffer` (previous/current snapshot pair → the six fixed event types; a null previous is
+the baseline, no events), `SampleClock` (dt accumulator, drift-free phase, long-frame backlog
+dropped), `Sanitize` (NaN/Inf→0, radius→altitude for KSA's from-center apsides). The
+game-coupled accessor half is `gatOS.GameMod/Game/TelemetrySampler.cs` (compile-gated like all
+`Game/**`): every KSA read verified against the decompiled sources — vessels via
+`Universe.CurrentSystem.All.UnsafeAsList()`, `Name = Id` (KSA has no separate display name),
+lat/lon via the ready-made `IParentBody.GetLlaFromCcf`, `Orbit.Inclination` radians→deg,
+engines from `EngineController.VacuumData` (Isp computed: thrust/(massflow·g₀)), tanks from
+per-`Mole` SoA state, battery from `Parts.Batteries` (`Joules.Value()`); one try/catch per
+vehicle, publish via one volatile swap (threading rules 1–2). Beware: the instance
+`double3.Transform` extension drags BepuUtilities into overload resolution — use the static
+overload. Wire-up (T9.3) in `Mod`: `OnFullyLoaded` builds `SnapshotStore` + `SimFsTree` and
+binds the `NinePServer` (ephemeral loopback port) **before** the `VmHost`, whose
+`SimPortProvider` hands the port to the kernel cmdline (null when the bind failed → guest
+idles); `OnBeforeUi` → `SampleTelemetry` partial seam (NoInlining, one-error disable latch);
+idle gate = VM Starting/Running or `NinePServer.ActiveSessions > 0`; `Unload` disposes the
+server after the VM. Diagnostics: **Restart SimFs** menu item (rebinds the **same port** —
+it is baked into the running guest's cmdline; the supervisor re-establishes the mount unaided)
+and a SimFs status row. **Verified 2026-06-12 by the headless dist smoke** (supervisor mounts
+`/sim` by itself during boot, warp readable, restart-remount unaided, 3.3 s clean unload —
+`docs/VALIDATION.md`); full `GATOS_IT=1` suite 187/187. **Pending: the T9.3 in-game pass**
+(same purrTTY-tip-release blocker as T6.6).
+
+Everything past M9 is **not yet implemented** — next is M10 (persistence & savegame shape) —
+with one exception pulled forward: **T11.1 QEMU win-x64 bundle tooling is DONE**
+(`tools/fetch-qemu.{ps1,sh}` populate
 `vendor/qemu/win-x64/` from the pinned Weil installer; pin + trimmed file list live in
 `tools/qemu-win64-files.txt`, derivation helper `tools/Get-QemuImportClosure.ps1`; see the
 T11.1 as-built note in `OS_PLAN.md`). On Windows, headless tests resolve that vendored bundle
@@ -249,7 +274,8 @@ tools/                          fetch-qemu.{sh,ps1} + qemu-win64-files.txt (pin 
 ```
 gatOS.Logging                    (no deps)            game-free logging shim
 gatOS.NineP    → Logging                              9P2000.L codec + server + VFS (M7, built)
-gatOS.SimFs    → NineP, Logging                       /sim tree, snapshot store, stream/events (M8, built)
+gatOS.SimFs    → NineP, Logging                       /sim tree, snapshots, stream/events,
+                                                      EventDiffer/SampleClock/Sanitize (M8+M9, built)
 gatOS.Vm       → Logging, Tomlyn                      QEMU lifecycle, disks, ports, GatOsPaths (M3, built)
 gatOS.Ssh      → Vm, Logging, vendor/purrTTY, SSH.NET SshShellSession : ICustomShell (M4, built)
 gatOS.GameMod  → Ssh, SimFs, Vm, Logging, vendor/purrTTY,

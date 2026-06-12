@@ -3,6 +3,19 @@
 Manual pass results live here. Record machine, date, purrTTY/gatOS versions and the outcome of
 each item; failures get a short note plus the relevant `logs/qemu-*.log` excerpt.
 
+## M9 headless dist smoke (pre-validation; run 2026-06-12, Windows 11 game machine)
+
+The M6 reflection harness, extended for M9, against the deployed dist (real VM boot, TCG):
+
+| Check | Result |
+|---|---|
+| `OnFullyLoaded` starts the 9p server (ephemeral loopback port) before any VM exists | ✅ |
+| First session boot carries `gatos.simport=<port>`; the guest supervisor mounts `/sim` **unaided** (its connection appears during boot, before the prompt) | ✅ |
+| `cat /sim/time/warp` through the real mount returns the published value | ✅ |
+| `OnBeforeUi` ×5 headless: no throw escapes the hook (sampler runs or latches once) | ✅ |
+| **Restart SimFs**: server bounced on the same port → guest re-establishes `/sim` by itself within seconds (`cat` works again, no manual umount) | ✅ |
+| Unload: VM stop + 9p server stop, returned in 3.3 s | ✅ |
+
 ## Headless dist smoke (pre-validation; run 2026-06-12, Windows 11 game machine)
 
 Before the first in-game pass, the deployed dist (`<MyDocuments>\My Games\Kitten Space
@@ -43,3 +56,19 @@ pending — see CLAUDE.md M5 note).
 | 1 | WHP feature enabled: boot under WHPX, record boot time + accel | ☐ | `HypervisorPlatform` is currently **disabled** on the game machine (`Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform`, admin + reboot) |
 | 2 | WHP disabled: fallback lands on TCG, session usable, status window shows accel=tcg + DISM hint | ◐ | Fallback + usable session verified headlessly 2026-06-12 (WHPX "Unexpected VP exit code 4" → forced-tcg retry); the status-window hint itself needs the in-game pass |
 | 3 | Full T6.6 checklist on Windows | ☐ | |
+
+## T9.3 — In-game validation pass #2 (the M9 exit) — **NOT YET RUN**
+
+Prereq: the T6.6 pass (purrTTY tip release). Run during a real flight with at least one vessel.
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | `ls /sim/vessels/by-id/` lists the loaded vessels | ☐ | |
+| 2 | `watch -n1 cat /sim/vessels/active/altitude/radar` live during a flight; Ctrl-C clean | ☐ | |
+| 3 | `tail -f /sim/vessels/active/stream \| jq .alt.radar` streams; Ctrl-C clean | ☐ | needs `apk add jq` |
+| 4 | `cat /sim/events` during a launch shows situation changes; warp change → `warp-changed` | ☐ | |
+| 5 | Time-warp changes `/sim/time/warp`; `/sim/time/ut` advances faster under warp | ☐ | |
+| 6 | Status window: SimFs row shows port + 1 connection while the VM is up | ☐ | |
+| 7 | Menu → Restart SimFs → guest re-establishes `/sim` within ~4 s (verified headlessly ✅) | ◐ | headless 2026-06-12: same-port rebind + unaided remount |
+| 8 | Orbit dir appears for an orbiting vessel; apoapsis is an altitude (not a radius) | ☐ | |
+| 9 | Battery/tanks/engines dirs match the vessel; values move during a burn | ☐ | |

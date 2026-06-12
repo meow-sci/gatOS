@@ -1514,7 +1514,15 @@ sampler publishing a scripted flight (altitude ramp). Assert from the mounted fs
 
 ---
 
-# M9 — Telemetry sampler + live `/sim` in-game
+# M9 — Telemetry sampler + live `/sim` in-game — **CODE DONE; T9.3 in-game pass pending**
+
+> (As built: the pure pieces (EventDiffer, SampleClock, Sanitize) live in game-free
+> **`gatOS.SimFs/Telemetry/`**, not `gatOS.GameMod/Telemetry/` — GameMod has no test project
+> by design and these are snapshot-domain logic; only the accessor half
+> (`gatOS.GameMod/Game/TelemetrySampler.cs`) is game-coupled and compile-gated. The full
+> wiring (server at init → simport on the cmdline → unaided guest mount → Restart SimFs
+> same-port rebind → clean unload) was verified headlessly against the deployed dist on
+> 2026-06-12 — see `docs/VALIDATION.md`. The T9.3 in-game checklist remains.)
 
 ## T9.1 — TelemetrySampler (game thread)
 
@@ -1541,6 +1549,25 @@ Files: `gatOS.GameMod/Telemetry/TelemetrySampler.cs`.
 **Tests:** the mapping is game-coupled — cover the pure parts (NaN sanitizer, radius→altitude
 conversion, rate limiter) as unit tests; the rest is validated in-game (T9.3).
 
+> (As built: every accessor was re-verified against the decompiled sources. Deltas from the
+> sketch above: vessels enumerate via `Universe.CurrentSystem.All.UnsafeAsList()` filtered to
+> `Vehicle` (game-thread-only read of the live list); KSA has **no display name** — `SetName`
+> assigns `Id`, so `Name = Id`; lat/lon needed no hand-rolled geodesy —
+> `IParentBody.GetLlaFromCcf(cciPos.Transform(GetCci2Ccf()))` is a ready-made default
+> interface method returning (lat°, lon°, alt); `OrbitalSpeed` is a property (not
+> `GetVelocityCci().Length()` by hand); `Orbit.Inclination` is radians → ×180/π;
+> `Orbit.Period` is already seconds; per-engine data comes from
+> `EngineController.VacuumData` (`ThrustMax` magnitude; Isp = thrust/(massflow·g₀) — there is
+> no stored Isp); tanks are `Get<Tank>()` → per-`Mole` SoA state (`SubstancePhase.Name`,
+> `MoleState.Mass`, capacity = `GetLiquidMass(ContainerVolume)`); battery fraction sums
+> `Parts.Batteries` charge/capacity via `Joules.Value()`. The idle gate is
+> `VmState is Starting or Running || NinePServer.ActiveSessions > 0` (Starting included: the
+> guest mounts before the SSH banner). One build trap: the instance `double3.Transform`
+> extension pulls BepuUtilities into overload resolution — use the static
+> `double3.Transform(value, rotation)`. The sampler seam is a `partial void
+> SampleTelemetry(double dt)` from `OnBeforeUi`, NoInlining + one-error disable latch,
+> mirroring the M6 discipline.)
+
 ## T9.2 — Event diffing
 
 Files: `gatOS.GameMod/Telemetry/EventDiffer.cs` (pure, unit-testable).
@@ -1548,6 +1575,12 @@ Files: `gatOS.GameMod/Telemetry/EventDiffer.cs` (pure, unit-testable).
 `Diff(SimSnapshot? previous, …current fields…) → IReadOnlyList<SimEvent>` producing the T8.3
 event types from snapshot deltas (situation per vessel, vessel set add/remove, active id,
 warp value, parent body change = soi-changed). Unit tests with fixture pairs.
+
+> (As built: lives in **`gatOS.SimFs/Telemetry/EventDiffer.cs`** (see the M9 header note) and
+> is tested in `gatOS.SimFs.Tests`. A null `previous` — the first sample of a session — is
+> the baseline and produces no events (no appeared-flood at load). Details format `A→B` with
+> `none` for null sides; warp values formatted with `Formats.Scalar` for consistency with the
+> rest of `/sim`.)
 
 ## T9.3 — Wire-up + in-game validation pass #2 (M9 exit)
 
@@ -1561,6 +1594,18 @@ warp value, parent body change = soi-changed). Unit tests with fixture pairs.
   Ctrl-C both cleanly; `cat /sim/events` during a launch shows liftoff-ish situation changes;
   time-warp changes `/sim/time/warp`. Kill the 9p server (debug menu button "Restart SimFs" —
   add it to the diagnostics menu) → guest supervisor remounts within ~4 s.
+
+> (As built: the wire-up is exactly the first bullet, with the server started **before** the
+> `VmHost` is constructed and a `SimPortProvider` returning null when the bind failed (the
+> guest then idles on `gatos.simport=0`; /sim is an optional luxury). The server reference is
+> a volatile field on `Mod` because **Restart SimFs** swaps it from a background task — and
+> the restart rebinds **the same port**, since the port is baked into a running guest's
+> kernel cmdline; the guest supervisor re-establishes the mount unaided (stacked remount;
+> verified headlessly, `docs/VALIDATION.md`). The diagnostics window gains a SimFs row (port
+> + `ActiveSessions`, a new `NinePServer` property that also drives the sampler's idle gate).
+> Unload disposes the server after the VM (its mounts die with the guest anyway). The
+> checklist lives in `docs/VALIDATION.md` § T9.3 — **the in-game pass is still pending** (it
+> needs the purrTTY tip release, same blocker as T6.6).)
 
 ---
 
