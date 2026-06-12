@@ -12,6 +12,12 @@
 
     <ItemGroup>
         <ProjectReference Include="..\gatOS.SimFs\gatOS.SimFs.csproj" />
+        <!-- The M7 managed 9p test client (OS_PLAN.md T8.2: "walk every path via the M7
+             test client"). -->
+        <ProjectReference Include="..\gatOS.NineP.Tests\gatOS.NineP.Tests.csproj" />
+        <!-- The T8.4 in-VM end-to-end test boots the real guest and talks to it over SSH. -->
+        <ProjectReference Include="..\gatOS.Vm\gatOS.Vm.csproj" />
+        <ProjectReference Include="..\gatOS.Ssh\gatOS.Ssh.csproj" />
     </ItemGroup>
 
     <ItemGroup>
