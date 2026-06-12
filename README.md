@@ -15,10 +15,25 @@ tail -f /sim/vessels/active/stream | jq .vel.surface
 
 ## Status
 
-Early development. The **M0 scaffold** (solution, projects, build config, CI) is in place; the VM
-lifecycle, SSH sessions, the 9p `/sim` server and the telemetry sampler are being built milestone by
-milestone. See `OS_PLAN.md` for the roadmap and `OS_ANALYSIS.md` (in this repo and `../purrtty`) for
-the architecture rationale.
+Early development, building milestone by milestone. Working today: the guest image pipeline, the
+QEMU VM lifecycle, SSH shell sessions (purrTTY's custom-shell contract, with live resize), and the
+in-game mod integration (lazy VM boot, config, diagnostics menu + status window). Still to come:
+the 9p `/sim` telemetry filesystem and the game-thread sampler. See `OS_PLAN.md` for the roadmap
+and `OS_ANALYSIS.md` (in this repo and `../purrtty`) for the architecture rationale.
+
+## In game
+
+Open a session from purrTTY's **New Tab / New Window** menus — **gatOS** appears alongside the
+regular shells. The first session boots the VM (a few seconds; longer without hardware
+acceleration); closing tabs never stops the VM, quitting the game does.
+
+If the **ModMenu** mod is installed, a *gatOS* menu offers a status window (VM state, accelerator,
+ports, last fault), Start / Shut Down VM, Open Data Folder, and **Reset Disk…** (wipes everything
+inside the guest back to factory state). ModMenu is optional — without it everything still works
+through purrTTY's menus; you only lose the diagnostics UI.
+
+User data (disks, logs, the `gatos.toml` config) lives under
+`Documents/My Games/Kitten Space Agency/mods/gatOS/`.
 
 ## Requirements
 

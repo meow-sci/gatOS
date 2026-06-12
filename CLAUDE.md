@@ -107,20 +107,48 @@ registration timing without a refresh hook), launching via
 `ProcessLaunchOptions.CreateCustomGame(id)`. **Still pending: the purrTTY tip release cut**
 (next push to purrtty `main`) — M6 in-game testing needs a purrTTY install carrying both changes.
 
-Everything past M5 is **not yet implemented** — the library projects (`NineP`, `SimFs`) and
-`GameMod` hold placeholder/skeleton types only — with two exceptions pulled forward:
-**T6.5 dist packaging is DONE** (`CopyCustomContent` in `gatOS.GameMod.csproj`; see Build and
-Test Commands) and **T11.1 QEMU win-x64 bundle tooling is DONE** (`tools/fetch-qemu.{ps1,sh}`
-populate `vendor/qemu/win-x64/` from the pinned Weil installer; pin + trimmed file list live
-in `tools/qemu-win64-files.txt`, derivation helper `tools/Get-QemuImportClosure.ps1`; see the
-T11.1 as-built note in `OS_PLAN.md`). On Windows, headless tests resolve that vendored bundle
-via `QemuLocator.OverridePath` (`VendoredQemuSetup` in `gatOS.Vm.Tests`/`gatOS.Ssh.Tests`),
-and `QemuLocator.Find()` throws the typed `QemuNotFoundException` (not
-`InvalidOperationException`) when `GatOsPaths.ModDir` is unset, so the test skip-gate works.
-The full `GATOS_IT=1` suite is verified green on the Windows 11 game machine (TCG fallback —
-WHPX needs the off-by-default `HypervisorPlatform` Windows feature; guest boot ≈ 7 s under
-TCG). Track real progress against the milestone table in `OS_PLAN.md` Part 3; do not document
-planned code here as if it exists.
+**M6 — gatOS.GameMod (in-game integration): CODE DONE; T6.6/T6.7 in-game passes pending.**
+`Mod` (`gatOS.GameMod/Mod.cs`) is the `[StarMapMod]` entry, a **partial class split on the
+game-assembly boundary**: `Mod.cs` itself uses no KSA/Brutal types, so the project builds on CI
+without the private game DLLs; the game-coupled half (`Game/Mod.Game.cs` + `Game/BrutalModLogger.cs`)
+compiles only when `KSAFolder/KSA.dll` exists (csproj `KsaAssembliesPresent` gate) and is reached
+through `partial void` seams (`InstallGameLogging`, `DrawGameUi`) whose calls drop out otherwise.
+`OnFullyLoaded` (never throws): swap `ModLog` to a Brutal `LogCategory("gatOS")` sink — isolated in
+`TryInstallGameLogging` so a load failure can't abort init, and `BrutalModLogger`'s ctor refuses
+while `LogSystem.IsEnabled` is false (calls would silently no-op) — then resolve
+`GatOsPaths.ModDir` from the entry assembly, `ModAssets.Validate()` (T6.2: manifest schema +
+artifact files + `QemuLocator.Find()`, all problems folded into one `AssetStatus.Error` string),
+`GatOsConfig.LoadOrCreate` (T6.3: Tomlyn 2.6 serializer, snake_case, clamp+log normalize, atomic
+temp+rename save, first-run file with comment header; bad files → in-memory defaults, never
+overwritten), build `VmHost`+`VmConnectionBroker` (**no boot**, D2), register shell `"gatos"`
+(purrTTY absence detected after the fact: the contract assembly resolving from gatOS's own folder
+means the vendored fallback loaded). `Unload` = `broker.DisposeAsync().AsTask().Wait(15 s)` (the
+dispose is the 10 s-grace QGA→QMP→kill ladder). T6.4 diagnostics: `[ModMenuEntry("gatOS")]` menu
+(Status/Start VM/Shut Down VM/Open Data Folder/Reset Disk…+confirm-modal) and an ImGui status
+window (state, accel + WHPX DISM hint when tcg-on-Windows, ports, uptime, guest version, config,
+newest qemu log — cached per `VmStatus` transition — fault reason, asset status, action note); all
+actions `Task.Run`, draw code reads volatile state only (rule 5). Two load-order subtleties worth
+keeping: game-typed *statics* live in a nested `Palette` class (field types resolve at type load;
+`Mod` must load without game DLLs) and the partial impls are `NoInlining` so missing-assembly
+faults hit the guarded call sites. **Verified 2026-06-12 by a headless smoke driving the deployed
+dist** (LoadFrom + reflection): init, registration, registry-created session booting the real VM
+(WHPX fail → auto TCG retry), echo + launch-size + live resize, session stop leaves VM Running,
+2.2 s clean unload — see `docs/VALIDATION.md`. **Pending: T6.6 in-game pass** (needs the purrTTY
+tip release with M5) **and T6.7** (WHPX-enabled run; `HypervisorPlatform` is off on the game
+machine).
+
+Everything past M6 is **not yet implemented** — the library projects (`NineP`, `SimFs`) hold
+placeholder/skeleton types only — with one exception pulled forward: **T11.1 QEMU win-x64 bundle
+tooling is DONE** (`tools/fetch-qemu.{ps1,sh}` populate `vendor/qemu/win-x64/` from the pinned
+Weil installer; pin + trimmed file list live in `tools/qemu-win64-files.txt`, derivation helper
+`tools/Get-QemuImportClosure.ps1`; see the T11.1 as-built note in `OS_PLAN.md`). On Windows,
+headless tests resolve that vendored bundle via `QemuLocator.OverridePath` (`VendoredQemuSetup`
+in `gatOS.Vm.Tests`/`gatOS.Ssh.Tests`), and `QemuLocator.Find()` throws the typed
+`QemuNotFoundException` (not `InvalidOperationException`) when `GatOsPaths.ModDir` is unset, so
+the test skip-gate works. The full `GATOS_IT=1` suite is verified green on the Windows 11 game
+machine (TCG fallback — WHPX needs the off-by-default `HypervisorPlatform` Windows feature; guest
+boot ≈ 7 s under TCG). Track real progress against the milestone table in `OS_PLAN.md` Part 3;
+do not document planned code here as if it exists.
 
 ## Build and Test Commands
 
@@ -156,6 +184,7 @@ gatos.slnx                      XML solution (all 11 projects)
 Directory.Build.props           shared build config + KSA/dist path resolution
 CLAUDE.md / README.md           this file; user-facing readme
 OS_IDEA.md / OS_ANALYSIS.md / OS_PLAN.md   goals / research / execution plan
+docs/VALIDATION.md              in-game validation record (T6.6/T6.7 checklists + results)
 LICENSE                         MIT (the mod's own code)
 THIRD-PARTY-NOTICES.md          QEMU GPLv2, Alpine, SSH.NET, Tomlyn, …
 vendor/purrTTY/                 pinned contract DLLs (committed) — see its README for the pin
@@ -179,7 +208,7 @@ gatOS.SimFs    → NineP, Logging                       /sim node tree + snapsho
 gatOS.Vm       → Logging, Tomlyn                      QEMU lifecycle, disks, ports, GatOsPaths (M3, built)
 gatOS.Ssh      → Vm, Logging, vendor/purrTTY, SSH.NET SshShellSession : ICustomShell (M4, built)
 gatOS.GameMod  → Ssh, SimFs, Vm, Logging, vendor/purrTTY,
-                  KSA DLLs, StarMap.API, Lib.Harmony, ModMenu.Attributes, Tomlyn   the KSA mod (M6)
+                  KSA DLLs, StarMap.API, Lib.Harmony, ModMenu.Attributes, Tomlyn   the KSA mod (M6, built)
 ```
 Each library has a matching `*.Tests` NUnit project (`gatOS.GameMod` has none — it is game-coupled).
 
@@ -187,8 +216,9 @@ Each library has a matching `*.Tests` NUnit project (`gatOS.GameMod` has none �
 > assemblies. Everything else must build and test on a bare host with no game DLLs present. This is
 > what keeps the 9p server, VM manager and SSH session headlessly testable (mirrors purrTTY's
 > backend/frontend discipline). KSA references in `GameMod` are condition-guarded
-> (`Condition="Exists('$(KSAFolder)/…')"`) so the rest of the solution still builds when the
-> assemblies are absent.
+> (`Condition="Exists('$(KSAFolder)/…')"`) **and** its game-coupled sources (`Game/**`, the
+> partial half of `Mod`) are compile-gated on `KSAFolder/KSA.dll`, so the whole solution —
+> `GameMod` included — still builds when the assemblies are absent.
 
 ### Runtime architecture (recap)
 

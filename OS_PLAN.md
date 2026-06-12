@@ -974,7 +974,18 @@ tip release cut.
 
 ---
 
-# M6 — gatOS.GameMod: in-game integration
+# M6 — gatOS.GameMod: in-game integration — **CODE DONE; T6.6/T6.7 in-game passes pending**
+
+> (As built — the full path short of the purrTTY/ModMenu UI layers was verified headlessly on the
+> Windows 11 game machine, 2026-06-12, by driving the **deployed dist** exactly as the game would:
+> `Assembly.LoadFrom` of the dist assemblies, lifecycle hooks by reflection, a session opened via
+> `CustomShellRegistry.CreateShell("gatos")` → real VM boot from the dist's guest + bundled QEMU,
+> echo round-trip, launch-size + live resize, session-stop-keeps-VM, 2.2 s QGA unload. Results
+> recorded in `docs/VALIDATION.md`. The structural deviation from the sketch below: `Mod` is a
+> **partial class** — `Mod.cs` stays free of game-assembly types so CI without the KSA DLLs still
+> builds the project, and the game-coupled half lives in `Game/Mod.Game.cs` +
+> `Game/BrutalModLogger.cs` behind a csproj compile gate (`KsaAssembliesPresent`), reached through
+> `partial void` seams whose calls drop out when the files are excluded.)
 
 ## T6.1 — mod.toml + Mod.cs lifecycle skeleton
 
@@ -1024,6 +1035,17 @@ CustomShellRegistry.Instance.RegisterShell("gatos", () => new SshShellSession(_b
 `Unload`: `VmHost.StopAsync(10s)` synchronously bounded (`.GetAwaiter().GetResult()` with an
 outer 15 s timeout), dispose broker.
 
+> (As built: `Unload` runs `broker.DisposeAsync().AsTask().Wait(15 s)` — the broker's dispose IS
+> the 10 s-grace stop ladder. Three hardening points beyond the sketch, all motivated by the JIT
+> lazy-resolution lesson the registry's `SafeLogDebug` documents: ① the logging swap is called
+> through `TryInstallGameLogging`, a wrapper whose try/catch sits at the partial-method **call
+> site**, so a game-assembly load failure can never abort init; ② `OnAfterUi` catches a seam
+> failure once, logs, and sets a `_uiDead` latch instead of throwing every frame; ③ purrTTY
+> presence is detected *after* registration by checking whether `typeof(CustomShellRegistry)`
+> resolved from gatOS's own mod folder (= vendored fallback, purrTTY absent) — no assembly-scan
+> heuristics. `_instance` is published even when init fails so the menu/status window can show
+> the failure. Menu actions live on `Mod` (game-free, `Task.Run`); only drawing is game-coupled.)
+
 ## T6.2 — Mod-dir asset resolution + first-run install
 
 - Locate `guest/` + `qemu/` beside the mod DLL; validate `manifest.toml` (schema=1) at init;
@@ -1031,6 +1053,13 @@ outer 15 s timeout), dispose broker.
   out of the lifecycle hook).
 - `DiskManager.EnsureBaseInstalled()` runs on first `EnsureStartedAsync` (not at game launch —
   no I/O before the player asks for a terminal).
+
+> (As built: `ModAssets.Validate()` → `AssetStatus(Error, Manifest, QemuPath)`. It reuses
+> `GuestManifest.Load` for the schema/keys validation, checks the four referenced artifact files
+> exist, and folds QEMU resolution in via `QemuLocator.Find()` (whose `QemuNotFoundException`
+> message already carries the per-OS player hint). All problems accumulate into one multi-line
+> `Error` string the status window shows verbatim. No subprocess is spawned at init — the QEMU
+> version check stays a boot-time concern.)
 
 ## T6.3 — gatos.toml config (Tomlyn)
 
@@ -1049,6 +1078,15 @@ Load with `Toml.TryToModel` (diagnostics logged, fall back to defaults — never
 file); write through an atomic temp+rename helper (copy the pattern from purrTTY's
 `Configuration/AtomicFile`). Created with defaults on first run.
 
+> (As built: Tomlyn 2.6 has the System.Text.Json-shaped API — `Toml.TryToModel` no longer
+> exists. `GatOsConfig.LoadOrCreate` uses `TomlSerializer.Deserialize` with
+> `PropertyNamingPolicy = SnakeCaseLower` (one cached options instance) inside try/catch:
+> verified against 2.6.0 that missing keys keep property defaults, unknown keys are ignored,
+> and malformed TOML / wrong value types throw `TomlException`. Fallback-to-defaults never
+> overwrites the user's file; only a *missing* file is written (with a `#`-comment field
+> reference header). `Normalize()` clamps memory 128–8192 / cpus 1–16 / sample 1–120 /
+> timeout 0–3600 and whitelists `accel_override`, each correction logged.)
+
 ## T6.4 — Diagnostics menu + status window
 
 - `[ModMenuEntry("gatOS")]` static menu (ModMenu.Attributes package, same as purrTTY):
@@ -1059,6 +1097,18 @@ file); write through an atomic temp+rename helper (copy the pattern from purrTTY
   ports, uptime, guest version, last fault reason, path of newest qemu log. Reads only the
   volatile `VmHost.Status` — zero blocking. (No transpiler fallback menu in MVP; ModMenu-less
   users still get full function via purrTTY's menus — document in README.)
+
+> (As built, in `Game/Mod.Game.cs`: the window adds the T6.2 asset-validation result, a config
+> summary, the last menu-action note, and — when accel=tcg on Windows — the T6.7 WHPX hint with
+> the DISM command. The newest-log lookup is the one filesystem touch and is cached, refreshed
+> only when the `VmStatus` record reference changes (state transitions) — rule 5 holds. Two
+> non-obvious mechanics: game-typed **statics** sit in a nested `Palette` class because field
+> types resolve at *type load* and `Mod` must stay loadable without game assemblies (proved by
+> the headless smoke, which failed on exactly this before the fix); both partial impls are
+> `[MethodImpl(NoInlining)]` so a missing game assembly faults at the guarded call sites in
+> Mod.cs rather than at the caller's JIT. `BrutalModLogger`'s ctor throws while
+> `LogSystem.IsEnabled` is false — otherwise `LogCategory` calls silently no-op and gatOS logs
+> would vanish; the throw keeps the console logger instead.)
 
 ## T6.5 — Dist packaging (CopyCustomContent)
 
@@ -1095,7 +1145,11 @@ mods dir on the dev machine.
 > exists (M11 creates it). Verified: stale dist DLLs are deleted on rebuild, guest survives,
 > 0 warnings, full suite green.)
 
-## T6.6 — In-game validation pass #1 (the M6 exit)
+## T6.6 — In-game validation pass #1 (the M6 exit) — **PENDING** (needs the purrTTY tip release)
+
+> Status: `docs/VALIDATION.md` exists with this checklist plus the 2026-06-12 headless dist
+> smoke that pre-validated everything except the purrTTY/ModMenu UI layers (items 2–6 in spirit:
+> registry-driven session, boot, resize, concurrent-VM semantics, clean unload).
 
 Manual checklist (record results in `docs/VALIDATION.md`):
 1. Launch KSA with purrTTY (≥ the T5.x release) + gatOS installed.
@@ -1106,7 +1160,10 @@ Manual checklist (record results in `docs/VALIDATION.md`):
 6. Quit game → qemu process gone (check task manager), disk lock released.
 7. gatOS without purrTTY installed → game loads clean, one log line, no crash.
 
-## T6.7 — Windows validation pass (the schedule-risk item — timebox 2–3 days)
+## T6.7 — Windows validation pass (the schedule-risk item — timebox 2–3 days) — **PENDING**
+> (Item 2's substance is already verified headlessly on the Windows 11 game machine: WHPX failed
+> with "Unexpected VP exit code 4" because `HypervisorPlatform` is disabled there, the classifier
+> retried with forced TCG, and the session was fully usable — see `docs/VALIDATION.md`.)
 
 On a real Windows 11 machine (and ideally one AMD box):
 1. WHP feature enabled: boot under WHPX, record boot time + `EffectiveAccel`.
