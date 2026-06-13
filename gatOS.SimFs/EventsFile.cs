@@ -32,6 +32,9 @@ public sealed class EventsFile : VfsFile
     }
 
     /// <inheritdoc />
+    public override bool IsStreaming => true;
+
+    /// <inheritdoc />
     public override long Size => 1;
 
     /// <inheritdoc />

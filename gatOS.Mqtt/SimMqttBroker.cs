@@ -3,6 +3,8 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using gatOS.Logging;
+using gatOS.NineP.Protocol;
+using gatOS.NineP.Vfs;
 using gatOS.SimFs;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
@@ -30,6 +32,14 @@ namespace gatOS.Mqtt;
 ///     other transports accept — and the outcome is published to <c>gatos/command/result</c>.
 ///     Threading: the publish pump and the command interceptor only read the latest snapshot and
 ///     enqueue commands (rules 1–2).
+///     <para>When a <c>simRoot</c> is supplied, a second pump mirrors the <c>/sim</c> filesystem
+///     leaf-by-leaf under <c>gatos/sim/&lt;path&gt;</c> (one retained topic per scalar/<c>ctl</c>/
+///     <c>debug</c> field, so an MQTT explorer renders the whole device tree, not just JSON blobs).
+///     It publishes only changed leaves (throttled to <c>fieldFeedHz</c>), clears vanished ones, and
+///     exposes <c>gatos/sim/vessels/active_id</c> as a pointer in place of the duplicate <c>active</c>
+///     alias subtree. A client writes one field by publishing its value to
+///     <c>gatos/sim/&lt;path&gt;/set</c> (the same actuation path as a 9p <c>echo</c>; outcome on
+///     <c>gatos/command/result</c>).</para>
 ///     <para>Retained per-vessel topics for a vessel that has since vanished linger until the broker
 ///     restarts (pre-existing behavior — clients should reconcile against the live vessel list).</para>
 /// </remarks>
@@ -41,21 +51,39 @@ public sealed class SimMqttBroker : IAsyncDisposable
     /// <summary>The topic the broker publishes each command's <c>{outcome}</c>/<c>{errno}</c> result to.</summary>
     public const string CommandResultTopic = "gatos/command/result";
 
+    /// <summary>Topic prefix for the field-level <c>/sim</c> mirror (one topic per leaf).</summary>
+    private const string FieldTopicPrefix = "gatos/sim/";
+
+    /// <summary>Suffix a client appends to a field topic to write it (e.g. <c>.../ctl/throttle/set</c>).</summary>
+    private const string SetSuffix = "/set";
+
     private readonly SnapshotStore _store;
     private readonly ICommandSink? _commands;
     private readonly Func<string>? _transports;
+    private readonly VfsDirectory? _simRoot;
+    private readonly int _fieldFeedHz;
+    private readonly Dictionary<string, string> _lastFields = new(); // owned by the field pump task only
     private readonly CancellationTokenSource _cts = new();
     private MqttServer? _server;
     private Task? _pump;
+    private Task? _fieldPump;
 
     /// <param name="store">The published-snapshot exchange telemetry is read from.</param>
     /// <param name="commands">The command sink the command topic routes to; null = telemetry only.</param>
     /// <param name="transports">Optional provider for the <c>gatos/status</c> transports line.</param>
-    public SimMqttBroker(SnapshotStore store, ICommandSink? commands = null, Func<string>? transports = null)
+    /// <param name="simRoot">
+    ///     The <c>/sim</c> VFS tree (the same instance the 9p server serves); when supplied, the
+    ///     field-level <c>gatos/sim/&lt;path&gt;</c> mirror runs. Null = JSON topics only.
+    /// </param>
+    /// <param name="fieldFeedHz">Field-mirror publish cadence, throttled below the sample rate.</param>
+    public SimMqttBroker(SnapshotStore store, ICommandSink? commands = null, Func<string>? transports = null,
+        VfsDirectory? simRoot = null, int fieldFeedHz = 4)
     {
         _store = store;
         _commands = commands;
         _transports = transports;
+        _simRoot = simRoot;
+        _fieldFeedHz = fieldFeedHz;
     }
 
     /// <summary>The bound TCP port (valid after <see cref="StartAsync"/>).</summary>
@@ -69,6 +97,8 @@ public sealed class SimMqttBroker : IAsyncDisposable
     {
         Port = await TryStartOnAsync(preferredPort).ConfigureAwait(false);
         _pump = Task.Run(() => PublishPumpAsync(_cts.Token));
+        if (_simRoot is not null)
+            _fieldPump = Task.Run(() => FieldPumpAsync(_cts.Token));
     }
 
     private async Task<int> TryStartOnAsync(int preferredPort)
@@ -112,11 +142,27 @@ public sealed class SimMqttBroker : IAsyncDisposable
         return port;
     }
 
-    // ---- inbound: gatos/command -> the command pipeline ----------------------------------
+    // ---- inbound: gatos/command + gatos/sim/<path>/set -> the command pipeline ------------
 
     private async Task OnClientPublishAsync(InterceptingPublishEventArgs args)
     {
-        if (args.ApplicationMessage.Topic != CommandTopic)
+        var topic = args.ApplicationMessage.Topic;
+
+        // Field-level actuation: a client publish to gatos/sim/<path>/set writes one /sim field
+        // through the same VFS node path as a 9p `echo` (the field value topics gatos/sim/<path>
+        // are injected by the field pump — empty client id — and fall through to be delivered).
+        if (_simRoot is { } root && topic.StartsWith(FieldTopicPrefix, StringComparison.Ordinal)
+            && topic.EndsWith(SetSuffix, StringComparison.Ordinal))
+        {
+            if (string.IsNullOrEmpty(args.ClientId))
+                return; // not a client publish
+            args.ProcessPublish = false; // consume the set; never rebroadcast it
+            await HandleFieldSetAsync(root, topic, args.ApplicationMessage.PayloadSegment.ToArray())
+                .ConfigureAwait(false);
+            return;
+        }
+
+        if (topic != CommandTopic)
             return;
 
         // The broker injects its own retained messages with an empty client id; ignore those so we
@@ -233,6 +279,110 @@ public sealed class SimMqttBroker : IAsyncDisposable
         }
     }
 
+    // ---- outbound: field-level /sim mirror (gatos/sim/<path>) ----------------------------
+
+    private async Task FieldPumpAsync(CancellationToken ct)
+    {
+        if (_simRoot is not { } root)
+            return;
+
+        // Emit-then-rate-limit: publish the latest snapshot's changed leaves, then sleep one
+        // interval before looking for the next change. The store coalesces (it keeps only Current),
+        // so after the sleep WaitForNextAsync returns the newest snapshot — we publish at most
+        // field_feed_hz times a second yet never drop the final state when the sim pauses.
+        var interval = TimeSpan.FromSeconds(1.0 / Math.Max(1, _fieldFeedHz));
+        var lastSeq = -1L;
+        while (!ct.IsCancellationRequested)
+        {
+            SimSnapshot snapshot;
+            try
+            {
+                snapshot = await _store.WaitForNextAsync(lastSeq, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            lastSeq = snapshot.Sequence;
+            try
+            {
+                await PublishFieldsAsync(root, snapshot, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                ModLog.Log.Debug($"mqtt: field feed failed: {ex.Message}");
+            }
+
+            try
+            {
+                await Task.Delay(interval, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
+    }
+
+    private async Task PublishFieldsAsync(VfsDirectory root, SimSnapshot snapshot, CancellationToken ct)
+    {
+        var current = new Dictionary<string, string>(_lastFields.Count);
+        // Canonical vessels/by-id only — the `active` alias would duplicate a whole subtree; expose
+        // the active vessel id as a small pointer instead.
+        current["vessels/active_id"] = snapshot.ActiveVesselId ?? "";
+        foreach (var (path, file) in VfsScan.Leaves(root, p => p == "vessels/active"))
+        {
+            try
+            {
+                current[path] = await VfsScan.ReadTextAsync(file, ct).ConfigureAwait(false);
+            }
+            catch (VfsErrorException)
+            {
+                // The leaf's entity vanished mid-walk; omit it (cleared below if previously published).
+            }
+        }
+
+        // Publish new/changed leaves; clear (empty retained) the ones that disappeared.
+        foreach (var (path, value) in current)
+            if (!_lastFields.TryGetValue(path, out var old) || old != value)
+                await PublishAsync(FieldTopicPrefix + path, value, retain: true).ConfigureAwait(false);
+        foreach (var path in _lastFields.Keys)
+            if (!current.ContainsKey(path))
+                await PublishAsync(FieldTopicPrefix + path, "", retain: true).ConfigureAwait(false);
+
+        _lastFields.Clear();
+        foreach (var (path, value) in current)
+            _lastFields[path] = value;
+    }
+
+    private async Task HandleFieldSetAsync(VfsDirectory root, string topic, byte[] payload)
+    {
+        var inner = topic[FieldTopicPrefix.Length..^SetSuffix.Length];
+        string resultJson;
+        try
+        {
+            if (VfsScan.Resolve(root, inner) is not { } file)
+                resultJson = Result("ENOENT", $"no field '{inner}'");
+            else
+            {
+                await VfsScan.WriteTextAsync(file, Encoding.UTF8.GetString(payload), _cts.Token)
+                    .ConfigureAwait(false);
+                resultJson = "{\"outcome\":\"ok\"}";
+            }
+        }
+        catch (VfsErrorException ex)
+        {
+            resultJson = Result(LinuxErrno.Name(ex.Errno), ex.Message);
+        }
+        catch (Exception ex)
+        {
+            resultJson = Result("EINVAL", ex.Message);
+        }
+
+        await PublishAsync(CommandResultTopic, resultJson, retain: false).ConfigureAwait(false);
+    }
+
     private async Task PublishAsync(string topic, string payload, bool retain)
     {
         if (_server is not { } server)
@@ -252,11 +402,13 @@ public sealed class SimMqttBroker : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await _cts.CancelAsync().ConfigureAwait(false);
-        if (_pump is not null)
+        foreach (var pump in new[] { _pump, _fieldPump })
         {
+            if (pump is null)
+                continue;
             try
             {
-                await _pump.ConfigureAwait(false);
+                await pump.ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {

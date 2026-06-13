@@ -86,6 +86,15 @@ public abstract class VfsFile : VfsNode
     public virtual bool IsWritable => false;
 
     /// <summary>
+    ///     Whether this is a growing-log or blocking-event file (a "stream"), as opposed to a scalar
+    ///     whose current value a single read returns at once. A bulk scalar walk (<see cref="VfsScan"/>,
+    ///     used by the field-level MQTT/HTTP projections) <b>must not</b> read these: a blocking-event
+    ///     file would park the walk, and a growing-log is a stream, not a point value. The default is
+    ///     a scalar sensor/state file; <c>stream</c>/<c>events</c>/<c>alarm</c> override this to true.
+    /// </summary>
+    public virtual bool IsStreaming => false;
+
+    /// <summary>
     ///     Opens a per-fid write handle (one per write-mode <c>Tlopen</c>). The default throws
     ///     <see cref="VfsErrorException"/> with EACCES — only <see cref="IsWritable"/> files
     ///     override it.

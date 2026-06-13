@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using gatOS.SimFs;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
 using MQTTnet;
@@ -27,7 +28,10 @@ public sealed class MqttBrokerTests
     {
         _store = new SnapshotStore();
         _sink = new RecordingSink();
-        _broker = new SimMqttBroker(_store, _sink);
+        // Share the real /sim tree (built with the sink, so ctl/ exists) so the field-level
+        // gatos/sim/<path> mirror runs; a high field cadence keeps the tests prompt.
+        var simRoot = SimFsTree.Build(_store, _sink, null);
+        _broker = new SimMqttBroker(_store, _sink, simRoot: simRoot, fieldFeedHz: 50);
         await _broker.StartAsync(0); // ephemeral
 
         _messages = Channel.CreateUnbounded<(string, string)>();
@@ -145,6 +149,35 @@ public sealed class MqttBrokerTests
             Assert.That(json.RootElement.TryGetProperty("situation", out _), Is.True,
                 "the full record uses 'situation', not the compact doc's 'sit'");
         });
+    }
+
+    [Test]
+    public async Task Field_TopicsMirrorTheSimTree()
+    {
+        _store.Publish(Snapshot(1, Vessel("v1")));
+        // Both topics publish in one batch; collect them together (order is not guaranteed, and the
+        // active alias subtree is pruned — a pointer stands in, prune is covered by VfsScan tests).
+        var found = await WaitForPayloadsAsync(new Dictionary<string, Func<string, bool>>
+        {
+            ["gatos/sim/vessels/by-id/v1/situation"] = p => p == "Freefall",
+            ["gatos/sim/vessels/active_id"] = p => p == "v1",
+        });
+        Assert.Multiple(() =>
+        {
+            Assert.That(found["gatos/sim/vessels/by-id/v1/situation"], Is.EqualTo("Freefall"),
+                "one topic per /sim leaf, the bare value");
+            Assert.That(found["gatos/sim/vessels/active_id"], Is.EqualTo("v1"));
+        });
+    }
+
+    [Test]
+    public async Task Field_SetActuatesAControlPoint()
+    {
+        _store.Publish(Snapshot(1, Vessel("v1"))); // so vessels/by-id/v1/ctl/throttle resolves
+        await _client.PublishStringAsync("gatos/sim/vessels/by-id/v1/ctl/throttle/set", "0.8");
+        var result = await WaitForAsync(t => t == SimMqttBroker.CommandResultTopic);
+        Assert.That(result, Does.Contain("ok"));
+        Assert.That(_sink.Last, Is.EqualTo(new SimCommand("v1", "vessel.throttle", SimCommand.NoOrdinal, 0.8)));
     }
 
     [Test]
@@ -290,6 +323,24 @@ public sealed class MqttBrokerTests
                     return msg.Payload;
 
         throw new TimeoutException($"no matching payload on {topic}");
+    }
+
+    /// <summary>
+    ///     Collects the latest payload satisfying each topic's predicate, in a single pass over the
+    ///     stream, so waiting for one topic never discards another that arrives in the same batch.
+    /// </summary>
+    private async Task<Dictionary<string, string>> WaitForPayloadsAsync(
+        Dictionary<string, Func<string, bool>> wanted)
+    {
+        var found = new Dictionary<string, string>();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        while (found.Count < wanted.Count && await _messages.Reader.WaitToReadAsync(cts.Token))
+            while (_messages.Reader.TryRead(out var msg))
+                if (!found.ContainsKey(msg.Topic) && wanted.TryGetValue(msg.Topic, out var ok) && ok(msg.Payload))
+                    found[msg.Topic] = msg.Payload;
+        Assert.That(found, Has.Count.EqualTo(wanted.Count),
+            $"never saw: {string.Join(", ", wanted.Keys.Except(found.Keys))}");
+        return found;
     }
 
     private static SimSnapshot Snapshot(long seq, params VesselSnapshot[] vessels)

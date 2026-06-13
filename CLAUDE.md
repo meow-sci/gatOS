@@ -286,7 +286,10 @@ file), long-poll `GET /v1/time/wait`, `GET /v1/openapi.json`, and one generic `P
 carrying the `SimCommand` shape with `CommandOutcome`→HTTP-status+`{errno,message}` (debug.* gated).
 The read JSON is produced by the shared, game-free `SimJson` projection layer (`gatOS.SimFs`) — the
 single source of truth both HTTP and MQTT serve, so the two stay byte-compatible (transport-parity
-invariant below). `Mod`
+invariant below). It also serves the **field-level filesystem mirror** `GET /v1/fs/<path>` (one
+endpoint per `/sim` leaf, raw text value), `?stream=1` for an SSE feed of one value on change, and
+`POST /v1/fs/<path>` to write/actuate one field (the `echo > file` shape) — all resolved by walking
+the same `/sim` VFS tree via `VfsScan` (config `[http] http_field_endpoints`). `Mod`
 hosts it (config `[http] enabled`/`preferred_port`=4242 ephemeral-fallback); `VmHost`/`QemuCommandBuilder`
 inject `gatos.httpport` on the cmdline (guest dials `10.0.2.2:<port>` outbound via slirp, like 9p).
 **`gatOS.Bus`** (G7): the framing codecs — `Ccsds` (TM space packets), `Nmea` (sentences +
@@ -304,7 +307,8 @@ same `Formats.VesselTelemetry` JSON over both — parse-identical; the 9p file a
 per the file convention, the HTTP/MQTT bodies do not), reactive events, warp-aware time helpers,
 `GatosError` errno mapping, and
 example scripts + a pure-shell README. Config grew `[http]` + `[serial]` flags. Tests:
-gatOS.Http 26 (HttpClient over the live socket, incl. `/v1/system` + the per-vessel stream SSE),
+gatOS.Http 30 (HttpClient over the live socket, incl. `/v1/system`, the per-vessel stream SSE, and
+the `/v1/fs/<path>` field reads/SSE/writes),
 gatOS.Bus 32 (codec/SCPI + `SerialBridge`/connector
 over a loopback socket pair). Full non-IT suite green, zero warnings. **Guest image v3 is BUILT
 (`GUEST_VERSION=3`, released + fetched).** All three extra transports are **validated in-guest**
@@ -323,14 +327,22 @@ emits retained topics `gatos/time`, `gatos/status`, `gatos/system`, `gatos/bodie
 (whole world), `gatos/vessels/<id>/telemetry` (the compact SDK-stable doc) and
 `gatos/vessels/<id>/snapshot` (the full granular vessel record), plus the non-retained
 `gatos/events`; clients publish a JSON `SimCommand`
-to `gatos/command` and the outcome is published to `gatos/command/result` (debug.* gated). `Mod` hosts
+to `gatos/command` and the outcome is published to `gatos/command/result` (debug.* gated). A second
+pump (config `[mqtt] mqtt_field_topics`, cadence `field_feed_hz`=4) mirrors the **whole `/sim`
+filesystem leaf-by-leaf** under retained `gatos/sim/<path>` (one topic per scalar/`ctl`/`debug` field,
+changed-only, via the shared `VfsScan` walk over the same `/sim` tree — so an MQTT explorer renders
+the device tree, not just JSON blobs): canonical `vessels/by-id` only (the duplicate `active` alias
+is replaced by a `gatos/sim/vessels/active_id` pointer), and a client writes one field by publishing
+its value to `gatos/sim/<path>/set` (same actuation as a 9p `echo`; outcome on
+`gatos/command/result`). `Mod` hosts
 it (config `[mqtt] enabled`/`preferred_port`=1883 ephemeral-fallback; the broker also gets the
 `SimTransportsStatus` provider so `gatos/status` carries the bound-ports line); `VmHost`/`QemuCommandBuilder`
 inject `gatos.mqttport`; the guest exports `$GATOS_MQTT=sim:<port>` (active on guest v3, like
-`$GATOS_HTTP` — validated in-guest, see `docs/VALIDATION.md`). `gatOS.Mqtt.Tests` (12) connect a real
-MQTTnet client to the broker (the full topic set incl. the per-vessel `snapshot` and enriched
-time/status, retained delivery to a late subscriber, command routing + errno, debug gating, and that
-consumed commands are not rebroadcast). Full `GATOS_IT=1` suite green on guest v3, zero warnings.
+`$GATOS_HTTP` — validated in-guest, see `docs/VALIDATION.md`). `gatOS.Mqtt.Tests` (14) connect a real
+MQTTnet client to the broker (the full topic set incl. the per-vessel `snapshot`, the field-level
+`gatos/sim/<path>` mirror + `/set` actuation, enriched time/status, retained delivery to a late
+subscriber, command routing + errno, debug gating, and that consumed commands are not rebroadcast).
+Full `GATOS_IT=1` suite green on guest v3, zero warnings.
 **Still pending: the in-game pass** (purrTTY tip release is now cut — the T6.6/T9.3/G1–G4 checklists
 in `docs/VALIDATION.md` are runnable but need a live KSA flight). The headless host↔guest stack
 (VM, shells, `/sim`, HTTP/MQTT/serial transports, control surface) is otherwise fully built and
@@ -411,7 +423,9 @@ tools/                          fetch-qemu.{sh,ps1} + qemu-win64-files.txt (pin 
 
 ```
 gatOS.Logging                    (no deps)            game-free logging shim
-gatOS.NineP    → Logging                              9P2000.L codec + server + VFS (M7, built)
+gatOS.NineP    → Logging                              9P2000.L codec + server + VFS (M7, built);
+                                                      VfsScan (walk/read/write) + VfsFile.IsStreaming
+                                                      back the field-level transport mirrors
 gatOS.SimFs    → NineP, Logging                       /sim tree, snapshots, stream/events, AlarmFile,
                                                       EventDiffer/SampleClock/Sanitize (M8+M9+G3, built);
                                                       Formats + SimJson (the shared JSON projection
@@ -458,8 +472,18 @@ client), plus `gatOS.Vm`/`gatOS.Ssh` for its in-VM integration fixture.
 > construction. Do **not** add a transport-specific read or command path. (Two read *shapes* coexist
 > deliberately and are both reachable on every transport: the compact per-vessel `telemetry` doc —
 > `Formats.VesselTelemetry`, frozen for the SDK — and the full raw-record snapshot via `SimJson`.)
-> A future per-data-source TOML toggle will gate which `SimJson` categories each transport serves;
-> keep the projection methods category-segmented so that stays a localized change.
+>
+> **Field-level parity** (the third shape): HTTP `/v1/fs/<path>` and MQTT `gatos/sim/<path>` mirror
+> the `/sim` filesystem **leaf-by-leaf** (one endpoint/topic per scalar/`ctl`/`debug` field, with
+> per-value SSE and per-field actuation). These are not a fourth definition — they are produced by
+> **walking the one `/sim` VFS tree** the 9p server serves (`VfsScan.Leaves`/`Resolve`/`ReadTextAsync`/
+> `WriteTextAsync` in `gatOS.NineP.Vfs`), so adding a `/sim` node lights it up everywhere with no new
+> code. Blocking/growing-log files (`stream`/`events`/`alarm`, marked `VfsFile.IsStreaming`) are
+> excluded from the bulk walk and keep their dedicated streaming mechanisms.
+>
+> A future per-data-source TOML toggle will gate which categories each transport serves; the existing
+> `[http] http_field_endpoints` / `[mqtt] mqtt_field_topics` / `field_feed_hz` flags are its first
+> slice, and the category-segmented `SimJson` methods keep that a localized change.
 
 ### Runtime architecture (recap)
 

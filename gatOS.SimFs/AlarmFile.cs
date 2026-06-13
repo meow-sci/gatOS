@@ -38,6 +38,9 @@ public sealed class AlarmFile : VfsFile
     /// <inheritdoc />
     public override bool IsWritable => true;
 
+    /// <inheritdoc />
+    public override bool IsStreaming => true; // blocking read — a scalar walk must skip it
+
     /// <summary>Blocking-read file: 1 is the only always-truthful size claim (see <see cref="EventsFile"/>).</summary>
     public override long Size => 1;
 

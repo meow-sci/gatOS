@@ -409,7 +409,8 @@ public sealed partial class Mod
             return;
         try
         {
-            var server = new SimHttpServer(store, _commandQueue, SimTransportsStatus);
+            var server = new SimHttpServer(store, _commandQueue, SimTransportsStatus,
+                _config.HttpFieldEndpoints ? _simRoot : null);
             server.StartAsync(_config.HttpPreferredPort).GetAwaiter().GetResult();
             _httpServer = server;
             ModLog.Log.Info($"gatOS HTTP API listening on 127.0.0.1:{server.Port} "
@@ -438,7 +439,8 @@ public sealed partial class Mod
             return;
         try
         {
-            var broker = new SimMqttBroker(store, _commandQueue, SimTransportsStatus);
+            var broker = new SimMqttBroker(store, _commandQueue, SimTransportsStatus,
+                _config.MqttFieldTopics ? _simRoot : null, _config.FieldFeedHz);
             broker.StartAsync(_config.MqttPreferredPort).GetAwaiter().GetResult();
             _mqttBroker = broker;
             ModLog.Log.Info($"gatOS MQTT broker listening on 127.0.0.1:{broker.Port} "

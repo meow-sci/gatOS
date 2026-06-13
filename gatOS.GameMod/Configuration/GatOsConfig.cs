@@ -41,6 +41,9 @@ public sealed class GatOsConfig
         # http_preferred_port   preferred HTTP port (4242); 0 = ephemeral only; falls back on a clash
         # mqtt_enabled          run the embedded MQTT broker (guest reaches it at $GATOS_MQTT / 10.0.2.2)
         # mqtt_preferred_port   preferred MQTT port (1883); 0 = ephemeral only; falls back on a clash
+        # http_field_endpoints  serve the per-field /v1/fs/<path> filesystem mirror (reads + SSE + writes)
+        # mqtt_field_topics     publish the per-field gatos/sim/<path> filesystem mirror (one topic per leaf)
+        # field_feed_hz         cadence of the MQTT field mirror in Hz (default 4; clamped 1..30)
         # serial_telemetry_port stream telemetry over the gatos.serial virtio-serial port (G7)
         # serial_command_port   accept SCPI commands over the gatos.serial virtio-serial port (G7)
         # serial_mode           serial telemetry wire format: ndjson | nmea | ccsds (default ndjson)
@@ -100,6 +103,15 @@ public sealed class GatOsConfig
 
     /// <summary>Preferred MQTT port (1883); 0 = ephemeral only; falls back to ephemeral on a clash.</summary>
     public int MqttPreferredPort { get; set; } = 1883;
+
+    /// <summary>Serve the per-field <c>/v1/fs/&lt;path&gt;</c> filesystem mirror (reads, SSE, writes).</summary>
+    public bool HttpFieldEndpoints { get; set; } = true;
+
+    /// <summary>Publish the per-field <c>gatos/sim/&lt;path&gt;</c> filesystem mirror (one topic per leaf).</summary>
+    public bool MqttFieldTopics { get; set; } = true;
+
+    /// <summary>Cadence of the MQTT field mirror, Hz (clamped 1..30); throttled below the sample rate.</summary>
+    public int FieldFeedHz { get; set; } = 4;
 
     /// <summary>Stream telemetry out over the <c>gatos.serial</c> virtio-serial port (G7).</summary>
     public bool SerialTelemetryPort { get; set; }
@@ -187,6 +199,7 @@ public sealed class GatOsConfig
         if (MqttPreferredPort != 0)
             MqttPreferredPort = Clamp(nameof(MqttPreferredPort), MqttPreferredPort, 1024, 65535);
         SerialIntervalMs = Clamp(nameof(SerialIntervalMs), SerialIntervalMs, 50, 60000);
+        FieldFeedHz = Clamp(nameof(FieldFeedHz), FieldFeedHz, 1, 30);
 
         var serialMode = SerialMode.Trim().ToLowerInvariant();
         if (serialMode is not ("ndjson" or "nmea" or "ccsds"))

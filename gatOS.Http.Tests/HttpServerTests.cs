@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using gatOS.NineP.Vfs;
+using gatOS.SimFs;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
 
@@ -24,7 +26,10 @@ public sealed class HttpServerTests
     {
         _store = new SnapshotStore();
         _sink = new RecordingSink();
-        _server = new SimHttpServer(_store, _sink, () => "9p 1; http 2");
+        // Build the real /sim tree (with the sink, so ctl/ exists) and share it with the server so
+        // the field-level /v1/fs endpoints resolve against the same tree the 9p server would serve.
+        var simRoot = SimFsTree.Build(_store, _sink, null);
+        _server = new SimHttpServer(_store, _sink, () => "9p 1; http 2", simRoot);
         await _server.StartAsync();
         _client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{_server.Port}/") };
         _store.Publish(Snapshot(1, Vessel("v1")));
@@ -207,6 +212,50 @@ public sealed class HttpServerTests
         Assert.That(line, Is.Not.Null);
         using var json = JsonDocument.Parse(line!);
         Assert.That(json.RootElement.GetProperty("sit").GetString(), Is.EqualTo("Freefall"));
+    }
+
+    [Test]
+    public async Task Fs_ReadsAScalarField()
+    {
+        var value = (await _client.GetStringAsync("v1/fs/vessels/by-id/v1/situation")).Trim();
+        Assert.That(value, Is.EqualTo("Freefall"));
+    }
+
+    [Test]
+    public async Task Fs_UnknownPath_Is404()
+    {
+        var gone = await _client.GetAsync("v1/fs/vessels/by-id/ghost/situation");
+        Assert.That(gone.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task Fs_PostWritesAControlPoint()
+    {
+        var response = await _client.PostAsync("v1/fs/vessels/by-id/v1/ctl/throttle",
+            new StringContent("0.8", Encoding.UTF8, "text/plain"));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(_sink.Last, Is.EqualTo(new SimCommand("v1", "vessel.throttle", SimCommand.NoOrdinal, 0.8)));
+    }
+
+    [Test]
+    public async Task Fs_StreamDeliversTheValue()
+    {
+        using var stream = await _client.GetStreamAsync("v1/fs/time/ut?stream=1");
+        using var reader = new StreamReader(stream);
+
+        string? line = null;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (!cts.IsCancellationRequested)
+        {
+            var read = await reader.ReadLineAsync(cts.Token);
+            if (read is { Length: > 0 } && read.StartsWith("data:"))
+            {
+                line = read["data:".Length..].Trim();
+                break;
+            }
+        }
+
+        Assert.That(line, Is.EqualTo("0.1"), "time/ut at seq 1 (ut = 0.1)");
     }
 
     [Test]

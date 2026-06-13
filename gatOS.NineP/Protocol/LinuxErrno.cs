@@ -42,4 +42,20 @@ public static class LinuxErrno
     ///     is paused or on a load screen). Part of the control-file errno vocabulary.
     /// </summary>
     public const uint ETIMEDOUT = 110;
+
+    /// <summary>The conventional symbolic name for an errno (e.g. <c>2 → "ENOENT"</c>); EIO for unknown.</summary>
+    public static string Name(uint errno) => errno switch
+    {
+        ENOENT => nameof(ENOENT),
+        EIO => nameof(EIO),
+        EBADF => nameof(EBADF),
+        EBUSY => nameof(EBUSY),
+        EACCES => nameof(EACCES),
+        ENOTDIR => nameof(ENOTDIR),
+        EISDIR => nameof(EISDIR),
+        EINVAL => nameof(EINVAL),
+        EOPNOTSUPP => nameof(EOPNOTSUPP),
+        ETIMEDOUT => nameof(ETIMEDOUT),
+        _ => nameof(EIO),
+    };
 }

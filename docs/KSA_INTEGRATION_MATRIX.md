@@ -25,12 +25,15 @@ surface, projected per transport, never re-implemented:
 | Surface | 9p `/sim` | HTTP `/v1` | MQTT `gatos/` |
 |---|---|---|---|
 | Data (granular + atomic) | scalar files + `telemetry` doc | `snapshot`/`system`/`bodies[/{id}]`/`vessels/{id}[/telemetry]` | `snapshot`/`system`/`bodies`/`time`/`status` + `vessels/<id>/{telemetry,snapshot}` |
+| Field-level (per leaf) | the file tree itself | `GET /v1/fs/<path>` (+ `?stream=1` SSE) | retained `gatos/sim/<path>` (one topic/leaf) |
 | Streaming | `stream` / `events` / `time/alarm` | `vessels/{id}/stream` / `events` (SSE) / `time/wait` | retained `vessels/<id>/*` / `events` topics |
-| Control + debug | `ctl/…`, per-module files, `debug/…` | `POST /v1/command` | publish `gatos/command` |
+| Control + debug | `ctl/…`, per-module files, `debug/…` | `POST /v1/command`, `POST /v1/fs/<path>` | publish `gatos/command`, `gatos/sim/<path>/set` |
 
-Reads project the one `SimSnapshot` through `gatOS.SimFs/SimJson` (HTTP + MQTT) or `Formats` (9p);
-writes funnel the one `SimCommand` through the single `ICommandSink`. Add a read to `SimJson` and an
-action to the command table once — every transport gets it. See CLAUDE.md "THE transport-parity rule".
+Aggregate reads project the one `SimSnapshot` through `gatOS.SimFs/SimJson` (HTTP + MQTT) or
+`Formats` (9p); the field-level mirror **walks the one `/sim` VFS tree** (`VfsScan`) the 9p server
+serves; writes funnel the one `SimCommand` through the single `ICommandSink`. Add a read to `SimJson`
+/ a `/sim` node / an action to the command table once — every transport gets it. See CLAUDE.md
+"THE transport-parity rule".
 
 ## Archetypes (KSA_GAME_INTEGRATION_PLAN Part 2)
 

@@ -26,6 +26,9 @@ internal static class TestTree
         /// <inheritdoc />
         public override long Size => 1;
 
+        /// <inheritdoc />
+        public override bool IsStreaming => true; // blocking-event double — a scalar walk must skip it
+
         /// <summary>Releases every parked read with the given text.</summary>
         public void Signal(string text)
         {

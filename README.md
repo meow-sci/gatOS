@@ -29,8 +29,16 @@ control points, and the same debug cheats — pick whichever fits the job:
   `gatos/system`, `gatos/bodies`, `gatos/snapshot` and per-vessel `telemetry`/`snapshot` topics (plus
   live `gatos/events`); publish a command JSON to `gatos/command`.
 
-`$GATOS_HTTP` and `$GATOS_MQTT` are preset in the guest shell, and each transport can be turned on or
-off in `gatos.toml`.
+Both HTTP and MQTT also expose the `/sim` tree **field-by-field**, so an MQTT explorer or a dashboard
+sees every individual reading and control as its own endpoint, not just JSON blobs:
+
+- **HTTP**: `GET /v1/fs/vessels/by-id/<id>/altitude/radar` returns the raw value; add `?stream=1` for
+  an SSE feed of that one value; `POST /v1/fs/.../ctl/throttle` (body `0.8`) actuates it.
+- **MQTT**: each leaf is its own retained topic, e.g. `gatos/sim/vessels/by-id/<id>/altitude/radar`;
+  write a control point by publishing to its `…/set` topic (e.g. `gatos/sim/.../ctl/ignite/set`).
+
+`$GATOS_HTTP` and `$GATOS_MQTT` are preset in the guest shell, and each transport (and its field-level
+mirror) can be turned on or off in `gatos.toml`.
 
 ## Status
 

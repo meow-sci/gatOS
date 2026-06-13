@@ -5,6 +5,8 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using gatOS.Logging;
+using gatOS.NineP.Protocol;
+using gatOS.NineP.Vfs;
 using gatOS.SimFs;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
@@ -32,6 +34,7 @@ public sealed class SimHttpServer : IAsyncDisposable
     private readonly SnapshotStore _store;
     private readonly ICommandSink? _commands;
     private readonly Func<string>? _transports;
+    private readonly VfsDirectory? _simRoot;
     private readonly CancellationTokenSource _cts = new();
     private TcpListener? _listener;
     private Task? _acceptLoop;
@@ -40,11 +43,18 @@ public sealed class SimHttpServer : IAsyncDisposable
     /// <param name="store">The published-snapshot exchange reads project from.</param>
     /// <param name="commands">The command sink writes submit to; null = read-only API.</param>
     /// <param name="transports">Optional provider for <c>/v1/status</c>'s transports line.</param>
-    public SimHttpServer(SnapshotStore store, ICommandSink? commands = null, Func<string>? transports = null)
+    /// <param name="simRoot">
+    ///     The <c>/sim</c> VFS tree (the same instance the 9p server serves), enabling the
+    ///     field-level <c>/v1/fs/&lt;path&gt;</c> endpoints that mirror the filesystem leaf-by-leaf.
+    ///     Null disables them (JSON surface only).
+    /// </param>
+    public SimHttpServer(SnapshotStore store, ICommandSink? commands = null, Func<string>? transports = null,
+        VfsDirectory? simRoot = null)
     {
         _store = store;
         _commands = commands;
         _transports = transports;
+        _simRoot = simRoot;
     }
 
     /// <summary>The bound TCP port (valid after <see cref="StartAsync"/>).</summary>
@@ -149,6 +159,14 @@ public sealed class SimHttpServer : IAsyncDisposable
         if (request.Method == "POST" && seg.Length == 2 && seg[1] == "command")
         {
             await HandleCommandAsync(stream, request, ct).ConfigureAwait(false);
+            return;
+        }
+
+        // /v1/fs/<path...> — the field-level filesystem mirror (per-leaf read / SSE / write). Handled
+        // before the GET-only gate below, since field writes are POST.
+        if (seg.Length >= 2 && seg[1] == "fs")
+        {
+            await HandleFsAsync(stream, request, ct).ConfigureAwait(false);
             return;
         }
 
@@ -297,6 +315,143 @@ public sealed class SimHttpServer : IAsyncDisposable
         }
     }
 
+    // ---- field-level filesystem mirror (/v1/fs/<path>) ------------------------------------
+
+    private async Task HandleFsAsync(Stream stream, HttpRequestLine request, CancellationToken ct)
+    {
+        if (_simRoot is not { } root)
+        {
+            await WriteJsonAsync(stream, 404, Error("ENOENT", "field endpoints are not enabled"), ct)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        var path = string.Join('/', request.Segments[2..]);
+        if (path.Length == 0)
+        {
+            await WriteJsonAsync(stream, 404, Error("ENOENT", "no field path"), ct).ConfigureAwait(false);
+            return;
+        }
+
+        switch (request.Method)
+        {
+            case "GET" when request.Query.ContainsKey("stream"):
+                await StreamFieldAsync(stream, root, path, ct).ConfigureAwait(false);
+                return;
+            case "GET":
+                await ReadFieldAsync(stream, root, path, ct).ConfigureAwait(false);
+                return;
+            case "POST":
+                await WriteFieldAsync(stream, root, path, request.Body, ct).ConfigureAwait(false);
+                return;
+            default:
+                await WriteJsonAsync(stream, 405, Error("EINVAL", "method not allowed"), ct).ConfigureAwait(false);
+                return;
+        }
+    }
+
+    private async Task ReadFieldAsync(Stream stream, VfsDirectory root, string path, CancellationToken ct)
+    {
+        if (VfsScan.Resolve(root, path) is not { } file)
+        {
+            await WriteJsonAsync(stream, 404, Error("ENOENT", $"no field '{path}'"), ct).ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            var value = await VfsScan.ReadTextAsync(file, ct).ConfigureAwait(false);
+            await WritePlainTextAsync(stream, 200, value, ct).ConfigureAwait(false);
+        }
+        catch (VfsErrorException ex)
+        {
+            await WriteJsonAsync(stream, StatusForErrno(ex.Errno), Error(LinuxErrno.Name(ex.Errno), ex.Message), ct)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private async Task StreamFieldAsync(Stream stream, VfsDirectory root, string path, CancellationToken ct)
+    {
+        var lastSeq = _store.Current.Sequence;
+        var head = Encoding.ASCII.GetBytes(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n"
+            + "Connection: close\r\n\r\n");
+        await stream.WriteAsync(head, ct).ConfigureAwait(false);
+        await stream.FlushAsync(ct).ConfigureAwait(false);
+
+        string? last = null;
+        while (!ct.IsCancellationRequested)
+        {
+            if (VfsScan.Resolve(root, path) is { } file)
+            {
+                string? value = null;
+                try
+                {
+                    value = await VfsScan.ReadTextAsync(file, ct).ConfigureAwait(false);
+                }
+                catch (VfsErrorException)
+                {
+                    // The leaf's entity vanished this frame (e.g. vessel gone); hold the last value
+                    // and resume if it reappears, like the per-vessel stream holds its frontier.
+                }
+
+                if (value is not null && value != last)
+                {
+                    last = value;
+                    await stream.WriteAsync(SseData(value), ct).ConfigureAwait(false);
+                    await stream.FlushAsync(ct).ConfigureAwait(false);
+                }
+            }
+
+            var snapshot = await _store.WaitForNextAsync(lastSeq, ct).ConfigureAwait(false);
+            lastSeq = snapshot.Sequence;
+        }
+    }
+
+    private async Task WriteFieldAsync(Stream stream, VfsDirectory root, string path, byte[] body,
+        CancellationToken ct)
+    {
+        if (VfsScan.Resolve(root, path) is not { } file)
+        {
+            await WriteJsonAsync(stream, 404, Error("ENOENT", $"no field '{path}'"), ct).ConfigureAwait(false);
+            return;
+        }
+
+        // The VFS node enforces authority itself: a read-only sensor's OpenWrite throws EACCES, and a
+        // control file submits to the command sink (which denies with EACCES when control is off).
+        try
+        {
+            await VfsScan.WriteTextAsync(file, Encoding.UTF8.GetString(body), ct).ConfigureAwait(false);
+            await WriteRawJsonAsync(stream, 200, "{\"outcome\":\"ok\"}", ct).ConfigureAwait(false);
+        }
+        catch (VfsErrorException ex)
+        {
+            await WriteJsonAsync(stream, StatusForErrno(ex.Errno), Error(LinuxErrno.Name(ex.Errno), ex.Message), ct)
+                .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Encodes a (possibly multi-line) value as one SSE event, one <c>data:</c> line per line.</summary>
+    private static byte[] SseData(string value)
+    {
+        var sb = new StringBuilder();
+        foreach (var line in value.Split('\n'))
+            sb.Append("data: ").Append(line).Append('\n');
+        sb.Append('\n');
+        return Encoding.UTF8.GetBytes(sb.ToString());
+    }
+
+    private static int StatusForErrno(uint errno) => errno switch
+    {
+        LinuxErrno.EINVAL => 400,
+        LinuxErrno.ENOENT => 404,
+        LinuxErrno.EACCES => 403,
+        LinuxErrno.EBUSY => 409,
+        LinuxErrno.ETIMEDOUT => 504,
+        LinuxErrno.EOPNOTSUPP => 501,
+        _ => 500,
+    };
+
     // ---- writes --------------------------------------------------------------------------
 
     private async Task HandleCommandAsync(Stream stream, HttpRequestLine request, CancellationToken ct)
@@ -390,6 +545,19 @@ public sealed class SimHttpServer : IAsyncDisposable
         var payload = Encoding.UTF8.GetBytes(json);
         var head = Encoding.ASCII.GetBytes(
             $"HTTP/1.1 {status} {Reason(status)}\r\nContent-Type: application/json\r\n"
+            + $"Content-Length: {payload.Length}\r\nConnection: close\r\n\r\n");
+        var buffer = new ArrayBufferWriter<byte>(head.Length + payload.Length);
+        buffer.Write(head);
+        buffer.Write(payload);
+        await stream.WriteAsync(buffer.WrittenMemory, ct).ConfigureAwait(false);
+        await stream.FlushAsync(ct).ConfigureAwait(false);
+    }
+
+    private static async Task WritePlainTextAsync(Stream stream, int status, string text, CancellationToken ct)
+    {
+        var payload = Encoding.UTF8.GetBytes(text + "\n"); // trailing LF mirrors the /sim file convention
+        var head = Encoding.ASCII.GetBytes(
+            $"HTTP/1.1 {status} {Reason(status)}\r\nContent-Type: text/plain; charset=utf-8\r\n"
             + $"Content-Length: {payload.Length}\r\nConnection: close\r\n\r\n");
         var buffer = new ArrayBufferWriter<byte>(head.Length + payload.Length);
         buffer.Write(head);

@@ -36,6 +36,9 @@ public sealed class StreamFile : VfsFile
     }
 
     /// <inheritdoc />
+    public override bool IsStreaming => true;
+
+    /// <inheritdoc />
     public override long Size
     {
         get
