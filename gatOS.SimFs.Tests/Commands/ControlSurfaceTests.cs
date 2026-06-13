@@ -132,6 +132,8 @@ public sealed class ControlSurfaceTests
         await WriteAsync("prograde\n", "vessels", "by-id", "test-1", "ctl", "attitude_mode");
         Assert.That(_sink.Last, Is.EqualTo(
             new SimCommand("test-1", "vessel.attitude_mode", SimCommand.NoOrdinal, 0) { Token = "Prograde" }));
+        Assert.That(_sink.Last!.Phase, Is.EqualTo(CommandPhase.Solver),
+            "flight-computer setpoints drain in the solver phase (else the async solver snapshot reverts them)");
     }
 
     [Test]
@@ -148,6 +150,7 @@ public sealed class ControlSurfaceTests
         await WriteAsync("0 0 0 1\n", "vessels", "by-id", "test-1", "ctl", "attitude_target");
         Assert.That(_sink.Last!.Action, Is.EqualTo("vessel.attitude_target"));
         Assert.That(_sink.Last!.Values, Is.EqualTo(new[] { 0d, 0d, 0d, 1d }));
+        Assert.That(_sink.Last!.Phase, Is.EqualTo(CommandPhase.Solver), "FC setpoints drain in the solver phase");
     }
 
     [Test]
@@ -193,8 +196,8 @@ public sealed class ControlSurfaceTests
 
         await WriteAsync("1\n", "debug", "vessels", "test-1", "refill_battery");
         Assert.That(_sink.Last, Is.EqualTo(
-            new SimCommand("test-1", "debug.refill_battery", SimCommand.NoOrdinal, 1, CommandPhase.Solver)),
-            "refills drain in the solver phase");
+            new SimCommand("test-1", "debug.refill_battery", SimCommand.NoOrdinal, 1)));
+        Assert.That(_sink.Last!.Phase, Is.EqualTo(CommandPhase.Solver), "refills drain in the solver phase");
 
         await WriteAsync("other\n", "debug", "switch_vessel");
         Assert.That(_sink.Last!.Action, Is.EqualTo("debug.switch_vessel"));

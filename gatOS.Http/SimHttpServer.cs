@@ -510,8 +510,7 @@ public sealed class SimHttpServer : IAsyncDisposable
         if (root.TryGetProperty("values", out var arr) && arr.ValueKind == JsonValueKind.Array)
             values = arr.EnumerateArray().Select(e => e.GetDouble()).ToArray();
         var token = GetString(root, "token");
-        return new SimCommand(vessel, action, ordinal, value, SimCommand.PhaseFor(action))
-            { Values = values, Token = token };
+        return new SimCommand(vessel, action, ordinal, value) { Values = values, Token = token };
     }
 
     private static string? GetString(JsonElement root, string name)

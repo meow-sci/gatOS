@@ -76,6 +76,23 @@ public sealed class MqttBrokerTests
     }
 
     [Test]
+    public async Task Command_AttitudeMode_RoutesToSolverPhase()
+    {
+        await _client.PublishStringAsync(
+            SimMqttBroker.CommandTopic,
+            """{"vessel_id":"v1","action":"vessel.attitude_mode","token":"Prograde"}""");
+
+        var result = await WaitForAsync(t => t == SimMqttBroker.CommandResultTopic);
+        Assert.That(result, Does.Contain("ok"));
+        Assert.Multiple(() =>
+        {
+            Assert.That(_sink.Last!.Token, Is.EqualTo("Prograde"));
+            Assert.That(_sink.Last!.Phase, Is.EqualTo(CommandPhase.Solver),
+                "flight-computer setpoints drain in the solver phase on every transport (transport-parity)");
+        });
+    }
+
+    [Test]
     public async Task Command_FailureMapsErrno()
     {
         _sink.Result = new CommandResult(CommandOutcome.Busy, "no");

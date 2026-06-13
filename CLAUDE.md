@@ -270,7 +270,10 @@ attitude_frame,attitude_target,burn}`, `engines/<n>/min_throttle`, `rcs/<n>/acti
 FlightComputer,Debug}Actuator`, `KsaCatalog` dispatches all actions (debug-namespace exempt from the
 authority gate). **Solver phase:** a Harmony `Priority.First` prefix on
 `Universe.ExecuteNextVehicleSolvers` (`Mod.DrainSolverCommands` via `InstallSolverHook`/`RemoveSolverHook`
-partial seams) drains `CommandPhase.Solver` commands (the refills) inside the physics step.
+partial seams) drains `CommandPhase.Solver` commands inside the physics step — the debug refills **and
+the flight-computer setpoints** (`attitude_mode`/`attitude_frame`/`attitude_target`/`burn`), which KSA's
+async solver snapshot-restores via `FlightComputer.CopyFrom` so a frame-phase write would be clobbered.
+Phase is derived from the action by `SimCommand.Phase` (`SolverActions` is the one source of truth).
 Co-located reference: **`docs/KSA_INTEGRATION_MATRIX.md`** (now covers G1–G4 + the documented
 deferrals: aero `cda` [private], `parts/<instanceId>` tree, per-nozzle engine internals, gimbal
 command, RCS pulse). **Pending: the G3/G4 in-game pass** (same purrTTY-tip-release blocker as T6.6).
@@ -511,9 +514,16 @@ host.
 1. **Game state is read *and mutated* only on the game thread** (`[StarMapBeforeGui]`). The sampler
    builds an immutable `SimSnapshot` and publishes it with a single volatile reference swap; control
    commands are *drained and executed* in the same hook (`CommandQueue.Drain` → `KsaCatalog`), so
-   writes obey rule 1 exactly like reads. Solver-phase writes (the debug refills) drain in a Harmony
-   `Priority.First` prefix on `Universe.ExecuteNextVehicleSolvers` (`Mod.DrainSolverCommands`) — still
-   the game thread, inside the physics step (G4, built).
+   writes obey rule 1 exactly like reads. **Solver-phase writes** — the debug refills **and the
+   flight-computer setpoints** (`vessel.attitude_mode`/`attitude_frame`/`attitude_target`/`burn`) —
+   drain in a Harmony `Priority.First` prefix on `Universe.ExecuteNextVehicleSolvers`
+   (`Mod.DrainSolverCommands`) — still the game thread, inside the physics step (G4, built). The
+   flight computer *must* drain there: KSA's async vehicle solver snapshots the whole `FlightComputer`
+   at prepare and restores it at apply (`FlightComputer.CopyFrom`), so a frame-phase write lands
+   outside that capture and is overwritten by the in-flight solve (the value flashes on, then reverts
+   to manual). Which phase an action uses is **derived from the action key** by `SimCommand.Phase`
+   (the `SimCommand.SolverActions` set is the single source of truth — every transport gets it by
+   construction); never pass a phase at a construction site.
 2. **9p server threads never touch game state** — they read the latest published snapshot, and for
    writes they only *enqueue* an immutable `SimCommand` and await its result (never executing it).
 3. SSH I/O runs on SSH.NET's threads; `OutputReceived` may fire on any thread (purrTTY tolerates

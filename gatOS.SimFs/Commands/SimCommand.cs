@@ -35,30 +35,49 @@ public enum CommandPhase
 ///     The numeric argument: a <c>0</c>/<c>1</c> flag, a <c>0..1</c> fraction, or the trigger
 ///     token (conventionally <c>1</c>).
 /// </param>
-/// <param name="Phase">Which game-thread phase must execute the command.</param>
 public sealed record SimCommand(
     string VesselId,
     string Action,
     int Ordinal,
-    double Value,
-    CommandPhase Phase = CommandPhase.Frame)
+    double Value)
 {
     /// <summary>Sentinel for <see cref="Ordinal"/> meaning "vessel-level, no module".</summary>
     public const int NoOrdinal = -1;
 
     /// <summary>
-    ///     Action keys whose mutation must be visible to the physics solvers within the same sim
-    ///     step, so they drain in the solver-phase queue rather than the per-frame hook (the debug
-    ///     refills today). The single source of truth: transports that infer phase from a parsed
-    ///     action key (HTTP/MQTT) call <see cref="PhaseFor"/>; the 9p tree builds these commands
-    ///     with the matching explicit phase. Add a new solver action here and the inference follows.
+    ///     The lone source of truth for which actions must drain in the solver phase: their mutation
+    ///     is only visible to (or only survives) the per-vehicle physics solver if applied inside the
+    ///     solver step (KSA_GAME_INTEGRATION_PLAN §3.1). Two reasons land an action here:
+    ///     <list type="bullet">
+    ///         <item>the debug refills mutate resource state the solver reads that same tick; and</item>
+    ///         <item>the flight-computer setpoints (<c>attitude_mode</c>/<c>attitude_frame</c>/
+    ///         <c>attitude_target</c>/<c>burn</c>) write fields that KSA's async vehicle solver
+    ///         <i>snapshots and restores</i> every frame (<c>FlightComputer.CopyFrom</c> at prepare
+    ///         and apply). A frame-phase write lands outside that capture and is overwritten by the
+    ///         in-flight solve — the value flashes on, then reverts to manual. Draining in the solver
+    ///         prefix (just before the prepare-capture) makes it stick.</item>
+    ///     </list>
+    ///     Because <see cref="Phase"/> is derived from this set, every transport (9p/HTTP/MQTT/serial)
+    ///     gets the right phase by construction — add an action here and they all follow.
     /// </summary>
     private static readonly HashSet<string> SolverActions =
-        new(StringComparer.Ordinal) { "debug.refill_fuel", "debug.refill_battery" };
+        new(StringComparer.Ordinal)
+        {
+            "debug.refill_fuel", "debug.refill_battery",
+            "vessel.attitude_mode", "vessel.attitude_frame", "vessel.attitude_target", "vessel.burn",
+        };
 
     /// <summary>The game-thread phase an action must execute in (KSA_GAME_INTEGRATION_PLAN §3.1).</summary>
     public static CommandPhase PhaseFor(string action)
         => SolverActions.Contains(action) ? CommandPhase.Solver : CommandPhase.Frame;
+
+    /// <summary>
+    ///     Which game-thread phase must execute this command — derived purely from
+    ///     <see cref="Action"/> (see <see cref="SolverActions"/>), so it cannot be set wrong at a
+    ///     construction site. Excluded from value-equality (no backing field); <see cref="Action"/>
+    ///     already participates, and phase is a function of it.
+    /// </summary>
+    public CommandPhase Phase => PhaseFor(Action);
 
     /// <summary>
     ///     Multi-component numeric payload for vector actions (attitude quaternion, burn

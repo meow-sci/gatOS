@@ -519,9 +519,9 @@ public static class SimFsTree
                 VectorControl($"{q}/teleport", "teleport", vesselId, "debug.teleport", SimCommand.NoOrdinal, 6,
                     () => "0 0 0 0 0 0"),
                 new TriggerFile("refill_fuel", Qid($"{q}/refill_fuel"), sink,
-                    new SimCommand(vesselId, "debug.refill_fuel", SimCommand.NoOrdinal, 1, CommandPhase.Solver)),
+                    new SimCommand(vesselId, "debug.refill_fuel", SimCommand.NoOrdinal, 1)),
                 new TriggerFile("refill_battery", Qid($"{q}/refill_battery"), sink,
-                    new SimCommand(vesselId, "debug.refill_battery", SimCommand.NoOrdinal, 1, CommandPhase.Solver)));
+                    new SimCommand(vesselId, "debug.refill_battery", SimCommand.NoOrdinal, 1)));
         }
 
         private VfsDirectory AnimationsDir(string p, string vesselId)

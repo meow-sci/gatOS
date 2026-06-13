@@ -9,8 +9,12 @@ namespace gatOS.SimFs.Tests.Commands;
 [TestFixture]
 public sealed class CommandQueueTests
 {
+    // Phase is derived from the action (SolverActions), so pick an action that maps to the wanted lane:
+    // a frame action (engine.active) or a solver action (debug.refill_fuel).
     private static SimCommand Cmd(CommandPhase phase = CommandPhase.Frame)
-        => new("v1", "engine.active", 0, 1, phase);
+        => phase == CommandPhase.Solver
+            ? new SimCommand("v1", "debug.refill_fuel", SimCommand.NoOrdinal, 1)
+            : new SimCommand("v1", "engine.active", 0, 1);
 
     [Test]
     public async Task Submit_ThenDrain_ExecutesAndReturnsResult()

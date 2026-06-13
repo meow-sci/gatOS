@@ -92,8 +92,10 @@ public sealed class HttpServerTests
     {
         await PostCommandAsync("""{"vessel_id":"v1","action":"vessel.burn","values":[100,1,2,3]}""");
         Assert.That(_sink.Last!.Values, Is.EqualTo(new[] { 100d, 1d, 2d, 3d }));
+        Assert.That(_sink.Last!.Phase, Is.EqualTo(CommandPhase.Solver), "burn is a flight-computer setpoint");
         await PostCommandAsync("""{"vessel_id":"v1","action":"vessel.attitude_mode","token":"Prograde"}""");
         Assert.That(_sink.Last!.Token, Is.EqualTo("Prograde"));
+        Assert.That(_sink.Last!.Phase, Is.EqualTo(CommandPhase.Solver), "attitude mode is a flight-computer setpoint");
     }
 
     [Test]
