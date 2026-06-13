@@ -176,6 +176,81 @@ public sealed class HttpServerTests
         Assert.That(json.RootElement.GetProperty("type").GetString(), Is.EqualTo("situation-change"));
     }
 
+    [Test]
+    public async Task Status_ReportsControlAndTransports()
+    {
+        using var json = JsonDocument.Parse(await _client.GetStringAsync("v1/status"));
+        Assert.Multiple(() =>
+        {
+            Assert.That(json.RootElement.GetProperty("control").GetBoolean(), Is.True);
+            Assert.That(json.RootElement.GetProperty("debug").GetBoolean(), Is.True);
+            Assert.That(json.RootElement.GetProperty("transports").GetString(), Is.EqualTo("9p 1; http 2"));
+        });
+    }
+
+    [Test]
+    public async Task Vessels_ListsIds()
+    {
+        using var json = JsonDocument.Parse(await _client.GetStringAsync("v1/vessels"));
+        Assert.That(json.RootElement.EnumerateArray().Select(e => e.GetString()), Does.Contain("v1"));
+    }
+
+    [Test]
+    public async Task Bodies_ListIs200_AndUnknownIs404()
+    {
+        var list = await _client.GetAsync("v1/bodies");
+        Assert.That(list.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        using var json = JsonDocument.Parse(await list.Content.ReadAsStringAsync());
+        Assert.That(json.RootElement.ValueKind, Is.EqualTo(JsonValueKind.Array));
+
+        var gone = await _client.GetAsync("v1/bodies/ghost");
+        Assert.That(gone.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task UnknownPaths_Are404()
+    {
+        Assert.That((await _client.GetAsync("v1/nonsense")).StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        Assert.That((await _client.GetAsync("not-v1/snapshot")).StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task NonGetNonCommand_Is405()
+    {
+        var response = await _client.PutAsync("v1/snapshot", new StringContent(""));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.MethodNotAllowed));
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.That(json.RootElement.GetProperty("errno").GetString(), Is.EqualTo("EINVAL"));
+    }
+
+    [Test]
+    public async Task ControlDisabled_PostCommandIsForbidden()
+    {
+        var store = new SnapshotStore();
+        var sink = new RecordingSink { ControlEnabled = false };
+        await using var server = new SimHttpServer(store, sink);
+        await server.StartAsync();
+        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{server.Port}/") };
+        var response = await client.PostAsync("v1/command",
+            new StringContent("""{"vessel_id":"v1","action":"engine.active","value":1}""", Encoding.UTF8));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
+    }
+
+    // The frozen errno vocabulary → HTTP status table (KSA_GAME_INTEGRATION_PLAN Part 2).
+    [TestCase(CommandOutcome.Invalid, HttpStatusCode.BadRequest, "EINVAL")]
+    [TestCase(CommandOutcome.Busy, HttpStatusCode.Conflict, "EBUSY")]
+    [TestCase(CommandOutcome.TimedOut, HttpStatusCode.GatewayTimeout, "ETIMEDOUT")]
+    [TestCase(CommandOutcome.Unsupported, HttpStatusCode.NotImplemented, "EOPNOTSUPP")]
+    [TestCase(CommandOutcome.Fault, HttpStatusCode.InternalServerError, "EIO")]
+    public async Task Command_OutcomeMapsToStatusAndErrno(CommandOutcome outcome, HttpStatusCode status, string errno)
+    {
+        _sink.Result = new CommandResult(outcome, "x");
+        var response = await PostCommandAsync("""{"vessel_id":"v1","action":"engine.active","value":1}""");
+        Assert.That(response.StatusCode, Is.EqualTo(status));
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.That(json.RootElement.GetProperty("errno").GetString(), Is.EqualTo(errno));
+    }
+
     private Task<HttpResponseMessage> PostCommandAsync(string body)
         => _client.PostAsync("v1/command", new StringContent(body, Encoding.UTF8, "application/json"));
 
@@ -196,6 +271,10 @@ public sealed class HttpServerTests
 
         public Task<CommandResult> SubmitAsync(SimCommand command, CancellationToken ct)
         {
+            // Mirror the production CommandQueue: a disabled control surface denies without
+            // executing (the transport maps Denied → 403/EACCES).
+            if (!ControlEnabled)
+                return Task.FromResult(new CommandResult(CommandOutcome.Denied, "disabled"));
             Last = command;
             return Task.FromResult(Result);
         }

@@ -110,11 +110,19 @@ public abstract class CommandFile : VfsFile
                 return;
 
             // No newline was written (e.g. `printf '%s' 1`): actuate best-effort. A clunk cannot
-            // carry an errno back to the writer, so failures are only logged.
+            // carry an errno back to the writer, so failures are only logged. Fire-and-forget: a
+            // sync wait here would stall the 9p clunk handler (and its Rclunk reply) for up to the
+            // command timeout, e.g. when the game is paused — the command is still submitted on the
+            // game thread, which is all "best-effort" promises.
             _executed = true;
+            _ = ActuateOnClunkAsync(file, line);
+        }
+
+        private static async Task ActuateOnClunkAsync(CommandFile file, string line)
+        {
             try
             {
-                file.ExecuteLineAsync(line, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+                await file.ExecuteLineAsync(line, CancellationToken.None).ConfigureAwait(false);
             }
             catch (VfsErrorException ex)
             {

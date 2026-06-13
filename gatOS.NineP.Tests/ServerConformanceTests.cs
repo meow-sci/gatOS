@@ -555,6 +555,30 @@ public sealed class ServerConformanceTests
     // ---- robustness ---------------------------------------------------------------------------
 
     [Test]
+    public async Task ReusedTag_AfterEachReply_KeepsTheConnectionAlive()
+    {
+        // A 9p client may reuse a tag the instant it receives the reply. The server must free
+        // the tag BEFORE it writes the reply; reaping it afterwards (e.g. in a post-handler
+        // finally) races the reused tag's dispatch → "tag reused while in flight" tears the
+        // whole connection down. On the real guest this surfaced as `find /sim` dying mid-walk
+        // (the mount goes EIO), undercounting to 6 or 0 files. Hammer one tag through many
+        // back-to-back getattrs: with the fix every reuse is answered; without it the
+        // connection dies and a later iteration faults instead of returning Rgetattr.
+        var root = await AttachedFidAsync();
+        await _client.WalkAsync(root, 1, "hello");
+
+        const ushort tag = 9;
+        for (var i = 0; i < 3000; i++)
+        {
+            var reply = await _client.RequestWithTagAsync(tag, MessageType.Tgetattr,
+                w => w.WriteUInt32(1).WriteUInt64(0x7FF));
+            Assert.That(reply.Type, Is.EqualTo(MessageType.Rgetattr), $"iteration {i} must be answered");
+        }
+
+        Assert.That(_client.ConnectionClosed.IsCompleted, Is.False, "the connection must stay alive");
+    }
+
+    [Test]
     public async Task MalformedFrame_ClosesTheConnection_ServerSurvives()
     {
         await _client.VersionAsync();

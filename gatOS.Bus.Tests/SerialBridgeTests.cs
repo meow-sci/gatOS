@@ -106,6 +106,66 @@ public sealed class SerialBridgeTests
     }
 
     [Test]
+    public async Task Commands_RetargetTheActiveVesselPerLine()
+    {
+        // The bridge resolves the active vessel for every command line, so a vessel switch
+        // mid-session retargets subsequent commands (SerialBridge.cs active-vessel resolution).
+        using var pair = await SocketPair.CreateAsync();
+        var store = new SnapshotStore();
+        store.Publish(Snapshot(1, Vessel("v1"), Vessel("v2"))); // active = vessels[0] = v1
+        var sink = new StubSink();
+
+        var bridge = new SerialBridge(store, SerialMode.Ndjson, Tick, emitTelemetry: false, commands: sink);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var run = bridge.RunAsync(pair.HostEnd, cts.Token);
+
+        var writer = new StreamWriter(pair.GuestEnd) { AutoFlush = true, NewLine = "\n" };
+        using var reader = new StreamReader(pair.GuestEnd);
+
+        await writer.WriteLineAsync("CTL:IGNITE");
+        Assert.That(await reader.ReadLineAsync(cts.Token), Is.EqualTo("OK"));
+        Assert.That(sink.Last!.VesselId, Is.EqualTo("v1"));
+
+        store.Publish(Snapshot(2, Vessel("v2"), Vessel("v1"))); // active switches to v2
+        await writer.WriteLineAsync("CTL:IGNITE");
+        Assert.That(await reader.ReadLineAsync(cts.Token), Is.EqualTo("OK"));
+        Assert.That(sink.Last!.VesselId, Is.EqualTo("v2"), "the next command targets the new active vessel");
+
+        await cts.CancelAsync();
+        await Swallow(run);
+    }
+
+    [Test]
+    public async Task Connector_ReconnectsAfterTheConnectionDrops()
+    {
+        // The connector's whole purpose: re-establish the feed when the guest closes the port (or a
+        // hiccup drops it). Read a frame, drop the connection, then prove a second connection forms
+        // and serves unaided (SerialBridgeConnector retry loop).
+        using var listener = new LoopbackListener();
+        var store = new SnapshotStore();
+        store.Publish(Snapshot(1, Vessel("v1")));
+        var bridge = new SerialBridge(store, SerialMode.Ndjson, Tick, emitTelemetry: true, commands: null);
+
+        await using var connector = new SerialBridgeConnector(listener.Port, bridge);
+        connector.Start();
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+        var first = await listener.AcceptAsync(cts.Token);
+        var firstReader = new StreamReader(first.GetStream());
+        Assert.That(await firstReader.ReadLineAsync(cts.Token), Is.Not.Null);
+        firstReader.Dispose();
+        first.Dispose(); // drop → the bridge errors, the connector waits then reconnects
+
+        using var second = await listener.AcceptAsync(cts.Token);
+        using var reader = new StreamReader(second.GetStream());
+        var line = await reader.ReadLineAsync(cts.Token);
+        Assert.That(line, Is.Not.Null, "the connector reconnected after the drop");
+        using var json = JsonDocument.Parse(line!);
+        Assert.That(json.RootElement.GetProperty("seq").GetInt64(), Is.EqualTo(1));
+    }
+
+    [Test]
     public async Task Connector_ConnectsToTheChardevAndRunsTheBridge()
     {
         // A loopback listener stands in for QEMU's gatos.serial chardev (server=on).

@@ -46,7 +46,19 @@ public sealed record CommandResult(CommandOutcome Outcome, string? Message = nul
     public bool IsSuccess => Outcome == CommandOutcome.Ok;
 
     /// <summary>The Linux errno a failed write should report (see <see cref="LinuxErrno"/>).</summary>
-    public uint ToErrno() => Outcome switch
+    public uint ToErrno() => Outcome.ToErrno();
+}
+
+/// <summary>
+///     The single source of truth for turning a <see cref="CommandOutcome"/> into the frozen
+///     errno vocabulary (KSA_GAME_INTEGRATION_PLAN Part 2) — as a Linux <c>errno</c> number for
+///     the 9p write path and as the canonical errno name for the HTTP/MQTT/serial transports.
+///     Every transport routes through here so the mapping can never drift between them.
+/// </summary>
+public static class CommandOutcomes
+{
+    /// <summary>The Linux errno number a failed outcome reports (<c>0</c> for success).</summary>
+    public static uint ToErrno(this CommandOutcome outcome) => outcome switch
     {
         CommandOutcome.Ok => 0,
         CommandOutcome.Invalid => LinuxErrno.EINVAL,
@@ -57,5 +69,18 @@ public sealed record CommandResult(CommandOutcome Outcome, string? Message = nul
         CommandOutcome.TimedOut => LinuxErrno.ETIMEDOUT,
         CommandOutcome.Unsupported => LinuxErrno.EOPNOTSUPP,
         _ => LinuxErrno.EIO,
+    };
+
+    /// <summary>The canonical errno name (<c>"EINVAL"</c>, …) for text/JSON transports.</summary>
+    public static string ErrnoName(this CommandOutcome outcome) => outcome switch
+    {
+        CommandOutcome.Ok => "OK",
+        CommandOutcome.Invalid => "EINVAL",
+        CommandOutcome.NotFound => "ENOENT",
+        CommandOutcome.Denied => "EACCES",
+        CommandOutcome.Busy => "EBUSY",
+        CommandOutcome.TimedOut => "ETIMEDOUT",
+        CommandOutcome.Unsupported => "EOPNOTSUPP",
+        _ => "EIO",
     };
 }

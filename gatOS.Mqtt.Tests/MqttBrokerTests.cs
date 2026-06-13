@@ -80,9 +80,130 @@ public sealed class MqttBrokerTests
         Assert.That(result, Does.Contain("EBUSY"));
     }
 
+    [Test]
+    public async Task TimeStatusAndTelemetry_AreAllPublished()
+    {
+        _store.Publish(Snapshot(1, Vessel("v1")));
+        await WaitForTopicsAsync("gatos/time", "gatos/status", "gatos/vessels/v1/telemetry");
+    }
+
+    [Test]
+    public async Task Command_IsNotRebroadcastToSubscribers()
+    {
+        // The broker consumes commands; the raw command JSON must never reach gatos/# subscribers
+        // (it would leak one client's commands to all). Only the result is published.
+        await _client.PublishStringAsync(SimMqttBroker.CommandTopic,
+            """{"vessel_id":"v1","action":"engine.active","ordinal":0,"value":1}""");
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var sawResult = false;
+        while (!sawResult && await _messages.Reader.WaitToReadAsync(cts.Token))
+            while (_messages.Reader.TryRead(out var msg))
+            {
+                Assert.That(msg.Topic, Is.Not.EqualTo(SimMqttBroker.CommandTopic),
+                    "the consumed command must not be relayed");
+                if (msg.Topic == SimMqttBroker.CommandResultTopic)
+                    sawResult = true;
+            }
+
+        Assert.That(sawResult, Is.True, "the result is still published");
+    }
+
+    [Test]
+    public async Task RetainedTopics_ReachALateSubscriber()
+    {
+        _store.Publish(Snapshot(1, Vessel("v1")));
+        await WaitForTopicsAsync("gatos/time"); // ensure the broker has published + retained
+
+        // A subscriber that connects after the publish still gets the retained snapshot topics.
+        var late = new MqttFactory().CreateMqttClient();
+        var lateMessages = Channel.CreateUnbounded<(string Topic, string Payload)>();
+        late.ApplicationMessageReceivedAsync += e =>
+        {
+            lateMessages.Writer.TryWrite((e.ApplicationMessage.Topic,
+                Encoding.UTF8.GetString(e.ApplicationMessage.PayloadSegment.ToArray())));
+            return Task.CompletedTask;
+        };
+        await late.ConnectAsync(new MqttClientOptionsBuilder().WithTcpServer("127.0.0.1", _broker.Port).Build());
+        try
+        {
+            await late.SubscribeAsync("gatos/#");
+            var seen = new HashSet<string>();
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            while (!seen.IsSupersetOf(new[] { "gatos/time", "gatos/status", "gatos/vessels/v1/telemetry" })
+                   && await lateMessages.Reader.WaitToReadAsync(cts.Token))
+                while (lateMessages.Reader.TryRead(out var msg))
+                    seen.Add(msg.Topic);
+
+            Assert.That(seen, Does.Contain("gatos/time").And.Contain("gatos/status")
+                .And.Contain("gatos/vessels/v1/telemetry"));
+        }
+        finally
+        {
+            await late.DisconnectAsync();
+            late.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task Command_MalformedJson_ReturnsEinval()
+    {
+        await _client.PublishStringAsync(SimMqttBroker.CommandTopic, "{ not json");
+        var result = await WaitForAsync(t => t == SimMqttBroker.CommandResultTopic);
+        Assert.That(result, Does.Contain("EINVAL"));
+    }
+
+    [Test]
+    public async Task Command_DebugGated_ReturnsEacces_WhenDebugDisabled()
+    {
+        // A dedicated broker whose sink reports debug disabled: a debug.* command is gated.
+        await using var broker = new SimMqttBroker(_store, new RecordingSink { DebugEnabled = false });
+        await broker.StartAsync(0);
+
+        var client = new MqttFactory().CreateMqttClient();
+        var messages = Channel.CreateUnbounded<(string Topic, string Payload)>();
+        client.ApplicationMessageReceivedAsync += e =>
+        {
+            messages.Writer.TryWrite((e.ApplicationMessage.Topic,
+                Encoding.UTF8.GetString(e.ApplicationMessage.PayloadSegment.ToArray())));
+            return Task.CompletedTask;
+        };
+        await client.ConnectAsync(new MqttClientOptionsBuilder().WithTcpServer("127.0.0.1", broker.Port).Build());
+        try
+        {
+            await client.SubscribeAsync(SimMqttBroker.CommandResultTopic);
+            await client.PublishStringAsync(SimMqttBroker.CommandTopic,
+                """{"vessel_id":"v1","action":"debug.refill_fuel","value":1}""");
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            string? result = null;
+            while (result is null && await messages.Reader.WaitToReadAsync(cts.Token))
+                while (messages.Reader.TryRead(out var msg))
+                    if (msg.Topic == SimMqttBroker.CommandResultTopic)
+                        result = msg.Payload;
+
+            Assert.That(result, Does.Contain("EACCES"));
+        }
+        finally
+        {
+            await client.DisconnectAsync();
+            client.Dispose();
+        }
+    }
+
+    private async Task WaitForTopicsAsync(params string[] topics)
+    {
+        var remaining = new HashSet<string>(topics);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        while (remaining.Count > 0 && await _messages.Reader.WaitToReadAsync(cts.Token))
+            while (_messages.Reader.TryRead(out var msg))
+                remaining.Remove(msg.Topic);
+        Assert.That(remaining, Is.Empty, $"never saw topics: {string.Join(", ", remaining)}");
+    }
+
     private async Task<string> WaitForAsync(Func<string, bool> topicMatch)
     {
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         while (await _messages.Reader.WaitToReadAsync(cts.Token))
         {
             while (_messages.Reader.TryRead(out var msg))
@@ -104,8 +225,8 @@ public sealed class MqttBrokerTests
 
     private sealed class RecordingSink : ICommandSink
     {
-        public bool ControlEnabled => true;
-        public bool DebugEnabled => true;
+        public bool ControlEnabled { get; init; } = true;
+        public bool DebugEnabled { get; init; } = true;
         public CommandResult Result { get; set; } = CommandResult.Ok;
         public SimCommand? Last { get; private set; }
 

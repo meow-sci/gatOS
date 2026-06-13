@@ -42,8 +42,6 @@ public sealed class SimMqttBroker : IAsyncDisposable
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
     };
 
-    private static readonly HashSet<string> SolverActions = ["debug.refill_fuel", "debug.refill_battery"];
-
     private readonly SnapshotStore _store;
     private readonly ICommandSink? _commands;
     private readonly CancellationTokenSource _cts = new();
@@ -116,12 +114,21 @@ public sealed class SimMqttBroker : IAsyncDisposable
 
     private async Task OnClientPublishAsync(InterceptingPublishEventArgs args)
     {
-        if (args.ApplicationMessage.Topic != CommandTopic || _commands is not { } sink)
+        if (args.ApplicationMessage.Topic != CommandTopic)
             return;
 
         // The broker injects its own retained messages with an empty client id; ignore those so we
         // only handle genuine client publishes to the command topic.
         if (string.IsNullOrEmpty(args.ClientId))
+            return;
+
+        // A command is consumed by the broker, not relayed: stop MQTTnet from re-broadcasting the
+        // raw command payload to every other gatos/# subscriber (it would leak one client's
+        // commands to all, and a client-set retain flag would make it stick). The reply goes out
+        // on gatos/command/result instead.
+        args.ProcessPublish = false;
+
+        if (_commands is not { } sink)
             return;
 
         var payload = args.ApplicationMessage.PayloadSegment.ToArray();
@@ -136,7 +143,7 @@ public sealed class SimMqttBroker : IAsyncDisposable
                 var result = await sink.SubmitAsync(command, _cts.Token).ConfigureAwait(false);
                 resultJson = result.IsSuccess
                     ? "{\"outcome\":\"ok\"}"
-                    : Result(ErrnoName(result.Outcome), result.Message ?? result.Outcome.ToString());
+                    : Result(result.Outcome.ErrnoName(), result.Message ?? result.Outcome.ToString());
             }
         }
         catch (Exception ex)
@@ -164,8 +171,8 @@ public sealed class SimMqttBroker : IAsyncDisposable
         if (root.TryGetProperty("values", out var arr) && arr.ValueKind == JsonValueKind.Array)
             values = arr.EnumerateArray().Select(e => e.GetDouble()).ToArray();
         var token = GetString(root, "token");
-        var phase = SolverActions.Contains(action) ? CommandPhase.Solver : CommandPhase.Frame;
-        return new SimCommand(vessel, action, ordinal, value, phase) { Values = values, Token = token };
+        return new SimCommand(vessel, action, ordinal, value, SimCommand.PhaseFor(action))
+            { Values = values, Token = token };
     }
 
     private static string? GetString(JsonElement root, string name)
@@ -232,17 +239,6 @@ public sealed class SimMqttBroker : IAsyncDisposable
 
     private static string Result(string errno, string message)
         => JsonSerializer.Serialize(new { errno, message }, Json);
-
-    private static string ErrnoName(CommandOutcome outcome) => outcome switch
-    {
-        CommandOutcome.Invalid => "EINVAL",
-        CommandOutcome.NotFound => "ENOENT",
-        CommandOutcome.Denied => "EACCES",
-        CommandOutcome.Busy => "EBUSY",
-        CommandOutcome.TimedOut => "ETIMEDOUT",
-        CommandOutcome.Unsupported => "EOPNOTSUPP",
-        _ => "EIO",
-    };
 
     /// <inheritdoc />
     public async ValueTask DisposeAsync()

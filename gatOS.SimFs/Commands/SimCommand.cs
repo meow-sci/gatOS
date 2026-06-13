@@ -47,6 +47,20 @@ public sealed record SimCommand(
     public const int NoOrdinal = -1;
 
     /// <summary>
+    ///     Action keys whose mutation must be visible to the physics solvers within the same sim
+    ///     step, so they drain in the solver-phase queue rather than the per-frame hook (the debug
+    ///     refills today). The single source of truth: transports that infer phase from a parsed
+    ///     action key (HTTP/MQTT) call <see cref="PhaseFor"/>; the 9p tree builds these commands
+    ///     with the matching explicit phase. Add a new solver action here and the inference follows.
+    /// </summary>
+    private static readonly HashSet<string> SolverActions =
+        new(StringComparer.Ordinal) { "debug.refill_fuel", "debug.refill_battery" };
+
+    /// <summary>The game-thread phase an action must execute in (KSA_GAME_INTEGRATION_PLAN §3.1).</summary>
+    public static CommandPhase PhaseFor(string action)
+        => SolverActions.Contains(action) ? CommandPhase.Solver : CommandPhase.Frame;
+
+    /// <summary>
     ///     Multi-component numeric payload for vector actions (attitude quaternion, burn
     ///     <c>ut + Δv</c>, teleport state). Null for scalar/flag/trigger actions, which use
     ///     <see cref="Value"/>.

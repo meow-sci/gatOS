@@ -154,11 +154,24 @@ Solver-phase commands drain in a Harmony `Priority.First` prefix on
 
 ### Deferred (documented, per plan §5.4 / open questions)
 
+Writes:
 - **Aero `cda`** — `Vehicle._aerodynamicCdABody` is private; no public read.
 - **`parts/<instanceId>` tree** — construction-grade; deferred.
 - **Engine per-nozzle thrust/burn_time/mass_flow, gimbal read/command** — nozzle/gimbal SoA internals (M/H);
   gimbal command is transient solver state.
 - **RCS pulse** — `CommandPulseTime` fires inside the flight-computer loop; deferred.
+
+Reads/events the plan catalogs promise but that are not yet built (the plan is aspirational here;
+this matrix and the code are the truth):
+- **`staged` and `encounter` events** (plan §4.7) — `EventDiffer` emits the other 11 types; `staged`
+  needs a per-vessel stage counter in the snapshot and `encounter` needs the next-patch body id,
+  both game-coupled sampler additions. Deferred until wanted.
+- **`bodies/<id>/position/cci` + `velocity/cci`** (plan §4.3) — only the ecliptic-frame body vectors
+  are sampled (`BodySnapshot.Position/VelocityEcl`); the CCI-frame ones are not.
+- **`bodies/<id>/orbit/t_pe`** (plan §4.3) and **`orbit/mean_anomaly`** (plan §4.5) — not carried on
+  `OrbitSnapshot`; the other orbit elements/anomalies are.
+- **`solar/<n>/tracker/{angle,active}` shape** (plan §4.6) — surfaced as a flat `tracker_angle` file
+  (no `active`, no subdir) when `HasTracker`; the subdir/`active` split is deferred.
 
 ## The churn playbook (when a decomp drop lands)
 

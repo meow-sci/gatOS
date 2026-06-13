@@ -215,6 +215,33 @@ public sealed class NinePTestClient : IAsyncDisposable
         return await response;
     }
 
+    /// <summary>
+    ///     Sends a T-message with a caller-chosen wire tag and awaits its reply. Lets a test
+    ///     deliberately reuse a tag the instant the previous request with it completed — 9p
+    ///     permits exactly that, and the server must free a tag before writing its reply so the
+    ///     reuse never collides with the just-answered request (regression for the
+    ///     tag-reused-while-in-flight teardown that undercounted <c>find /sim</c>).
+    /// </summary>
+    public async Task<Response> RequestWithTagAsync(ushort tag, MessageType type, Action<NinePWriter>? build = null)
+    {
+        var tcs = new TaskCompletionSource<Response>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pending[tag] = tcs;
+        var writer = new NinePWriter().Begin(type, tag);
+        build?.Invoke(writer);
+        var frame = writer.Frame();
+        await _writeLock.WaitAsync();
+        try
+        {
+            await _stream.WriteAsync(frame);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+
+        return await tcs.Task;
+    }
+
     /// <summary>Writes raw bytes straight onto the socket (malformed-frame tests).</summary>
     public async Task SendRawBytesAsync(byte[] bytes)
     {

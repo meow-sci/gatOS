@@ -37,8 +37,6 @@ public sealed class SimHttpServer : IAsyncDisposable
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
     };
 
-    private static readonly HashSet<string> SolverActions = ["debug.refill_fuel", "debug.refill_battery"];
-
     private readonly SnapshotStore _store;
     private readonly ICommandSink? _commands;
     private readonly Func<string>? _transports;
@@ -317,7 +315,8 @@ public sealed class SimHttpServer : IAsyncDisposable
         }
 
         await WriteJsonAsync(stream, StatusFor(result.Outcome),
-            Error(ErrnoName(result.Outcome), result.Message ?? result.Outcome.ToString()), ct).ConfigureAwait(false);
+            Error(result.Outcome.ErrnoName(), result.Message ?? result.Outcome.ToString()), ct)
+            .ConfigureAwait(false);
     }
 
     private static SimCommand ParseCommand(byte[] body)
@@ -339,8 +338,8 @@ public sealed class SimHttpServer : IAsyncDisposable
         if (root.TryGetProperty("values", out var arr) && arr.ValueKind == JsonValueKind.Array)
             values = arr.EnumerateArray().Select(e => e.GetDouble()).ToArray();
         var token = GetString(root, "token");
-        var phase = SolverActions.Contains(action) ? CommandPhase.Solver : CommandPhase.Frame;
-        return new SimCommand(vessel, action, ordinal, value, phase) { Values = values, Token = token };
+        return new SimCommand(vessel, action, ordinal, value, SimCommand.PhaseFor(action))
+            { Values = values, Token = token };
     }
 
     private static string? GetString(JsonElement root, string name)
@@ -357,17 +356,6 @@ public sealed class SimHttpServer : IAsyncDisposable
         CommandOutcome.TimedOut => 504,
         CommandOutcome.Unsupported => 501,
         _ => 500,
-    };
-
-    private static string ErrnoName(CommandOutcome outcome) => outcome switch
-    {
-        CommandOutcome.Invalid => "EINVAL",
-        CommandOutcome.NotFound => "ENOENT",
-        CommandOutcome.Denied => "EACCES",
-        CommandOutcome.Busy => "EBUSY",
-        CommandOutcome.TimedOut => "ETIMEDOUT",
-        CommandOutcome.Unsupported => "EOPNOTSUPP",
-        _ => "EIO",
     };
 
     // ---- response plumbing ---------------------------------------------------------------

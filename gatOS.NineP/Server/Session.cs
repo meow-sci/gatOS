@@ -122,7 +122,7 @@ internal sealed class Session
     private void Dispatch(MessageType type, ushort tag, byte[] body)
     {
         var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
-        var inFlight = new InFlight(cts);
+        var inFlight = new InFlight(cts, tag);
         if (!_inFlight.TryAdd(tag, inFlight))
         {
             // A tag may not be reused while outstanding; treat as a broken peer.
@@ -138,6 +138,8 @@ internal sealed class Session
             }
             finally
             {
+                // Backstop only: SendAsync frees the tag before the reply is written (see
+                // there). This still covers the suppressed-reply and exception paths.
                 _inFlight.TryRemove(tag, out _);
                 cts.Dispose();
             }
@@ -191,8 +193,18 @@ internal sealed class Session
     private async Task SendAsync(NinePWriter reply, InFlight inFlight)
     {
         // A flushed request must never be answered after its Rflush (flush(5); spike T1.2).
+        // The Tflush handler sends its Rflush only after awaiting this task, so leaving the
+        // tag for the Dispatch finally to reap is correct on this suppressed path.
         if (inFlight.Flushed)
             return;
+
+        // Free the tag BEFORE the reply bytes can reach the client. 9p lets a client reuse a
+        // tag the instant it receives the reply, so a tag still in _inFlight when the reply is
+        // written races the next request's Dispatch — TryAdd fails, "tag reused while in
+        // flight" tears the whole connection down (a load-dependent flake under e.g. `find`,
+        // which recycles tags rapidly). This TryRemove is sequenced before WriteAsync, so the
+        // tag is gone before any byte is sent and the reuse can never collide.
+        _inFlight.TryRemove(inFlight.Tag, out _);
 
         await _writeLock.WaitAsync(_cts.Token).ConfigureAwait(false);
         try
@@ -559,10 +571,14 @@ internal sealed class Session
             oldtag = reader.ReadUInt16();
         }
 
-        if (oldtag != tag && _inFlight.TryGetValue(oldtag, out var pending) && pending.Task is { } task)
+        if (oldtag != tag && _inFlight.TryGetValue(oldtag, out var pending))
         {
             // flush(5): suppress any not-yet-sent reply to oldtag, cancel it, and only answer
             // Rflush once the old handler has finished (so no oldtag reply can follow Rflush).
+            // Set Flushed + cancel unconditionally — Dispatch publishes the tag before it
+            // assigns pending.Task, so a flush landing in that window still latches Flushed
+            // (the handler then suppresses its own reply when it runs) and need only await the
+            // task once it exists.
             pending.Flushed = true;
             try
             {
@@ -572,13 +588,16 @@ internal sealed class Session
             {
             }
 
-            try
+            if (pending.Task is { } task)
             {
-                await task.ConfigureAwait(false);
-            }
-            catch
-            {
-                // The flushed handler's outcome is irrelevant.
+                try
+                {
+                    await task.ConfigureAwait(false);
+                }
+                catch
+                {
+                    // The flushed handler's outcome is irrelevant.
+                }
             }
         }
 
@@ -627,9 +646,14 @@ internal sealed class Session
 
     private sealed class InFlight
     {
-        internal InFlight(CancellationTokenSource cts) => Cts = cts;
+        internal InFlight(CancellationTokenSource cts, ushort tag)
+        {
+            Cts = cts;
+            Tag = tag;
+        }
 
         internal CancellationTokenSource Cts { get; }
+        internal ushort Tag { get; }
         internal volatile Task? Task;
         internal volatile bool Flushed;
     }

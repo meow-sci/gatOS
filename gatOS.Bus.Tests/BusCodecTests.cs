@@ -49,12 +49,49 @@ public sealed class BusCodecTests
     }
 
     [Test]
+    public void Ccsds_DecodesTelecommandTypeBit()
+    {
+        // The encoder only emits TM (type=0); hand-build a packet with the type bit (word1 bit 12)
+        // set to confirm DecodeHeader reports a telecommand. Word1 = type(0x1000) | APID(0x030).
+        byte[] tc = [0x10, 0x30, 0xC0, 0x07, 0x00, 0x00, 0x99];
+        var (apid, isTm, seq, len) = Ccsds.DecodeHeader(tc);
+        Assert.Multiple(() =>
+        {
+            Assert.That(isTm, Is.False, "type bit set ⇒ telecommand");
+            Assert.That(apid, Is.EqualTo(0x030));
+            Assert.That(seq, Is.EqualTo(7));
+            Assert.That(len, Is.EqualTo(1));
+        });
+    }
+
+    [TestCase(16384, 0)] // 14-bit field wraps at 2^14
+    [TestCase(16385, 1)]
+    [TestCase(0x3FFF, 0x3FFF)]
+    public void Ccsds_SequenceCountWrapsAt14Bits(int encoded, int decoded)
+    {
+        var packet = Ccsds.EncodeTm((int)Ccsds.Apid.Nav, encoded, "x"u8);
+        Assert.That(Ccsds.DecodeHeader(packet).SequenceCount, Is.EqualTo(decoded));
+    }
+
+    [Test]
+    public void Ccsds_DecodeHeader_ShortPacketThrows()
+        => Assert.Throws<ArgumentException>(() => Ccsds.DecodeHeader(new byte[5]));
+
+    [Test]
     public void Nmea_ParseRejectsBadChecksum()
     {
         var good = Nmea.Sentence("STA", "v1");
         var corrupted = good.Replace("v1", "v2"); // checksum no longer matches
         Assert.That(Nmea.Parse(corrupted), Is.Null);
     }
+
+    [TestCase("$KSSTA,v1*ZZ\r\n")] // non-hex checksum digits must reject cleanly, not throw
+    [TestCase("$KSSTA,v1*G1\r\n")]
+    [TestCase("KSSTA,v1*00\r\n")]  // no leading '$'
+    [TestCase("$KSSTA,v1\r\n")]    // no checksum delimiter
+    [TestCase("$x\r\n")]           // too short to hold a checksum
+    public void Nmea_ParseRejectsMalformedSentences(string sentence)
+        => Assert.That(Nmea.Parse(sentence), Is.Null);
 
     [TestCase("CTL:IGNITE", "vessel.ignite", -1, 1)]
     [TestCase("CTL:STAGE", "vessel.stage", -1, 1)]

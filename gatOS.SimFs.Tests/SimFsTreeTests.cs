@@ -139,6 +139,71 @@ public sealed class SimFsTreeTests
     }
 
     [Test]
+    public async Task ControlEnabledTree_ExposesEveryModuleControlStatusAndDebugPath()
+    {
+        // The no-sink crawl above covers the read-only tree with a feature-empty vessel. This one
+        // builds the control-enabled tree (status/, debug/, ctl/, writable per-module nodes) over a
+        // vessel with every module collection populated, and asserts the full surface renders and
+        // is walkable+readable — a guard against a subtree silently vanishing.
+        var store = new SnapshotStore();
+        var sink = new Commands.FakeCommandSink { DebugEnabled = true };
+        await using var server = new NinePServer(SimFsTree.Build(store, sink, () => "9p 1"));
+        await server.StartAsync();
+        await using var client = await NinePTestClient.ConnectAsync(server.Port);
+        await client.VersionAsync();
+        await client.AttachAsync(0);
+
+        store.Publish(TestData.Snapshot(1, TestData.FullVessel()).WithCelestials());
+
+        var files = new Dictionary<string, string>();
+        await CrawlWithAsync(client, 0, "", files);
+
+        string[] expectedPresent =
+        [
+            // integration health
+            "status/game_version", "status/sampler", "status/accessors", "status/transports",
+            // vessel control surface
+            "vessels/by-id/test-1/ctl/ignite", "vessels/by-id/test-1/ctl/shutdown",
+            "vessels/by-id/test-1/ctl/stage", "vessels/by-id/test-1/ctl/throttle",
+            "vessels/by-id/test-1/ctl/lights", "vessels/by-id/test-1/ctl/rcs",
+            "vessels/by-id/test-1/ctl/attitude_mode", "vessels/by-id/test-1/ctl/attitude_frame",
+            "vessels/by-id/test-1/ctl/attitude_target", "vessels/by-id/test-1/ctl/burn",
+            // per-module reads + controls
+            "vessels/by-id/test-1/rcs/0/active", "vessels/by-id/test-1/rcs/0/map",
+            "vessels/by-id/test-1/solar/0/produced", "vessels/by-id/test-1/solar/0/goal",
+            "vessels/by-id/test-1/solar/0/tracker_angle", "vessels/by-id/test-1/solar/0/state",
+            "vessels/by-id/test-1/lights/0/on", "vessels/by-id/test-1/lights/0/brightness",
+            "vessels/by-id/test-1/lights/0/color",
+            "vessels/by-id/test-1/generators/0/active", "vessels/by-id/test-1/generators/0/produced",
+            "vessels/by-id/test-1/docking/0/docked", "vessels/by-id/test-1/docking/0/docked_to",
+            "vessels/by-id/test-1/decouplers/0/fired", "vessels/by-id/test-1/decouplers/0/fire",
+            "vessels/by-id/test-1/animations/1/goal", "vessels/by-id/test-1/animations/1/state",
+            "vessels/by-id/test-1/navball/twr", "vessels/by-id/test-1/navball/frame",
+            "vessels/by-id/test-1/environment/pressure", "vessels/by-id/test-1/environment/g_force",
+            "vessels/by-id/test-1/encounters",
+            // celestial catalog
+            "system/name", "bodies/Kerth/mass", "bodies/Kerth/orbit/sma",
+            "bodies/Kerth/atmosphere/height", "bodies/Kerth/ocean/density",
+            // debug namespace
+            "debug/vessels/test-1/teleport", "debug/vessels/test-1/refill_fuel",
+            "debug/vessels/test-1/refill_battery", "debug/time/warp", "debug/switch_vessel",
+        ];
+
+        Assert.That(files.Keys, Is.SupersetOf(expectedPresent));
+        Assert.Multiple(() =>
+        {
+            // The control files read their live value; a sampled module reads its formatted value.
+            Assert.That(files["vessels/by-id/test-1/rcs/0/map"], Is.EqualTo("Pitch|Yaw\n"));
+            Assert.That(files["vessels/by-id/test-1/solar/0/tracker_angle"], Is.EqualTo("30\n"));
+            Assert.That(files["vessels/by-id/test-1/lights/0/on"], Is.EqualTo("1\n"));
+            Assert.That(files["vessels/by-id/test-1/docking/0/docked_to"], Is.EqualTo("part-7\n"));
+            Assert.That(files["bodies/Kerth/atmosphere/height"], Is.EqualTo("70000\n"));
+            // The active alias mirrors the control surface too.
+            Assert.That(files.Keys, Does.Contain("vessels/active/ctl/ignite"));
+        });
+    }
+
+    [Test]
     public async Task ActiveAlias_WalksToTheSameQids_AsById()
     {
         _store.Publish(TestData.Snapshot(1, TestData.Vessel()));
@@ -319,6 +384,49 @@ public sealed class SimFsTreeTests
     }
 
     /// <summary>Depth-first crawl reading every file (except the blocking <c>events</c>).</summary>
+    /// <summary>Crawls a tree over a caller-supplied client (its own fid space), for the
+    /// control-enabled-tree test which runs against a second, local server.</summary>
+    private static async Task CrawlWithAsync(NinePTestClient client, uint dirFid, string prefix,
+        Dictionary<string, string> files)
+    {
+        uint next = 1000; // a fid range that won't collide with the caller's root fid (0)
+        await CrawlInnerAsync(client, dirFid, prefix, files, () => next++);
+    }
+
+    private static async Task CrawlInnerAsync(NinePTestClient client, uint dirFid, string prefix,
+        Dictionary<string, string> files, Func<uint> nextFid)
+    {
+        var fid = nextFid();
+        await client.WalkAsync(dirFid, fid);
+        await client.LopenAsync(fid);
+        var entries = await client.ReaddirAllAsync(fid);
+        await client.ClunkAsync(fid);
+
+        foreach (var entry in entries)
+        {
+            if (entry.Name is "." or "..")
+                continue;
+            var path = prefix.Length == 0 ? entry.Name : $"{prefix}/{entry.Name}";
+            var childFid = nextFid();
+            await client.WalkAsync(dirFid, childFid, entry.Name);
+            if (entry.Type == 4) // DT_DIR
+            {
+                await CrawlInnerAsync(client, childFid, path, files, nextFid);
+            }
+            else if (path != "events") // blocking-event file: reading would park
+            {
+                await client.LopenAsync(childFid);
+                files[path] = Encoding.UTF8.GetString(await client.ReadToEndAsync(childFid));
+            }
+            else
+            {
+                files[path] = "";
+            }
+
+            await client.ClunkAsync(childFid);
+        }
+    }
+
     private async Task CrawlAsync(uint dirFid, string prefix, Dictionary<string, string> files)
     {
         var fid = _nextFid++;

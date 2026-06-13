@@ -44,7 +44,11 @@ public static class Nmea
             return null;
 
         var body = line[1..star];
-        var expected = Convert.ToInt32(line.Substring(star + 1, 2), 16);
+        // A corrupt sentence can carry non-hex checksum digits (e.g. "...*ZZ"); reject it cleanly
+        // rather than throwing — Parse is the SDK/tests' reference decoder and is fed hostile input.
+        if (!int.TryParse(line.AsSpan(star + 1, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture,
+                out var expected))
+            return null;
         var checksum = 0;
         foreach (var c in body)
             checksum ^= (byte)c;

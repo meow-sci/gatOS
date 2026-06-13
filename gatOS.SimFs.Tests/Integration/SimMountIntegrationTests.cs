@@ -115,13 +115,11 @@ public sealed class SimMountIntegrationTests
         Assert.That(Run(ssh, "cat /sim/vessels/by-id/test-1/id").Trim(), Is.EqualTo("test-1"),
             "the mount must stay fully usable after a flushed read");
 
-        // The whole tree is listable (a sanity sweep that every dir readdirs cleanly). Freeze
-        // the flight first: the tree is live (vessels can legitimately vanish → ENOENT between
-        // a parent's readdir and walking into a child), so a single `find` over a 10 Hz-swapping
-        // tree can race a transient and undercount. Stopping the publisher leaves Current pinned
-        // to a snapshot that still holds test-1, so the enumeration is deterministic.
-        await _publisher!.CancelAsync();
-        await Task.Delay(250); // let the in-flight publish settle; cache=none reads it live
+        // The whole tree is listable (a sanity sweep that every dir readdirs cleanly), run
+        // against the still-live 10 Hz flight. test-1 is present in every published snapshot
+        // with a fixed shape, so a healthy mount always enumerates the full tree; `find`'s
+        // rapid tag recycling used to race Session's tag bookkeeping and tear the connection
+        // down mid-walk (fixed: the tag is freed before its reply is written).
         var find = Run(ssh, "find /sim -type f | wc -l").Trim();
         Assert.That(int.Parse(find, CultureInfo.InvariantCulture), Is.GreaterThanOrEqualTo(30),
             "the full tree should enumerate (35 vessel files ×2 aliases + time + events)");

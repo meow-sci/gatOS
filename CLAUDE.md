@@ -295,10 +295,12 @@ mirroring `QgaClient`). `VmHost` allocates a 4th loopback port + `QemuCommandBui
 no rebuild needed); `Mod` starts/stops the connector on the VM `Running`/stop transitions per
 `[serial] serial_telemetry_port`/`serial_command_port`/`serial_mode`/`serial_interval_ms`.
 **`examples/sdk-ts`** (G6): a TypeScript/Bun SDK with
-`FsTransport`+`HttpTransport` behind one typed `GatosClient` (the per-vessel `telemetry` doc is
-byte-identical over both), reactive events, warp-aware time helpers, `GatosError` errno mapping, and
+`FsTransport`+`HttpTransport` behind one typed `GatosClient` (the per-vessel `telemetry` doc is the
+same `Formats.VesselTelemetry` JSON over both — parse-identical; the 9p file appends a trailing LF
+per the file convention, the HTTP/MQTT bodies do not), reactive events, warp-aware time helpers,
+`GatosError` errno mapping, and
 example scripts + a pure-shell README. Config grew `[http]` + `[serial]` flags. Tests:
-gatOS.Http 13 (HttpClient over the live socket), gatOS.Bus 20 (codec/SCPI + `SerialBridge`/connector
+gatOS.Http 24 (HttpClient over the live socket), gatOS.Bus 32 (codec/SCPI + `SerialBridge`/connector
 over a loopback socket pair). Full non-IT suite green, zero warnings. **Guest image v3 is BUILT
 (`GUEST_VERSION=3`, released + fetched).** All three extra transports are **validated in-guest**
 (2026-06-13, Windows/TCG) by the `GATOS_IT` fixture `SimFs.Tests/Integration/TransportEnvIntegrationTests`
@@ -316,8 +318,10 @@ port (guest reaches it at `10.0.2.2:<port>`, like the others — no external bro
 to `gatos/command` and the outcome is published to `gatos/command/result` (debug.* gated). `Mod` hosts
 it (config `[mqtt] enabled`/`preferred_port`=1883 ephemeral-fallback); `VmHost`/`QemuCommandBuilder`
 inject `gatos.mqttport`; the guest exports `$GATOS_MQTT=sim:<port>` (active on guest v3, like
-`$GATOS_HTTP` — validated in-guest, see `docs/VALIDATION.md`). `gatOS.Mqtt.Tests` (3) connect a real
-MQTTnet client to the broker. Full `GATOS_IT=1` suite green on guest v3, zero warnings.
+`$GATOS_HTTP` — validated in-guest, see `docs/VALIDATION.md`). `gatOS.Mqtt.Tests` (8) connect a real
+MQTTnet client to the broker (telemetry/time/status topics, retained delivery to a late subscriber,
+command routing + errno, debug gating, and that consumed commands are not rebroadcast). Full
+`GATOS_IT=1` suite green on guest v3, zero warnings.
 **Still pending: the in-game pass** (purrTTY tip release is now cut — the T6.6/T9.3/G1–G4 checklists
 in `docs/VALIDATION.md` are runnable but need a live KSA flight). The headless host↔guest stack
 (VM, shells, `/sim`, HTTP/MQTT/serial transports, control surface) is otherwise fully built and
@@ -332,10 +336,16 @@ T11.1 as-built note in `OS_PLAN.md`). On Windows, headless tests resolve that ve
 via `QemuLocator.OverridePath` (`VendoredQemuSetup` in `gatOS.Vm.Tests`/`gatOS.Ssh.Tests`/
 `gatOS.SimFs.Tests`), and `QemuLocator.Find()` throws the typed `QemuNotFoundException` (not
 `InvalidOperationException`) when `GatOsPaths.ModDir` is unset, so the test skip-gate works.
-The full `GATOS_IT=1` suite is verified green on the Windows 11 game machine against **guest v3**
+The full `GATOS_IT=1` suite was verified green on the Windows 11 game machine against **guest v3**
 (278/278, 0 skipped, 2026-06-13 — TCG fallback: WHPX needs the off-by-default `HypervisorPlatform`
-Windows feature; guest boot ≈ 7 s under TCG). Track real progress against the milestone table in `OS_PLAN.md` Part 3; do not document
-planned code here as if it exists.
+Windows feature; guest boot ≈ 7 s under TCG). A follow-up review (2026-06-13) hardened the 9p
+server against a tag-reuse-while-in-flight teardown (`Session` frees a tag *before* writing its
+reply — this was the real cause of the `find /sim` flake) and added 43 game-free tests across
+NineP/SimFs/Bus/MQTT/HTTP for control-file errno paths, codec edge cases, transport error/retained
+paths, and a full control-enabled tree crawl; the non-IT suite is green with zero warnings and the
+`/sim` mount IT fixture re-verified against guest v3 (suite now 321 with `GATOS_IT`). Track real
+progress against the milestone table in `OS_PLAN.md` Part 3; do not document planned code here as
+if it exists.
 
 ## Build and Test Commands
 

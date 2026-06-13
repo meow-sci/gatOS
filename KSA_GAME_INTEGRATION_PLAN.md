@@ -5,7 +5,10 @@
 > 2026-06-13). Parts 1–8 are implemented, including Part 6 T3's live wiring — `SerialBridge` +
 > `SerialBridgeConnector` over the QEMU `gatos.serial` chardev (guest `/dev/virtio-ports/gatos.serial`),
 > validated end-to-end against the real guest v3. (T4's 1553/SpaceWire framing variants remain a
-> reserved experiment.) As-built reality: `CLAUDE.md` + `docs/KSA_INTEGRATION_MATRIX.md`.
+> reserved experiment.) A few catalog reads/events below are aspirational and not yet built —
+> `staged`/`encounter` events, body CCI-frame vectors, `orbit/{mean_anomaly,t_pe}`, the
+> `solar/<n>/tracker/` subdir shape; the **Deferred** list in `docs/KSA_INTEGRATION_MATRIX.md`
+> tracks them. As-built reality: `CLAUDE.md` + `docs/KSA_INTEGRATION_MATRIX.md`.
 > A user-requested **MQTT transport** (`gatOS.Mqtt`, MQTTnet embedded broker) is also built — an
 > additional bridge alongside 9p/HTTP/serial. Guest v3 is built + fetched; all transports are
 > validated in-guest (`GATOS_IT`). Remaining: the in-game pass (live KSA flight).
@@ -263,7 +266,7 @@ Columns: **A** = archetype (S sensor, St state, T trigger, Sm stream), **W** = a
 | Path | A | Contents |
 |---|---|---|
 | `status/game_version` | S | `VersionInfo.Current.VersionString` (Risk L) |
-| `status/sampler` | S | `ok <hz>` or `disabled <reason>` |
+| `status/sampler` | S | `ok <hz>` or `idle` (as-built; the sampler has no per-reason disable text) |
 | `status/accessors` | S | NDJSON: one line per degraded accessor (`{"name":…,"since_ut":…,"error":…}`); empty when healthy |
 | `status/guest`/`status/transports` | S | which transports are bound (9p port, http port, serial ports) |
 
