@@ -3,6 +3,29 @@
 Manual pass results live here. Record machine, date, purrTTY/gatOS versions and the outcome of
 each item; failures get a short note plus the relevant `logs/qemu-*.log` excerpt.
 
+## Guest-v3 transport-env validation (run 2026-06-13, Windows 11 game machine, TCG)
+
+Guest image **v3** built + fetched (`GUEST_VERSION=3`, host-key pin verified). The v3-only
+guest activation for the extra transports (G5 HTTP + MQTT) is proven in-guest by the
+`GATOS_IT=1` fixture `SimFs.Tests/Integration/TransportEnvIntegrationTests`, which boots the
+real guest with the host HTTP server **and** MQTT broker wired
+(`HttpPortProvider`/`MqttPortProvider`):
+
+| Check | Result |
+|---|---|
+| `init-gatos` writes `/etc/profile.d/gatos.sh` exporting `$GATOS_HTTP = http://sim:<port>/v1` | ✅ |
+| …and `$GATOS_MQTT = sim:<port>` | ✅ |
+| `/run/gatos/{http,mqtt}-port` carry the bare ports for non-shell consumers | ✅ |
+| The `sim` host alias resolves to the slirp gateway `10.0.2.2` (`/etc/hosts`) | ✅ |
+| **Guest reads live telemetry over slirp**: `wget -qO- $GATOS_HTTP/time` → JSON with advancing `ut` | ✅ |
+| The MQTT broker accepts the guest's TCP connection over the same slirp path (`nc sim <port>`) | ✅ |
+| `/sim` 9p mount + control-surface writes still work on v3 (existing fixtures, re-run on v3) | ✅ |
+
+Full `GATOS_IT=1` suite re-run on v3: **green** (see CLAUDE.md). Still pending and unchanged:
+the **G7 live serial bridge** (the `gatOS.Bus` codecs are built + unit-tested, but the QEMU
+virtio-serial *port* for it is not wired — only the qemu-ga port exists), and the **in-game
+pass** (blocked on the purrTTY tip release, same as T6.6).
+
 ## M9 headless dist smoke (pre-validation; run 2026-06-12, Windows 11 game machine)
 
 The M6 reflection harness, extended for M9, against the deployed dist (real VM boot, TCG):

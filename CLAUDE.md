@@ -292,10 +292,15 @@ XOR checksum), `ScpiCommandPort` (`CTL:ENG0:ACT 1`→`SimCommand`→sink, `OK`/`
 byte-identical over both), reactive events, warp-aware time helpers, `GatosError` errno mapping, and
 example scripts + a pure-shell README. Config grew `[http]` + reserved `[serial]` flags. Tests:
 gatOS.Http 13 (HttpClient over the live socket), gatOS.Bus 15 (codec/SCPI). Full non-IT suite green
-(260 passed), zero warnings. **Pending guest image v3** (additive `rootfs-overlay` written, `GUEST_VERSION`
-unchanged so v2 IT stays green): the `sim` `/etc/hosts` alias + `$GATOS_HTTP` env activate then, and
-the **G7 QEMU virtio-serial port wiring + guest `/dev/virtio-ports` exposure** (the live serial
-bridge) is that image build's integration step — the codecs + command port are done and tested now.
+(260 passed), zero warnings. **Guest image v3 is BUILT (`GUEST_VERSION=3`, released + fetched).** The
+HTTP/MQTT guest activation is **validated in-guest** (2026-06-13, Windows/TCG): the `GATOS_IT`
+fixture `SimFs.Tests/Integration/TransportEnvIntegrationTests` boots the real v3 guest with the host
+HTTP server + MQTT broker wired and proves the `sim` `/etc/hosts` alias, `$GATOS_HTTP`/`$GATOS_MQTT`
+(`/etc/profile.d/gatos.sh`) + `/run/gatos/{http,mqtt}-port`, a **live telemetry read over slirp**
+(`wget $GATOS_HTTP/time`), and MQTT-broker TCP reachability — see `docs/VALIDATION.md`. **Still
+pending: the G7 live serial bridge** — the QEMU virtio-serial *port* for it + guest
+`/dev/virtio-ports` exposure are not wired (only the qemu-ga port exists); the `gatOS.Bus` codecs +
+command port are done and unit-tested, but the live serial transport awaits that wiring.
 
 **MQTT transport (`gatOS.Mqtt`, MQTTnet): BUILT.** A user-requested additional bridge alongside
 9p/HTTP/serial. An **embedded MQTTnet broker** (`SimMqttBroker`) in the host process on a loopback
@@ -304,11 +309,12 @@ port (guest reaches it at `10.0.2.2:<port>`, like the others — no external bro
 `gatos/vessels/<id>/telemetry` and (non-retained) `gatos/events`; clients publish a JSON `SimCommand`
 to `gatos/command` and the outcome is published to `gatos/command/result` (debug.* gated). `Mod` hosts
 it (config `[mqtt] enabled`/`preferred_port`=1883 ephemeral-fallback); `VmHost`/`QemuCommandBuilder`
-inject `gatos.mqttport`; the guest exports `$GATOS_MQTT=sim:<port>` (pending guest v3, like
-`$GATOS_HTTP`). `gatOS.Mqtt.Tests` (3) connect a real MQTTnet client to the broker. Full non-IT suite
-green (263 passed), zero warnings. **Still pending: the in-game pass** (the purrTTY-tip-release
-blocker) **and the guest image v3 build** (activates the `sim`/`$GATOS_HTTP`/`$GATOS_MQTT` guest env
-+ the live serial bridge).
+inject `gatos.mqttport`; the guest exports `$GATOS_MQTT=sim:<port>` (active on guest v3, like
+`$GATOS_HTTP` — validated in-guest, see `docs/VALIDATION.md`). `gatOS.Mqtt.Tests` (3) connect a real
+MQTTnet client to the broker. Full `GATOS_IT=1` suite green on guest v3 (270 passed), zero warnings.
+**Still pending: the in-game pass** (the purrTTY-tip-release blocker) **and the G7 live serial
+bridge** (QEMU virtio-serial port + guest `/dev/virtio-ports` wiring — the codecs are built, the
+transport is not yet wired).
 
 Everything past M9 is **not yet implemented** — next is M10 (persistence & savegame shape) —
 with one exception pulled forward: **T11.1 QEMU win-x64 bundle tooling is DONE**
@@ -319,9 +325,9 @@ T11.1 as-built note in `OS_PLAN.md`). On Windows, headless tests resolve that ve
 via `QemuLocator.OverridePath` (`VendoredQemuSetup` in `gatOS.Vm.Tests`/`gatOS.Ssh.Tests`/
 `gatOS.SimFs.Tests`), and `QemuLocator.Find()` throws the typed `QemuNotFoundException` (not
 `InvalidOperationException`) when `GatOsPaths.ModDir` is unset, so the test skip-gate works.
-The full `GATOS_IT=1` suite is verified green on the Windows 11 game machine (TCG fallback —
-WHPX needs the off-by-default `HypervisorPlatform` Windows feature; guest boot ≈ 7 s under
-TCG). Track real progress against the milestone table in `OS_PLAN.md` Part 3; do not document
+The full `GATOS_IT=1` suite is verified green on the Windows 11 game machine against **guest v3**
+(270/270, 0 skipped, 2026-06-13 — TCG fallback: WHPX needs the off-by-default `HypervisorPlatform`
+Windows feature; guest boot ≈ 7 s under TCG). Track real progress against the milestone table in `OS_PLAN.md` Part 3; do not document
 planned code here as if it exists.
 
 ## Build and Test Commands
