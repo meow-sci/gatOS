@@ -40,11 +40,15 @@ cargo run -- --url http://127.0.0.1:4242/v1        # --interval <ms> tunes the p
 **Dashboard:** `↑`/`↓` or `j`/`k` (or the mouse wheel) select · `Enter` or click a row open it ·
 `q` quit.
 
-**Vessel detail** — keyboard focus ring **and** clickable buttons drive the same actions:
-`Tab`/`↑`/`↓` (or wheel) move focus · `Enter`/`Space` or click activate · `−`/`=` (or `←`/`→`) nudge
-throttle · `Esc`/`Backspace` back · `q` quit. Available controls:
+**Vessel detail** — the header shows the current attitude mode; a keyboard focus ring **and**
+clickable buttons drive the same actions: `Tab`/`↑`/`↓` (or wheel) move focus · `Enter`/`Space` or
+click activate · `−`/`=` (or `←`/`→`) nudge throttle · `Esc`/`Backspace` back · `q` quit. Available
+controls:
 
-- **Flight:** ignite, shutdown, stage, throttle (−/+, 0 %, 100 %), lights, RCS, cycle attitude mode.
+- **Flight:** ignite, shutdown, stage, throttle (−/+, 0 %, 100 %), lights, RCS, attitude mode.
+- **Throttle bar:** click anywhere along the throttle bar in the telemetry pane to set it directly.
+- **Attitude mode:** activating the attitude control opens a **picker** — choose any mode (or
+  `manual` to unset the autopilot); `↑`/`↓` move, `Enter`/click select, `Esc` cancels.
 - **Per engine:** toggle each engine on/off.
 - **Per light:** toggle each light on/off.
 - **Debug** (active only when the server's `[control] debug_namespace` is on — otherwise they report

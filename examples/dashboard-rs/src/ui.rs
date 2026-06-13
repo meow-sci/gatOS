@@ -7,11 +7,15 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Cell, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Cell, Clear, Paragraph, Row, Table};
 use ratatui::Frame;
 
 use crate::api::Vessel;
 use crate::app::{Action, App, Screen};
+
+/// Columns the throttle label + percent occupy before the bar starts (`"Throttle "` = 9, a
+/// 4-wide right-aligned percent, a space). The bar's clickable rect is anchored at this offset.
+const THROTTLE_PREFIX: u16 = 14;
 
 // Foreground palette (the TUI is otherwise transparent).
 const TITLE: Color = Color::Cyan;
@@ -36,6 +40,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
     match detail_id {
         None => render_dashboard(f, app),
         Some(id) => render_detail(f, app, &id),
+    }
+    if app.picker.is_some() {
+        render_picker(f, app);
     }
 }
 
@@ -212,6 +219,12 @@ fn render_detail(f: &mut Frame, app: &mut App, id: &str) {
         } else {
             Span::styled("[uncontrolled]", Style::new().fg(LABEL))
         },
+        Span::raw("  "),
+        Span::styled("att ", Style::new().fg(LABEL)),
+        Span::styled(
+            val_or(&v.attitude_mode, "manual").to_string(),
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
     ]);
     f.render_widget(
         Paragraph::new(header).style(Style::new().bg(BAR_BG)),
@@ -228,8 +241,16 @@ fn render_detail(f: &mut Frame, app: &mut App, id: &str) {
         ));
     let telem_inner = telem.inner(body[0]);
     f.render_widget(telem, body[0]);
+    let bar_w = (telem_inner.width.saturating_sub(20)).clamp(6, 24);
+    // The throttle bar is the first telemetry line; record its rect so a click maps to a fraction.
+    app.throttle_bar = Rect {
+        x: telem_inner.x.saturating_add(THROTTLE_PREFIX),
+        y: telem_inner.y,
+        width: bar_w.min(telem_inner.width.saturating_sub(THROTTLE_PREFIX)),
+        height: 1,
+    };
     f.render_widget(
-        Paragraph::new(telemetry_lines(&v, telem_inner.width)),
+        Paragraph::new(telemetry_lines(&v, bar_w as usize)),
         telem_inner,
     );
 
@@ -238,7 +259,8 @@ fn render_detail(f: &mut Frame, app: &mut App, id: &str) {
     // Status bar — last command outcome / connection.
     let (msg, color) = if app.status_line.is_empty() {
         (
-            "Tab/↑↓ focus · Enter/click activate · −/= throttle · Esc back · q quit".to_string(),
+            "Tab/↑↓ focus · Enter/click activate · −/= or click bar: throttle · Esc back · q quit"
+                .to_string(),
             LABEL,
         )
     } else if app.status_is_error {
@@ -252,13 +274,19 @@ fn render_detail(f: &mut Frame, app: &mut App, id: &str) {
     );
 }
 
-fn telemetry_lines(v: &Vessel, width: u16) -> Vec<Line<'static>> {
-    let bar_w = (width.saturating_sub(20)).clamp(6, 24) as usize;
+fn telemetry_lines(v: &Vessel, bar_w: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
-    // Throttle bar.
-    let mut throttle = vec![label("Throttle "), pct_span(v.throttle_cmd)];
-    throttle.push(Span::raw(" "));
+    // Throttle bar (clickable — see App::throttle_bar). The label + 4-wide percent are a fixed
+    // THROTTLE_PREFIX columns so the bar starts where the click hit-test rect is anchored.
+    let mut throttle = vec![
+        label("Throttle "),
+        Span::styled(
+            format!("{:>4}", pct(v.throttle_cmd)),
+            Style::new().fg(WARN).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+    ];
     throttle.extend(bar_spans(v.throttle_cmd, bar_w, WARN));
     lines.push(Line::from(throttle));
     lines.push(Line::raw(""));
@@ -429,8 +457,8 @@ fn control_items(v: &Vessel, debug_enabled: bool) -> Vec<(Action, String, Color)
             on_off_color(v.rcs_on),
         ),
         (
-            Action::CycleAttitude,
-            format!("Attitude: {} ▸", val_or(&v.attitude_mode, "—")),
+            Action::OpenAttitudePicker,
+            format!("Attitude: {} ▾", val_or(&v.attitude_mode, "manual")),
             ACCENT,
         ),
     ];
@@ -457,6 +485,88 @@ fn control_items(v: &Vessel, debug_enabled: bool) -> Vec<(Action, String, Color)
     items.push((Action::WarpDown, "Warp ÷2 ⚙".to_string(), debug_color));
     items.push((Action::WarpUp, "Warp ×2 ⚙".to_string(), debug_color));
     items
+}
+
+// ---- modal picker -----------------------------------------------------------------------------
+
+/// Draws the modal list-picker centered over the screen and records its hit-test rects back into
+/// `app.picker` (outer `area` + per-option `item_rects`) for the next mouse event. A picker is a
+/// menu, so it gets a (subtle) background fill + `Clear` underneath to stay legible over the game —
+/// the one place transparency is traded for readability.
+fn render_picker(f: &mut Frame, app: &mut App) {
+    let screen = f.area();
+    let Some(p) = app.picker.as_mut() else {
+        return;
+    };
+    let n = p.options.len() as u16;
+    let width = 30u16.min(screen.width.saturating_sub(2)).max(10);
+    // Cap the body to what fits (leave room for the border); scroll the rest.
+    let max_body = screen.height.saturating_sub(2).max(1);
+    let body = n.min(max_body);
+    let height = body + 2;
+    let x = screen.x + screen.width.saturating_sub(width) / 2;
+    let y = screen.y + screen.height.saturating_sub(height) / 2;
+    let popup = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+    p.area = popup;
+
+    f.render_widget(Clear, popup);
+    let block = Block::bordered()
+        .border_style(Style::new().fg(ACCENT))
+        .title(Span::styled(
+            format!(" {} ", p.title),
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::new().bg(BAR_BG));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    // Scroll the selection into the visible window.
+    let visible = inner.height as usize;
+    if p.selected < p.offset {
+        p.offset = p.selected;
+    } else if visible > 0 && p.selected >= p.offset + visible {
+        p.offset = p.selected + 1 - visible;
+    }
+
+    p.item_rects.clear();
+    for row in 0..inner.height {
+        let idx = p.offset + row as usize;
+        if idx >= p.options.len() {
+            break;
+        }
+        let rect = Rect {
+            x: inner.x,
+            y: inner.y + row,
+            width: inner.width,
+            height: 1,
+        };
+        p.item_rects.push((rect, idx));
+
+        let focused = idx == p.selected;
+        let (marker, style) = if focused {
+            ("▶ ", Style::new().fg(FOCUS).add_modifier(Modifier::BOLD))
+        } else {
+            ("  ", Style::new().fg(VALUE))
+        };
+        // "manual" is the unset option — label it so that's obvious.
+        let text = if p.options[idx].eq_ignore_ascii_case("manual") {
+            "manual (off)".to_string()
+        } else {
+            p.options[idx].to_string()
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(marker, Style::new().fg(ACCENT)),
+                Span::styled(text, style),
+            ])),
+            rect,
+        );
+    }
 }
 
 // ---- span / formatting helpers ----------------------------------------------------------------

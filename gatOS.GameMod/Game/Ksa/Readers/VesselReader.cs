@@ -115,6 +115,18 @@ internal static class VesselReader
     private static VesselSnapshot Enrich(VesselSnapshot core, Vehicle vehicle, double utSeconds)
     {
         var (_, batteryCapacity) = SampleBattery(vehicle);
+        var rcs = SampleRcs(vehicle);
+        // The vessel-level RCS master flag is "any thruster controller active" (RcsActuator.SetMaster
+        // toggles them all); derive it from the per-controller states we just sampled.
+        var rcsOn = false;
+        foreach (var r in rcs)
+            if (r.Active)
+            {
+                rcsOn = true;
+                break;
+            }
+
+        var (attitudeMode, attitudeFrame) = SampleFlightComputer(vehicle);
         return core with
         {
             PositionEcl = Vec(vehicle.GetPositionEcl()),
@@ -128,7 +140,15 @@ internal static class VesselReader
             BatteryCapacityJoules = batteryCapacity,
             PowerProducedW = SamplePowerProduced(vehicle),
             PowerConsumedW = SamplePowerConsumed(vehicle),
-            Rcs = SampleRcs(vehicle),
+            // The writable-setpoint read-backs the control files surface (ctl/throttle, ctl/rcs,
+            // ctl/attitude_mode, ctl/attitude_frame). Without these the snapshot reported the
+            // record defaults (0 / false / ""), so every transport showed throttle 0% and a blank
+            // attitude mode regardless of the real state.
+            ThrottleCmd = Sanitize.Finite(vehicle.GetManualThrottle()),
+            RcsOn = rcsOn,
+            AttitudeMode = attitudeMode,
+            AttitudeFrame = attitudeFrame,
+            Rcs = rcs,
             Solar = SampleSolar(vehicle),
             Generators = SampleGenerators(vehicle),
             Lights = SampleLights(vehicle),
@@ -136,6 +156,19 @@ internal static class VesselReader
             Decouplers = SampleDecouplers(vehicle),
             Encounters = SampleEncounters(vehicle),
         };
+    }
+
+    [KsaAnchor("Vehicle.GetManualThrottle(); FlightComputer.{AttitudeMode,AttitudeTrackTarget,AttitudeFrame}",
+        SourceFile = "KSA/Vehicle.cs / KSA/FlightComputer.cs", Verified = "2026-06-13", Risk = ChurnRisk.Medium,
+        Notes = "Read-back of the writable setpoints. Manual attitude reports \"manual\"; auto reports the "
+                + "track-target name (Prograde/…). Frame is the VehicleReferenceFrame name.")]
+    private static (string Mode, string Frame) SampleFlightComputer(Vehicle vehicle)
+    {
+        var fc = vehicle.FlightComputer;
+        var mode = fc.AttitudeMode == FlightComputerAttitudeMode.Manual
+            ? "manual"
+            : fc.AttitudeTrackTarget.ToString();
+        return (mode, fc.AttitudeFrame.ToString());
     }
 
     [KsaAnchor("Orbit.StateVectors.TrueAnomaly.Degrees; LongitudeOfAscendingNode/ArgumentOfPeriapsis (rad); "

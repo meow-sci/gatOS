@@ -157,6 +157,14 @@ Anchors in `Game/Ksa/Actuators/**`; routed by `KsaCatalog`. Frame phase unless n
 | `…/lights/<n>/color` | St | `r g b` | `Template.ColorRgb.{R,G,B}`+`OnDataLoad` (per-instance clone) | H | Frame |
 | `…/decouplers/<n>/fire` | T | `1` | `Decoupler.SetIsActive` (re-fire → EBUSY) | M | Frame |
 
+A STATE control file's **read** returns the current setpoint, so the vessel-level ones need a reader
+that samples it back. These are populated in `VesselReader.Enrich` (anchor `SampleFlightComputer` +
+`GetManualThrottle`): `ctl/throttle` ← `Vehicle.GetManualThrottle()`, `ctl/rcs` ← any
+`ThrusterController.IsActive`, `ctl/attitude_mode` ← `FlightComputer.AttitudeMode`/`AttitudeTrackTarget`
+(`manual` when Manual, else the track-target name), `ctl/attitude_frame` ← `FlightComputer.AttitudeFrame`.
+(Before this wiring the snapshot reported the record defaults — throttle `0`, attitude `""` — on every
+transport regardless of the real state.)
+
 `/sim/debug/` (G-D2; gated by `[control] debug_namespace`):
 
 | Path | A | Write | KSA anchor | Risk | Phase |
