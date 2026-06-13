@@ -6,6 +6,8 @@ dist/
 *.trx
 *.log
 *.db
+# Rust example client (examples/dashboard-rs) build dir
+target/
 
 # --- IDE / OS ---
 .idea/
