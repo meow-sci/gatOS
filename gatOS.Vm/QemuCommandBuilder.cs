@@ -52,7 +52,8 @@ public sealed class QemuCommandBuilder(OperatingSystemFacts facts)
 
         args.AddRange(["-kernel", spec.KernelPath]);
         args.AddRange(["-initrd", spec.InitrdPath]);
-        args.AddRange(["-append", $"{spec.KernelCmdlineBase} gatos.simport={spec.SimPort ?? 0}"]);
+        args.AddRange(["-append",
+            $"{spec.KernelCmdlineBase} gatos.simport={spec.SimPort ?? 0} gatos.httpport={spec.HttpPort ?? 0}"]);
 
         args.AddRange(["-drive", $"file={spec.OverlayPath},if=virtio,format=qcow2"]);
 

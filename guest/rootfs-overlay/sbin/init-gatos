@@ -36,3 +36,16 @@ ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up 2>/dev/null
 route add default gw 10.0.2.2 2>/dev/null
 
 mkdir -p /sim
+
+# Magic HTTP transport (G5): the host advertises its server port as gatos.httpport=<port> on
+# the kernel cmdline (0/absent = disabled). The guest reaches the host server outbound at
+# 10.0.2.2 (slirp); /etc/hosts aliases that to 'sim'. Login shells pick up $GATOS_HTTP via
+# /etc/profile.d, and /run/gatos/http-port carries the bare port for non-shell consumers.
+HTTP_PORT="$(sed -n 's/.*gatos\.httpport=\([0-9][0-9]*\).*/\1/p' /proc/cmdline)"
+mkdir -p /run/gatos /etc/profile.d
+if [ -n "$HTTP_PORT" ] && [ "$HTTP_PORT" != "0" ]; then
+    echo "$HTTP_PORT" > /run/gatos/http-port
+    printf 'export GATOS_HTTP="http://sim:%s/v1"\n' "$HTTP_PORT" > /etc/profile.d/gatos.sh
+else
+    rm -f /run/gatos/http-port /etc/profile.d/gatos.sh 2>/dev/null
+fi

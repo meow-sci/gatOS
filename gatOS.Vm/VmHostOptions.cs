@@ -25,6 +25,13 @@ public sealed record VmHostOptions
     public Func<int?>? SimPortProvider { get; init; }
 
     /// <summary>
+    ///     Supplies the magic HTTP port at boot time (G5); <c>null</c> result or provider emits
+    ///     <c>gatos.httpport=0</c> so the guest's HTTP env stays unset. The guest reaches the host
+    ///     server outbound at <c>10.0.2.2:&lt;port&gt;</c> (slirp), like the 9p server.
+    /// </summary>
+    public Func<int?>? HttpPortProvider { get; init; }
+
+    /// <summary>
     ///     Overall boot timeout (spawn → SSH banner); <c>null</c> = auto: 60 s accelerated,
     ///     300 s under TCG.
     /// </summary>

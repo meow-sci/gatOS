@@ -107,7 +107,8 @@ public sealed partial class Mod
             _telemetry ??= new TelemetrySampler(store, Config.SampleRateHz, _health);
             var state = CurrentVmStatus.State;
             var active = state is VmState.Starting or VmState.Running
-                         || (_simServer?.ActiveSessions ?? 0) > 0;
+                         || (_simServer?.ActiveSessions ?? 0) > 0
+                         || (_httpServer?.ActiveSessions ?? 0) > 0;
             _telemetry.Tick(dt, active);
         }
         catch (Exception ex)
@@ -280,6 +281,8 @@ public sealed partial class Mod
             ImGui.Text(status.SimPort?.ToString() ?? "—");
             Row("SimFs");
             ImGui.Text(SimFsStatusText());
+            Row("HTTP");
+            ImGui.Text(HttpStatusText());
             Row("Uptime");
             ImGui.Text(FormatUptime(status));
             Row("Guest");

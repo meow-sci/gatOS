@@ -37,6 +37,12 @@ public sealed class GatOsConfig
         # debug_namespace       expose the /sim/debug cheat surface (G-D2; reserved for G4+)
         # command_timeout_ms    how long a control write waits for the game thread before ETIMEDOUT
         # max_commands_per_frame upper bound on control commands executed per game frame
+        # http_enabled          serve the magic HTTP API (guest reaches it at $GATOS_HTTP / 10.0.2.2)
+        # http_preferred_port   preferred HTTP port (4242); 0 = ephemeral only; falls back on a clash
+        # serial_telemetry_port expose a virtio-serial NDJSON telemetry feed (G7; reserved)
+        # serial_command_port   expose a virtio-serial SCPI command port (G7; reserved)
+        # bus_ccsds             expose a CCSDS space-packet TM/TC feed (G7; reserved)
+        # bus_1553              expose a MIL-STD-1553 BC/RT framing feed (G7; reserved)
 
         """;
 
@@ -78,6 +84,24 @@ public sealed class GatOsConfig
 
     /// <summary>Upper bound on control commands executed per game frame.</summary>
     public int MaxCommandsPerFrame { get; set; } = 64;
+
+    /// <summary>Serve the magic HTTP API (KSA_GAME_INTEGRATION_PLAN Part 6 T2 / Part 7).</summary>
+    public bool HttpEnabled { get; set; } = true;
+
+    /// <summary>Preferred HTTP port (4242); 0 = ephemeral only; falls back to ephemeral on a clash.</summary>
+    public int HttpPreferredPort { get; set; } = 4242;
+
+    /// <summary>Expose a virtio-serial NDJSON telemetry feed (G7; reserved — not yet served).</summary>
+    public bool SerialTelemetryPort { get; set; }
+
+    /// <summary>Expose a virtio-serial SCPI command port (G7; reserved — not yet served).</summary>
+    public bool SerialCommandPort { get; set; }
+
+    /// <summary>Expose a CCSDS space-packet TM/TC feed (G7; reserved — not yet served).</summary>
+    public bool BusCcsds { get; set; }
+
+    /// <summary>Expose a MIL-STD-1553 BC/RT framing feed (G7; reserved — not yet served).</summary>
+    public bool Bus1553 { get; set; }
 
     /// <summary>
     ///     Loads the config from <paramref name="path"/>, creating it with defaults on first run.
@@ -142,6 +166,8 @@ public sealed class GatOsConfig
         BootTimeoutSeconds = Clamp(nameof(BootTimeoutSeconds), BootTimeoutSeconds, 0, 3600);
         CommandTimeoutMs = Clamp(nameof(CommandTimeoutMs), CommandTimeoutMs, 100, 30000);
         MaxCommandsPerFrame = Clamp(nameof(MaxCommandsPerFrame), MaxCommandsPerFrame, 1, 4096);
+        if (HttpPreferredPort != 0)
+            HttpPreferredPort = Clamp(nameof(HttpPreferredPort), HttpPreferredPort, 1024, 65535);
 
         var accel = AccelOverride.Trim().ToLowerInvariant();
         if (accel is not ("" or "whpx" or "kvm" or "hvf" or "tcg"))

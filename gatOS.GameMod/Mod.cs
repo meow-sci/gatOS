@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using gatOS.GameMod.Configuration;
 using gatOS.Logging;
+using gatOS.Http;
 using gatOS.NineP.Server;
 using gatOS.NineP.Vfs;
 using gatOS.SimFs;
@@ -54,6 +55,11 @@ public sealed partial class Mod
     private SnapshotStore? _simStore;
     private VfsDirectory? _simRoot;
     private volatile NinePServer? _simServer;
+
+    // The magic HTTP transport (G5): same SnapshotStore + command pipeline as the 9p tree, on a
+    // loopback port the guest reaches at 10.0.2.2. Volatile — read by the render thread (status)
+    // and the VM boot's HttpPortProvider on their own threads.
+    private volatile SimHttpServer? _httpServer;
 
     // The control pipeline (KSA_GAME_INTEGRATION_PLAN G1): transport threads submit commands here,
     // the game thread drains them through the KSA actuator catalog each frame. Game-free; the
@@ -116,6 +122,7 @@ public sealed partial class Mod
                 TimeSpan.FromMilliseconds(_config.CommandTimeoutMs));
             _simRoot = SimFsTree.Build(_simStore, _commandQueue, SimTransportsStatus);
             StartSimServer(port: 0);
+            StartHttpServer();
 
             _disks = new DiskManager();
             var vmHost = new VmHost(new VmHostOptions
@@ -131,6 +138,9 @@ public sealed partial class Mod
                 // A failed/missing server returns null → the guest supervisor idles
                 // (gatos.simport=0); the rest of gatOS works without /sim.
                 SimPortProvider = () => _simServer is { Port: > 0 } server ? server.Port : null,
+                // The guest reaches the host HTTP server outbound at 10.0.2.2:<port> (slirp);
+                // gatos.httpport on the cmdline lets the guest discover it. Null = guest HTTP env unset.
+                HttpPortProvider = () => _httpServer is { Port: > 0 } http ? http.Port : null,
             });
             _broker = new VmConnectionBroker(vmHost);
 
@@ -169,8 +179,9 @@ public sealed partial class Mod
     {
         var server = _simServer;
         var ninep = server is { Port: > 0 } ? server.Port.ToString() : "unbound";
+        var http = _httpServer is { Port: > 0 } h ? h.Port.ToString() : "off";
         var control = _commandQueue is { ControlEnabled: true } ? "on" : "off";
-        return $"9p {ninep}\ncontrol {control}";
+        return $"9p {ninep}\nhttp {http}\ncontrol {control}";
     }
 
     /// <summary>Draws the diagnostics UI (T6.4); a no-op when built without the KSA assemblies.</summary>
@@ -222,6 +233,11 @@ public sealed partial class Mod
             _simServer = null;
             if (simServer is not null && !simServer.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)))
                 ModLog.Log.Warn("The /sim server did not stop within 5 s at unload.");
+
+            var httpServer = _httpServer;
+            _httpServer = null;
+            if (httpServer is not null && !httpServer.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)))
+                ModLog.Log.Warn("The HTTP server did not stop within 5 s at unload.");
         }
         catch (Exception ex)
         {
@@ -354,6 +370,35 @@ public sealed partial class Mod
         var server = _simServer;
         return server is null
             ? "not running"
+            : $"port {server.Port}, {server.ActiveSessions} connection(s)";
+    }
+
+    private void StartHttpServer()
+    {
+        if (!_config.HttpEnabled || _simStore is not { } store)
+            return;
+        try
+        {
+            var server = new SimHttpServer(store, _commandQueue, SimTransportsStatus);
+            server.StartAsync(_config.HttpPreferredPort).GetAwaiter().GetResult();
+            _httpServer = server;
+            ModLog.Log.Info($"gatOS HTTP API listening on 127.0.0.1:{server.Port} "
+                            + "(guest: $GATOS_HTTP / http://sim:<port>/v1).");
+        }
+        catch (Exception ex)
+        {
+            // HTTP is an optional luxury like /sim: the VM, shells and 9p work without it.
+            _httpServer = null;
+            ModLog.Log.Error($"The magic HTTP server failed to start: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>One status-window line for the HTTP server (read on the render thread).</summary>
+    internal string HttpStatusText()
+    {
+        var server = _httpServer;
+        return server is null
+            ? (_config.HttpEnabled ? "not running" : "disabled")
             : $"port {server.Port}, {server.ActiveSessions} connection(s)";
     }
 

@@ -25,6 +25,10 @@ namespace gatOS.Vm;
 ///     Forces a single accelerator (e.g. <c>"tcg"</c>); empty string selects the per-OS
 ///     auto ladder.
 /// </param>
+/// <param name="HttpPort">
+///     The host magic-HTTP server port baked into the kernel cmdline (<c>gatos.httpport</c>);
+///     <c>null</c> (emitted as 0) leaves the guest's HTTP env unset. G5.
+/// </param>
 public sealed record VmLaunchSpec(
     string OverlayPath,
     string KernelPath,
@@ -38,7 +42,8 @@ public sealed record VmLaunchSpec(
     int? SimPort,
     bool RestrictNetwork,
     string SerialLogPath,
-    string AccelOverride = "")
+    string AccelOverride = "",
+    int? HttpPort = null)
 {
     /// <summary>Default guest RAM (OS_ANALYSIS.md §3.8: Alpine comfy at 192–256 MB).</summary>
     public const int DefaultMemoryMb = 256;

@@ -10,6 +10,8 @@
     <Project Path="gatOS.NineP.Tests/gatOS.NineP.Tests.csproj" />
     <Project Path="gatOS.SimFs/gatOS.SimFs.csproj" />
     <Project Path="gatOS.SimFs.Tests/gatOS.SimFs.Tests.csproj" />
+    <Project Path="gatOS.Http/gatOS.Http.csproj" />
+    <Project Path="gatOS.Http.Tests/gatOS.Http.Tests.csproj" />
     <Project Path="gatOS.Vm/gatOS.Vm.csproj" />
     <Project Path="gatOS.Vm.Tests/gatOS.Vm.Tests.csproj" />
     <Project Path="gatOS.Ssh/gatOS.Ssh.csproj" />

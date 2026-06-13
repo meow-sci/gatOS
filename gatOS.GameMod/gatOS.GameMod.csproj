@@ -91,6 +91,7 @@
     <ItemGroup>
         <ProjectReference Include="..\gatOS.Ssh\gatOS.Ssh.csproj" />
         <ProjectReference Include="..\gatOS.SimFs\gatOS.SimFs.csproj" />
+        <ProjectReference Include="..\gatOS.Http\gatOS.Http.csproj" />
         <ProjectReference Include="..\gatOS.Vm\gatOS.Vm.csproj" />
         <ProjectReference Include="..\gatOS.Logging\gatOS.Logging.csproj" />
     </ItemGroup>

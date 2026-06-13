@@ -1,2 +1,4 @@
 127.0.0.1	localhost gatos
 ::1		localhost
+# The slirp gateway is the host loopback; 'sim' is the magic HTTP/transport host (G5).
+10.0.2.2	sim

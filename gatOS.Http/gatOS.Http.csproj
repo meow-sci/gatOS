@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <AssemblyName>gatOS.Http</AssemblyName>
+        <RootNamespace>gatOS.Http</RootNamespace>
+        <Description>The "magic" HTTP transport (KSA_GAME_INTEGRATION_PLAN Part 6 T2 / G5): a
+            game-free REST+SSE server over the same SnapshotStore + command pipeline the 9p tree
+            uses. Built on the BCL HttpListener (no third-party HTTP dependency in the mod ALC).</Description>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\gatOS.SimFs\gatOS.SimFs.csproj" />
+        <ProjectReference Include="..\gatOS.Logging\gatOS.Logging.csproj" />
+    </ItemGroup>
+
+</Project>

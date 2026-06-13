@@ -169,6 +169,7 @@ public sealed class VmHost : IAsyncDisposable
             var overlay = _disks.GetOrCreateOverlay(_options.Profile);
             diskLock = _disks.AcquireOverlayLock(_options.Profile);
             var simPort = _options.SimPortProvider?.Invoke();
+            var httpPort = _options.HttpPortProvider?.Invoke();
 
             // The port-reuse race window is real but tiny (T3.1): one retry with fresh ports.
             for (var portRetry = false; ; portRetry = true)
@@ -185,7 +186,8 @@ public sealed class VmHost : IAsyncDisposable
                     SimPort: simPort,
                     RestrictNetwork: _options.RestrictNetwork,
                     SerialLogPath: Path.Combine(GatOsPaths.LogsDir, $"serial-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}.log"),
-                    AccelOverride: _options.AccelOverride);
+                    AccelOverride: _options.AccelOverride,
+                    HttpPort: httpPort);
 
                 process = _processFactory();
                 try
