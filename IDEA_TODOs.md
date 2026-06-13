@@ -3,3 +3,4 @@
 - hide some ksp/jeb easter eggs around.. jeb remembers
 - filesystem persistence across sessions.. how is this going to work short and long term
     - can this somehow be tied to per-game save?  might get annoying to not have your files though... remote git to the rescue?
+- explore wasm kernel runtime to avoid qemu and be truly platform agnostic
