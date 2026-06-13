@@ -32,3 +32,5 @@ vendor/qemu/
 # record of the spike's learnings that M3/M4/M7/M8 must read.
 spike/*
 !spike/NOTES.md
+
+node_modules/
