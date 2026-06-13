@@ -25,8 +25,14 @@ internal sealed class Session
     /// <summary>Rread header overhead: size[4] type[1] tag[2] count[4].</summary>
     private const uint ReadOverhead = 11;
 
-    private const uint ModeDirectory = 0x4000 | 0x1ED; // S_IFDIR | 0755
-    private const uint ModeFile = 0x8000 | 0x124;      // S_IFREG | 0444
+    private const uint ModeDirectory = 0x4000 | 0x1ED;     // S_IFDIR | 0755
+    private const uint ModeFile = 0x8000 | 0x124;          // S_IFREG | 0444 (read-only sensor)
+    private const uint ModeFileWritable = 0x8000 | 0x1A4;  // S_IFREG | 0644 (control file)
+
+    // Linux open-flag bits we care about (the access mode lives in the low two bits).
+    private const uint OAccmode = 3;
+    private const uint OWronly = 1;
+    private const uint ORdwr = 2;
     private const ulong GetattrBasic = 0x7FF;          // P9_GETATTR_BASIC
     private const byte DtDir = 4;
     private const byte DtReg = 8;
@@ -152,7 +158,9 @@ internal sealed class Session
                 MessageType.Tgetattr => HandleGetattr(body, tag),
                 MessageType.Treaddir => HandleReaddir(body, tag),
                 MessageType.Tread => await HandleReadAsync(body, tag, ct).ConfigureAwait(false),
-                MessageType.Twrite => Error(tag, LinuxErrno.EACCES),
+                MessageType.Twrite => await HandleWriteAsync(body, tag, ct).ConfigureAwait(false),
+                MessageType.Tsetattr => HandleSetattr(body, tag),
+                MessageType.Tfsync => HandleFsync(body, tag),
                 MessageType.Tclunk => HandleClunk(body, tag),
                 MessageType.Tstatfs => HandleStatfs(body, tag),
                 MessageType.Tflush => await HandleFlushAsync(body, tag).ConfigureAwait(false),
@@ -338,9 +346,15 @@ internal sealed class Session
                 throw new VfsErrorException(LinuxErrno.EINVAL, $"lopen: fid {fid} is already open");
             if (entry.Node is VfsFile file)
             {
-                if ((flags & 3) != 0) // O_ACCMODE: read-only tree until M12 control files
-                    throw new VfsErrorException(LinuxErrno.EACCES, "lopen: the tree is read-only");
-                entry.Handle = file.Open();
+                var access = flags & OAccmode;
+                var wantsWrite = access is OWronly or ORdwr;
+                var wantsRead = access != OWronly; // O_RDONLY or O_RDWR
+                if (wantsWrite && !file.IsWritable)
+                    throw new VfsErrorException(LinuxErrno.EACCES, $"lopen: '{file.Name}' is read-only");
+                if (wantsRead)
+                    entry.Handle = file.Open();
+                if (wantsWrite)
+                    entry.WriteHandle = file.OpenWrite(); // O_TRUNC (0x200) is ignored: control files are length-free
             }
 
             entry.Opened = true;
@@ -360,17 +374,21 @@ internal sealed class Session
         var node = entry.Node;
 
         long size = 0;
+        var mode = ModeDirectory;
         if (node is VfsFile file)
         {
             var handle = entry.Handle;
             size = handle?.Size ?? file.Size;
+            // Writable control files must advertise 0644: the kernel pre-checks write permission
+            // from getattr, so without the write bit `echo` fails before any Twrite reaches us.
+            mode = file.IsWritable ? ModeFileWritable : ModeFile;
         }
 
         var seconds = (ulong)_attrTime.ToUnixTimeSeconds();
         return new NinePWriter().Begin(MessageType.Rgetattr, tag)
             .WriteUInt64(GetattrBasic)                                   // valid
             .WriteQid(Qid.ForNode(node))                                 // qid
-            .WriteUInt32(node.IsDirectory ? ModeDirectory : ModeFile)    // mode
+            .WriteUInt32(mode)                                           // mode
             .WriteUInt32(0).WriteUInt32(0)                               // uid gid
             .WriteUInt64(1)                                              // nlink
             .WriteUInt64(0)                                              // rdev
@@ -462,6 +480,52 @@ internal sealed class Session
             .WriteBytes(data.Span);
     }
 
+    private async Task<NinePWriter> HandleWriteAsync(byte[] body, ushort tag, CancellationToken ct)
+    {
+        uint fid;
+        ulong offset;
+        byte[] data;
+        {
+            var reader = new NinePReader(body);
+            fid = reader.ReadUInt32();
+            offset = reader.ReadUInt64();
+            var count = reader.ReadUInt32();
+            data = reader.ReadBytes((int)count).ToArray();
+        }
+
+        var entry = RequireFid(fid);
+        if (entry.Node.IsDirectory)
+            throw new VfsErrorException(LinuxErrno.EISDIR, $"write: fid {fid} is a directory");
+        var handle = entry.WriteHandle
+                     ?? throw new VfsErrorException(LinuxErrno.EBADF, $"write: fid {fid} is not open for writing");
+
+        var written = await handle.WriteAsync(offset, data, ct).ConfigureAwait(false);
+        return new NinePWriter().Begin(MessageType.Rwrite, tag).WriteUInt32(written);
+    }
+
+    /// <summary>
+    ///     Accepts the kernel's <c>O_TRUNC</c> truncate on a writable control file (size-only,
+    ///     no-op — control files are length-free) and rejects everything else; read-only files
+    ///     get EOPNOTSUPP. Only the fid is needed to find the node (T7.4-style minimal handler).
+    /// </summary>
+    private NinePWriter HandleSetattr(byte[] body, ushort tag)
+    {
+        var reader = new NinePReader(body);
+        var fid = reader.ReadUInt32();
+        var entry = RequireFid(fid);
+        if (entry.Node is VfsFile { IsWritable: true })
+            return new NinePWriter().Begin(MessageType.Rsetattr, tag);
+        throw new VfsErrorException(LinuxErrno.EOPNOTSUPP, $"setattr: '{entry.Node.Name}' is read-only");
+    }
+
+    /// <summary>Trivially succeeds for any fid: synthetic files have nothing to flush to disk.</summary>
+    private NinePWriter HandleFsync(byte[] body, ushort tag)
+    {
+        var reader = new NinePReader(body);
+        _ = RequireFid(reader.ReadUInt32());
+        return new NinePWriter().Begin(MessageType.Rfsync, tag);
+    }
+
     private NinePWriter HandleClunk(byte[] body, ushort tag)
     {
         var reader = new NinePReader(body);
@@ -537,20 +601,27 @@ internal sealed class Session
         internal VfsNode Node => Path[^1];
         internal bool Opened;
         internal IVfsFileHandle? Handle;
+        internal IVfsWritableFileHandle? WriteHandle;
         internal IReadOnlyList<VfsNode>? DirListing;
 
         internal void DisposeHandle()
         {
+            Dispose(Handle);
+            Dispose(WriteHandle);
+            Handle = null;
+            WriteHandle = null;
+        }
+
+        private static void Dispose(IDisposable? handle)
+        {
             try
             {
-                Handle?.Dispose();
+                handle?.Dispose();
             }
             catch (Exception ex)
             {
                 ModLog.Log.Debug($"9p session: handle dispose failed: {ex.Message}");
             }
-
-            Handle = null;
         }
     }
 

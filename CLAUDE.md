@@ -206,6 +206,49 @@ and a SimFs status row. **Verified 2026-06-12 by the headless dist smoke** (supe
 `docs/VALIDATION.md`); full `GATOS_IT=1` suite 187/187. **Pending: the T9.3 in-game pass**
 (same purrTTY-tip-release blocker as T6.6).
 
+**KSA game-integration G1 (command pipeline + first controls) & G2 (integration-layer
+formalization): CODE DONE; in-game pass pending.** The control surface and its churn firewall, per
+`KSA_GAME_INTEGRATION_PLAN.md` (Parts 1–3 + G1/G2). The 9p server gained a **write path**
+(`gatOS.NineP`): `IVfsWritableFileHandle`, `VfsFile.IsWritable`/`OpenWrite`, writable files stat
+`0644` (kernel pre-checks write permission from getattr), `Tlopen` accepts `O_WRONLY`/`O_RDWR` on
+writable nodes, `Twrite` dispatches to the handle, `Tsetattr` accepts the `O_TRUNC` size-truncate
+on writable files (no-op) and `Tfsync` trivially succeeds; errnos `EBUSY`/`ETIMEDOUT` added. The
+**command pipeline** is game-free in `gatOS.SimFs/Commands/`: `SimCommand` (vessel id + action key
++ ordinal + value + `CommandPhase`), `CommandResult`/`CommandOutcome`→errno, `CommandQueue`
+(`ICommandSink`: transport threads `SubmitAsync` + await with timeout → ETIMEDOUT, game thread
+`Drain(phase, ICommandExecutor, max)`; abandoned-on-timeout commands are skipped; one TCS per
+command with `RunContinuationsAsynchronously` so the awaiter never resumes inline on the game
+thread), and the two writable archetypes `ControlFile` (STATE: `Flag`/`Fraction`) + `TriggerFile`
+(TRIGGER) over a shared line-buffered `CommandFile` (actuates on the first newline → real errno on
+the failed `write(2)`; unterminated writes actuate best-effort on clunk). `SimFsTree.Build` gained
+an overload taking an `ICommandSink` + transports provider: with a sink it adds the writable
+surface — `engines/<n>/active` (STATE), `ctl/{ignite,shutdown,lights}`, `animations/<n>/goal`,
+`solar/<n>/goal` (solar-filtered animation view, same ordinal) — and the `/sim/status/`
+integration-health tree (`game_version`, `sampler`, `accessors` NDJSON, `transports`); **with no
+sink the tree is byte-for-byte the old read-only tree** (existing tests unchanged). The
+**integration layer** — the only KSA-touching code, all under `gatOS.GameMod/Game/Ksa/` (compile-
+gated like all `Game/**`): `KsaAnchorAttribute`+`ChurnRisk` (per-member provenance; the churn
+playbook is a grep over `[KsaAnchor]` build breaks), `Readers/VesselReader` (the M9 sampler reads
+refactored out + new lights-master/animations reads), `Actuators/{Engine,Light,Animation}Actuator`
+(ignite/shutdown via `Vehicle.SetEnum(VehicleEngine.*)`, engine `active` via
+`EngineController.SetIsActive`, lights via `PowerConsumer.LightIsActive`, animation/solar via
+`KeyframeAnimationModule.TimeGoal`), and `KsaCatalog` (`ICommandExecutor`: resolves the target
+vessel, authority-gates per G-D1, dispatches to the actuator, and owns the **health latches**
+`KsaHealth` — a thrown KSA call latches that accessor degraded → EOPNOTSUPP, logs once, surfaces in
+`/sim/status/accessors`). `Mod` builds a `CommandQueue` from new `[control]` config
+(`control_enabled`/`control_all_vessels`/`debug_namespace`/`command_timeout_ms`/`max_commands_per_frame`),
+passes it to `SimFsTree.Build`, and **drains the frame queue each `OnBeforeUi` after the sampler**
+(both touch game state only on the game thread). `VesselSnapshot` gained `LightsMasterOn` +
+`Animations`; `SimSnapshot` gained `GameVersion`/`SampleRateHz`/`Accessors`. The co-located
+per-point reference is **`docs/KSA_INTEGRATION_MATRIX.md`**. Tests: NineP write-path golden +
+conformance (`Tlopen`/`Twrite`/`Tsetattr`/`Tfsync`/mode bits), SimFs `ControlFile`/`TriggerFile`/
+`CommandQueue` unit tests + a control-surface fixture over the 9p client, and a `GATOS_IT`
+control-surface guest fixture (`echo 1 > …/engines/0/active` actuates; `echo bogus` → nonzero
+EINVAL). Verified on this machine: full non-IT suite green (NineP 46, SimFs 76 + 2 IT-skip), zero
+warnings. **Pending: the G1 in-game pass** (same purrTTY-tip-release blocker as T6.6) and the
+**solver-phase queue + G3/G4 surface** (not yet built). The plan's HTTP/serial transports
+(T2/T3/T4) and SDK (G6) are not started.
+
 Everything past M9 is **not yet implemented** — next is M10 (persistence & savegame shape) —
 with one exception pulled forward: **T11.1 QEMU win-x64 bundle tooling is DONE**
 (`tools/fetch-qemu.{ps1,sh}` populate
@@ -277,7 +320,9 @@ tools/                          fetch-qemu.{sh,ps1} + qemu-win64-files.txt (pin 
 gatOS.Logging                    (no deps)            game-free logging shim
 gatOS.NineP    → Logging                              9P2000.L codec + server + VFS (M7, built)
 gatOS.SimFs    → NineP, Logging                       /sim tree, snapshots, stream/events,
-                                                      EventDiffer/SampleClock/Sanitize (M8+M9, built)
+                                                      EventDiffer/SampleClock/Sanitize (M8+M9, built);
+                                                      Commands/ (SimCommand, CommandQueue,
+                                                      ControlFile/TriggerFile — G1, built)
 gatOS.Vm       → Logging, Tomlyn                      QEMU lifecycle, disks, ports, GatOsPaths (M3, built)
 gatOS.Ssh      → Vm, Logging, vendor/purrTTY, SSH.NET SshShellSession : ICustomShell (M4, built)
 gatOS.GameMod  → Ssh, SimFs, Vm, Logging, vendor/purrTTY,
@@ -294,6 +339,12 @@ client), plus `gatOS.Vm`/`gatOS.Ssh` for its in-VM integration fixture.
 > (`Condition="Exists('$(KSAFolder)/…')"`) **and** its game-coupled sources (`Game/**`, the
 > partial half of `Mod`) are compile-gated on `KSAFolder/KSA.dll`, so the whole solution —
 > `GameMod` included — still builds when the assemblies are absent.
+>
+> **Stronger form for KSA integration (G2):** a KSA type name may appear **only under
+> `gatOS.GameMod/Game/Ksa/`** (`Readers/`, `Actuators/`, `KsaCatalog`, annotated with
+> `[KsaAnchor]`). Transports (9p/HTTP/serial), the `/sim` tree, formats and the command pipeline
+> never see one — they speak `SimSnapshot` (reads) and `SimCommand`/`ICommandExecutor` (writes).
+> When a decomp drop breaks the build, the diff is confined to that folder + `docs/KSA_INTEGRATION_MATRIX.md`.
 
 ### Runtime architecture (recap)
 
@@ -316,9 +367,13 @@ host.
 
 ## Threading rules (binding for every task)
 
-1. **Game state is read only on the game thread** (`[StarMapBeforeGui]`). The sampler builds an
-   immutable `SimSnapshot` and publishes it with a single volatile reference swap.
-2. **9p server threads never touch game state** — they read the latest published snapshot only.
+1. **Game state is read *and mutated* only on the game thread** (`[StarMapBeforeGui]`). The sampler
+   builds an immutable `SimSnapshot` and publishes it with a single volatile reference swap; control
+   commands are *drained and executed* in the same hook (`CommandQueue.Drain` → `KsaCatalog`), so
+   writes obey rule 1 exactly like reads. (Solver-phase writes — refills/robotics — will drain in a
+   Harmony prefix on the vehicle-solver phase; not yet built.)
+2. **9p server threads never touch game state** — they read the latest published snapshot, and for
+   writes they only *enqueue* an immutable `SimCommand` and await its result (never executing it).
 3. SSH I/O runs on SSH.NET's threads; `OutputReceived` may fire on any thread (purrTTY tolerates
    this — its `Surface.Write` is the one thread-safe entrypoint).
 4. `VmHost` is an async state machine guarded by one `SemaphoreSlim`; concurrent

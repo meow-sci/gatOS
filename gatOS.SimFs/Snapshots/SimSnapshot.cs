@@ -11,16 +11,26 @@ namespace gatOS.SimFs.Snapshots;
 /// <param name="ActiveVesselId">Id of the controlled vessel; null when none.</param>
 /// <param name="Vessels">All vessels, stable order.</param>
 /// <param name="NewEvents">Events that occurred since the previous snapshot (M9 diffs them).</param>
+/// <param name="GameVersion">KSA version string at sample time (<c>/sim/status/game_version</c>); "" when unknown.</param>
+/// <param name="SampleRateHz">The sampler's configured cadence, for <c>/sim/status/sampler</c>.</param>
+/// <param name="Accessors">
+///     Per-accessor health: one entry per integration accessor that is currently degraded
+///     (faulted on the game side). Empty when every accessor is healthy
+///     (<c>/sim/status/accessors</c>).
+/// </param>
 public sealed record SimSnapshot(
     long Sequence,
     double UtSeconds,
     double WarpFactor,
     string? ActiveVesselId,
     IReadOnlyList<VesselSnapshot> Vessels,
-    IReadOnlyList<SimEvent> NewEvents)
+    IReadOnlyList<SimEvent> NewEvents,
+    string GameVersion,
+    double SampleRateHz,
+    IReadOnlyList<AccessorHealthSnapshot> Accessors)
 {
     /// <summary>The pre-first-publish snapshot: sequence 0, no vessels, no events.</summary>
-    public static SimSnapshot Empty { get; } = new(0, 0, 1, null, [], []);
+    public static SimSnapshot Empty { get; } = new(0, 0, 1, null, [], [], "", 0, []);
 }
 
 /// <summary>One vessel's telemetry.</summary>
@@ -45,6 +55,11 @@ public sealed record SimSnapshot(
 /// <param name="Tanks">Tanks, by resource.</param>
 /// <param name="BatteryChargeFraction">Battery charge 0..1; null when no battery.</param>
 /// <param name="ParentBodyName">Name of the parent body; null when unknown.</param>
+/// <param name="LightsMasterOn">The vessel's master lights flag (<c>Vehicle.LightsOn</c>).</param>
+/// <param name="Animations">
+///     Keyframe animations (deploy/retract actuators), by vessel-level ordinal. Solar-panel
+///     deploy animations are flagged so the tree can surface them under <c>solar/</c> too.
+/// </param>
 public sealed record VesselSnapshot(
     string Id,
     string Name,
@@ -66,7 +81,9 @@ public sealed record VesselSnapshot(
     IReadOnlyList<EngineSnapshot> Engines,
     IReadOnlyList<TankSnapshot> Tanks,
     double? BatteryChargeFraction,
-    string? ParentBodyName);
+    string? ParentBodyName,
+    bool LightsMasterOn,
+    IReadOnlyList<AnimationSnapshot> Animations);
 
 /// <summary>Orbit elements (altitudes, not radii — the sampler converts).</summary>
 /// <param name="ApoapsisAltitude">Apoapsis altitude above the parent body surface, meters.</param>
@@ -95,6 +112,29 @@ public sealed record EngineSnapshot(int Index, bool Active, double VacThrustN, d
 /// <param name="Amount">Current amount.</param>
 /// <param name="Capacity">Capacity.</param>
 public sealed record TankSnapshot(string Resource, double Amount, double Capacity);
+
+/// <summary>
+///     One keyframe animation (deploy/retract actuator). The goal/current fractions are
+///     0 (retracted) … 1 (deployed); <see cref="Index"/> is the stable vessel-level ordinal the
+///     control command addresses.
+/// </summary>
+/// <param name="Index">Stable per-vessel animation ordinal (PartTree enumeration order).</param>
+/// <param name="GoalFraction">Commanded deploy fraction 0..1 (the setpoint a STATE read returns).</param>
+/// <param name="CurrentFraction">Actual deploy fraction 0..1 (animation position).</param>
+/// <param name="DeploymentState">"Deployed", "Retracted", "Deploying", "Retracting", "Broken".</param>
+/// <param name="IsSolar">Whether this animation deploys a solar panel (surfaced under solar/ too).</param>
+public sealed record AnimationSnapshot(
+    int Index, double GoalFraction, double CurrentFraction, string DeploymentState, bool IsSolar);
+
+/// <summary>
+///     Health of one KSA integration accessor (reader or actuator). Present only while the
+///     accessor is degraded after a fault (<c>/sim/status/accessors</c>); the snapshot omits
+///     healthy accessors entirely.
+/// </summary>
+/// <param name="Name">The accessor's stable name (e.g. "reader.vessel.orbit").</param>
+/// <param name="SinceUtSeconds">Sim time the accessor first faulted.</param>
+/// <param name="Error">The fault message (first occurrence).</param>
+public sealed record AccessorHealthSnapshot(string Name, double SinceUtSeconds, string Error);
 
 /// <summary>One discrete event (situation change, vessel appeared, …; types fixed in T8.3).</summary>
 /// <param name="UtSeconds">Sim time of the snapshot that carried the event.</param>

@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Text.Json;
 using gatOS.NineP.Server;
+using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
+using gatOS.SimFs.Tests.Commands;
 using gatOS.Ssh;
 using gatOS.Vm;
 using Renci.SshNet;
@@ -120,6 +122,65 @@ public sealed class SimMountIntegrationTests
 
         await broker.VmHost.StopAsync(TimeSpan.FromSeconds(30));
         Assert.That(broker.VmHost.Status.State, Is.EqualTo(VmState.Stopped));
+    }
+
+    [Test]
+    public async Task ControlSurface_WritesActuateFromAGuestShell()
+    {
+        // Host stack: store + tree with a control sink, plus a background "game thread" that drains
+        // the queue through a fake actuator (no real game here — that's the in-game checklist).
+        var store = new SnapshotStore();
+        var queue = new CommandQueue(controlEnabled: true, debugEnabled: false, TimeSpan.FromSeconds(5));
+        var executor = new FakeCommandExecutor();
+        await using var server = new NinePServer(SimFsTree.Build(store, queue, () => "9p it"));
+        await server.StartAsync();
+        store.Publish(TestData.Snapshot(1, TestData.Vessel(
+            animations: [new AnimationSnapshot(0, 0, 0, "Retracted", IsSolar: true)])));
+        _ = Task.Run(() => DrainLoopAsync(queue, executor, _publisher!.Token));
+
+        var host = new VmHost(new VmHostOptions
+        {
+            Profile = "it-control",
+            GuestAssetsDir = TestEnv.RequireGuestAssetsDir(),
+            SimPortProvider = () => server.Port,
+        });
+        await using var broker = new VmConnectionBroker(host);
+        using var ssh = await broker.ConnectAsync(CancellationToken.None);
+        await WaitForMountAsync(ssh);
+
+        // A control file is writable (echo succeeds, exit 0) and actuates the command.
+        Assert.That(Run(ssh, "echo 1 > /sim/vessels/active/engines/0/active && echo OK || echo FAIL").Trim(),
+            Is.EqualTo("OK"), "writing a valid value succeeds");
+        Assert.That(Run(ssh, "echo 1 > /sim/vessels/active/ctl/ignite && echo OK || echo FAIL").Trim(),
+            Is.EqualTo("OK"), "firing a trigger succeeds");
+        Assert.That(Run(ssh, "echo 1 > /sim/vessels/active/solar/0/goal && echo OK || echo FAIL").Trim(),
+            Is.EqualTo("OK"), "deploying a panel succeeds");
+
+        // A bad value fails the write with EINVAL → nonzero exit (the embedded-Linux contract).
+        Assert.That(Run(ssh, "echo bogus > /sim/vessels/active/engines/0/active 2>/dev/null && echo OK || echo FAIL")
+            .Trim(), Is.EqualTo("FAIL"), "an out-of-range value must fail the write");
+
+        // The actuator saw the valid commands (the failing one never reached it).
+        Assert.That(executor.Count, Is.GreaterThanOrEqualTo(3), "valid writes reached the executor");
+
+        await broker.VmHost.StopAsync(TimeSpan.FromSeconds(30));
+        Assert.That(broker.VmHost.Status.State, Is.EqualTo(VmState.Stopped));
+    }
+
+    private static async Task DrainLoopAsync(CommandQueue queue, FakeCommandExecutor executor, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            queue.Drain(CommandPhase.Frame, executor, 64);
+            try
+            {
+                await Task.Delay(15, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
     }
 
     private static string Run(SshClient ssh, string command)

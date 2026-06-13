@@ -15,6 +15,13 @@ public static class LinuxErrno
     /// <summary>Bad file descriptor (fid unknown or not open as required).</summary>
     public const uint EBADF = 9;
 
+    /// <summary>
+    ///     Resource busy: a control action cannot fire right now (e.g. a one-shot trigger that
+    ///     has already fired). Part of the control-file errno vocabulary (KSA_GAME_INTEGRATION_PLAN
+    ///     Part 2).
+    /// </summary>
+    public const uint EBUSY = 16;
+
     /// <summary>Permission denied (write attempts on the read-only tree).</summary>
     public const uint EACCES = 13;
 
@@ -29,4 +36,10 @@ public static class LinuxErrno
 
     /// <summary>Operation not supported (unimplemented message types, xattrs, auth).</summary>
     public const uint EOPNOTSUPP = 95;
+
+    /// <summary>
+    ///     Operation timed out: the game thread did not drain a queued command in time (the sim
+    ///     is paused or on a load screen). Part of the control-file errno vocabulary.
+    /// </summary>
+    public const uint ETIMEDOUT = 110;
 }

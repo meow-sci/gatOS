@@ -72,3 +72,22 @@ Prereq: the T6.6 pass (purrTTY tip release). Run during a real flight with at le
 | 7 | Menu → Restart SimFs → guest re-establishes `/sim` within ~4 s (verified headlessly ✅) | ◐ | headless 2026-06-12: same-port rebind + unaided remount |
 | 8 | Orbit dir appears for an orbiting vessel; apoapsis is an altitude (not a radius) | ☐ | |
 | 9 | Battery/tanks/engines dirs match the vessel; values move during a burn | ☐ | |
+
+## G1 — Control-surface validation pass — **NOT YET RUN**
+
+Prereq: the T6.6 pass (purrTTY tip release). Run during a real flight with a vessel that has at
+least one engine and one deployable solar panel. `[control] enabled = true` (default). See
+`docs/KSA_INTEGRATION_MATRIX.md` for the full path/anchor list.
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | `echo 1 > /sim/vessels/active/ctl/ignite` ignites the active stage (exit 0) | ☐ | |
+| 2 | `echo 1 > /sim/vessels/active/ctl/shutdown` shuts engines down | ☐ | |
+| 3 | `echo 0 > /sim/vessels/active/engines/0/active` toggles one engine; read-back reflects it | ☐ | |
+| 4 | `echo 1 > /sim/vessels/active/ctl/lights` / `echo 0 …` toggles vessel lights | ☐ | |
+| 5 | `echo 1 > /sim/vessels/active/solar/0/goal` deploys a panel; `0` retracts it | ☐ | |
+| 6 | `echo 0.5 > /sim/vessels/active/animations/0/goal` drives an animation to mid-travel | ☐ | |
+| 7 | `echo bogus > …/engines/0/active` fails with EINVAL (nonzero exit, "Invalid argument") | ☐ | verified via `GATOS_IT` fixture ✅ |
+| 8 | `[control] enabled=false` → every write fails EACCES | ☐ | |
+| 9 | `cat /sim/status/transports` shows the 9p port + `control on`; `/sim/status/game_version` non-empty | ☐ | |
+| 10 | A deliberately broken accessor surfaces in `/sim/status/accessors` and the rest keeps working | ☐ | health-latch path |

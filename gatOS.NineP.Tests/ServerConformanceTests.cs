@@ -15,14 +15,16 @@ public sealed class ServerConformanceTests
 {
     private NinePServer _server = null!;
     private TestTree.GateFile _gate = null!;
+    private TestTree.CaptureControlFile _ctl = null!;
     private Func<int> _ticksRead = null!;
     private NinePTestClient _client = null!;
 
     [SetUp]
     public async Task SetUp()
     {
-        var (root, gate, ticksRead) = TestTree.Build();
+        var (root, gate, ticksRead, ctl) = TestTree.Build();
         _gate = gate;
+        _ctl = ctl;
         _ticksRead = ticksRead;
         _server = new NinePServer(root);
         await _server.StartAsync();
@@ -368,14 +370,87 @@ public sealed class ServerConformanceTests
     // ---- write / unsupported ------------------------------------------------------------------
 
     [Test]
-    public async Task Write_IsEACCES()
+    public async Task Write_ToReadOnlyOpenedFid_IsEBADF()
     {
+        // A read-only file can't be opened for writing (Lopen_WriteFlags_AreEACCES covers that),
+        // so a Twrite only ever lands on a fid opened O_RDONLY — which has no write handle: EBADF.
         var root = await AttachedFidAsync();
         await _client.WalkAsync(root, 1, "hello");
         await _client.LopenAsync(1);
         var ex = Assert.ThrowsAsync<NinePErrorException>(
             () => _client.WriteAsync(1, 0, [1, 2, 3]));
-        Assert.That(ex!.Errno, Is.EqualTo(LinuxErrno.EACCES));
+        Assert.That(ex!.Errno, Is.EqualTo(LinuxErrno.EBADF));
+    }
+
+    [Test]
+    public async Task WritableFile_Getattr_Has0644Mode()
+    {
+        var root = await AttachedFidAsync();
+        await _client.WalkAsync(root, 1, "ctl");
+        await _client.WalkAsync(root, 2, "hello");
+        var ctl = await _client.GetattrAsync(1);
+        var hello = await _client.GetattrAsync(2);
+        Assert.Multiple(() =>
+        {
+            Assert.That(ctl.Mode, Is.EqualTo(0x8000u | 0x1A4u), "writable control file is S_IFREG | 0644");
+            Assert.That(hello.Mode, Is.EqualTo(0x8000u | 0x124u), "read-only file stays S_IFREG | 0444");
+        });
+    }
+
+    [Test]
+    public async Task WritableFile_Wronly_Open_AndWrite_CapturesValue()
+    {
+        var root = await AttachedFidAsync();
+        await _client.WalkAsync(root, 1, "ctl");
+        await _client.LopenAsync(1, 1); // O_WRONLY
+        var written = await _client.WriteAsync(1, 0, "1\n"u8.ToArray());
+        Assert.Multiple(() =>
+        {
+            Assert.That(written, Is.EqualTo(2u), "Rwrite reports the full byte count");
+            Assert.That(_ctl.LastWrite, Is.EqualTo("1"), "the line before the LF actuated");
+        });
+    }
+
+    [Test]
+    public async Task WritableFile_RejectedWrite_ReturnsChosenErrno()
+    {
+        _ctl.RejectErrno = LinuxErrno.EINVAL;
+        var root = await AttachedFidAsync();
+        await _client.WalkAsync(root, 1, "ctl");
+        await _client.LopenAsync(1, 1); // O_WRONLY
+        var ex = Assert.ThrowsAsync<NinePErrorException>(
+            () => _client.WriteAsync(1, 0, "bogus\n"u8.ToArray()));
+        Assert.That(ex!.Errno, Is.EqualTo(LinuxErrno.EINVAL));
+    }
+
+    [Test]
+    public async Task WritableFile_SetattrTruncate_Succeeds()
+    {
+        var root = await AttachedFidAsync();
+        await _client.WalkAsync(root, 1, "ctl");
+        // O_TRUNC drives a size-only Tsetattr; the handler only needs the fid.
+        var response = await _client.SendRawAsync(MessageType.Tsetattr, w => w.WriteUInt32(1));
+        Assert.That(response.Type, Is.EqualTo(MessageType.Rsetattr));
+    }
+
+    [Test]
+    public async Task ReadOnlyFile_SetattrTruncate_IsEOPNOTSUPP()
+    {
+        var root = await AttachedFidAsync();
+        await _client.WalkAsync(root, 1, "hello");
+        var response = await _client.SendRawAsync(MessageType.Tsetattr, w => w.WriteUInt32(1));
+        Assert.That(response.Type, Is.EqualTo(MessageType.Rlerror));
+        Assert.That(new NinePReader(response.Body).ReadUInt32(), Is.EqualTo(LinuxErrno.EOPNOTSUPP));
+    }
+
+    [Test]
+    public async Task WritableFile_Fsync_Succeeds()
+    {
+        var root = await AttachedFidAsync();
+        await _client.WalkAsync(root, 1, "ctl");
+        await _client.LopenAsync(1, 1);
+        var response = await _client.SendRawAsync(MessageType.Tfsync, w => w.WriteUInt32(1).WriteUInt32(0));
+        Assert.That(response.Type, Is.EqualTo(MessageType.Rfsync));
     }
 
     [Test]

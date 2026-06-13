@@ -32,3 +32,27 @@ public interface IVfsFileHandle : IDisposable
     /// </summary>
     ValueTask<ReadOnlyMemory<byte>> ReadAsync(ulong offset, uint count, CancellationToken ct);
 }
+
+/// <summary>
+///     One open fid's write view of a writable <see cref="VfsFile"/> (control files;
+///     KSA_GAME_INTEGRATION_PLAN Part 6 T1). Created by <see cref="VfsFile.OpenWrite"/> on a
+///     <c>Tlopen</c> carrying <c>O_WRONLY</c>/<c>O_RDWR</c>, disposed on <c>Tclunk</c> or teardown.
+/// </summary>
+/// <remarks>
+///     Control-file writes are <b>synchronous actuation with real feedback</b>: a failed write
+///     throws <see cref="VfsErrorException"/> carrying the errno the kernel hands back to the
+///     <c>write(2)</c> caller (so <c>echo 1 &gt; ignite</c> can exit non-zero with EINVAL). The
+///     handle is line-buffered by contract — it executes the command on the first newline it
+///     sees, and any unterminated trailing bytes on <see cref="IDisposable.Dispose"/> (clunk);
+///     a clunk-time failure cannot reach the writer and is best-effort only.
+/// </remarks>
+public interface IVfsWritableFileHandle : IDisposable
+{
+    /// <summary>
+    ///     Accepts <paramref name="data"/> written at <paramref name="offset"/>, returning the
+    ///     number of bytes consumed (normally the full length). Throws
+    ///     <see cref="VfsErrorException"/> to fail the underlying <c>write(2)</c> with a specific
+    ///     errno. The token fires on <c>Tflush</c>/<c>Tclunk</c>/teardown.
+    /// </summary>
+    ValueTask<uint> WriteAsync(ulong offset, ReadOnlyMemory<byte> data, CancellationToken ct);
+}

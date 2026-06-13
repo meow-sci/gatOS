@@ -4,6 +4,7 @@ using gatOS.Logging;
 using gatOS.NineP.Server;
 using gatOS.NineP.Vfs;
 using gatOS.SimFs;
+using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
 using gatOS.Ssh;
 using gatOS.Vm;
@@ -53,6 +54,11 @@ public sealed partial class Mod
     private SnapshotStore? _simStore;
     private VfsDirectory? _simRoot;
     private volatile NinePServer? _simServer;
+
+    // The control pipeline (KSA_GAME_INTEGRATION_PLAN G1): transport threads submit commands here,
+    // the game thread drains them through the KSA actuator catalog each frame. Game-free; the
+    // game-coupled drain + executor live in Mod.Game.cs behind the DrainCommands seam.
+    private CommandQueue? _commandQueue;
 
     // Written by background actions, read by the render thread (status window).
     private volatile string? _lastActionNote;
@@ -106,7 +112,9 @@ public sealed partial class Mod
             // and the guest's sim-mount supervisor mounts /sim on its own. The store stays at
             // SimSnapshot.Empty until the sampler's first publish.
             _simStore = new SnapshotStore();
-            _simRoot = SimFsTree.Build(_simStore);
+            _commandQueue = new CommandQueue(_config.ControlEnabled, _config.DebugNamespace,
+                TimeSpan.FromMilliseconds(_config.CommandTimeoutMs));
+            _simRoot = SimFsTree.Build(_simStore, _commandQueue, SimTransportsStatus);
             StartSimServer(port: 0);
 
             _disks = new DiskManager();
@@ -137,9 +145,28 @@ public sealed partial class Mod
         }
     }
 
-    /// <summary>Per-frame game-thread hook: the telemetry sampler ticks here (T9.1, rule 1).</summary>
+    /// <summary>
+    ///     Per-frame game-thread hook: the telemetry sampler ticks and queued control commands
+    ///     drain here (T9.1 + G1, threading rule 1 — both touch game state only on this thread).
+    /// </summary>
     [StarMapBeforeGui]
-    public void OnBeforeUi(double dt) => SampleTelemetry(dt);
+    public void OnBeforeUi(double dt)
+    {
+        SampleTelemetry(dt);
+        DrainCommands();
+    }
+
+    /// <summary>
+    ///     The <c>/sim/status/transports</c> provider (read on 9p threads — reads only volatile
+    ///     state). Reports the bound 9p port and whether control writes are enabled.
+    /// </summary>
+    private string SimTransportsStatus()
+    {
+        var server = _simServer;
+        var ninep = server is { Port: > 0 } ? server.Port.ToString() : "unbound";
+        var control = _commandQueue is { ControlEnabled: true } ? "on" : "off";
+        return $"9p {ninep}\ncontrol {control}";
+    }
 
     /// <summary>Draws the diagnostics UI (T6.4); a no-op when built without the KSA assemblies.</summary>
     [StarMapAfterGui]
@@ -453,4 +480,5 @@ public sealed partial class Mod
     partial void InstallGameLogging();
     partial void DrawGameUi();
     partial void SampleTelemetry(double dt);
+    partial void DrainCommands();
 }

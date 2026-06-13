@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using gatOS.NineP.Protocol;
 using gatOS.NineP.Vfs;
+using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
 
 namespace gatOS.SimFs;
@@ -29,19 +30,43 @@ namespace gatOS.SimFs;
 /// </summary>
 public static class SimFsTree
 {
-    /// <summary>Builds the root directory to hand to <c>NinePServer</c>.</summary>
-    public static VfsDirectory Build(SnapshotStore store) => new Builder(store).BuildRoot();
+    /// <summary>Builds the read-only <c>/sim</c> tree (no control surface, no status).</summary>
+    public static VfsDirectory Build(SnapshotStore store) => Build(store, null, null);
+
+    /// <summary>
+    ///     Builds the <c>/sim</c> tree. When <paramref name="commands"/> is supplied the tree
+    ///     gains its writable control surface (<c>ctl/</c>, writable <c>engines/&lt;n&gt;/active</c>,
+    ///     <c>animations/</c>, <c>solar/</c>) and the <c>/sim/status/</c> integration-health tree
+    ///     (KSA_GAME_INTEGRATION_PLAN Parts 4–5). With no sink the tree is purely read-only.
+    /// </summary>
+    /// <param name="store">The published-snapshot exchange the tree reads from.</param>
+    /// <param name="commands">The command sink control files submit to; null = read-only tree.</param>
+    /// <param name="transports">
+    ///     Optional provider for <c>/sim/status/transports</c> (bound ports etc.); supplied by the
+    ///     game mod, which alone knows the transport bindings.
+    /// </param>
+    public static VfsDirectory Build(SnapshotStore store, ICommandSink? commands, Func<string>? transports)
+        => new Builder(store, commands, transports).BuildRoot();
 
     private sealed class Builder
     {
         private readonly SnapshotStore _store;
+        private readonly ICommandSink? _commands;
+        private readonly Func<string>? _transports;
         private readonly ConcurrentDictionary<string, ulong> _qids = new();
         private long _nextQid;
 
-        internal Builder(SnapshotStore store) => _store = store;
+        internal Builder(SnapshotStore store, ICommandSink? commands, Func<string>? transports)
+        {
+            _store = store;
+            _commands = commands;
+            _transports = transports;
+        }
 
         internal VfsDirectory BuildRoot()
-            => DelegateDirectory.Fixed("/", Qid("/"),
+        {
+            var children = new List<VfsNode>
+            {
                 DelegateDirectory.Fixed("time", Qid("time"),
                     Line("time/ut", "ut", () => Formats.Scalar(_store.Current.UtSeconds)),
                     Line("time/warp", "warp", () => Formats.Scalar(_store.Current.WarpFactor))),
@@ -53,7 +78,32 @@ public static class SimFsTree
                         "by-id" => ByIdDir(),
                         _ => null,
                     }),
-                new EventsFile("events", Qid("events"), _store));
+                new EventsFile("events", Qid("events"), _store),
+            };
+
+            // The integration-health tree rides with the control surface (G2): present whenever a
+            // command sink is wired, regardless of whether writes are currently enabled.
+            if (_commands is not null)
+                children.Add(StatusDir());
+
+            var fixedChildren = children.ToArray();
+            return new DelegateDirectory("/", Qid("/"), () => fixedChildren);
+        }
+
+        // ---- status (integration health) -------------------------------------------------
+
+        private VfsDirectory StatusDir()
+            => DelegateDirectory.Fixed("status", Qid("status"),
+                Line("status/game_version", "game_version",
+                    () => _store.Current.GameVersion is { Length: > 0 } v ? v : "unknown"),
+                Line("status/sampler", "sampler", () =>
+                {
+                    var rate = _store.Current.SampleRateHz;
+                    return rate > 0 ? $"ok {Formats.Scalar(rate)}" : "idle";
+                }),
+                new StaticTextFile("accessors", Qid("status/accessors"),
+                    () => string.Concat(_store.Current.Accessors.Select(a => Formats.AccessorLine(a) + "\n"))),
+                Line("status/transports", "transports", () => _transports?.Invoke() ?? "unknown"));
 
         // ---- vessels ---------------------------------------------------------------------
 
@@ -130,6 +180,17 @@ public static class SimFsTree
                 children.Add(EnginesDir(p, vesselId));
                 children.Add(TanksDir(p, vesselId));
                 children.Add(new StreamFile("stream", Qid($"{p}/stream"), _store, vesselId));
+
+                // The vessel control surface (G1): only when a command sink is wired.
+                if (_commands is not null)
+                {
+                    children.Add(CtlDir(p, vesselId));
+                    if (vessel.Animations.Count > 0)
+                        children.Add(AnimationsDir(p, vesselId));
+                    if (vessel.Animations.Any(a => a.IsSolar))
+                        children.Add(SolarDir(p, vesselId));
+                }
+
                 return children;
             });
         }
@@ -155,10 +216,84 @@ public static class SimFsTree
 
         private VfsDirectory EngineDir(string p, string vesselId, int index)
             => DelegateDirectory.Fixed($"{index}", Qid($"{p}/engines/{index}"),
-                Line($"{p}/engines/{index}/active", "active", () => Formats.Flag(Engine(vesselId, index).Active)),
+                FlagControl($"{p}/engines/{index}/active", "active", vesselId, "engine.active", index,
+                    () => Formats.Flag(Engine(vesselId, index).Active)),
                 Line($"{p}/engines/{index}/vac_thrust", "vac_thrust",
                     () => Formats.Scalar(Engine(vesselId, index).VacThrustN)),
                 Line($"{p}/engines/{index}/isp", "isp", () => Formats.Scalar(Engine(vesselId, index).IspS)));
+
+        // ---- control surface (only when a command sink is wired — KSA_GAME_INTEGRATION_PLAN T1) ----
+
+        /// <summary>A <c>0</c>/<c>1</c> STATE control, or its read-only twin when control is unwired.</summary>
+        private VfsFile FlagControl(string qidPath, string name, string vesselId, string action, int ordinal,
+            Func<string> read)
+            => _commands is { } sink
+                ? ControlFile.Flag(name, Qid(qidPath), sink, read,
+                    v => new SimCommand(vesselId, action, ordinal, v))
+                : new StaticTextFile(name, Qid(qidPath), () => read() + "\n");
+
+        /// <summary>A <c>0..1</c> STATE control, or its read-only twin when control is unwired.</summary>
+        private VfsFile FractionControl(string qidPath, string name, string vesselId, string action, int ordinal,
+            Func<string> read)
+            => _commands is { } sink
+                ? ControlFile.Fraction(name, Qid(qidPath), sink, read,
+                    v => new SimCommand(vesselId, action, ordinal, v))
+                : new StaticTextFile(name, Qid(qidPath), () => read() + "\n");
+
+        private VfsDirectory CtlDir(string p, string vesselId)
+        {
+            var sink = _commands!; // CtlDir is only reached when _commands is non-null
+            var q = $"{p}/ctl";
+            return DelegateDirectory.Fixed("ctl", Qid(q),
+                new TriggerFile("ignite", Qid($"{q}/ignite"), sink,
+                    new SimCommand(vesselId, "vessel.ignite", SimCommand.NoOrdinal, 1)),
+                new TriggerFile("shutdown", Qid($"{q}/shutdown"), sink,
+                    new SimCommand(vesselId, "vessel.shutdown", SimCommand.NoOrdinal, 1)),
+                FlagControl($"{q}/lights", "lights", vesselId, "vessel.lights", SimCommand.NoOrdinal,
+                    () => Formats.Flag(Vessel(vesselId).LightsMasterOn)));
+        }
+
+        private VfsDirectory AnimationsDir(string p, string vesselId)
+        {
+            var basePath = $"{p}/animations";
+            return new DelegateDirectory("animations", Qid(basePath),
+                () => Vessel(vesselId).Animations
+                    .Select(a => (VfsNode)AnimationDir(basePath, vesselId, a.Index.ToString(), a.Index))
+                    .ToArray(),
+                name => int.TryParse(name, out var idx) && Vessel(vesselId).Animations.Any(a => a.Index == idx)
+                    ? AnimationDir(basePath, vesselId, idx.ToString(), idx)
+                    : null);
+        }
+
+        /// <summary>Solar-panel deploy animations, re-indexed 0-based; <c>goal</c> still addresses the animation ordinal.</summary>
+        private VfsDirectory SolarDir(string p, string vesselId)
+        {
+            var basePath = $"{p}/solar";
+            return new DelegateDirectory("solar", Qid(basePath),
+                () => SolarAnimations(vesselId)
+                    .Select((a, ord) => (VfsNode)AnimationDir(basePath, vesselId, ord.ToString(), a.Index))
+                    .ToArray(),
+                name =>
+                {
+                    if (!int.TryParse(name, out var ord) || ord < 0)
+                        return null;
+                    var solar = SolarAnimations(vesselId);
+                    return ord < solar.Count ? AnimationDir(basePath, vesselId, ord.ToString(), solar[ord].Index) : null;
+                });
+        }
+
+        private VfsDirectory AnimationDir(string basePath, string vesselId, string entryName, int animIndex)
+        {
+            var q = $"{basePath}/{entryName}";
+            return DelegateDirectory.Fixed(entryName, Qid(q),
+                FractionControl($"{q}/goal", "goal", vesselId, "animation.goal", animIndex,
+                    () => Formats.Scalar(Anim(vesselId, animIndex).GoalFraction)),
+                Line($"{q}/current", "current", () => Formats.Scalar(Anim(vesselId, animIndex).CurrentFraction)),
+                Line($"{q}/state", "state", () => Anim(vesselId, animIndex).DeploymentState));
+        }
+
+        private List<AnimationSnapshot> SolarAnimations(string vesselId)
+            => Vessel(vesselId).Animations.Where(a => a.IsSolar).ToList();
 
         private VfsDirectory TanksDir(string p, string vesselId)
             => new DelegateDirectory("tanks", Qid($"{p}/tanks"),
@@ -193,6 +328,10 @@ public static class SimFsTree
         private EngineSnapshot Engine(string vesselId, int index)
             => Vessel(vesselId).Engines.FirstOrDefault(e => e.Index == index)
                ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"engine {index} is gone");
+
+        private AnimationSnapshot Anim(string vesselId, int index)
+            => Vessel(vesselId).Animations.FirstOrDefault(a => a.Index == index)
+               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"animation {index} is gone");
 
         private TankSnapshot Tank(string vesselId, string tankName)
             => SanitizedTanks(vesselId).Where(t => t.Name == tankName).Select(t => t.Tank).FirstOrDefault()

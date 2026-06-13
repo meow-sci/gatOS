@@ -77,4 +77,19 @@ public abstract class VfsFile : VfsNode
 
     /// <summary>Opens a per-fid read handle (one per <c>Tlopen</c>).</summary>
     public abstract IVfsFileHandle Open();
+
+    /// <summary>
+    ///     Whether this file accepts writes (control files; KSA_GAME_INTEGRATION_PLAN Part 6 T1).
+    ///     Writable files report writable mode bits so the kernel's permission pre-check lets an
+    ///     <c>echo</c> through; the default is a read-only sensor file.
+    /// </summary>
+    public virtual bool IsWritable => false;
+
+    /// <summary>
+    ///     Opens a per-fid write handle (one per write-mode <c>Tlopen</c>). The default throws
+    ///     <see cref="VfsErrorException"/> with EACCES — only <see cref="IsWritable"/> files
+    ///     override it.
+    /// </summary>
+    public virtual IVfsWritableFileHandle OpenWrite()
+        => throw new VfsErrorException(Protocol.LinuxErrno.EACCES, $"'{Name}' is not writable");
 }

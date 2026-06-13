@@ -1,6 +1,8 @@
 using Brutal.ImGuiApi;
 using gatOS.GameMod.Game;
+using gatOS.GameMod.Game.Ksa;
 using gatOS.Logging;
+using gatOS.SimFs.Commands;
 using gatOS.Vm;
 using ModMenu;
 using float2 = Brutal.Numerics.float2;
@@ -49,6 +51,13 @@ public sealed partial class Mod
     private TelemetrySampler? _telemetry;
     private bool _samplerDead;
 
+    // Game-thread-only control state (KSA_GAME_INTEGRATION_PLAN G1). The health latches are shared
+    // between the sampler (publishes degraded accessors to /sim/status) and the executor (latches
+    // a faulting actuator). A drain failure disables the drain for the session (one error log).
+    private KsaHealth? _health;
+    private KsaCatalog? _catalog;
+    private bool _commandsDead;
+
     /// <summary>The "gatOS" entry in the ModMenu bar (same mechanism as purrTTY's).</summary>
     [ModMenuEntry("gatOS")]
     public static void DrawMenu()
@@ -88,7 +97,8 @@ public sealed partial class Mod
 
         try
         {
-            _telemetry ??= new TelemetrySampler(store, Config.SampleRateHz);
+            _health ??= new KsaHealth();
+            _telemetry ??= new TelemetrySampler(store, Config.SampleRateHz, _health);
             var state = CurrentVmStatus.State;
             var active = state is VmState.Starting or VmState.Running
                          || (_simServer?.ActiveSessions ?? 0) > 0;
@@ -98,6 +108,30 @@ public sealed partial class Mod
         {
             _samplerDead = true;
             ModLog.Log.Error($"gatOS telemetry sampling disabled after an error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    ///     G1: drains queued control commands on the game thread, executing each through the KSA
+    ///     actuator catalog (threading rule 1). A drain failure disables control for the session
+    ///     (one error log); telemetry and the VM keep working.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void DrainCommands()
+    {
+        if (_commandsDead || _commandQueue is not { } queue)
+            return;
+
+        try
+        {
+            _health ??= new KsaHealth();
+            _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels);
+            queue.Drain(CommandPhase.Frame, _catalog, Config.MaxCommandsPerFrame);
+        }
+        catch (Exception ex)
+        {
+            _commandsDead = true;
+            ModLog.Log.Error($"gatOS control disabled after a drain error: {ex.Message}");
         }
     }
 

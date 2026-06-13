@@ -32,6 +32,11 @@ public sealed class GatOsConfig
         # accel_override        force one accelerator: "whpx" | "kvm" | "hvf" | "tcg" ("" = auto)
         # sample_rate_hz        /sim telemetry sampling rate (used once the 9p server lands, M9)
         # boot_timeout_seconds  0 = automatic (60 s accelerated, 300 s under TCG)
+        # control_enabled       master switch for /sim writes (false = every control write EACCES)
+        # control_all_vessels   true = command any vessel; false = only the active vessel (G-D1)
+        # debug_namespace       expose the /sim/debug cheat surface (G-D2; reserved for G4+)
+        # command_timeout_ms    how long a control write waits for the game thread before ETIMEDOUT
+        # max_commands_per_frame upper bound on control commands executed per game frame
 
         """;
 
@@ -58,6 +63,21 @@ public sealed class GatOsConfig
 
     /// <summary>Overall boot timeout in seconds; 0 = automatic (60 s accelerated / 300 s TCG).</summary>
     public int BootTimeoutSeconds { get; set; }
+
+    /// <summary>Master switch for all <c>/sim</c> control writes (KSA_GAME_INTEGRATION_PLAN Part 7).</summary>
+    public bool ControlEnabled { get; set; } = true;
+
+    /// <summary>When false, only the active vessel is commandable (G-D1); default commands any vessel.</summary>
+    public bool ControlAllVessels { get; set; } = true;
+
+    /// <summary>Exposes the <c>/sim/debug</c> cheat surface (G-D2; reserved for the G4 control surface).</summary>
+    public bool DebugNamespace { get; set; } = true;
+
+    /// <summary>How long a control write waits for the game thread before returning ETIMEDOUT.</summary>
+    public int CommandTimeoutMs { get; set; } = 2000;
+
+    /// <summary>Upper bound on control commands executed per game frame.</summary>
+    public int MaxCommandsPerFrame { get; set; } = 64;
 
     /// <summary>
     ///     Loads the config from <paramref name="path"/>, creating it with defaults on first run.
@@ -120,6 +140,8 @@ public sealed class GatOsConfig
         Cpus = Clamp(nameof(Cpus), Cpus, 1, 16);
         SampleRateHz = Clamp(nameof(SampleRateHz), SampleRateHz, 1, 120);
         BootTimeoutSeconds = Clamp(nameof(BootTimeoutSeconds), BootTimeoutSeconds, 0, 3600);
+        CommandTimeoutMs = Clamp(nameof(CommandTimeoutMs), CommandTimeoutMs, 100, 30000);
+        MaxCommandsPerFrame = Clamp(nameof(MaxCommandsPerFrame), MaxCommandsPerFrame, 1, 4096);
 
         var accel = AccelOverride.Trim().ToLowerInvariant();
         if (accel is not ("" or "whpx" or "kvm" or "hvf" or "tcg"))

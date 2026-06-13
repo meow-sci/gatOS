@@ -1,0 +1,5 @@
+- bash, zsh, starship by default setup in userland
+- add a /etc/os-release for gatOS with some ascii art
+- hide some ksp/jeb easter eggs around.. jeb remembers
+- filesystem persistence across sessions.. how is this going to work short and long term
+    - can this somehow be tied to per-game save?  might get annoying to not have your files though... remote git to the rescue?

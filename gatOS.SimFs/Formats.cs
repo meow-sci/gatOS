@@ -108,6 +108,25 @@ public static class Formats
     public static byte[] DroppedNoticeLine()
         => Encoding.UTF8.GetBytes("{\"notice\":\"dropped\"}\n");
 
+    /// <summary>
+    ///     One <c>/sim/status/accessors</c> NDJSON line for a degraded accessor:
+    ///     <c>{"name":…,"since_ut":…,"error":…}</c> (no trailing LF — the file joins them).
+    /// </summary>
+    public static string AccessorLine(AccessorHealthSnapshot accessor)
+    {
+        var buffer = new ArrayBufferWriter<byte>(128);
+        using (var json = new Utf8JsonWriter(buffer, JsonOptions))
+        {
+            json.WriteStartObject();
+            json.WriteString("name", accessor.Name);
+            json.WriteNumber("since_ut", accessor.SinceUtSeconds);
+            json.WriteString("error", accessor.Error);
+            json.WriteEndObject();
+        }
+
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
+
     private static byte[] WithNewline(ArrayBufferWriter<byte> buffer)
     {
         var line = new byte[buffer.WrittenCount + 1];
