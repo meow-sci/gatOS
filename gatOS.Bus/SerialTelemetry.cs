@@ -19,8 +19,8 @@ public enum SerialMode
 
 /// <summary>
 ///     Formats one telemetry frame for a serial/bus feed from a published snapshot, in the chosen
-///     <see cref="SerialMode"/>. Pure and game-free; the QEMU virtio-serial pump (the host bridge
-///     that writes these to a <c>/dev/virtio-ports/gatos.tlm.0</c> chardev) lands with guest v3.
+///     <see cref="SerialMode"/>. Pure and game-free; <see cref="SerialBridge"/> pumps these out
+///     over the QEMU <c>gatos.serial</c> virtio-serial chardev (guest <c>/dev/virtio-ports/gatos.serial</c>).
 /// </summary>
 public static class SerialTelemetry
 {

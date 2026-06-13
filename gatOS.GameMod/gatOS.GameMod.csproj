@@ -93,6 +93,7 @@
         <ProjectReference Include="..\gatOS.SimFs\gatOS.SimFs.csproj" />
         <ProjectReference Include="..\gatOS.Http\gatOS.Http.csproj" />
         <ProjectReference Include="..\gatOS.Mqtt\gatOS.Mqtt.csproj" />
+        <ProjectReference Include="..\gatOS.Bus\gatOS.Bus.csproj" />
         <ProjectReference Include="..\gatOS.Vm\gatOS.Vm.csproj" />
         <ProjectReference Include="..\gatOS.Logging\gatOS.Logging.csproj" />
     </ItemGroup>

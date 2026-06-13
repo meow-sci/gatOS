@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using gatOS.Bus;
 using gatOS.GameMod.Configuration;
 using gatOS.Logging;
 using gatOS.Http;
@@ -65,6 +66,12 @@ public sealed partial class Mod
     // The embedded MQTT broker (additional bridge): same store + command pipeline, loopback port,
     // guest reaches it at 10.0.2.2. Volatile for the same reasons as the HTTP server.
     private volatile SimMqttBroker? _mqttBroker;
+
+    // The G7 serial bridge connector: unlike the slirp servers above this is tied to the VM
+    // lifecycle (it connects to QEMU's gatos.serial chardev, which only exists while QEMU runs),
+    // so it is started/stopped by OnVmStatusChanged under _serialLock. Volatile for status reads.
+    private readonly object _serialLock = new();
+    private volatile SerialBridgeConnector? _serialConnector;
 
     // The control pipeline (KSA_GAME_INTEGRATION_PLAN G1): transport threads submit commands here,
     // the game thread drains them through the KSA actuator catalog each frame. Game-free; the
@@ -148,7 +155,12 @@ public sealed partial class Mod
                 // gatos.httpport on the cmdline lets the guest discover it. Null = guest HTTP env unset.
                 HttpPortProvider = () => _httpServer is { Port: > 0 } http ? http.Port : null,
                 MqttPortProvider = () => _mqttBroker is { Port: > 0 } mqtt ? mqtt.Port : null,
+                // G7: allocate the gatos.serial chardev port when a serial direction is enabled.
+                // The host bridge (OnVmStatusChanged) connects to it once the VM is Running.
+                SerialEnabled = SerialEnabled(),
             });
+            // The serial bridge follows the VM lifecycle (the chardev only exists while QEMU runs).
+            vmHost.StatusChanged += OnVmStatusChanged;
             _broker = new VmConnectionBroker(vmHost);
 
             RegisterShell(_broker);
@@ -188,8 +200,9 @@ public sealed partial class Mod
         var ninep = server is { Port: > 0 } ? server.Port.ToString() : "unbound";
         var http = _httpServer is { Port: > 0 } h ? h.Port.ToString() : "off";
         var mqtt = _mqttBroker is { Port: > 0 } m ? m.Port.ToString() : "off";
+        var serial = SerialStatusText();
         var control = _commandQueue is { ControlEnabled: true } ? "on" : "off";
-        return $"9p {ninep}\nhttp {http}\nmqtt {mqtt}\ncontrol {control}";
+        return $"9p {ninep}\nhttp {http}\nmqtt {mqtt}\nserial {serial}\ncontrol {control}";
     }
 
     /// <summary>Draws the diagnostics UI (T6.4); a no-op when built without the KSA assemblies.</summary>
@@ -224,10 +237,14 @@ public sealed partial class Mod
             _instance = null;
             IsInitialized = false;
             RemoveSolverHook(); // partial: drops out without the KSA assemblies
+
+            // Stop the serial bridge first (it follows the VM); then drop our status subscription.
+            StopSerialConnector();
             var broker = _broker;
             _broker = null;
             if (broker is not null)
             {
+                broker.VmHost.StatusChanged -= OnVmStatusChanged;
                 if (broker.DisposeAsync().AsTask().Wait(UnloadWaitBudget))
                     ModLog.Log.Info("gatOS unloaded; VM stopped.");
                 else
@@ -441,6 +458,77 @@ public sealed partial class Mod
         return broker is null
             ? (_config.MqttEnabled ? "not running" : "disabled")
             : $"port {broker.Port}";
+    }
+
+    /// <summary>True when any serial direction is configured (G7).</summary>
+    private bool SerialEnabled() => _config.SerialTelemetryPort || _config.SerialCommandPort;
+
+    /// <summary>
+    ///     Starts/stops the G7 serial bridge with the VM lifecycle: the QEMU <c>gatos.serial</c>
+    ///     chardev only exists while QEMU runs, so we connect on Running (with the port from the
+    ///     status) and tear down on every other transition. Fires on a VM thread (boot/stop) —
+    ///     non-blocking: the teardown is fire-and-forget.
+    /// </summary>
+    private void OnVmStatusChanged(object? sender, VmStatus status)
+    {
+        if (status is { State: VmState.Running, SerialPort: { } port }
+            && SerialEnabled() && _simStore is { } store)
+        {
+            lock (_serialLock)
+            {
+                if (_serialConnector is not null)
+                    return; // already connected for this run
+                var bridge = new SerialBridge(store, ParseSerialMode(_config.SerialMode),
+                    TimeSpan.FromMilliseconds(_config.SerialIntervalMs),
+                    emitTelemetry: _config.SerialTelemetryPort,
+                    commands: _config.SerialCommandPort ? _commandQueue : null);
+                var connector = new SerialBridgeConnector(port, bridge);
+                _serialConnector = connector;
+                connector.Start();
+                ModLog.Log.Info($"gatOS serial bridge connecting to gatos.serial on 127.0.0.1:{port} "
+                                + "(guest: /dev/virtio-ports/gatos.serial).");
+            }
+        }
+        else
+        {
+            StopSerialConnector();
+        }
+    }
+
+    /// <summary>Tears down the serial connector if running (fire-and-forget dispose; idempotent).</summary>
+    private void StopSerialConnector()
+    {
+        SerialBridgeConnector? connector;
+        lock (_serialLock)
+        {
+            connector = _serialConnector;
+            _serialConnector = null;
+        }
+
+        if (connector is not null)
+            _ = Task.Run(() => connector.DisposeAsync().AsTask());
+    }
+
+    private static SerialMode ParseSerialMode(string mode) => mode switch
+    {
+        "nmea" => SerialMode.Nmea,
+        "ccsds" => SerialMode.Ccsds,
+        _ => SerialMode.Ndjson,
+    };
+
+    /// <summary>One status line for the serial bridge (read on the render thread).</summary>
+    internal string SerialStatusText()
+    {
+        if (!SerialEnabled())
+            return "disabled";
+        var directions = (_config.SerialTelemetryPort, _config.SerialCommandPort) switch
+        {
+            (true, true) => $"tlm+cmd {_config.SerialMode}",
+            (true, false) => $"tlm {_config.SerialMode}",
+            (false, true) => "cmd",
+            _ => "off",
+        };
+        return _serialConnector is null ? $"{directions} (waiting)" : $"{directions} (connected)";
     }
 
     private void StartSimServer(int port)

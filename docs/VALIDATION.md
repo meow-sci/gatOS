@@ -21,10 +21,22 @@ real guest with the host HTTP server **and** MQTT broker wired
 | The MQTT broker accepts the guest's TCP connection over the same slirp path (`nc sim <port>`) | ✅ |
 | `/sim` 9p mount + control-surface writes still work on v3 (existing fixtures, re-run on v3) | ✅ |
 
-Full `GATOS_IT=1` suite re-run on v3: **green** (see CLAUDE.md). Still pending and unchanged:
-the **G7 live serial bridge** (the `gatOS.Bus` codecs are built + unit-tested, but the QEMU
-virtio-serial *port* for it is not wired — only the qemu-ga port exists), and the **in-game
-pass** (blocked on the purrTTY tip release, same as T6.6).
+### G7 serial bridge (added 2026-06-13, fixture `GuestSerialPort_StreamsTelemetry_AndAcceptsCommands`)
+
+Boots the real v3 guest with `VmHostOptions.SerialEnabled = true` and a host `SerialBridge`
+connected to the QEMU `gatos.serial` chardev:
+
+| Check | Result |
+|---|---|
+| The VM exposes a `gatos.serial` virtio-serial chardev port (`VmStatus.SerialPort`) | ✅ |
+| The guest device `/dev/virtio-ports/gatos.serial` appears unaided (init symlinks it) | ✅ |
+| Guest reads an NDJSON telemetry frame off the device (`head -n1`) over the chardev | ✅ |
+| `echo CTL:IGNITE >` the device actuates → `OK`; the command reaches the executor | ✅ |
+| A bad command (`CTL:BOGUS`) → `ERR EINVAL` (no executor hit) | ✅ |
+
+Full `GATOS_IT=1` suite re-run on v3: **green, 278/278, 0 skipped** (see CLAUDE.md). The only
+remaining item is the **in-game pass** (the purrTTY tip release is now cut, so the
+T6.6/T9.3/G1–G4 checklists below are runnable, but they need a live KSA flight).
 
 ## M9 headless dist smoke (pre-validation; run 2026-06-12, Windows 11 game machine)
 

@@ -29,13 +29,18 @@ public enum VmState
 /// <param name="SimPort">The 9p port handed to the guest, when one was provided.</param>
 /// <param name="StartedUtc">When the VM reached Running.</param>
 /// <param name="FaultReason">Player-readable reason while Faulted.</param>
+/// <param name="SerialPort">
+///     Loopback port of the <c>gatos.serial</c> virtio-serial chardev while Running (G7); the
+///     host <c>SerialBridge</c> connects here. <c>null</c> when serial is disabled or not Running.
+/// </param>
 public sealed record VmStatus(
     VmState State,
     string? EffectiveAccel,
     int? SshPort,
     int? SimPort,
     DateTime? StartedUtc,
-    string? FaultReason)
+    string? FaultReason,
+    int? SerialPort = null)
 {
     /// <summary>The initial (and post-stop) status.</summary>
     public static VmStatus Stopped { get; } = new(VmState.Stopped, null, null, null, null, null);

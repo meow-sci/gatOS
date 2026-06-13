@@ -275,7 +275,7 @@ Co-located reference: **`docs/KSA_INTEGRATION_MATRIX.md`** (now covers G1–G4 +
 deferrals: aero `cda` [private], `parts/<instanceId>` tree, per-nozzle engine internals, gimbal
 command, RCS pulse). **Pending: the G3/G4 in-game pass** (same purrTTY-tip-release blocker as T6.6).
 
-**Additional transports G5 (HTTP) & G7 (serial/bus framing): BUILT; G6 (TypeScript SDK): BUILT.**
+**Additional transports G5 (HTTP) & G7 (serial/bus framing + live virtio-serial bridge): BUILT; G6 (TypeScript SDK): BUILT.**
 Plan Parts 6–8. All game-free and built on the **same** `SnapshotStore` + `CommandQueue` the 9p
 tree uses — no second copy of the action table, no new KSA coupling. **`gatOS.Http`** (G5): a raw
 loopback-`TcpListener` HTTP/1.1 server (not `HttpListener` — that needs http.sys URL-ACL/admin on
@@ -285,22 +285,28 @@ long-poll `GET /v1/time/wait`, `GET /v1/openapi.json`, and one generic `POST /v1
 the `SimCommand` shape with `CommandOutcome`→HTTP-status+`{errno,message}` (debug.* gated). `Mod`
 hosts it (config `[http] enabled`/`preferred_port`=4242 ephemeral-fallback); `VmHost`/`QemuCommandBuilder`
 inject `gatos.httpport` on the cmdline (guest dials `10.0.2.2:<port>` outbound via slirp, like 9p).
-**`gatOS.Bus`** (G7 core): the framing codecs — `Ccsds` (TM space packets), `Nmea` (sentences +
+**`gatOS.Bus`** (G7): the framing codecs — `Ccsds` (TM space packets), `Nmea` (sentences +
 XOR checksum), `ScpiCommandPort` (`CTL:ENG0:ACT 1`→`SimCommand`→sink, `OK`/`ERR <errno>`),
-`SerialTelemetry` (NDJSON/NMEA/CCSDS frames). **`examples/sdk-ts`** (G6): a TypeScript/Bun SDK with
+`SerialTelemetry` (NDJSON/NMEA/CCSDS frames) — **plus the live serial bridge**: `SerialBridge`
+(duplex over one `Stream` — telemetry pump out + SCPI command lines in, both targeting the active
+vessel) and `SerialBridgeConnector` (connect-with-retry to the QEMU `gatos.serial` chardev,
+mirroring `QgaClient`). `VmHost` allocates a 4th loopback port + `QemuCommandBuilder` wires a
+`virtserialport,name=gatos.serial` (the guest's init symlinks it to `/dev/virtio-ports/gatos.serial`,
+no rebuild needed); `Mod` starts/stops the connector on the VM `Running`/stop transitions per
+`[serial] serial_telemetry_port`/`serial_command_port`/`serial_mode`/`serial_interval_ms`.
+**`examples/sdk-ts`** (G6): a TypeScript/Bun SDK with
 `FsTransport`+`HttpTransport` behind one typed `GatosClient` (the per-vessel `telemetry` doc is
 byte-identical over both), reactive events, warp-aware time helpers, `GatosError` errno mapping, and
-example scripts + a pure-shell README. Config grew `[http]` + reserved `[serial]` flags. Tests:
-gatOS.Http 13 (HttpClient over the live socket), gatOS.Bus 15 (codec/SCPI). Full non-IT suite green
-(260 passed), zero warnings. **Guest image v3 is BUILT (`GUEST_VERSION=3`, released + fetched).** The
-HTTP/MQTT guest activation is **validated in-guest** (2026-06-13, Windows/TCG): the `GATOS_IT`
-fixture `SimFs.Tests/Integration/TransportEnvIntegrationTests` boots the real v3 guest with the host
-HTTP server + MQTT broker wired and proves the `sim` `/etc/hosts` alias, `$GATOS_HTTP`/`$GATOS_MQTT`
+example scripts + a pure-shell README. Config grew `[http]` + `[serial]` flags. Tests:
+gatOS.Http 13 (HttpClient over the live socket), gatOS.Bus 20 (codec/SCPI + `SerialBridge`/connector
+over a loopback socket pair). Full non-IT suite green, zero warnings. **Guest image v3 is BUILT
+(`GUEST_VERSION=3`, released + fetched).** All three extra transports are **validated in-guest**
+(2026-06-13, Windows/TCG) by the `GATOS_IT` fixture `SimFs.Tests/Integration/TransportEnvIntegrationTests`
+against the real v3 guest: HTTP/MQTT — the `sim` `/etc/hosts` alias, `$GATOS_HTTP`/`$GATOS_MQTT`
 (`/etc/profile.d/gatos.sh`) + `/run/gatos/{http,mqtt}-port`, a **live telemetry read over slirp**
-(`wget $GATOS_HTTP/time`), and MQTT-broker TCP reachability — see `docs/VALIDATION.md`. **Still
-pending: the G7 live serial bridge** — the QEMU virtio-serial *port* for it + guest
-`/dev/virtio-ports` exposure are not wired (only the qemu-ga port exists); the `gatOS.Bus` codecs +
-command port are done and unit-tested, but the live serial transport awaits that wiring.
+(`wget $GATOS_HTTP/time`), MQTT-broker TCP reachability; serial — the guest reads an NDJSON frame off
+`/dev/virtio-ports/gatos.serial` and an `echo CTL:… >` SCPI command actuates (`OK`) with a bad line
+rejected (`ERR EINVAL`). See `docs/VALIDATION.md`.
 
 **MQTT transport (`gatOS.Mqtt`, MQTTnet): BUILT.** A user-requested additional bridge alongside
 9p/HTTP/serial. An **embedded MQTTnet broker** (`SimMqttBroker`) in the host process on a loopback
@@ -311,10 +317,11 @@ to `gatos/command` and the outcome is published to `gatos/command/result` (debug
 it (config `[mqtt] enabled`/`preferred_port`=1883 ephemeral-fallback); `VmHost`/`QemuCommandBuilder`
 inject `gatos.mqttport`; the guest exports `$GATOS_MQTT=sim:<port>` (active on guest v3, like
 `$GATOS_HTTP` — validated in-guest, see `docs/VALIDATION.md`). `gatOS.Mqtt.Tests` (3) connect a real
-MQTTnet client to the broker. Full `GATOS_IT=1` suite green on guest v3 (270 passed), zero warnings.
-**Still pending: the in-game pass** (the purrTTY-tip-release blocker) **and the G7 live serial
-bridge** (QEMU virtio-serial port + guest `/dev/virtio-ports` wiring — the codecs are built, the
-transport is not yet wired).
+MQTTnet client to the broker. Full `GATOS_IT=1` suite green on guest v3, zero warnings.
+**Still pending: the in-game pass** (purrTTY tip release is now cut — the T6.6/T9.3/G1–G4 checklists
+in `docs/VALIDATION.md` are runnable but need a live KSA flight). The headless host↔guest stack
+(VM, shells, `/sim`, HTTP/MQTT/serial transports, control surface) is otherwise fully built and
+validated against the real guest.
 
 Everything past M9 is **not yet implemented** — next is M10 (persistence & savegame shape) —
 with one exception pulled forward: **T11.1 QEMU win-x64 bundle tooling is DONE**
@@ -326,7 +333,7 @@ via `QemuLocator.OverridePath` (`VendoredQemuSetup` in `gatOS.Vm.Tests`/`gatOS.S
 `gatOS.SimFs.Tests`), and `QemuLocator.Find()` throws the typed `QemuNotFoundException` (not
 `InvalidOperationException`) when `GatOsPaths.ModDir` is unset, so the test skip-gate works.
 The full `GATOS_IT=1` suite is verified green on the Windows 11 game machine against **guest v3**
-(270/270, 0 skipped, 2026-06-13 — TCG fallback: WHPX needs the off-by-default `HypervisorPlatform`
+(278/278, 0 skipped, 2026-06-13 — TCG fallback: WHPX needs the off-by-default `HypervisorPlatform`
 Windows feature; guest boot ≈ 7 s under TCG). Track real progress against the milestone table in `OS_PLAN.md` Part 3; do not document
 planned code here as if it exists.
 
@@ -391,11 +398,12 @@ gatOS.SimFs    → NineP, Logging                       /sim tree, snapshots, st
                                                       Commands/ (SimCommand, CommandQueue, Control/Trigger/
                                                       Vector/Enum/Number/Token control files — G1+G4, built)
 gatOS.Http     → SimFs, Logging                       magic HTTP /v1 server (raw TcpListener; G5, built)
-gatOS.Bus      → SimFs, Logging                       serial/bus framing: CCSDS/NMEA/SCPI (G7 core, built)
+gatOS.Bus      → SimFs, Logging                       serial/bus framing CCSDS/NMEA/SCPI + the gatos.serial
+                                                      SerialBridge/Connector over QEMU virtio-serial (G7, built)
 gatOS.Mqtt     → SimFs, Logging, MQTTnet              embedded MQTT broker over the same store+sink (built)
 gatOS.Vm       → Logging, Tomlyn                      QEMU lifecycle, disks, ports, GatOsPaths (M3, built)
 gatOS.Ssh      → Vm, Logging, vendor/purrTTY, SSH.NET SshShellSession : ICustomShell (M4, built)
-gatOS.GameMod  → Ssh, SimFs, Http, Mqtt, Vm, Logging, vendor/purrTTY,
+gatOS.GameMod  → Ssh, SimFs, Http, Mqtt, Bus, Vm, Logging, vendor/purrTTY,
                   KSA DLLs, StarMap.API, Lib.Harmony, ModMenu.Attributes, Tomlyn   the KSA mod (M6, built)
 ```
 `examples/sdk-ts/` is a standalone TypeScript/Bun example SDK (G6, built — not part of the .NET

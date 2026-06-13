@@ -1,8 +1,11 @@
 using System.Globalization;
 using System.Text.Json;
+using gatOS.Bus;
 using gatOS.Http;
 using gatOS.Mqtt;
+using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
+using gatOS.SimFs.Tests.Commands;
 using gatOS.Ssh;
 using gatOS.Vm;
 using Renci.SshNet;
@@ -105,6 +108,92 @@ public sealed class TransportEnvIntegrationTests
 
         await broker.VmHost.StopAsync(TimeSpan.FromSeconds(30));
         Assert.That(broker.VmHost.Status.State, Is.EqualTo(VmState.Stopped));
+    }
+
+    [Test]
+    public async Task GuestSerialPort_StreamsTelemetry_AndAcceptsCommands()
+    {
+        // Host stack: one store feeding the serial telemetry pump + a command queue drained by a
+        // background "game thread" through a fake actuator (no real game — that's the checklist).
+        var store = new SnapshotStore();
+        var queue = new CommandQueue(controlEnabled: true, debugEnabled: false, TimeSpan.FromSeconds(5));
+        var executor = new FakeCommandExecutor();
+        store.Publish(TestData.Snapshot(1, TestData.Vessel()));
+        _ = Task.Run(() => PublishFlightAsync(store, _publisher!.Token));
+        _ = Task.Run(() => DrainLoopAsync(queue, executor, _publisher!.Token));
+
+        var host = new VmHost(new VmHostOptions
+        {
+            Profile = "it-serial",
+            GuestAssetsDir = TestEnv.RequireGuestAssetsDir(),
+            SerialEnabled = true,
+        });
+        await using var broker = new VmConnectionBroker(host);
+        using var ssh = await broker.ConnectAsync(CancellationToken.None);
+
+        var serialPort = broker.VmHost.Status.SerialPort;
+        Assert.That(serialPort, Is.Not.Null, "the VM exposes a gatos.serial chardev port when SerialEnabled");
+
+        // The host-side bridge connects to QEMU's gatos.serial chardev: NDJSON telemetry out at
+        // 5 Hz, SCPI command lines in. The guest sees /dev/virtio-ports/gatos.serial.
+        var bridge = new SerialBridge(store, SerialMode.Ndjson, TimeSpan.FromMilliseconds(200),
+            emitTelemetry: true, commands: queue);
+        await using var connector = new SerialBridgeConnector(serialPort!.Value, bridge);
+        connector.Start();
+
+        // The init script symlinks every virtio-serial port by name, so the device appears unaided.
+        await WaitForFileAsync(ssh, "/dev/virtio-ports/gatos.serial");
+
+        // Telemetry: the guest reads one NDJSON frame off the serial device, over the chardev.
+        var line = Run(ssh, "timeout 10 head -n 1 /dev/virtio-ports/gatos.serial").Trim();
+        Assert.That(line, Does.StartWith("{").And.Contains("\"seq\""),
+            $"expected an NDJSON telemetry frame, got: '{line}'");
+
+        // Command round-trip: write an SCPI line, then read past streaming telemetry frames to the
+        // OK/ERR reply (the device is one duplex UART; replies are plain OK / ERR <errno> lines).
+        Assert.That(SerialCommand(ssh, "CTL:IGNITE"), Is.EqualTo("OK"),
+            "a valid SCPI command actuates and replies OK");
+        Assert.That(executor.Count, Is.GreaterThanOrEqualTo(1), "the command reached the executor");
+        Assert.That(SerialCommand(ssh, "CTL:BOGUS"), Is.EqualTo("ERR EINVAL"),
+            "an unparseable command replies ERR EINVAL");
+
+        await broker.VmHost.StopAsync(TimeSpan.FromSeconds(30));
+        Assert.That(broker.VmHost.Status.State, Is.EqualTo(VmState.Stopped));
+    }
+
+    /// <summary>Sends one SCPI line and returns the first OK/ERR reply, skipping telemetry frames.</summary>
+    private static string SerialCommand(SshClient ssh, string scpi)
+        => Run(ssh,
+            "exec 3<>/dev/virtio-ports/gatos.serial; "
+            + $"printf '{scpi}\\n' >&3; "
+            + "while IFS= read -r -t 10 l <&3; do case \"$l\" in OK|ERR*) printf '%s' \"$l\"; break;; esac; done; "
+            + "exec 3<&-").Trim();
+
+    private static async Task WaitForFileAsync(SshClient ssh, string path)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (!Run(ssh, $"test -e {path} && echo yes || true").Contains("yes"))
+        {
+            if (DateTime.UtcNow > deadline)
+                Assert.Fail($"{path} did not appear within 30 s");
+            await Task.Delay(500);
+        }
+    }
+
+    private static async Task DrainLoopAsync(CommandQueue queue, FakeCommandExecutor executor, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            queue.Drain(CommandPhase.Frame, executor, 64);
+            try
+            {
+                await Task.Delay(15, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
     }
 
     private static string Run(SshClient ssh, string command)

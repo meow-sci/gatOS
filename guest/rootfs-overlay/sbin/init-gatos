@@ -58,3 +58,11 @@ if [ -n "$MQTT_PORT" ] && [ "$MQTT_PORT" != "0" ]; then
 else
     rm -f /run/gatos/mqtt-port 2>/dev/null
 fi
+
+# G7 serial bus: the host wires a 'gatos.serial' virtio-serial port (chardev), which the vport
+# loop above symlinks to /dev/virtio-ports/gatos.serial. Unlike HTTP/MQTT there is no port to
+# advertise (it is a local device, not a slirp server) — just point $GATOS_SERIAL at it when the
+# host enabled it. `cat` the device for telemetry; `echo CTL:... >` it to send SCPI commands.
+if [ -e /dev/virtio-ports/gatos.serial ]; then
+    printf 'export GATOS_SERIAL="/dev/virtio-ports/gatos.serial"\n' >> /etc/profile.d/gatos.sh
+fi

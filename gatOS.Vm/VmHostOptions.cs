@@ -39,6 +39,14 @@ public sealed record VmHostOptions
     public Func<int?>? MqttPortProvider { get; init; }
 
     /// <summary>
+    ///     When true (G7) the boot allocates a loopback port and wires the <c>gatos.serial</c>
+    ///     virtio-serial chardev; the port is published as <see cref="VmStatus.SerialPort"/> for
+    ///     the host-side <c>SerialBridge</c> to connect to. The guest exposes
+    ///     <c>/dev/virtio-ports/gatos.serial</c>. False omits the port.
+    /// </summary>
+    public bool SerialEnabled { get; init; }
+
+    /// <summary>
     ///     Overall boot timeout (spawn → SSH banner); <c>null</c> = auto: 60 s accelerated,
     ///     300 s under TCG.
     /// </summary>

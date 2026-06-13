@@ -19,9 +19,10 @@
         <ProjectReference Include="..\gatOS.Vm\gatOS.Vm.csproj" />
         <ProjectReference Include="..\gatOS.Ssh\gatOS.Ssh.csproj" />
         <!-- The guest-v3 transport-env fixture boots the guest with the HTTP server + MQTT
-             broker wired and proves the guest reaches them over slirp. -->
+             broker + serial bridge wired and proves the guest reaches them. -->
         <ProjectReference Include="..\gatOS.Http\gatOS.Http.csproj" />
         <ProjectReference Include="..\gatOS.Mqtt\gatOS.Mqtt.csproj" />
+        <ProjectReference Include="..\gatOS.Bus\gatOS.Bus.csproj" />
     </ItemGroup>
 
     <ItemGroup>

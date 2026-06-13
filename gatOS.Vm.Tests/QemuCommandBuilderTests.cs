@@ -10,7 +10,7 @@ public sealed class QemuCommandBuilderTests
     private static readonly OperatingSystemFacts MacArm64 = new(IsWindows: false, IsLinux: false, IsMacOs: true, IsX64: false);
 
     private static VmLaunchSpec Spec(int? simPort = null, bool restrict = false, string accelOverride = "",
-        int? httpPort = null)
+        int? httpPort = null, int? serialPort = null)
         => new(
             OverlayPath: "/data/disks/default.qcow2",
             KernelPath: "/data/disks/guest-v1/vmlinuz-virt",
@@ -21,7 +21,8 @@ public sealed class QemuCommandBuilderTests
             SimPort: simPort, RestrictNetwork: restrict,
             SerialLogPath: "/data/logs/serial.log",
             AccelOverride: accelOverride,
-            HttpPort: httpPort);
+            HttpPort: httpPort,
+            SerialPort: serialPort);
 
     [Test]
     public void LinuxX64_GoldenArgs()
@@ -110,5 +111,24 @@ public sealed class QemuCommandBuilderTests
         var args = new QemuCommandBuilder(LinuxX64).Build(Spec(restrict: true));
         var netdev = args[args.ToList().IndexOf("-netdev") + 1];
         Assert.That(netdev, Does.EndWith(",restrict=on"));
+    }
+
+    [Test]
+    public void SerialPort_WiresTheGatosSerialChardev_WhenSet()
+    {
+        var args = new QemuCommandBuilder(LinuxX64).Build(Spec(serialPort: 50025)).ToList();
+        Assert.That(args, Does.Contain("socket,id=gatosserial,host=127.0.0.1,port=50025,server=on,wait=off"));
+        var chardevIdx = args.IndexOf("socket,id=gatosserial,host=127.0.0.1,port=50025,server=on,wait=off");
+        Assert.That(args[chardevIdx - 1], Is.EqualTo("-chardev"));
+        Assert.That(args[chardevIdx + 1], Is.EqualTo("-device"));
+        Assert.That(args[chardevIdx + 2], Is.EqualTo("virtserialport,chardev=gatosserial,name=gatos.serial"));
+    }
+
+    [Test]
+    public void SerialPort_IsAbsent_WhenNull()
+    {
+        var args = new QemuCommandBuilder(LinuxX64).Build(Spec());
+        Assert.That(args, Has.None.Contains("gatosserial"));
+        Assert.That(args, Has.None.Contains("name=gatos.serial"));
     }
 }

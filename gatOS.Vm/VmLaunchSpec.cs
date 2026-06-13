@@ -33,6 +33,12 @@ namespace gatOS.Vm;
 ///     The host MQTT broker port baked into the kernel cmdline (<c>gatos.mqttport</c>);
 ///     <c>null</c> (emitted as 0) leaves the guest's MQTT env unset.
 /// </param>
+/// <param name="SerialPort">
+///     Loopback port for the G7 <c>gatos.serial</c> virtio-serial chardev socket (QEMU listens,
+///     the host bridge connects — like QGA). <c>null</c> omits the port entirely, so the guest's
+///     <c>/dev/virtio-ports/gatos.serial</c> never appears. Unlike Sim/Http/Mqtt this is NOT on
+///     the kernel cmdline: it is a host-side chardev, not a server the guest dials over slirp.
+/// </param>
 public sealed record VmLaunchSpec(
     string OverlayPath,
     string KernelPath,
@@ -48,7 +54,8 @@ public sealed record VmLaunchSpec(
     string SerialLogPath,
     string AccelOverride = "",
     int? HttpPort = null,
-    int? MqttPort = null)
+    int? MqttPort = null,
+    int? SerialPort = null)
 {
     /// <summary>Default guest RAM (OS_ANALYSIS.md §3.8: Alpine comfy at 192–256 MB).</summary>
     public const int DefaultMemoryMb = 256;

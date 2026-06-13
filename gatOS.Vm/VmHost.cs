@@ -171,11 +171,14 @@ public sealed class VmHost : IAsyncDisposable
             var simPort = _options.SimPortProvider?.Invoke();
             var httpPort = _options.HttpPortProvider?.Invoke();
             var mqttPort = _options.MqttPortProvider?.Invoke();
+            var serialEnabled = _options.SerialEnabled;
 
             // The port-reuse race window is real but tiny (T3.1): one retry with fresh ports.
             for (var portRetry = false; ; portRetry = true)
             {
-                var ports = PortAllocator.AllocatePorts(3);
+                // ports[0..2] = ssh/qga/qmp; ports[3] = the gatos.serial chardev when enabled (G7).
+                var ports = PortAllocator.AllocatePorts(serialEnabled ? 4 : 3);
+                var serialPort = serialEnabled ? (int?)ports[3] : null;
                 var spec = new VmLaunchSpec(
                     OverlayPath: overlay,
                     KernelPath: installed.KernelPath,
@@ -189,7 +192,8 @@ public sealed class VmHost : IAsyncDisposable
                     SerialLogPath: Path.Combine(GatOsPaths.LogsDir, $"serial-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}.log"),
                     AccelOverride: _options.AccelOverride,
                     HttpPort: httpPort,
-                    MqttPort: mqttPort);
+                    MqttPort: mqttPort,
+                    SerialPort: serialPort);
 
                 process = _processFactory();
                 try
@@ -204,7 +208,8 @@ public sealed class VmHost : IAsyncDisposable
                     continue;
                 }
 
-                SetStatus(new VmStatus(VmState.Starting, process.EffectiveAccel, ports[0], simPort, null, null));
+                SetStatus(new VmStatus(VmState.Starting, process.EffectiveAccel, ports[0], simPort, null, null,
+                    serialPort));
                 var timeout = _options.BootTimeout
                               ?? (process.EffectiveAccel == "tcg" ? TcgBootTimeout : AcceleratedBootTimeout);
                 await WaitForSshOrDeathAsync(process, ports[0], timeout);
@@ -230,7 +235,7 @@ public sealed class VmHost : IAsyncDisposable
                 }
 
                 SetStatus(new VmStatus(VmState.Running, process.EffectiveAccel, ports[0], simPort,
-                    DateTime.UtcNow, null));
+                    DateTime.UtcNow, null, serialPort));
                 ModLog.Log.Info($"VM running: ssh 127.0.0.1:{ports[0]}, accel {process.EffectiveAccel}, "
                                 + $"profile '{_options.Profile}'");
                 return new VmEndpoints(ports[0], installed.Manifest.SshUser, installed.PrivateKeyPath,

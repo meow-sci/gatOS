@@ -1,11 +1,14 @@
 # KSA Game Integration Plan — telemetry, control, and virtual hardware
 
-> Status: **G1–G6 BUILT + G7 codec core BUILT** (command pipeline, controls, integration layer, read
-> + write catalogs, magic HTTP, TypeScript SDK, serial/bus framing; 2026-06-12). Parts 1–8 are
-> implemented (Part 6 T3/T4's live virtio-serial wiring + guest exposure ride the next guest image
-> v3; the codecs + command port are done). As-built reality: `CLAUDE.md` + `docs/KSA_INTEGRATION_MATRIX.md`.
+> Status: **G1–G7 BUILT** (command pipeline, controls, integration layer, read + write catalogs,
+> magic HTTP, TypeScript SDK, serial/bus framing **and the live `gatos.serial` virtio-serial bridge**;
+> 2026-06-13). Parts 1–8 are implemented, including Part 6 T3's live wiring — `SerialBridge` +
+> `SerialBridgeConnector` over the QEMU `gatos.serial` chardev (guest `/dev/virtio-ports/gatos.serial`),
+> validated end-to-end against the real guest v3. (T4's 1553/SpaceWire framing variants remain a
+> reserved experiment.) As-built reality: `CLAUDE.md` + `docs/KSA_INTEGRATION_MATRIX.md`.
 > A user-requested **MQTT transport** (`gatOS.Mqtt`, MQTTnet embedded broker) is also built — an
-> additional bridge alongside 9p/HTTP/serial. Remaining: the guest v3 image build and the in-game pass.
+> additional bridge alongside 9p/HTTP/serial. Guest v3 is built + fetched; all transports are
+> validated in-guest (`GATOS_IT`). Remaining: the in-game pass (live KSA flight).
 > This plan expands and supersedes the one-paragraph M12 P1 sketch ("writable control files")
 > in `OS_PLAN.md`. It is the central, co-located reference for **every KSA data point we read
 > and every KSA mutation we perform** — the document you update first when a new decompiled
@@ -596,7 +599,7 @@ image bump as any M10 guest changes to avoid churning `GUEST_VERSION` twice).
 | **G4 — full control surface** ✅ **BUILT** | throttle (reflection), attitude/burn (FlightComputer), RCS, staging, decouplers, solver-phase queue (Harmony prefix on `ExecuteNextVehicleSolvers`), `/sim/debug/*` (teleport/refill/warp/switch) | Control surface verified over the 9p client + `[control]` config. **Done** (gimbal command + `parts/<instanceId>` tree + RCS pulse deferred — see matrix; scripted-burn in-game pass pending) |
 | **G5 — HTTP transport** ✅ **BUILT** | `gatOS.Http` (raw `TcpListener`, **not** GenHTTP/HttpListener — see CLAUDE.md), REST snapshot projections + SSE + `time/wait` long-poll + OpenAPI + generic `POST /v1/command`, errno→status; `[http]` config; `gatos.httpport` cmdline; guest v3 plumbing written (hosts `sim`, `$GATOS_HTTP`) | `gatOS.Http.Tests` (13, HttpClient over the live socket) green. **Done** host-side; in-guest `curl http://sim:<port>/v1/...` pass rides guest v3 |
 | **G6 — SDK + player docs** ✅ **BUILT** | `examples/sdk-ts` (Bun/Node): `FsTransport`+`HttpTransport` behind one typed `GatosClient`, reactive events, warp-aware time helpers, `GatosError` errno, example scripts + pure-shell README | Type-careful TS; runs in-guest against both transports (Bun musl). **Done** |
-| **G7 — bus experiments** ◐ **codecs BUILT** | `gatOS.Bus`: `Ccsds` TM packets, `Nmea` sentences+checksum, `ScpiCommandPort`→`SimCommand`, `SerialTelemetry` (NDJSON/NMEA/CCSDS); `[serial]` config | `gatOS.Bus.Tests` (15) green. **Codecs + command port done**; the QEMU virtio-serial port wiring + guest `/dev/virtio-ports` exposure (live bridge) + 1553/SpaceWire ride guest v3 |
+| **G7 — serial bus** ✅ **BUILT** | `gatOS.Bus`: `Ccsds` TM packets, `Nmea` sentences+checksum, `ScpiCommandPort`→`SimCommand`, `SerialTelemetry` (NDJSON/NMEA/CCSDS); **+ the live bridge** — `SerialBridge` (duplex telemetry-out/SCPI-in over one `Stream`) + `SerialBridgeConnector` (connect-with-retry to QEMU's `gatos.serial` chardev); `VmHost` allocates the port, `QemuCommandBuilder` wires `virtserialport,name=gatos.serial`, `Mod` runs the bridge on VM status; `[serial]` config (mode/interval/directions); guest `/dev/virtio-ports/gatos.serial` | `gatOS.Bus.Tests` (20, codecs + bridge/connector over a loopback socket pair) green; `GATOS_IT` `GuestSerialPort_StreamsTelemetry_AndAcceptsCommands` reads NDJSON + actuates SCPI on the real v3 guest. **Done.** (1553/SpaceWire framing variants remain a reserved experiment) |
 
 ## Part 10 — Open implementation questions (resolve during the listed phase)
 

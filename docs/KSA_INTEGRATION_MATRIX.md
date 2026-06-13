@@ -10,8 +10,10 @@
 **Status:** covers the **G1** (command pipeline + first controls), **G2** (integration-layer
 formalization), **G3** (read-surface expansion: bodies/system, vessel extensions, per-module reads,
 new events) and **G4** (full control surface: throttle/staging/attitude/burn, RCS, per-light, decouplers,
-`/sim/debug`, solver-phase queue) surfaces. The HTTP/serial transports (G5/G7) and SDK (G6) remain
-unbuilt.
+`/sim/debug`, solver-phase queue) surfaces. The HTTP (G5), serial-bus (G7 — codecs + the live
+`gatos.serial` virtio-serial bridge) and MQTT transports and the TypeScript SDK (G6) are all built;
+they add **no** KSA coupling — every transport speaks the same `SnapshotStore` (reads) and
+`ICommandSink`/`SimCommand` (writes), so this matrix (the KSA-touching surface) is unaffected by them.
 
 **Verified:** 2026-06-12, against `thirdparty/ksa` (`VersionInfo.Current` at build time).
 

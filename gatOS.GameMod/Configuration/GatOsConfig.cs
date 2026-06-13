@@ -41,8 +41,10 @@ public sealed class GatOsConfig
         # http_preferred_port   preferred HTTP port (4242); 0 = ephemeral only; falls back on a clash
         # mqtt_enabled          run the embedded MQTT broker (guest reaches it at $GATOS_MQTT / 10.0.2.2)
         # mqtt_preferred_port   preferred MQTT port (1883); 0 = ephemeral only; falls back on a clash
-        # serial_telemetry_port expose a virtio-serial NDJSON telemetry feed (G7; reserved)
-        # serial_command_port   expose a virtio-serial SCPI command port (G7; reserved)
+        # serial_telemetry_port stream telemetry over the gatos.serial virtio-serial port (G7)
+        # serial_command_port   accept SCPI commands over the gatos.serial virtio-serial port (G7)
+        # serial_mode           serial telemetry wire format: ndjson | nmea | ccsds (default ndjson)
+        # serial_interval_ms    serial telemetry cadence in milliseconds (default 500; clamped 50..60000)
         # bus_ccsds             expose a CCSDS space-packet TM/TC feed (G7; reserved)
         # bus_1553              expose a MIL-STD-1553 BC/RT framing feed (G7; reserved)
 
@@ -99,11 +101,17 @@ public sealed class GatOsConfig
     /// <summary>Preferred MQTT port (1883); 0 = ephemeral only; falls back to ephemeral on a clash.</summary>
     public int MqttPreferredPort { get; set; } = 1883;
 
-    /// <summary>Expose a virtio-serial NDJSON telemetry feed (G7; reserved — not yet served).</summary>
+    /// <summary>Stream telemetry out over the <c>gatos.serial</c> virtio-serial port (G7).</summary>
     public bool SerialTelemetryPort { get; set; }
 
-    /// <summary>Expose a virtio-serial SCPI command port (G7; reserved — not yet served).</summary>
+    /// <summary>Accept SCPI command lines in over the <c>gatos.serial</c> virtio-serial port (G7).</summary>
     public bool SerialCommandPort { get; set; }
+
+    /// <summary>Serial telemetry wire format: <c>ndjson</c> | <c>nmea</c> | <c>ccsds</c> (G7).</summary>
+    public string SerialMode { get; set; } = "ndjson";
+
+    /// <summary>Serial telemetry cadence in milliseconds (clamped to 50..60000).</summary>
+    public int SerialIntervalMs { get; set; } = 500;
 
     /// <summary>Expose a CCSDS space-packet TM/TC feed (G7; reserved — not yet served).</summary>
     public bool BusCcsds { get; set; }
@@ -178,6 +186,16 @@ public sealed class GatOsConfig
             HttpPreferredPort = Clamp(nameof(HttpPreferredPort), HttpPreferredPort, 1024, 65535);
         if (MqttPreferredPort != 0)
             MqttPreferredPort = Clamp(nameof(MqttPreferredPort), MqttPreferredPort, 1024, 65535);
+        SerialIntervalMs = Clamp(nameof(SerialIntervalMs), SerialIntervalMs, 50, 60000);
+
+        var serialMode = SerialMode.Trim().ToLowerInvariant();
+        if (serialMode is not ("ndjson" or "nmea" or "ccsds"))
+        {
+            ModLog.Log.Warn($"Config: serial_mode '{SerialMode}' is not ndjson/nmea/ccsds; using ndjson.");
+            serialMode = "ndjson";
+        }
+
+        SerialMode = serialMode;
 
         var accel = AccelOverride.Trim().ToLowerInvariant();
         if (accel is not ("" or "whpx" or "kvm" or "hvf" or "tcg"))

@@ -66,6 +66,16 @@ public sealed class QemuCommandBuilder(OperatingSystemFacts facts)
         args.AddRange(["-chardev", $"socket,id=qga0,host=127.0.0.1,port={spec.QgaPort},server=on,wait=off"]);
         args.AddRange(["-device", "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0"]);
 
+        // G7: the gatos.serial bus port. QEMU listens (server=on,wait=off) on a loopback socket
+        // the host SerialBridge connects to; the guest sees /dev/virtio-ports/gatos.serial (the
+        // init script symlinks every virtio-port by name). Shares the virtio-serial-pci bus above.
+        if (spec.SerialPort is { } serialPort)
+        {
+            args.AddRange(["-chardev",
+                $"socket,id=gatosserial,host=127.0.0.1,port={serialPort},server=on,wait=off"]);
+            args.AddRange(["-device", "virtserialport,chardev=gatosserial,name=gatos.serial"]);
+        }
+
         args.AddRange(["-qmp", $"tcp:127.0.0.1:{spec.QmpPort},server=on,wait=off"]);
 
         args.AddRange(["-display", "none"]);
