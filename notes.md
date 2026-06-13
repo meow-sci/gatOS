@@ -104,3 +104,32 @@ What was built
   Two conveniences worth knowing: /sim/vessels/active/ is an alias for whatever vessel you're currently controlling (so watch -n 0.2 cat
   /sim/vessels/active/velocity/orbital keeps working across vessel switches), and cat /sim/events blocks and prints flight events (situation
   changes, SoI changes, warp changes) as they happen — a nice second terminal to leave open.
+
+
+
+
+  # game integration notes
+
+    Parts 4–5 (G3 read surface + G4 control surface) — the full /sim telemetry catalog (/sim/system, /sim/bodies, navball,
+  environment, orbit extras, encounters, per-module reads, the time/alarm wake device) and the full write surface
+  (throttle/staging/attitude/burn, RCS, per-light colour, decouplers, the /sim/debug cheat namespace) with a solver-phase Harmony
+  queue. All KSA access stays behind the [KsaAnchor] churn firewall.
+
+  Parts 6–8 (transports + config + SDK):
+  - G5 HTTP (gatOS.Http) — a /v1 REST+SSE+long-poll+OpenAPI server over the same SnapshotStore+CommandQueue. I used a raw loopback
+  TcpListener rather than HttpListener (needs http.sys URL-ACL/admin on Windows) — and, per your note, not GenHTTP: it would drag a
+  heavy dependency tree into the mod ALC for no functional gain, and the dependency-free server already meets every need.
+  - G6 SDK (examples/sdk-ts) — a typed TS/Bun client over both transports with reactive events, warp-aware time helpers, and a
+  pure-shell README.
+  - G7 serial/bus (gatOS.Bus) — CCSDS / NMEA / SCPI framing codecs + command port.
+  - Part 7 — [http]/[mqtt]/[serial] config.
+
+  MQTT (gatOS.Mqtt) — your requested additional bridge: an embedded MQTTnet broker over the same store+pipeline, publishing gatos/…
+  telemetry topics and routing gatos/command into the queue.
+
+  Verification: full non-IT suite 263 passed, 6 IT-skipped, zero warnings. Two slices need a guest image v3 build (which I can't
+  run/validate here) to go live in-VM: the $GATOS_HTTP/$GATOS_MQTT/sim guest env (scripts written, GUEST_VERSION left at 2 so the
+  v2 IT path stays green) and G7's QEMU virtio-serial port wiring — both documented in CLAUDE.md/the plan as the v3 integration
+  step. The in-game pass remains blocked on the purrTTY tip release, same as the earlier milestones.
+
+  The branch isn't pushed and no PR was opened — say the word if you'd like either.
