@@ -254,6 +254,8 @@ gatos.slnx                      XML solution (all 11 projects)
 Directory.Build.props           shared build config + KSA/dist path resolution
 CLAUDE.md / README.md           this file; user-facing readme
 OS_IDEA.md / OS_ANALYSIS.md / OS_PLAN.md   goals / research / execution plan
+KSA_GAME_INTEGRATION_PLAN.md    proposed plan: /sim read/write expansion, control files, HTTP +
+                                bus transports, KSA-churn integration layer (G-series phases)
 docs/VALIDATION.md              in-game validation record (T6.6/T6.7 checklists + results)
 LICENSE                         MIT (the mod's own code)
 THIRD-PARTY-NOTICES.md          QEMU GPLv2, Alpine, SSH.NET, Tomlyn, …
