@@ -280,9 +280,13 @@ Plan Parts 6–8. All game-free and built on the **same** `SnapshotStore` + `Com
 tree uses — no second copy of the action table, no new KSA coupling. **`gatOS.Http`** (G5): a raw
 loopback-`TcpListener` HTTP/1.1 server (not `HttpListener` — that needs http.sys URL-ACL/admin on
 Windows; not GenHTTP — avoids a heavy dependency tree in the mod ALC) serving `/v1`: JSON snapshot
-projections (`snapshot`/`time`/`status`/`bodies`/`vessels[/{id}[/telemetry]]`), SSE `GET /v1/events`,
-long-poll `GET /v1/time/wait`, `GET /v1/openapi.json`, and one generic `POST /v1/command` carrying
-the `SimCommand` shape with `CommandOutcome`→HTTP-status+`{errno,message}` (debug.* gated). `Mod`
+projections (`snapshot`/`time`/`status`/`system`/`bodies[/{id}]`/`vessels[/{id}[/telemetry]]`), SSE
+`GET /v1/events` and per-vessel `GET /v1/vessels/{id}/stream` (the HTTP twin of the 9p `stream`
+file), long-poll `GET /v1/time/wait`, `GET /v1/openapi.json`, and one generic `POST /v1/command`
+carrying the `SimCommand` shape with `CommandOutcome`→HTTP-status+`{errno,message}` (debug.* gated).
+The read JSON is produced by the shared, game-free `SimJson` projection layer (`gatOS.SimFs`) — the
+single source of truth both HTTP and MQTT serve, so the two stay byte-compatible (transport-parity
+invariant below). `Mod`
 hosts it (config `[http] enabled`/`preferred_port`=4242 ephemeral-fallback); `VmHost`/`QemuCommandBuilder`
 inject `gatos.httpport` on the cmdline (guest dials `10.0.2.2:<port>` outbound via slirp, like 9p).
 **`gatOS.Bus`** (G7): the framing codecs — `Ccsds` (TM space packets), `Nmea` (sentences +
@@ -300,7 +304,8 @@ same `Formats.VesselTelemetry` JSON over both — parse-identical; the 9p file a
 per the file convention, the HTTP/MQTT bodies do not), reactive events, warp-aware time helpers,
 `GatosError` errno mapping, and
 example scripts + a pure-shell README. Config grew `[http]` + `[serial]` flags. Tests:
-gatOS.Http 24 (HttpClient over the live socket), gatOS.Bus 32 (codec/SCPI + `SerialBridge`/connector
+gatOS.Http 26 (HttpClient over the live socket, incl. `/v1/system` + the per-vessel stream SSE),
+gatOS.Bus 32 (codec/SCPI + `SerialBridge`/connector
 over a loopback socket pair). Full non-IT suite green, zero warnings. **Guest image v3 is BUILT
 (`GUEST_VERSION=3`, released + fetched).** All three extra transports are **validated in-guest**
 (2026-06-13, Windows/TCG) by the `GATOS_IT` fixture `SimFs.Tests/Integration/TransportEnvIntegrationTests`
@@ -313,15 +318,19 @@ rejected (`ERR EINVAL`). See `docs/VALIDATION.md`.
 **MQTT transport (`gatOS.Mqtt`, MQTTnet): BUILT.** A user-requested additional bridge alongside
 9p/HTTP/serial. An **embedded MQTTnet broker** (`SimMqttBroker`) in the host process on a loopback
 port (guest reaches it at `10.0.2.2:<port>`, like the others — no external broker) over the same
-`SnapshotStore` + `CommandQueue`: a publish pump emits retained topics `gatos/time`, `gatos/status`,
-`gatos/vessels/<id>/telemetry` and (non-retained) `gatos/events`; clients publish a JSON `SimCommand`
+`SnapshotStore` + `CommandQueue` (and the same `SimJson` projection layer HTTP uses): a publish pump
+emits retained topics `gatos/time`, `gatos/status`, `gatos/system`, `gatos/bodies`, `gatos/snapshot`
+(whole world), `gatos/vessels/<id>/telemetry` (the compact SDK-stable doc) and
+`gatos/vessels/<id>/snapshot` (the full granular vessel record), plus the non-retained
+`gatos/events`; clients publish a JSON `SimCommand`
 to `gatos/command` and the outcome is published to `gatos/command/result` (debug.* gated). `Mod` hosts
-it (config `[mqtt] enabled`/`preferred_port`=1883 ephemeral-fallback); `VmHost`/`QemuCommandBuilder`
+it (config `[mqtt] enabled`/`preferred_port`=1883 ephemeral-fallback; the broker also gets the
+`SimTransportsStatus` provider so `gatos/status` carries the bound-ports line); `VmHost`/`QemuCommandBuilder`
 inject `gatos.mqttport`; the guest exports `$GATOS_MQTT=sim:<port>` (active on guest v3, like
-`$GATOS_HTTP` — validated in-guest, see `docs/VALIDATION.md`). `gatOS.Mqtt.Tests` (8) connect a real
-MQTTnet client to the broker (telemetry/time/status topics, retained delivery to a late subscriber,
-command routing + errno, debug gating, and that consumed commands are not rebroadcast). Full
-`GATOS_IT=1` suite green on guest v3, zero warnings.
+`$GATOS_HTTP` — validated in-guest, see `docs/VALIDATION.md`). `gatOS.Mqtt.Tests` (12) connect a real
+MQTTnet client to the broker (the full topic set incl. the per-vessel `snapshot` and enriched
+time/status, retained delivery to a late subscriber, command routing + errno, debug gating, and that
+consumed commands are not rebroadcast). Full `GATOS_IT=1` suite green on guest v3, zero warnings.
 **Still pending: the in-game pass** (purrTTY tip release is now cut — the T6.6/T9.3/G1–G4 checklists
 in `docs/VALIDATION.md` are runnable but need a live KSA flight). The headless host↔guest stack
 (VM, shells, `/sim`, HTTP/MQTT/serial transports, control surface) is otherwise fully built and
@@ -405,6 +414,8 @@ gatOS.Logging                    (no deps)            game-free logging shim
 gatOS.NineP    → Logging                              9P2000.L codec + server + VFS (M7, built)
 gatOS.SimFs    → NineP, Logging                       /sim tree, snapshots, stream/events, AlarmFile,
                                                       EventDiffer/SampleClock/Sanitize (M8+M9+G3, built);
+                                                      Formats + SimJson (the shared JSON projection
+                                                      HTTP/MQTT both serve — transport parity);
                                                       Commands/ (SimCommand, CommandQueue, Control/Trigger/
                                                       Vector/Enum/Number/Token control files — G1+G4, built)
 gatOS.Http     → SimFs, Logging                       magic HTTP /v1 server (raw TcpListener; G5, built)
@@ -435,6 +446,20 @@ client), plus `gatOS.Vm`/`gatOS.Ssh` for its in-VM integration fixture.
 > `[KsaAnchor]`). Transports (9p/HTTP/serial), the `/sim` tree, formats and the command pipeline
 > never see one — they speak `SimSnapshot` (reads) and `SimCommand`/`ICommandExecutor` (writes).
 > When a decomp drop breaks the build, the diff is confined to that folder + `docs/KSA_INTEGRATION_MATRIX.md`.
+>
+> **THE transport-parity rule (binding):** the 9p `/sim` tree, the HTTP `/v1` API and the MQTT
+> `gatos/` topics must expose the **same** surface — every datum's granularity, every control point,
+> and the whole `/sim/debug` cheat surface. This is kept structural, not manual: **reads** all
+> project the one `SimSnapshot` through the shared `gatOS.SimFs/SimJson` layer (HTTP and MQTT) /
+> `Formats` (9p files), and **writes** all funnel the one `SimCommand` through the single
+> `ICommandSink`/`CommandQueue` (so `POST /v1/command` and `gatos/command` reach exactly the action
+> set the `/sim` control files build). When you add a `/sim` read, add it to `SimJson` (both
+> transports get it); when you add a control/debug action, it is reachable everywhere by
+> construction. Do **not** add a transport-specific read or command path. (Two read *shapes* coexist
+> deliberately and are both reachable on every transport: the compact per-vessel `telemetry` doc —
+> `Formats.VesselTelemetry`, frozen for the SDK — and the full raw-record snapshot via `SimJson`.)
+> A future per-data-source TOML toggle will gate which `SimJson` categories each transport serves;
+> keep the projection methods category-segmented so that stays a localized change.
 
 ### Runtime architecture (recap)
 

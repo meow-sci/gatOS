@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using gatOS.Logging;
 using gatOS.SimFs;
@@ -21,11 +20,18 @@ namespace gatOS.Mqtt;
 ///     firewall prompt, no external broker required.
 /// </summary>
 /// <remarks>
-///     Topics (retained unless noted): <c>gatos/time</c>, <c>gatos/status</c>,
-///     <c>gatos/vessels/&lt;id&gt;/telemetry</c>, and <c>gatos/events</c> (not retained). Commands are
-///     published by clients to <c>gatos/command</c> as the JSON <see cref="SimCommand"/> shape; the
-///     outcome is published to <c>gatos/command/result</c>. Threading: the publish pump and the
-///     command interceptor only read the latest snapshot and enqueue commands (rules 1–2).
+///     Topics (retained unless noted) — the same data the HTTP <c>/v1</c> reads serve, projected
+///     through the shared <see cref="SimJson"/> layer so the two transports stay at parity:
+///     <c>gatos/time</c>, <c>gatos/status</c>, <c>gatos/system</c>, <c>gatos/bodies</c>,
+///     <c>gatos/snapshot</c> (whole world), <c>gatos/vessels/&lt;id&gt;/telemetry</c> (the compact
+///     SDK-stable doc), <c>gatos/vessels/&lt;id&gt;/snapshot</c> (the full granular vessel record),
+///     and <c>gatos/events</c> (not retained). Commands are published by clients to
+///     <c>gatos/command</c> as the JSON <see cref="SimCommand"/> shape — the same action set the
+///     other transports accept — and the outcome is published to <c>gatos/command/result</c>.
+///     Threading: the publish pump and the command interceptor only read the latest snapshot and
+///     enqueue commands (rules 1–2).
+///     <para>Retained per-vessel topics for a vessel that has since vanished linger until the broker
+///     restarts (pre-existing behavior — clients should reconcile against the live vessel list).</para>
 /// </remarks>
 public sealed class SimMqttBroker : IAsyncDisposable
 {
@@ -35,25 +41,21 @@ public sealed class SimMqttBroker : IAsyncDisposable
     /// <summary>The topic the broker publishes each command's <c>{outcome}</c>/<c>{errno}</c> result to.</summary>
     public const string CommandResultTopic = "gatos/command/result";
 
-    private static readonly JsonSerializerOptions Json = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
-    };
-
     private readonly SnapshotStore _store;
     private readonly ICommandSink? _commands;
+    private readonly Func<string>? _transports;
     private readonly CancellationTokenSource _cts = new();
     private MqttServer? _server;
     private Task? _pump;
 
     /// <param name="store">The published-snapshot exchange telemetry is read from.</param>
     /// <param name="commands">The command sink the command topic routes to; null = telemetry only.</param>
-    public SimMqttBroker(SnapshotStore store, ICommandSink? commands = null)
+    /// <param name="transports">Optional provider for the <c>gatos/status</c> transports line.</param>
+    public SimMqttBroker(SnapshotStore store, ICommandSink? commands = null, Func<string>? transports = null)
     {
         _store = store;
         _commands = commands;
+        _transports = transports;
     }
 
     /// <summary>The bound TCP port (valid after <see cref="StartAsync"/>).</summary>
@@ -198,23 +200,31 @@ public sealed class SimMqttBroker : IAsyncDisposable
             lastSeq = snapshot.Sequence;
             try
             {
-                await PublishAsync("gatos/time", Serialize(new
-                {
-                    ut = snapshot.UtSeconds, warp = snapshot.WarpFactor, sim_dt = snapshot.SimDtSeconds,
-                }), retain: true).ConfigureAwait(false);
-                await PublishAsync("gatos/status", Serialize(new
-                {
-                    game_version = snapshot.GameVersion, sample_rate_hz = snapshot.SampleRateHz,
-                }), retain: true).ConfigureAwait(false);
+                // World-level retained topics — the same projections the HTTP /v1 reads serve, via
+                // the shared SimJson layer (cross-transport parity).
+                await PublishAsync("gatos/time", SimJson.Time(snapshot), retain: true).ConfigureAwait(false);
+                await PublishAsync("gatos/status", SimJson.Status(snapshot,
+                        _commands is { ControlEnabled: true }, _commands is { DebugEnabled: true },
+                        _transports?.Invoke()), retain: true).ConfigureAwait(false);
+                await PublishAsync("gatos/system", SimJson.Serialize(snapshot.System), retain: true)
+                    .ConfigureAwait(false);
+                await PublishAsync("gatos/bodies", SimJson.Serialize(snapshot.Bodies), retain: true)
+                    .ConfigureAwait(false);
+                await PublishAsync("gatos/snapshot", SimJson.Serialize(snapshot), retain: true)
+                    .ConfigureAwait(false);
+
+                // Per vessel: the compact telemetry doc (SDK-stable) and the full granular snapshot.
                 foreach (var vessel in snapshot.Vessels)
+                {
                     await PublishAsync($"gatos/vessels/{vessel.Id}/telemetry",
                         Formats.VesselTelemetry(snapshot, vessel), retain: true).ConfigureAwait(false);
+                    await PublishAsync($"gatos/vessels/{vessel.Id}/snapshot",
+                        SimJson.Serialize(vessel), retain: true).ConfigureAwait(false);
+                }
+
                 foreach (var simEvent in snapshot.NewEvents)
-                    await PublishAsync("gatos/events", Serialize(new
-                    {
-                        ut = simEvent.UtSeconds, type = simEvent.Type, vessel = simEvent.VesselId,
-                        detail = simEvent.Detail,
-                    }), retain: false).ConfigureAwait(false);
+                    await PublishAsync("gatos/events", SimJson.Event(simEvent), retain: false)
+                        .ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -235,10 +245,8 @@ public sealed class SimMqttBroker : IAsyncDisposable
         await server.InjectApplicationMessage(new InjectedMqttApplicationMessage(message)).ConfigureAwait(false);
     }
 
-    private static string Serialize<T>(T value) => JsonSerializer.Serialize(value, Json);
-
     private static string Result(string errno, string message)
-        => JsonSerializer.Serialize(new { errno, message }, Json);
+        => SimJson.Serialize(new { errno, message });
 
     /// <inheritdoc />
     public async ValueTask DisposeAsync()

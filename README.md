@@ -13,6 +13,25 @@ watch -n1 cat /sim/vessels/active/altitude/radar
 tail -f /sim/vessels/active/stream | jq .vel.surface
 ```
 
+## Three ways in, one data model
+
+`/sim` is the native surface, but the same telemetry **and** the same controls are also served over
+**HTTP** and **MQTT** for clients that prefer them. All three are projections of a single telemetry
+snapshot and a single command pipeline, so they expose the **same** data granularity, the same
+control points, and the same debug cheats — pick whichever fits the job:
+
+- **`/sim` files** — shell-native; `cat`, `watch`, `tail -f`, `jq` pipelines (above), and write to a
+  control file to act (`echo 1 > /sim/vessels/active/ctl/ignite`).
+- **HTTP** (`$GATOS_HTTP`) — `GET /v1/snapshot` (one atomic JSON read), `/v1/vessels/<id>/telemetry`,
+  `/v1/system`, `/v1/bodies`, Server-Sent Events `/v1/events` and `/v1/vessels/<id>/stream`, and one
+  `POST /v1/command` for every action. `GET /v1/openapi.json` builds a typed client in any language.
+- **MQTT** (`$GATOS_MQTT`) — subscribe `gatos/#` for retained `gatos/time`, `gatos/status`,
+  `gatos/system`, `gatos/bodies`, `gatos/snapshot` and per-vessel `telemetry`/`snapshot` topics (plus
+  live `gatos/events`); publish a command JSON to `gatos/command`.
+
+`$GATOS_HTTP` and `$GATOS_MQTT` are preset in the guest shell, and each transport can be turned on or
+off in `gatos.toml`.
+
 ## Status
 
 Early development, building milestone by milestone. Working today: the guest image pipeline, the

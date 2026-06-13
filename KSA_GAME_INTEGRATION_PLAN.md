@@ -431,6 +431,15 @@ game thread (or solver phase), synchronous result. Per **G-D1** any vessel is ad
 | Parameterized queries | no | yes | no | subaddress-limited |
 | Phase | **G1** | **G5** | G7 | G7 |
 
+> **Parity invariant (as-built):** the transports are not independent feature sets — they are
+> projections of one surface. Reads project the single `SimSnapshot` through the shared
+> `gatOS.SimFs/SimJson` layer (HTTP + MQTT) or `Formats` (9p files); writes funnel the single
+> `SimCommand` through the one `ICommandSink`. So HTTP `/v1` and MQTT `gatos/` expose the same data
+> granularity, the same control points and the whole `/sim/debug` cheat surface as the `/sim` tree —
+> `POST /v1/command` / `gatos/command` accept exactly the action set the 9p control files build.
+> Add a read to `SimJson` / an action to the command table once and every transport gets it. The
+> binding statement lives in CLAUDE.md ("THE transport-parity rule").
+
 ### T1 — 9p writable control files (primary; phase G1)
 
 Protocol work in `gatOS.NineP` (today: `Session.cs` rejects `O_WRONLY/O_RDWR` at Tlopen and

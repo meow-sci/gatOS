@@ -177,6 +177,39 @@ public sealed class HttpServerTests
     }
 
     [Test]
+    public async Task System_ReturnsTheSystemSummary()
+    {
+        _store.Publish(Snapshot(2, Vessel("v1")) with { System = new SystemSnapshot("Kerbol", "Kerth", "Kerbol") });
+        using var json = JsonDocument.Parse(await _client.GetStringAsync("v1/system"));
+        Assert.That(json.RootElement.GetProperty("name").GetString(), Is.EqualTo("Kerbol"));
+    }
+
+    [Test]
+    public async Task VesselStream_DeliversTelemetryLines()
+    {
+        // The HTTP twin of the 9p /sim/.../stream growing-log file: one SSE data line per publish.
+        using var stream = await _client.GetStreamAsync("v1/vessels/v1/stream");
+        using var reader = new StreamReader(stream);
+        _store.Publish(Snapshot(2, Vessel("v1")));
+
+        string? line = null;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (!cts.IsCancellationRequested)
+        {
+            var read = await reader.ReadLineAsync(cts.Token);
+            if (read is { Length: > 0 } && read.StartsWith("data:"))
+            {
+                line = read["data:".Length..].Trim();
+                break;
+            }
+        }
+
+        Assert.That(line, Is.Not.Null);
+        using var json = JsonDocument.Parse(line!);
+        Assert.That(json.RootElement.GetProperty("sit").GetString(), Is.EqualTo("Freefall"));
+    }
+
+    [Test]
     public async Task Status_ReportsControlAndTransports()
     {
         using var json = JsonDocument.Parse(await _client.GetStringAsync("v1/status"));

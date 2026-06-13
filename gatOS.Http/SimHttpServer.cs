@@ -3,7 +3,6 @@ using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using gatOS.Logging;
 using gatOS.SimFs;
@@ -30,13 +29,6 @@ namespace gatOS.Http;
 /// </remarks>
 public sealed class SimHttpServer : IAsyncDisposable
 {
-    private static readonly JsonSerializerOptions Json = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
-    };
-
     private readonly SnapshotStore _store;
     private readonly ICommandSink? _commands;
     private readonly Func<string>? _transports;
@@ -180,6 +172,15 @@ public sealed class SimHttpServer : IAsyncDisposable
             return;
         }
 
+        // GET /v1/vessels/<id>/stream — SSE of the per-vessel telemetry stream line (the HTTP twin
+        // of the 9p growing-log `stream` file). MQTT serves the same stream via its republished
+        // telemetry topic.
+        if (seg is ["v1", "vessels", var streamId, "stream"])
+        {
+            await StreamVesselAsync(stream, streamId, ct).ConfigureAwait(false);
+            return;
+        }
+
         var (status, json) = Read(seg);
         await WriteRawJsonAsync(stream, status, json, ct).ConfigureAwait(false);
     }
@@ -196,19 +197,12 @@ public sealed class SimHttpServer : IAsyncDisposable
             case ["v1", "openapi.json"]:
                 return (200, OpenApi.Document);
             case ["v1", "time"]:
-                return (200, Serialize(new
-                {
-                    ut = snapshot.UtSeconds, warp = snapshot.WarpFactor, sim_dt = snapshot.SimDtSeconds,
-                    warp_speeds = snapshot.WarpSpeeds, auto_warp_active = snapshot.AutoWarpActive,
-                    auto_warp_target_ut = snapshot.AutoWarpTargetUt,
-                }));
+                return (200, SimJson.Time(snapshot));
             case ["v1", "status"]:
-                return (200, Serialize(new
-                {
-                    game_version = snapshot.GameVersion, sample_rate_hz = snapshot.SampleRateHz,
-                    accessors = snapshot.Accessors, control = _commands is { ControlEnabled: true },
-                    debug = _commands is { DebugEnabled: true }, transports = _transports?.Invoke(),
-                }));
+                return (200, SimJson.Status(snapshot, _commands is { ControlEnabled: true },
+                    _commands is { DebugEnabled: true }, _transports?.Invoke()));
+            case ["v1", "system"]:
+                return (200, Serialize(snapshot.System));
             case ["v1", "bodies"]:
                 return (200, Serialize(snapshot.Bodies));
             case ["v1", "bodies", var id]:
@@ -269,14 +263,37 @@ public sealed class SimHttpServer : IAsyncDisposable
             lastSeq = snapshot.Sequence;
             foreach (var simEvent in snapshot.NewEvents)
             {
-                var line = "data: " + Serialize(new
-                {
-                    ut = simEvent.UtSeconds, type = simEvent.Type, vessel = simEvent.VesselId,
-                    detail = simEvent.Detail,
-                }) + "\n\n";
+                var line = "data: " + SimJson.Event(simEvent) + "\n\n";
                 await stream.WriteAsync(Encoding.UTF8.GetBytes(line), ct).ConfigureAwait(false);
                 await stream.FlushAsync(ct).ConfigureAwait(false);
             }
+        }
+    }
+
+    private async Task StreamVesselAsync(Stream stream, string vesselId, CancellationToken ct)
+    {
+        // Baseline before the header flush (see StreamEventsAsync): a publish racing the header
+        // write is still delivered, since WaitForNextAsync rechecks Current against lastSeq.
+        var lastSeq = _store.Current.Sequence;
+
+        var head = Encoding.ASCII.GetBytes(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n"
+            + "Connection: close\r\n\r\n");
+        await stream.WriteAsync(head, ct).ConfigureAwait(false);
+        await stream.FlushAsync(ct).ConfigureAwait(false);
+
+        while (!ct.IsCancellationRequested)
+        {
+            var snapshot = await _store.WaitForNextAsync(lastSeq, ct).ConfigureAwait(false);
+            lastSeq = snapshot.Sequence;
+            // Hold the frontier while the vessel is absent this frame (the 9p stream emits nothing
+            // until it reappears); resume streaming when it is back.
+            if (snapshot.Vessels.FirstOrDefault(v => v.Id == vesselId) is not { } vessel)
+                continue;
+            var json = Encoding.UTF8.GetString(Formats.StreamLine(snapshot, vessel)).TrimEnd('\n');
+            var line = "data: " + json + "\n\n";
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(line), ct).ConfigureAwait(false);
+            await stream.FlushAsync(ct).ConfigureAwait(false);
         }
     }
 
@@ -360,10 +377,10 @@ public sealed class SimHttpServer : IAsyncDisposable
 
     // ---- response plumbing ---------------------------------------------------------------
 
-    private static string Serialize<T>(T value) => JsonSerializer.Serialize(value, Json);
+    private static string Serialize<T>(T value) => SimJson.Serialize(value);
 
     private static string Error(string errno, string message)
-        => JsonSerializer.Serialize(new { errno, message }, Json);
+        => SimJson.Serialize(new { errno, message });
 
     private static Task WriteJsonAsync(Stream stream, int status, string json, CancellationToken ct)
         => WriteRawJsonAsync(stream, status, json, ct);

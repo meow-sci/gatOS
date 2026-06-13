@@ -17,6 +17,21 @@ they add **no** KSA coupling — every transport speaks the same `SnapshotStore`
 
 **Verified:** 2026-06-12, against `thirdparty/ksa` (`VersionInfo.Current` at build time).
 
+## Transport parity (binding)
+
+Every row below is reachable over **all** transports — there is one read surface and one write
+surface, projected per transport, never re-implemented:
+
+| Surface | 9p `/sim` | HTTP `/v1` | MQTT `gatos/` |
+|---|---|---|---|
+| Data (granular + atomic) | scalar files + `telemetry` doc | `snapshot`/`system`/`bodies[/{id}]`/`vessels/{id}[/telemetry]` | `snapshot`/`system`/`bodies`/`time`/`status` + `vessels/<id>/{telemetry,snapshot}` |
+| Streaming | `stream` / `events` / `time/alarm` | `vessels/{id}/stream` / `events` (SSE) / `time/wait` | retained `vessels/<id>/*` / `events` topics |
+| Control + debug | `ctl/…`, per-module files, `debug/…` | `POST /v1/command` | publish `gatos/command` |
+
+Reads project the one `SimSnapshot` through `gatOS.SimFs/SimJson` (HTTP + MQTT) or `Formats` (9p);
+writes funnel the one `SimCommand` through the single `ICommandSink`. Add a read to `SimJson` and an
+action to the command table once — every transport gets it. See CLAUDE.md "THE transport-parity rule".
+
 ## Archetypes (KSA_GAME_INTEGRATION_PLAN Part 2)
 
 | Code | Archetype | Read | Write |

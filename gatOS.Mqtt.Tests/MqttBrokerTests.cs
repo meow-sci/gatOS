@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using System.Threading.Channels;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
@@ -85,6 +86,65 @@ public sealed class MqttBrokerTests
     {
         _store.Publish(Snapshot(1, Vessel("v1")));
         await WaitForTopicsAsync("gatos/time", "gatos/status", "gatos/vessels/v1/telemetry");
+    }
+
+    [Test]
+    public async Task FullSurface_TopicsArePublished()
+    {
+        // Parity with the /sim tree and the HTTP /v1 reads: the broker publishes the world-level
+        // and per-vessel-full topics, not just the compact telemetry doc.
+        _store.Publish(Snapshot(1, Vessel("v1")) with
+        {
+            System = new SystemSnapshot("Kerbol", "Kerth", "Kerbol"),
+            Bodies = [new BodySnapshot("Kerth", "Planet", null, [], 1, 1, 1, 1, 0,
+                new double3Snap(0, 0, 0), new double3Snap(0, 0, 0), null, null, null)],
+        });
+        await WaitForTopicsAsync("gatos/system", "gatos/bodies", "gatos/snapshot", "gatos/vessels/v1/snapshot");
+    }
+
+    [Test]
+    public async Task Time_TopicCarriesWarpSpeedsAndAutoWarp()
+    {
+        _store.Publish(Snapshot(1, Vessel("v1")) with { WarpSpeeds = [1, 10, 100], AutoWarpActive = true });
+        // Skip the retained projection of the pre-first-sample Empty snapshot (warp_speeds = []).
+        var payload = await WaitForPayloadAsync("gatos/time",
+            p => JsonDocument.Parse(p).RootElement.GetProperty("warp_speeds").GetArrayLength() > 0);
+        using var json = JsonDocument.Parse(payload);
+        Assert.Multiple(() =>
+        {
+            Assert.That(json.RootElement.GetProperty("warp_speeds").GetArrayLength(), Is.EqualTo(3));
+            Assert.That(json.RootElement.GetProperty("auto_warp_active").GetBoolean(), Is.True);
+        });
+    }
+
+    [Test]
+    public async Task Status_TopicCarriesControlAndDebugFlags()
+    {
+        _store.Publish(Snapshot(1, Vessel("v1")));
+        // Skip the retained Empty-snapshot projection (game_version = "").
+        var payload = await WaitForPayloadAsync("gatos/status",
+            p => JsonDocument.Parse(p).RootElement.GetProperty("game_version").GetString() is { Length: > 0 });
+        using var json = JsonDocument.Parse(payload);
+        Assert.Multiple(() =>
+        {
+            Assert.That(json.RootElement.GetProperty("control").GetBoolean(), Is.True);
+            Assert.That(json.RootElement.TryGetProperty("debug", out _), Is.True);
+            Assert.That(json.RootElement.GetProperty("game_version").GetString(), Is.EqualTo("test"));
+        });
+    }
+
+    [Test]
+    public async Task VesselSnapshot_TopicIsTheFullRecordShape()
+    {
+        _store.Publish(Snapshot(1, Vessel("v1")));
+        var payload = await WaitForAsync(t => t == "gatos/vessels/v1/snapshot");
+        using var json = JsonDocument.Parse(payload);
+        Assert.Multiple(() =>
+        {
+            Assert.That(json.RootElement.GetProperty("id").GetString(), Is.EqualTo("v1"));
+            Assert.That(json.RootElement.TryGetProperty("situation", out _), Is.True,
+                "the full record uses 'situation', not the compact doc's 'sit'");
+        });
     }
 
     [Test]
@@ -214,6 +274,22 @@ public sealed class MqttBrokerTests
         }
 
         throw new TimeoutException("no matching message");
+    }
+
+    /// <summary>
+    ///     Waits for a message on <paramref name="topic"/> whose payload satisfies
+    ///     <paramref name="payloadOk"/> — used to skip the retained projection of the pre-first-sample
+    ///     Empty snapshot the broker publishes at startup and select the snapshot under test.
+    /// </summary>
+    private async Task<string> WaitForPayloadAsync(string topic, Func<string, bool> payloadOk)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        while (await _messages.Reader.WaitToReadAsync(cts.Token))
+            while (_messages.Reader.TryRead(out var msg))
+                if (msg.Topic == topic && payloadOk(msg.Payload))
+                    return msg.Payload;
+
+        throw new TimeoutException($"no matching payload on {topic}");
     }
 
     private static SimSnapshot Snapshot(long seq, params VesselSnapshot[] vessels)

@@ -23,11 +23,13 @@ internal static class OpenApi
             "/time": { "get": { "summary": "ut, warp, sim_dt, warp_speeds, auto-warp", "responses": { "200": { "description": "time" } } } },
             "/time/wait": { "get": { "summary": "Long-poll until sim time reaches 'until'", "parameters": [{ "name": "until", "in": "query", "required": true, "schema": { "type": "number" } }], "responses": { "200": { "description": "{reached_ut}" } } } },
             "/status": { "get": { "summary": "Integration health + bound transports", "responses": { "200": { "description": "status" } } } },
+            "/system": { "get": { "summary": "Current star-system summary", "responses": { "200": { "description": "SystemSnapshot" } } } },
             "/bodies": { "get": { "summary": "Celestial bodies", "responses": { "200": { "description": "BodySnapshot[]" } } } },
             "/bodies/{id}": { "get": { "summary": "One body", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "BodySnapshot" }, "404": { "description": "gone" } } } },
             "/vessels": { "get": { "summary": "Vessel ids", "responses": { "200": { "description": "string[]" } } } },
             "/vessels/{id}": { "get": { "summary": "One vessel", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "VesselSnapshot" }, "404": { "description": "gone" } } } },
             "/vessels/{id}/telemetry": { "get": { "summary": "Compact per-vessel telemetry document", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "telemetry" } } } },
+            "/vessels/{id}/stream": { "get": { "summary": "Server-Sent Events of the per-vessel telemetry stream line (the HTTP twin of /sim/.../stream)", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "text/event-stream" } } } },
             "/events": { "get": { "summary": "Server-Sent Events stream of sim events", "responses": { "200": { "description": "text/event-stream" } } } },
             "/command": {
               "post": {
