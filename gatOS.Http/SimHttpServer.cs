@@ -253,13 +253,18 @@ public sealed class SimHttpServer : IAsyncDisposable
 
     private async Task StreamEventsAsync(Stream stream, CancellationToken ct)
     {
+        // Snapshot the baseline sequence BEFORE flushing headers. The client's GetStream()
+        // completes once the headers arrive, after which it may publish immediately; capturing
+        // lastSeq first guarantees such a publish has a sequence > lastSeq and is delivered
+        // (WaitForNextAsync rechecks Current), instead of being swallowed by the header-flush gap.
+        var lastSeq = _store.Current.Sequence;
+
         var head = Encoding.ASCII.GetBytes(
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n"
             + "Connection: close\r\n\r\n");
         await stream.WriteAsync(head, ct).ConfigureAwait(false);
         await stream.FlushAsync(ct).ConfigureAwait(false);
 
-        var lastSeq = _store.Current.Sequence;
         while (!ct.IsCancellationRequested)
         {
             var snapshot = await _store.WaitForNextAsync(lastSeq, ct).ConfigureAwait(false);
