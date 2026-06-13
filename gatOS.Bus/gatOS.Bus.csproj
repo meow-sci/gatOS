@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <AssemblyName>gatOS.Bus</AssemblyName>
+        <RootNamespace>gatOS.Bus</RootNamespace>
+        <Description>Serial/bus transport framing (KSA_GAME_INTEGRATION_PLAN Part 6 T3/T4 / G7):
+            NDJSON + NMEA telemetry feeds, an SCPI command line, and CCSDS space-packet TM framing,
+            plus a stream SerialBridge over the same SnapshotStore + command pipeline. Game-free.
+            The QEMU virtio-serial port wiring + guest exposure land with the next guest image (v3).</Description>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\gatOS.SimFs\gatOS.SimFs.csproj" />
+        <ProjectReference Include="..\gatOS.Logging\gatOS.Logging.csproj" />
+    </ItemGroup>
+
+</Project>

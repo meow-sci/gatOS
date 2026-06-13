@@ -1,0 +1,20 @@
+{
+  "name": "gatos-sdk",
+  "version": "0.1.0",
+  "description": "Example TypeScript SDK for the gatOS /sim API — runs inside the guest on Bun or Node. Demonstrates the file (9p) and HTTP transports behind one typed API.",
+  "type": "module",
+  "module": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "orbit-watch": "bun run examples/orbit-watch.ts",
+    "solar-keeper": "bun run examples/solar-keeper.ts",
+    "launch-monitor": "bun run examples/launch-monitor.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^22.0.0"
+  }
+}
