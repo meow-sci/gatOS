@@ -307,8 +307,9 @@ same `Formats.VesselTelemetry` JSON over both — parse-identical; the 9p file a
 per the file convention, the HTTP/MQTT bodies do not), reactive events, warp-aware time helpers,
 `GatosError` errno mapping, and
 example scripts + a pure-shell README. Config grew `[http]` + `[serial]` flags. Tests:
-gatOS.Http 30 (HttpClient over the live socket, incl. `/v1/system`, the per-vessel stream SSE, and
-the `/v1/fs/<path>` field reads/SSE/writes),
+gatOS.Http 37 (HttpClient over the live socket, incl. `/v1/system`, `/v1/vessels/{id}` + `/v1/bodies/{id}`,
+the per-vessel stream SSE, and the `/v1/fs/<path>` field read sweep / per-value SSE / per-archetype
+writes / error + disabled paths),
 gatOS.Bus 32 (codec/SCPI + `SerialBridge`/connector
 over a loopback socket pair). Full non-IT suite green, zero warnings. **Guest image v3 is BUILT
 (`GUEST_VERSION=3`, released + fetched).** All three extra transports are **validated in-guest**
@@ -338,11 +339,12 @@ its value to `gatos/sim/<path>/set` (same actuation as a 9p `echo`; outcome on
 it (config `[mqtt] enabled`/`preferred_port`=1883 ephemeral-fallback; the broker also gets the
 `SimTransportsStatus` provider so `gatos/status` carries the bound-ports line); `VmHost`/`QemuCommandBuilder`
 inject `gatos.mqttport`; the guest exports `$GATOS_MQTT=sim:<port>` (active on guest v3, like
-`$GATOS_HTTP` — validated in-guest, see `docs/VALIDATION.md`). `gatOS.Mqtt.Tests` (14) connect a real
-MQTTnet client to the broker (the full topic set incl. the per-vessel `snapshot`, the field-level
-`gatos/sim/<path>` mirror + `/set` actuation, enriched time/status, retained delivery to a late
-subscriber, command routing + errno, debug gating, and that consumed commands are not rebroadcast).
-Full `GATOS_IT=1` suite green on guest v3, zero warnings.
+`$GATOS_HTTP` — validated in-guest, see `docs/VALIDATION.md`). `gatOS.Mqtt.Tests` (19) connect a real
+MQTTnet client to the broker (the full topic set incl. the per-vessel `snapshot`, `gatos/events`, the
+field-level `gatos/sim/<path>` read sweep + `/set` actuation across every write archetype + set
+error paths, enriched time/status, retained delivery to a late subscriber, command routing + errno,
+debug gating, and that consumed commands are not rebroadcast). Full `GATOS_IT=1` suite green on guest
+v3, zero warnings.
 **Still pending: the in-game pass** (purrTTY tip release is now cut — the T6.6/T9.3/G1–G4 checklists
 in `docs/VALIDATION.md` are runnable but need a live KSA flight). The headless host↔guest stack
 (VM, shells, `/sim`, HTTP/MQTT/serial transports, control surface) is otherwise fully built and

@@ -181,6 +181,70 @@ public sealed class MqttBrokerTests
     }
 
     [Test]
+    public async Task Events_TopicIsPublished()
+    {
+        _store.Publish(Snapshot(1, Vessel("v1")) with
+        {
+            NewEvents = [new SimEvent(0.1, "situation-change", "v1", "Landed→Freefall")],
+        });
+        var payload = await WaitForAsync(t => t == "gatos/events");
+        using var json = JsonDocument.Parse(payload);
+        Assert.That(json.RootElement.GetProperty("type").GetString(), Is.EqualTo("situation-change"));
+    }
+
+    [Test]
+    public async Task Field_ReadsAcrossTheTree()
+    {
+        // One retained topic per /sim leaf, spanning the read kinds; WaitForPayloadsAsync asserts all
+        // are present with the expected value.
+        _store.Publish(RichSnapshot());
+        await WaitForPayloadsAsync(new Dictionary<string, Func<string, bool>>
+        {
+            ["gatos/sim/time/warp"] = p => p == "1",
+            ["gatos/sim/system/name"] = p => p == "Kerbol",
+            ["gatos/sim/bodies/Kerth/class"] = p => p == "Planet",
+            ["gatos/sim/vessels/by-id/v1/engines/0/active"] = p => p == "1",
+            ["gatos/sim/vessels/by-id/v1/tanks/methalox/amount"] = p => p == "100",
+            ["gatos/sim/vessels/by-id/v1/ctl/throttle"] = p => p == "0",
+        });
+    }
+
+    [Test]
+    public async Task Field_SetActuatesEachArchetype()
+    {
+        _store.Publish(RichSnapshot());
+        await AssertSetAsync("vessels/by-id/v1/ctl/ignite", "1",
+            new SimCommand("v1", "vessel.ignite", SimCommand.NoOrdinal, 1));   // TRIGGER
+        await AssertSetAsync("vessels/by-id/v1/ctl/lights", "1",
+            new SimCommand("v1", "vessel.lights", SimCommand.NoOrdinal, 1));    // STATE flag
+        await AssertSetAsync("vessels/by-id/v1/engines/0/active", "1",
+            new SimCommand("v1", "engine.active", 0, 1));                       // per-module flag
+
+        await SetAsync("vessels/by-id/v1/ctl/attitude_mode", "Prograde");       // enum token
+        Assert.That(_sink.Last!.Token, Is.EqualTo("Prograde"));
+        await SetAsync("vessels/by-id/v1/ctl/burn", "100 1 2 3");               // vector
+        Assert.That(_sink.Last!.Values, Is.EqualTo(new[] { 100d, 1d, 2d, 3d }));
+    }
+
+    [Test]
+    public async Task Field_SetReadOnly_ReturnsEacces()
+    {
+        _store.Publish(Snapshot(1, Vessel("v1")));
+        await _client.PublishStringAsync("gatos/sim/time/ut/set", "9");
+        var result = await WaitForAsync(t => t == SimMqttBroker.CommandResultTopic);
+        Assert.That(result, Does.Contain("EACCES"));
+    }
+
+    [Test]
+    public async Task Field_SetInvalid_ReturnsEinval()
+    {
+        _store.Publish(Snapshot(1, Vessel("v1")));
+        await _client.PublishStringAsync("gatos/sim/vessels/by-id/v1/ctl/throttle/set", "abc");
+        var result = await WaitForAsync(t => t == SimMqttBroker.CommandResultTopic);
+        Assert.That(result, Does.Contain("EINVAL"));
+    }
+
+    [Test]
     public async Task Command_IsNotRebroadcastToSubscribers()
     {
         // The broker consumes commands; the raw command JSON must never reach gatos/# subscribers
@@ -343,12 +407,42 @@ public sealed class MqttBrokerTests
         return found;
     }
 
+    /// <summary>Publishes a <c>…/set</c> for a field, then waits for its result (the processing barrier).</summary>
+    private async Task SetAsync(string path, string value)
+    {
+        await _client.PublishStringAsync($"gatos/sim/{path}/set", value);
+        await WaitForAsync(t => t == SimMqttBroker.CommandResultTopic);
+    }
+
+    private async Task AssertSetAsync(string path, string value, SimCommand expected)
+    {
+        await SetAsync(path, value);
+        Assert.That(_sink.Last, Is.EqualTo(expected), path);
+    }
+
     private static SimSnapshot Snapshot(long seq, params VesselSnapshot[] vessels)
         => new(seq, seq * 0.1, 1, vessels.Length > 0 ? vessels[0].Id : null, vessels, [], "test", 10, []);
 
     private static VesselSnapshot Vessel(string id) => new(
         id, id, "Freefall", new double3Snap(0, 0, 0), 0, 0, 0, 0, 0, new QuatSnap(0, 0, 0, 1),
         new double3Snap(0, 0, 0), 0, 0, 1, 1, 0, null, [], [], null, "Kerth", false, []);
+
+    /// <summary>A vessel with engines/lights/tanks + a system and a body, for the field-level sweeps.</summary>
+    private static SimSnapshot RichSnapshot()
+        => Snapshot(2, Vessel("v1") with
+            {
+                Engines = [new EngineSnapshot(0, true, 250000, 312)],
+                Lights = [new LightSnapshot(0, false, 1, new double3Snap(1, 1, 1))],
+                Tanks = [new TankSnapshot("methalox", 100, 200)],
+            }) with
+            {
+                System = new SystemSnapshot("Kerbol", "Kerth", "Kerbol"),
+                Bodies =
+                [
+                    new BodySnapshot("Kerth", "Planet", null, [], 5.29e22, 600000, 3.5e12, 8.4e7, 7.3e-5,
+                        new double3Snap(0, 0, 0), new double3Snap(0, 0, 0), null, null, null),
+                ],
+            };
 
     private sealed class RecordingSink : ICommandSink
     {

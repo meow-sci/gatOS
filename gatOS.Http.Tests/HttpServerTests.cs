@@ -259,6 +259,108 @@ public sealed class HttpServerTests
     }
 
     [Test]
+    public async Task Vessel_FullRecord_Returns200_And404WhenGone()
+    {
+        using var ok = JsonDocument.Parse(await _client.GetStringAsync("v1/vessels/v1"));
+        Assert.Multiple(() =>
+        {
+            Assert.That(ok.RootElement.GetProperty("id").GetString(), Is.EqualTo("v1"));
+            Assert.That(ok.RootElement.TryGetProperty("barometric_altitude", out _), Is.True,
+                "the full raw-record shape, not the compact telemetry doc");
+        });
+        var gone = await _client.GetAsync("v1/vessels/ghost");
+        Assert.That(gone.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task Body_Single_Returns200()
+    {
+        _store.Publish(RichSnapshot());
+        using var json = JsonDocument.Parse(await _client.GetStringAsync("v1/bodies/Kerth"));
+        Assert.That(json.RootElement.GetProperty("id").GetString(), Is.EqualTo("Kerth"));
+    }
+
+    [Test]
+    public async Task Fs_ReadsFieldsAcrossTheTree()
+    {
+        // One endpoint per /sim leaf, spanning the read kinds: scalar, string, vector, nested module,
+        // control-point current value, time/system/body, and the active alias (which HTTP resolves).
+        _store.Publish(RichSnapshot());
+        (string Path, string Expected)[] cases =
+        [
+            ("time/ut", "0.2"),
+            ("time/warp", "1"),
+            ("system/name", "Kerbol"),
+            ("system/home", "Kerth"),
+            ("bodies/Kerth/class", "Planet"),
+            ("bodies/Kerth/radius", "600000"),
+            ("vessels/by-id/v1/id", "v1"),
+            ("vessels/by-id/v1/situation", "Freefall"),
+            ("vessels/by-id/v1/parent", "Kerth"),
+            ("vessels/by-id/v1/com", "0 0 0"),
+            ("vessels/by-id/v1/engines/0/active", "1"),
+            ("vessels/by-id/v1/engines/0/vac_thrust", "250000"),
+            ("vessels/by-id/v1/tanks/methalox/amount", "100"),
+            ("vessels/by-id/v1/ctl/throttle", "0"),
+            ("vessels/active/situation", "Freefall"),
+        ];
+        var results = new List<string>();
+        foreach (var (path, _) in cases)
+            results.Add((await _client.GetStringAsync($"v1/fs/{path}")).Trim());
+        Assert.Multiple(() =>
+        {
+            for (var i = 0; i < cases.Length; i++)
+                Assert.That(results[i], Is.EqualTo(cases[i].Expected), cases[i].Path);
+        });
+    }
+
+    [Test]
+    public async Task Fs_WritesActuateEachControlArchetype()
+    {
+        _store.Publish(RichSnapshot());
+        await AssertFieldWriteAsync("vessels/by-id/v1/ctl/ignite", "1",
+            new SimCommand("v1", "vessel.ignite", SimCommand.NoOrdinal, 1));        // TRIGGER
+        await AssertFieldWriteAsync("vessels/by-id/v1/ctl/lights", "1",
+            new SimCommand("v1", "vessel.lights", SimCommand.NoOrdinal, 1));         // STATE flag
+        await AssertFieldWriteAsync("vessels/by-id/v1/ctl/throttle", "0.5",
+            new SimCommand("v1", "vessel.throttle", SimCommand.NoOrdinal, 0.5));     // STATE fraction
+        await AssertFieldWriteAsync("vessels/by-id/v1/engines/0/active", "1",
+            new SimCommand("v1", "engine.active", 0, 1));                            // per-module flag
+
+        await PostFieldAsync("vessels/by-id/v1/ctl/attitude_mode", "Prograde");      // enum token
+        Assert.That(_sink.Last!.Token, Is.EqualTo("Prograde"));
+        await PostFieldAsync("vessels/by-id/v1/ctl/burn", "100 1 2 3");              // vector
+        Assert.That(_sink.Last!.Values, Is.EqualTo(new[] { 100d, 1d, 2d, 3d }));
+    }
+
+    [Test]
+    public async Task Fs_WriteToReadOnlyField_Is403()
+    {
+        var response = await _client.PostAsync("v1/fs/time/ut",
+            new StringContent("9", Encoding.UTF8, "text/plain"));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden)); // EACCES from OpenWrite
+    }
+
+    [Test]
+    public async Task Fs_WriteInvalidValue_Is400()
+    {
+        var response = await _client.PostAsync("v1/fs/vessels/by-id/v1/ctl/throttle",
+            new StringContent("abc", Encoding.UTF8, "text/plain"));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest)); // EINVAL from the control file
+    }
+
+    [Test]
+    public async Task Fs_DisabledWithoutSimRoot_Is404()
+    {
+        var store = new SnapshotStore();
+        await using var server = new SimHttpServer(store, _sink); // no simRoot → field endpoints off
+        await server.StartAsync();
+        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{server.Port}/") };
+        var response = await client.GetAsync("v1/fs/time/ut");
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
     public async Task Status_ReportsControlAndTransports()
     {
         using var json = JsonDocument.Parse(await _client.GetStringAsync("v1/status"));
@@ -336,12 +438,42 @@ public sealed class HttpServerTests
     private Task<HttpResponseMessage> PostCommandAsync(string body)
         => _client.PostAsync("v1/command", new StringContent(body, Encoding.UTF8, "application/json"));
 
+    private async Task PostFieldAsync(string path, string body)
+    {
+        var response = await _client.PostAsync($"v1/fs/{path}", new StringContent(body, Encoding.UTF8, "text/plain"));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), $"{path} <= {body}");
+    }
+
+    private async Task AssertFieldWriteAsync(string path, string body, SimCommand expected)
+    {
+        await PostFieldAsync(path, body);
+        Assert.That(_sink.Last, Is.EqualTo(expected), path);
+    }
+
     private static SimSnapshot Snapshot(long seq, params VesselSnapshot[] vessels)
         => new(seq, seq * 0.1, 1, vessels.Length > 0 ? vessels[0].Id : null, vessels, [], "test", 10, []);
 
     private static VesselSnapshot Vessel(string id) => new(
         id, id, "Freefall", new double3Snap(0, 0, 0), 0, 0, 0, 0, 0, new QuatSnap(0, 0, 0, 1),
         new double3Snap(0, 0, 0), 0, 0, 1, 1, 0, null, [], [], null, "Kerth", false, []);
+
+    /// <summary>A vessel with engines/lights/tanks + a system and a body — enough leaves to exercise
+    /// the field-level read/write surface across kinds. Seq 2 (after the SetUp's seq 1).</summary>
+    private static SimSnapshot RichSnapshot()
+        => Snapshot(2, Vessel("v1") with
+            {
+                Engines = [new EngineSnapshot(0, true, 250000, 312)],
+                Lights = [new LightSnapshot(0, false, 1, new double3Snap(1, 1, 1))],
+                Tanks = [new TankSnapshot("methalox", 100, 200)],
+            }) with
+            {
+                System = new SystemSnapshot("Kerbol", "Kerth", "Kerbol"),
+                Bodies =
+                [
+                    new BodySnapshot("Kerth", "Planet", null, [], 5.29e22, 600000, 3.5e12, 8.4e7, 7.3e-5,
+                        new double3Snap(0, 0, 0), new double3Snap(0, 0, 0), null, null, null),
+                ],
+            };
 
     /// <summary>An <see cref="ICommandSink"/> double recording the last command and a configurable result.</summary>
     private sealed class RecordingSink : ICommandSink
