@@ -25,6 +25,11 @@ namespace gatOS.Vm;
 ///     Forces a single accelerator (e.g. <c>"tcg"</c>); empty string selects the per-OS
 ///     auto ladder.
 /// </param>
+/// <param name="CpuModel">
+///     Overrides the guest CPU model; empty selects per-accelerator defaults (<c>host</c> on
+///     KVM/HVF, a named model on WHPX, <c>max</c> on TCG — see
+///     <see cref="QemuCommandBuilder.DefaultWhpxCpuModel"/>).
+/// </param>
 /// <param name="HttpPort">
 ///     The host magic-HTTP server port baked into the kernel cmdline (<c>gatos.httpport</c>);
 ///     <c>null</c> (emitted as 0) leaves the guest's HTTP env unset. G5.
@@ -53,6 +58,7 @@ public sealed record VmLaunchSpec(
     bool RestrictNetwork,
     string SerialLogPath,
     string AccelOverride = "",
+    string CpuModel = "",
     int? HttpPort = null,
     int? MqttPort = null,
     int? SerialPort = null)

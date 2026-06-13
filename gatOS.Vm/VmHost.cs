@@ -191,6 +191,7 @@ public sealed class VmHost : IAsyncDisposable
                     RestrictNetwork: _options.RestrictNetwork,
                     SerialLogPath: Path.Combine(GatOsPaths.LogsDir, $"serial-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}.log"),
                     AccelOverride: _options.AccelOverride,
+                    CpuModel: _options.CpuModel,
                     HttpPort: httpPort,
                     MqttPort: mqttPort,
                     SerialPort: serialPort);

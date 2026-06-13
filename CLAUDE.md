@@ -67,7 +67,10 @@ Supporting cast (all `gatOS.Vm/`, all game-free): `GatOsPaths`; `PortAllocator`;
 (versioned `base-v<N>.qcow2` install, kernel/initrd/manifest/ssh-key under `disks/guest-v<N>/`,
 overlays with **bare relative backing refs**, PID lock files with stale reclaim, never
 `qemu-img commit`); `QemuCommandBuilder` (per-OS accel ladders `whpx|kvm|hvf→tcg`, **non-x64
-hosts collapse to tcg**, `-cpu host` vs `max`, injectable `OperatingSystemFacts`); `QemuProcess`
+hosts collapse to tcg**, `-cpu` per accel — `host` on KVM/HVF, a **named model (`Haswell`) on
+WHPX** (WHPX triple-faults the guest on `-cpu host`/`max` — "Unexpected VP exit code 4", confirmed
+on a Raptor Lake i9-13900K; any named model boots), `max` on TCG; `cpu_model` config overrides —
+injectable `OperatingSystemFacts`); `QemuProcess`
 (3 s survival window, `AccelFailureClassifier` + one forced-tcg retry, `logs/qemu-*.log`
 retention ×5, 100-line stderr ring, minimal QMP quit); `ReadinessProbe` (reads the `SSH-` banner —
 a bare TCP connect is meaningless, slirp accepts from t=0); `QgaClient` (0xFF-sentinel
@@ -134,8 +137,12 @@ faults hit the guarded call sites. **Verified 2026-06-12 by a headless smoke dri
 dist** (LoadFrom + reflection): init, registration, registry-created session booting the real VM
 (WHPX fail → auto TCG retry), echo + launch-size + live resize, session stop leaves VM Running,
 2.2 s clean unload — see `docs/VALIDATION.md`. **Pending: T6.6 in-game pass** (needs the purrTTY
-tip release with M5) **and T6.7** (WHPX-enabled run; `HypervisorPlatform` is off on the game
-machine).
+tip release with M5). **T6.7 (WHPX-enabled run): DONE** — with `HypervisorPlatform` enabled on the
+game machine, the real `VmHost` path now boots **`accel whpx`** end-to-end (verified 2026-06-13 via
+`VmHostIntegrationTests`). This surfaced and fixed a real bug: WHPX triple-faults the guest under
+`-cpu host`/`max` ("Unexpected VP exit code 4"), silently falling back to TCG; `QemuCommandBuilder`
+now emits a named CPU model (`Haswell`, AES-NI for fast in-guest SSH) under WHPX, overridable via
+the `cpu_model` config.
 
 **M7 — gatOS.NineP (the 9P2000.L server): DONE.** Three layers, all game-free. `Vfs/`: the
 seam SimFs implements — `VfsNode`/`VfsDirectory`/`VfsFile` (ctor takes `(name, qidPath)`; the

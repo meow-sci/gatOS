@@ -10,12 +10,20 @@ namespace gatOS.Vm;
 ///     compiled in (never pass foreign accel names): Windows <c>whpx,tcg</c>; Linux
 ///     <c>kvm,tcg</c>; macOS <c>hvf,tcg</c> — emitted as repeated <c>-accel</c> flags, first
 ///     available wins. Non-x64 hosts go straight to <c>tcg</c> (hardware accel is same-arch
-///     only). <c>-cpu host</c> requires hardware accel, so a ladder that starts at tcg uses
-///     <c>-cpu max</c>. <c>pic=off</c> from the analysis sketch is deliberately not included
-///     until validated on WHPX (T6.7) — maximally compatible first.
+///     only). The guest CPU model is chosen per accelerator (see <see cref="ResolveCpuModel"/>):
+///     <c>host</c> passthrough under KVM/HVF, a named model under WHPX (which cannot run
+///     <c>host</c>/<c>max</c>), and <c>max</c> under TCG. <c>pic=off</c> from the analysis sketch
+///     is deliberately not included — maximally compatible first.
 /// </remarks>
 public sealed class QemuCommandBuilder(OperatingSystemFacts facts)
 {
+    /// <summary>
+    ///     The named guest CPU model used under WHPX (Windows hardware accel); see
+    ///     <see cref="ResolveCpuModel"/> for why <c>host</c>/<c>max</c> cannot be used there.
+    ///     Haswell is the widest-supported model that still carries AES-NI (fast in-guest SSH crypto).
+    /// </summary>
+    public const string DefaultWhpxCpuModel = "Haswell";
+
     /// <summary>A builder for the current host.</summary>
     public static QemuCommandBuilder ForCurrentHost { get; } = new(OperatingSystemFacts.Current);
 
@@ -45,8 +53,7 @@ public sealed class QemuCommandBuilder(OperatingSystemFacts facts)
             args.AddRange(["-accel", accel]);
 
         args.AddRange(["-M", "q35"]);
-        // "host" passes the host CPU through and exists only under hardware accel.
-        args.AddRange(["-cpu", ladder[0] == "tcg" ? "max" : "host"]);
+        args.AddRange(["-cpu", ResolveCpuModel(spec, ladder[0])]);
         args.AddRange(["-m", spec.MemoryMb.ToString()]);
         args.AddRange(["-smp", spec.Cpus.ToString()]);
 
@@ -85,5 +92,28 @@ public sealed class QemuCommandBuilder(OperatingSystemFacts facts)
         args.Add("-no-reboot");
 
         return args;
+    }
+
+    /// <summary>
+    ///     The guest CPU model for the chosen accelerator. <c>-cpu host</c> passes the physical CPU
+    ///     through and is ideal under KVM/HVF, but the <b>Windows Hypervisor Platform rejects it</b>
+    ///     (and <c>-cpu max</c>) on real hardware — the guest triple-faults at boot with
+    ///     "WHPX: Unexpected VP exit code 4" regardless of which individual features are masked off
+    ///     (verified on a Raptor Lake i9-13900K: <c>host</c>, <c>host,-vmx</c>, <c>host,-apxf,-mpx</c>
+    ///     and <c>max</c> all fault, while every named model boots cleanly). So WHPX uses a fixed
+    ///     named model (<see cref="DefaultWhpxCpuModel"/>). TCG has no host CPU to pass through and
+    ///     uses <c>max</c>. A non-empty <see cref="VmLaunchSpec.CpuModel"/> overrides all of this
+    ///     (config <c>cpu_model</c>), e.g. to force <c>host</c> where a host's WHPX tolerates it.
+    /// </summary>
+    private static string ResolveCpuModel(VmLaunchSpec spec, string accel)
+    {
+        if (spec.CpuModel.Length > 0)
+            return spec.CpuModel;
+        return accel switch
+        {
+            "tcg" => "max",
+            "whpx" => DefaultWhpxCpuModel,
+            _ => "host", // kvm, hvf — passthrough is correct and fastest
+        };
     }
 }

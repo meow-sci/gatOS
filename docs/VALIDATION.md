@@ -84,13 +84,23 @@ pending — see CLAUDE.md M5 note).
 | 6 | Quit game → qemu process gone, disk lock released | ☐ | |
 | 7 | gatOS **without** purrTTY → game loads clean, one log line, no crash | ☐ | |
 
-## T6.7 — Windows validation pass — **PARTIALLY COVERED HEADLESSLY**
+## T6.7 — Windows validation pass — **WHPX VERIFIED HEADLESSLY (2026-06-13)**
 
 | # | Check | Result | Notes |
 |---|---|---|---|
-| 1 | WHP feature enabled: boot under WHPX, record boot time + accel | ☐ | `HypervisorPlatform` is currently **disabled** on the game machine (`Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform`, admin + reboot) |
+| 1 | WHP feature enabled: boot under WHPX, record boot time + accel | ✅ | `HypervisorPlatform` enabled on the game machine; `VmHostIntegrationTests` (the real `VmHost` path) boots **`accel whpx`** end-to-end. Boot ≈ 1–2 s vs ≈ 7 s under TCG |
 | 2 | WHP disabled: fallback lands on TCG, session usable, status window shows accel=tcg + DISM hint | ◐ | Fallback + usable session verified headlessly 2026-06-12 (WHPX "Unexpected VP exit code 4" → forced-tcg retry); the status-window hint itself needs the in-game pass |
 | 3 | Full T6.6 checklist on Windows | ☐ | |
+
+**Bug found & fixed during this pass (2026-06-13, i9-13900K / Raptor Lake).** Enabling WHPX exposed
+that QEMU's WHPX backend triple-faults the guest under `-cpu host` **and** `-cpu max` — "WHPX:
+Unexpected VP exit code 4" — so gatOS's classifier silently fell back to TCG even with WHPX
+available. Empirically confirmed against the real guest: `host`, `host,-vmx`, `host,-apxf,-mpx`,
+`max` all fault; every *named* model (`qemu64`, `Haswell`, `Skylake-Client`) boots fully to sshd.
+Fix: `QemuCommandBuilder.ResolveCpuModel` now selects `-cpu` per accelerator — `host` on KVM/HVF, a
+named model (default `Haswell`, AES-NI for fast in-guest SSH) on WHPX, `max` on TCG — overridable
+via the `cpu_model` config. The APX/MPX CPUID-conflict warnings in stderr are a red herring (the
+13900K has no APX); masking those bits does not fix the fault, only a named model does.
 
 ## T9.3 — In-game validation pass #2 (the M9 exit) — **NOT YET RUN**
 

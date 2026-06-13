@@ -10,7 +10,7 @@ public sealed class QemuCommandBuilderTests
     private static readonly OperatingSystemFacts MacArm64 = new(IsWindows: false, IsLinux: false, IsMacOs: true, IsX64: false);
 
     private static VmLaunchSpec Spec(int? simPort = null, bool restrict = false, string accelOverride = "",
-        int? httpPort = null, int? serialPort = null)
+        string cpuModel = "", int? httpPort = null, int? serialPort = null)
         => new(
             OverlayPath: "/data/disks/default.qcow2",
             KernelPath: "/data/disks/guest-v1/vmlinuz-virt",
@@ -21,8 +21,15 @@ public sealed class QemuCommandBuilderTests
             SimPort: simPort, RestrictNetwork: restrict,
             SerialLogPath: "/data/logs/serial.log",
             AccelOverride: accelOverride,
+            CpuModel: cpuModel,
             HttpPort: httpPort,
             SerialPort: serialPort);
+
+    private static string CpuOf(IReadOnlyList<string> args)
+    {
+        var list = args.ToList();
+        return list[list.IndexOf("-cpu") + 1];
+    }
 
     [Test]
     public void LinuxX64_GoldenArgs()
@@ -71,10 +78,40 @@ public sealed class QemuCommandBuilderTests
     {
         var builder = new QemuCommandBuilder(MacArm64);
         Assert.That(builder.ResolveAccelLadder(Spec()), Is.EqualTo(new[] { "tcg" }));
+        Assert.That(CpuOf(builder.Build(Spec())), Is.EqualTo("max"), "-cpu host requires hardware acceleration");
+    }
 
-        var args = builder.Build(Spec());
-        var cpu = args[args.ToList().IndexOf("-cpu") + 1];
-        Assert.That(cpu, Is.EqualTo("max"), "-cpu host requires hardware acceleration");
+    [Test]
+    public void WindowsWhpx_UsesANamedCpuModel_NeverHostOrMax()
+    {
+        // WHPX triple-faults the guest under -cpu host / -cpu max ("Unexpected VP exit code 4"),
+        // so the Windows accelerated path must use a named model. Any named model boots; the
+        // default carries AES-NI for in-guest SSH.
+        var cpu = CpuOf(new QemuCommandBuilder(WindowsX64).Build(Spec()));
+        Assert.Multiple(() =>
+        {
+            Assert.That(cpu, Is.EqualTo(QemuCommandBuilder.DefaultWhpxCpuModel));
+            Assert.That(cpu, Is.Not.EqualTo("host"));
+            Assert.That(cpu, Is.Not.EqualTo("max"));
+        });
+    }
+
+    [Test]
+    public void WindowsTcgFallback_UsesCpuMax()
+    {
+        // The C# accel-init retry forces tcg; the rebuilt command must drop the named model for max.
+        Assert.That(CpuOf(new QemuCommandBuilder(WindowsX64).Build(Spec(accelOverride: "tcg"))), Is.EqualTo("max"));
+    }
+
+    [Test]
+    public void CpuModelOverride_WinsOverThePerAccelDefault()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(CpuOf(new QemuCommandBuilder(WindowsX64).Build(Spec(cpuModel: "host"))), Is.EqualTo("host"));
+            Assert.That(CpuOf(new QemuCommandBuilder(LinuxX64).Build(Spec(cpuModel: "Skylake-Client"))),
+                Is.EqualTo("Skylake-Client"));
+        });
     }
 
     [Test]

@@ -30,6 +30,7 @@ public sealed class GatOsConfig
         # cpus                  guest vCPU count
         # restrict_network      true = guest gets no internet, only the gatOS channels (D3)
         # accel_override        force one accelerator: "whpx" | "kvm" | "hvf" | "tcg" ("" = auto)
+        # cpu_model             override guest CPU model ("" = auto; WHPX needs a named model, not host)
         # sample_rate_hz        /sim telemetry sampling rate (used once the 9p server lands, M9)
         # boot_timeout_seconds  0 = automatic (60 s accelerated, 300 s under TCG)
         # control_enabled       master switch for /sim writes (false = every control write EACCES)
@@ -70,6 +71,12 @@ public sealed class GatOsConfig
 
     /// <summary>Forces one accelerator (<c>""</c> = auto ladder; see <c>VmHostOptions.AccelOverride</c>).</summary>
     public string AccelOverride { get; set; } = "";
+
+    /// <summary>
+    ///     Overrides the guest CPU model (<c>""</c> = auto: <c>host</c> on KVM/HVF, a named model on
+    ///     WHPX, <c>max</c> on TCG; see <c>VmHostOptions.CpuModel</c>). WHPX cannot run <c>host</c>.
+    /// </summary>
+    public string CpuModel { get; set; } = "";
 
     /// <summary>Telemetry sampling rate for the <c>/sim</c> tree (consumed by the M9 sampler).</summary>
     public int SampleRateHz { get; set; } = 10;
@@ -219,6 +226,9 @@ public sealed class GatOsConfig
         }
 
         AccelOverride = accel;
+
+        // CPU model names are QEMU-defined (e.g. "Haswell"); pass through verbatim, just trimmed.
+        CpuModel = CpuModel.Trim();
     }
 
     private static int Clamp(string name, int value, int min, int max)

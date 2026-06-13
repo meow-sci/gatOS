@@ -145,6 +145,7 @@ public sealed partial class Mod
                 Cpus = _config.Cpus,
                 RestrictNetwork = _config.RestrictNetwork,
                 AccelOverride = _config.AccelOverride,
+                CpuModel = _config.CpuModel,
                 BootTimeout = _config.BootTimeoutSeconds > 0
                     ? TimeSpan.FromSeconds(_config.BootTimeoutSeconds)
                     : null,

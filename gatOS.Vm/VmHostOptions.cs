@@ -19,6 +19,13 @@ public sealed record VmHostOptions
     public string AccelOverride { get; init; } = "";
 
     /// <summary>
+    ///     Overrides the guest CPU model (config <c>cpu_model</c>); empty = auto per accelerator
+    ///     (<c>host</c> on KVM/HVF, a named model on WHPX, <c>max</c> on TCG). Set e.g. to
+    ///     <c>"host"</c> to force passthrough where a particular host's WHPX tolerates it.
+    /// </summary>
+    public string CpuModel { get; init; } = "";
+
+    /// <summary>
     ///     Supplies the 9p sim port at boot time (M8 wires the real server); <c>null</c> result
     ///     or provider keeps the guest's sim-mount idle (<c>gatos.simport=0</c>).
     /// </summary>
