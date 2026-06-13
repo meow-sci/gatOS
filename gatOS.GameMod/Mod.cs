@@ -2,6 +2,7 @@ using System.Diagnostics;
 using gatOS.GameMod.Configuration;
 using gatOS.Logging;
 using gatOS.Http;
+using gatOS.Mqtt;
 using gatOS.NineP.Server;
 using gatOS.NineP.Vfs;
 using gatOS.SimFs;
@@ -60,6 +61,10 @@ public sealed partial class Mod
     // loopback port the guest reaches at 10.0.2.2. Volatile — read by the render thread (status)
     // and the VM boot's HttpPortProvider on their own threads.
     private volatile SimHttpServer? _httpServer;
+
+    // The embedded MQTT broker (additional bridge): same store + command pipeline, loopback port,
+    // guest reaches it at 10.0.2.2. Volatile for the same reasons as the HTTP server.
+    private volatile SimMqttBroker? _mqttBroker;
 
     // The control pipeline (KSA_GAME_INTEGRATION_PLAN G1): transport threads submit commands here,
     // the game thread drains them through the KSA actuator catalog each frame. Game-free; the
@@ -123,6 +128,7 @@ public sealed partial class Mod
             _simRoot = SimFsTree.Build(_simStore, _commandQueue, SimTransportsStatus);
             StartSimServer(port: 0);
             StartHttpServer();
+            StartMqttBroker();
 
             _disks = new DiskManager();
             var vmHost = new VmHost(new VmHostOptions
@@ -141,6 +147,7 @@ public sealed partial class Mod
                 // The guest reaches the host HTTP server outbound at 10.0.2.2:<port> (slirp);
                 // gatos.httpport on the cmdline lets the guest discover it. Null = guest HTTP env unset.
                 HttpPortProvider = () => _httpServer is { Port: > 0 } http ? http.Port : null,
+                MqttPortProvider = () => _mqttBroker is { Port: > 0 } mqtt ? mqtt.Port : null,
             });
             _broker = new VmConnectionBroker(vmHost);
 
@@ -180,8 +187,9 @@ public sealed partial class Mod
         var server = _simServer;
         var ninep = server is { Port: > 0 } ? server.Port.ToString() : "unbound";
         var http = _httpServer is { Port: > 0 } h ? h.Port.ToString() : "off";
+        var mqtt = _mqttBroker is { Port: > 0 } m ? m.Port.ToString() : "off";
         var control = _commandQueue is { ControlEnabled: true } ? "on" : "off";
-        return $"9p {ninep}\nhttp {http}\ncontrol {control}";
+        return $"9p {ninep}\nhttp {http}\nmqtt {mqtt}\ncontrol {control}";
     }
 
     /// <summary>Draws the diagnostics UI (T6.4); a no-op when built without the KSA assemblies.</summary>
@@ -238,6 +246,11 @@ public sealed partial class Mod
             _httpServer = null;
             if (httpServer is not null && !httpServer.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)))
                 ModLog.Log.Warn("The HTTP server did not stop within 5 s at unload.");
+
+            var mqttBroker = _mqttBroker;
+            _mqttBroker = null;
+            if (mqttBroker is not null && !mqttBroker.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)))
+                ModLog.Log.Warn("The MQTT broker did not stop within 5 s at unload.");
         }
         catch (Exception ex)
         {
@@ -400,6 +413,34 @@ public sealed partial class Mod
         return server is null
             ? (_config.HttpEnabled ? "not running" : "disabled")
             : $"port {server.Port}, {server.ActiveSessions} connection(s)";
+    }
+
+    private void StartMqttBroker()
+    {
+        if (!_config.MqttEnabled || _simStore is not { } store)
+            return;
+        try
+        {
+            var broker = new SimMqttBroker(store, _commandQueue);
+            broker.StartAsync(_config.MqttPreferredPort).GetAwaiter().GetResult();
+            _mqttBroker = broker;
+            ModLog.Log.Info($"gatOS MQTT broker listening on 127.0.0.1:{broker.Port} "
+                            + "(guest: $GATOS_MQTT / 10.0.2.2; topics under gatos/).");
+        }
+        catch (Exception ex)
+        {
+            _mqttBroker = null;
+            ModLog.Log.Error($"The MQTT broker failed to start: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>One status-window line for the MQTT broker (read on the render thread).</summary>
+    internal string MqttStatusText()
+    {
+        var broker = _mqttBroker;
+        return broker is null
+            ? (_config.MqttEnabled ? "not running" : "disabled")
+            : $"port {broker.Port}";
     }
 
     private void StartSimServer(int port)

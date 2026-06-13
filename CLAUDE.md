@@ -296,7 +296,19 @@ gatOS.Http 13 (HttpClient over the live socket), gatOS.Bus 15 (codec/SCPI). Full
 unchanged so v2 IT stays green): the `sim` `/etc/hosts` alias + `$GATOS_HTTP` env activate then, and
 the **G7 QEMU virtio-serial port wiring + guest `/dev/virtio-ports` exposure** (the live serial
 bridge) is that image build's integration step — the codecs + command port are done and tested now.
-Still not started: the **MQTT transport** (MQTTnet — a user-requested addition) and the in-game pass.
+
+**MQTT transport (`gatOS.Mqtt`, MQTTnet): BUILT.** A user-requested additional bridge alongside
+9p/HTTP/serial. An **embedded MQTTnet broker** (`SimMqttBroker`) in the host process on a loopback
+port (guest reaches it at `10.0.2.2:<port>`, like the others — no external broker) over the same
+`SnapshotStore` + `CommandQueue`: a publish pump emits retained topics `gatos/time`, `gatos/status`,
+`gatos/vessels/<id>/telemetry` and (non-retained) `gatos/events`; clients publish a JSON `SimCommand`
+to `gatos/command` and the outcome is published to `gatos/command/result` (debug.* gated). `Mod` hosts
+it (config `[mqtt] enabled`/`preferred_port`=1883 ephemeral-fallback); `VmHost`/`QemuCommandBuilder`
+inject `gatos.mqttport`; the guest exports `$GATOS_MQTT=sim:<port>` (pending guest v3, like
+`$GATOS_HTTP`). `gatOS.Mqtt.Tests` (3) connect a real MQTTnet client to the broker. Full non-IT suite
+green (263 passed), zero warnings. **Still pending: the in-game pass** (the purrTTY-tip-release
+blocker) **and the guest image v3 build** (activates the `sim`/`$GATOS_HTTP`/`$GATOS_MQTT` guest env
++ the live serial bridge).
 
 Everything past M9 is **not yet implemented** — next is M10 (persistence & savegame shape) —
 with one exception pulled forward: **T11.1 QEMU win-x64 bundle tooling is DONE**
@@ -342,7 +354,7 @@ un-gated whenever QEMU is present. CI runs the full suite with `GATOS_IT=1` unde
 ## Repository layout & project map
 
 ```
-gatos.slnx                      XML solution (15 projects: 8 libs/mod + 7 test projects)
+gatos.slnx                      XML solution (17 projects: 9 libs/mod + 8 test projects)
 Directory.Build.props           shared build config + KSA/dist path resolution
 CLAUDE.md / README.md           this file; user-facing readme
 OS_IDEA.md / OS_ANALYSIS.md / OS_PLAN.md   goals / research / execution plan
@@ -374,9 +386,10 @@ gatOS.SimFs    → NineP, Logging                       /sim tree, snapshots, st
                                                       Vector/Enum/Number/Token control files — G1+G4, built)
 gatOS.Http     → SimFs, Logging                       magic HTTP /v1 server (raw TcpListener; G5, built)
 gatOS.Bus      → SimFs, Logging                       serial/bus framing: CCSDS/NMEA/SCPI (G7 core, built)
+gatOS.Mqtt     → SimFs, Logging, MQTTnet              embedded MQTT broker over the same store+sink (built)
 gatOS.Vm       → Logging, Tomlyn                      QEMU lifecycle, disks, ports, GatOsPaths (M3, built)
 gatOS.Ssh      → Vm, Logging, vendor/purrTTY, SSH.NET SshShellSession : ICustomShell (M4, built)
-gatOS.GameMod  → Ssh, SimFs, Http, Vm, Logging, vendor/purrTTY,
+gatOS.GameMod  → Ssh, SimFs, Http, Mqtt, Vm, Logging, vendor/purrTTY,
                   KSA DLLs, StarMap.API, Lib.Harmony, ModMenu.Attributes, Tomlyn   the KSA mod (M6, built)
 ```
 `examples/sdk-ts/` is a standalone TypeScript/Bun example SDK (G6, built — not part of the .NET

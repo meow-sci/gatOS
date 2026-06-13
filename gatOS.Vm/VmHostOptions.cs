@@ -32,6 +32,13 @@ public sealed record VmHostOptions
     public Func<int?>? HttpPortProvider { get; init; }
 
     /// <summary>
+    ///     Supplies the embedded MQTT broker port at boot time; <c>null</c> emits
+    ///     <c>gatos.mqttport=0</c> so the guest's MQTT env stays unset. Guest dials
+    ///     <c>10.0.2.2:&lt;port&gt;</c> (slirp).
+    /// </summary>
+    public Func<int?>? MqttPortProvider { get; init; }
+
+    /// <summary>
     ///     Overall boot timeout (spawn → SSH banner); <c>null</c> = auto: 60 s accelerated,
     ///     300 s under TCG.
     /// </summary>

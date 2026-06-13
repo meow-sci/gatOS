@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <AssemblyName>gatOS.Mqtt</AssemblyName>
+        <RootNamespace>gatOS.Mqtt</RootNamespace>
+        <Description>An MQTT transport (additional bridge): an embedded MQTTnet broker over the same
+            SnapshotStore + command pipeline. Publishes telemetry topics; subscribes a command topic.
+            Guest MQTT clients reach it at 10.0.2.2:&lt;port&gt; (slirp), like the 9p/HTTP servers.</Description>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\gatOS.SimFs\gatOS.SimFs.csproj" />
+        <ProjectReference Include="..\gatOS.Logging\gatOS.Logging.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="MQTTnet" Version="4.3.7.1207" />
+    </ItemGroup>
+
+</Project>

@@ -36,7 +36,7 @@ public sealed class QemuCommandBuilderTests
             "-smp", "2",
             "-kernel", "/data/disks/guest-v1/vmlinuz-virt",
             "-initrd", "/data/disks/guest-v1/initramfs-virt",
-            "-append", "console=ttyS0 root=/dev/vda rw quiet gatos.simport=0 gatos.httpport=0",
+            "-append", "console=ttyS0 root=/dev/vda rw quiet gatos.simport=0 gatos.httpport=0 gatos.mqttport=0",
             "-drive", "file=/data/disks/default.qcow2,if=virtio,format=qcow2",
             "-netdev", "user,id=n0,hostfwd=tcp:127.0.0.1:50022-:22",
             "-device", "virtio-net-pci,netdev=n0",
@@ -93,7 +93,7 @@ public sealed class QemuCommandBuilderTests
     {
         var args = new QemuCommandBuilder(LinuxX64).Build(Spec(simPort: 5640));
         var append = args[args.ToList().IndexOf("-append") + 1];
-        Assert.That(append, Is.EqualTo("console=ttyS0 root=/dev/vda rw quiet gatos.simport=5640 gatos.httpport=0"));
+        Assert.That(append, Is.EqualTo("console=ttyS0 root=/dev/vda rw quiet gatos.simport=5640 gatos.httpport=0 gatos.mqttport=0"));
     }
 
     [Test]
@@ -101,7 +101,7 @@ public sealed class QemuCommandBuilderTests
     {
         var args = new QemuCommandBuilder(LinuxX64).Build(Spec(simPort: 5640, httpPort: 4242));
         var append = args[args.ToList().IndexOf("-append") + 1];
-        Assert.That(append, Is.EqualTo("console=ttyS0 root=/dev/vda rw quiet gatos.simport=5640 gatos.httpport=4242"));
+        Assert.That(append, Is.EqualTo("console=ttyS0 root=/dev/vda rw quiet gatos.simport=5640 gatos.httpport=4242 gatos.mqttport=0"));
     }
 
     [Test]

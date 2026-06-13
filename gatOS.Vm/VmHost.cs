@@ -170,6 +170,7 @@ public sealed class VmHost : IAsyncDisposable
             diskLock = _disks.AcquireOverlayLock(_options.Profile);
             var simPort = _options.SimPortProvider?.Invoke();
             var httpPort = _options.HttpPortProvider?.Invoke();
+            var mqttPort = _options.MqttPortProvider?.Invoke();
 
             // The port-reuse race window is real but tiny (T3.1): one retry with fresh ports.
             for (var portRetry = false; ; portRetry = true)
@@ -187,7 +188,8 @@ public sealed class VmHost : IAsyncDisposable
                     RestrictNetwork: _options.RestrictNetwork,
                     SerialLogPath: Path.Combine(GatOsPaths.LogsDir, $"serial-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}.log"),
                     AccelOverride: _options.AccelOverride,
-                    HttpPort: httpPort);
+                    HttpPort: httpPort,
+                    MqttPort: mqttPort);
 
                 process = _processFactory();
                 try

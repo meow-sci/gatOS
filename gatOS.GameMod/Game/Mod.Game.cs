@@ -283,6 +283,8 @@ public sealed partial class Mod
             ImGui.Text(SimFsStatusText());
             Row("HTTP");
             ImGui.Text(HttpStatusText());
+            Row("MQTT");
+            ImGui.Text(MqttStatusText());
             Row("Uptime");
             ImGui.Text(FormatUptime(status));
             Row("Guest");

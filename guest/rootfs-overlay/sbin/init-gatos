@@ -43,9 +43,18 @@ mkdir -p /sim
 # /etc/profile.d, and /run/gatos/http-port carries the bare port for non-shell consumers.
 HTTP_PORT="$(sed -n 's/.*gatos\.httpport=\([0-9][0-9]*\).*/\1/p' /proc/cmdline)"
 mkdir -p /run/gatos /etc/profile.d
+MQTT_PORT="$(sed -n 's/.*gatos\.mqttport=\([0-9][0-9]*\).*/\1/p' /proc/cmdline)"
+: > /etc/profile.d/gatos.sh
 if [ -n "$HTTP_PORT" ] && [ "$HTTP_PORT" != "0" ]; then
     echo "$HTTP_PORT" > /run/gatos/http-port
-    printf 'export GATOS_HTTP="http://sim:%s/v1"\n' "$HTTP_PORT" > /etc/profile.d/gatos.sh
+    printf 'export GATOS_HTTP="http://sim:%s/v1"\n' "$HTTP_PORT" >> /etc/profile.d/gatos.sh
 else
-    rm -f /run/gatos/http-port /etc/profile.d/gatos.sh 2>/dev/null
+    rm -f /run/gatos/http-port 2>/dev/null
+fi
+if [ -n "$MQTT_PORT" ] && [ "$MQTT_PORT" != "0" ]; then
+    echo "$MQTT_PORT" > /run/gatos/mqtt-port
+    # MQTT has no URL scheme convention; export host + port (broker is at 'sim' = 10.0.2.2).
+    printf 'export GATOS_MQTT="sim:%s"\n' "$MQTT_PORT" >> /etc/profile.d/gatos.sh
+else
+    rm -f /run/gatos/mqtt-port 2>/dev/null
 fi

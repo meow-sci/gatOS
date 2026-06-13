@@ -39,6 +39,8 @@ public sealed class GatOsConfig
         # max_commands_per_frame upper bound on control commands executed per game frame
         # http_enabled          serve the magic HTTP API (guest reaches it at $GATOS_HTTP / 10.0.2.2)
         # http_preferred_port   preferred HTTP port (4242); 0 = ephemeral only; falls back on a clash
+        # mqtt_enabled          run the embedded MQTT broker (guest reaches it at $GATOS_MQTT / 10.0.2.2)
+        # mqtt_preferred_port   preferred MQTT port (1883); 0 = ephemeral only; falls back on a clash
         # serial_telemetry_port expose a virtio-serial NDJSON telemetry feed (G7; reserved)
         # serial_command_port   expose a virtio-serial SCPI command port (G7; reserved)
         # bus_ccsds             expose a CCSDS space-packet TM/TC feed (G7; reserved)
@@ -90,6 +92,12 @@ public sealed class GatOsConfig
 
     /// <summary>Preferred HTTP port (4242); 0 = ephemeral only; falls back to ephemeral on a clash.</summary>
     public int HttpPreferredPort { get; set; } = 4242;
+
+    /// <summary>Run the embedded MQTT broker (an additional game-data bridge).</summary>
+    public bool MqttEnabled { get; set; } = true;
+
+    /// <summary>Preferred MQTT port (1883); 0 = ephemeral only; falls back to ephemeral on a clash.</summary>
+    public int MqttPreferredPort { get; set; } = 1883;
 
     /// <summary>Expose a virtio-serial NDJSON telemetry feed (G7; reserved — not yet served).</summary>
     public bool SerialTelemetryPort { get; set; }
@@ -168,6 +176,8 @@ public sealed class GatOsConfig
         MaxCommandsPerFrame = Clamp(nameof(MaxCommandsPerFrame), MaxCommandsPerFrame, 1, 4096);
         if (HttpPreferredPort != 0)
             HttpPreferredPort = Clamp(nameof(HttpPreferredPort), HttpPreferredPort, 1024, 65535);
+        if (MqttPreferredPort != 0)
+            MqttPreferredPort = Clamp(nameof(MqttPreferredPort), MqttPreferredPort, 1024, 65535);
 
         var accel = AccelOverride.Trim().ToLowerInvariant();
         if (accel is not ("" or "whpx" or "kvm" or "hvf" or "tcg"))

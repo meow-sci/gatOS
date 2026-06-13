@@ -4,7 +4,8 @@
 > + write catalogs, magic HTTP, TypeScript SDK, serial/bus framing; 2026-06-12). Parts 1–8 are
 > implemented (Part 6 T3/T4's live virtio-serial wiring + guest exposure ride the next guest image
 > v3; the codecs + command port are done). As-built reality: `CLAUDE.md` + `docs/KSA_INTEGRATION_MATRIX.md`.
-> Remaining: the guest v3 image build, the in-game pass, and a user-requested **MQTT transport** (MQTTnet).
+> A user-requested **MQTT transport** (`gatOS.Mqtt`, MQTTnet embedded broker) is also built — an
+> additional bridge alongside 9p/HTTP/serial. Remaining: the guest v3 image build and the in-game pass.
 > This plan expands and supersedes the one-paragraph M12 P1 sketch ("writable control files")
 > in `OS_PLAN.md`. It is the central, co-located reference for **every KSA data point we read
 > and every KSA mutation we perform** — the document you update first when a new decompiled

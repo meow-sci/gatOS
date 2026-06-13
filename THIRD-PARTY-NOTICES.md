@@ -25,6 +25,12 @@ milestones land; entries marked *(planned)* are not bundled yet.
 - **License:** BSD-2-Clause
 - **Description:** TOML parsing/serialization for the gatOS user config and the guest manifest.
 
+## MQTTnet
+
+- **Source:** NuGet `MQTTnet` — https://github.com/dotnet/MQTTnet
+- **License:** MIT
+- **Description:** The embedded MQTT broker in `gatOS.Mqtt` (the MQTT game-data bridge).
+
 ## QEMU *(planned — bundled for win-x64 at M11)*
 
 - **Path in repo:** `vendor/qemu/win-x64/` (NOT committed; fetched by `tools/fetch-qemu.*`)
