@@ -39,4 +39,15 @@ internal static class EngineActuator
         engines[ordinal].SetIsActive(vehicle, active);
         return CommandResult.Ok;
     }
+
+    [KsaAnchor("EngineController.MinimumThrottle (float, settable)", SourceFile = "KSA/EngineController.cs",
+        Verified = "2026-06-12", Risk = ChurnRisk.Medium, Notes = "Deep-throttle floor 0..1.")]
+    internal static CommandResult SetMinThrottle(Vehicle vehicle, int ordinal, double fraction)
+    {
+        var engines = vehicle.Parts.Modules.Get<EngineController>();
+        if (ordinal < 0 || ordinal >= engines.Length)
+            return new CommandResult(CommandOutcome.NotFound, $"engine {ordinal} does not exist");
+        engines[ordinal].MinimumThrottle = (float)Math.Clamp(fraction, 0, 1);
+        return CommandResult.Ok;
+    }
 }

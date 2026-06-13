@@ -135,6 +135,11 @@ public sealed partial class Mod
             _broker = new VmConnectionBroker(vmHost);
 
             RegisterShell(_broker);
+
+            // G4: drain solver-phase control commands (refills) inside the vehicle-solver step.
+            // A no-op build without the KSA assemblies drops this call (partial seam).
+            InstallSolverHook();
+
             IsInitialized = true;
             ModLog.Log.Info("gatOS initialized (VM boots lazily on the first session).");
         }
@@ -199,6 +204,7 @@ public sealed partial class Mod
         {
             _instance = null;
             IsInitialized = false;
+            RemoveSolverHook(); // partial: drops out without the KSA assemblies
             var broker = _broker;
             _broker = null;
             if (broker is not null)
@@ -481,4 +487,6 @@ public sealed partial class Mod
     partial void DrawGameUi();
     partial void SampleTelemetry(double dt);
     partial void DrainCommands();
+    partial void InstallSolverHook();
+    partial void RemoveSolverHook();
 }

@@ -45,4 +45,17 @@ public sealed record SimCommand(
 {
     /// <summary>Sentinel for <see cref="Ordinal"/> meaning "vessel-level, no module".</summary>
     public const int NoOrdinal = -1;
+
+    /// <summary>
+    ///     Multi-component numeric payload for vector actions (attitude quaternion, burn
+    ///     <c>ut + Δv</c>, teleport state). Null for scalar/flag/trigger actions, which use
+    ///     <see cref="Value"/>.
+    /// </summary>
+    public IReadOnlyList<double>? Values { get; init; }
+
+    /// <summary>
+    ///     Symbolic-token payload for enum actions (attitude mode/frame, vessel-switch target id).
+    ///     Null for numeric actions.
+    /// </summary>
+    public string? Token { get; init; }
 }

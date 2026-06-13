@@ -206,9 +206,10 @@ and a SimFs status row. **Verified 2026-06-12 by the headless dist smoke** (supe
 `docs/VALIDATION.md`); full `GATOS_IT=1` suite 187/187. **Pending: the T9.3 in-game pass**
 (same purrTTY-tip-release blocker as T6.6).
 
-**KSA game-integration G1 (command pipeline + first controls) & G2 (integration-layer
-formalization): CODE DONE; in-game pass pending.** The control surface and its churn firewall, per
-`KSA_GAME_INTEGRATION_PLAN.md` (Parts 1–3 + G1/G2). The 9p server gained a **write path**
+**KSA game-integration G1–G4: CODE DONE; in-game pass pending.** The full read + write surface and
+its churn firewall, per `KSA_GAME_INTEGRATION_PLAN.md` (Parts 1–5). G1/G2 (below) are the command
+pipeline + integration-layer foundation; G3/G4 (further below) are the read-surface expansion and
+the full control surface. The 9p server gained a **write path**
 (`gatOS.NineP`): `IVfsWritableFileHandle`, `VfsFile.IsWritable`/`OpenWrite`, writable files stat
 `0644` (kernel pre-checks write permission from getattr), `Tlopen` accepts `O_WRONLY`/`O_RDWR` on
 writable nodes, `Twrite` dispatches to the handle, `Tsetattr` accepts the `O_TRUNC` size-truncate
@@ -244,10 +245,37 @@ per-point reference is **`docs/KSA_INTEGRATION_MATRIX.md`**. Tests: NineP write-
 conformance (`Tlopen`/`Twrite`/`Tsetattr`/`Tfsync`/mode bits), SimFs `ControlFile`/`TriggerFile`/
 `CommandQueue` unit tests + a control-surface fixture over the 9p client, and a `GATOS_IT`
 control-surface guest fixture (`echo 1 > …/engines/0/active` actuates; `echo bogus` → nonzero
-EINVAL). Verified on this machine: full non-IT suite green (NineP 46, SimFs 76 + 2 IT-skip), zero
-warnings. **Pending: the G1 in-game pass** (same purrTTY-tip-release blocker as T6.6) and the
-**solver-phase queue + G3/G4 surface** (not yet built). The plan's HTTP/serial transports
-(T2/T3/T4) and SDK (G6) are not started.
+EINVAL). **Pending: the G1 in-game pass** (same purrTTY-tip-release blocker as T6.6).
+
+**G3 (read-surface expansion) & G4 (full control surface): CODE DONE; in-game pass pending.** Parts
+4–5 of the plan. **Reads (game-free `SimSnapshot` extensions + `SimFsTree`):** `/sim/system` and
+`/sim/bodies/<id>/…` (celestial catalog: mass/radius/mu/soi/rotation, position/velocity ecl, orbit,
+atmosphere, ocean — planets/moons are `Celestial`, the star is a separate `StellarBody`);
+`time/{sim_dt,warp_speeds,auto_warp}` + the `time/alarm` blocking sim-time wake device (`AlarmFile`,
+writable + blocking read); per-vessel `telemetry` (atomic JSON doc), `controlled`, `com`,
+`position/ecl`, `velocity/cci`, `navball/…`, `environment/…` (pressure/density/dynamic-pressure/
+accel/g-force), orbit extras (lan/argpe/true-anomaly/time-to-ap-pe/next-patch), `encounters`,
+engine throttle/propellant/min-throttle, tank `fraction`, battery `fraction`/`capacity`,
+`power/{produced,consumed}`, and module dirs `rcs/ solar/ generators/ lights/ docking/ decouplers/`.
+New `/sim/events`: engine-state, flameout, docked/undocked, decoupled, animation-complete,
+battery-depleted/charged. **Writes (G4 control surface):** `ctl/{throttle,stage,rcs,attitude_mode,
+attitude_frame,attitude_target,burn}`, `engines/<n>/min_throttle`, `rcs/<n>/active`,
+`lights/<n>/{on,brightness,color}`, `decouplers/<n>/fire`, and the **`/sim/debug/`** cheat namespace
+(gated by `[control] debug_namespace`: `vessels/<id>/{teleport,refill_fuel,refill_battery}`,
+`time/warp`, `switch_vessel`). New game-free command archetypes: `ControlFile.Number`,
+`VectorControlFile`, `EnumControlFile`, `TokenControlFile`; `SimCommand` gained `Values` (vectors)
++ `Token` (enum/free tokens). **The integration layer grew (all `gatOS.GameMod/Game/Ksa/`):**
+`Readers/{VesselReader (now core + a guarded enrich pass),BodyReader}`,
+`Actuators/{Engine,Light(+per-instance clone),Animation,Staging,Throttle(reflection),Rcs,Decoupler,
+FlightComputer,Debug}Actuator`, `KsaCatalog` dispatches all actions (debug-namespace exempt from the
+authority gate). **Solver phase:** a Harmony `Priority.First` prefix on
+`Universe.ExecuteNextVehicleSolvers` (`Mod.DrainSolverCommands` via `InstallSolverHook`/`RemoveSolverHook`
+partial seams) drains `CommandPhase.Solver` commands (the refills) inside the physics step.
+Co-located reference: **`docs/KSA_INTEGRATION_MATRIX.md`** (now covers G1–G4 + the documented
+deferrals: aero `cda` [private], `parts/<instanceId>` tree, per-nozzle engine internals, gimbal
+command, RCS pulse). Verified on this machine: full non-IT suite green (NineP 46, SimFs 95, zero
+warnings). **Pending: the G3/G4 in-game pass** (same purrTTY-tip-release blocker as T6.6). The plan's
+HTTP transport (G5), SDK (G6) and serial/bus transports (G7) are not started.
 
 Everything past M9 is **not yet implemented** — next is M10 (persistence & savegame shape) —
 with one exception pulled forward: **T11.1 QEMU win-x64 bundle tooling is DONE**
@@ -319,10 +347,10 @@ tools/                          fetch-qemu.{sh,ps1} + qemu-win64-files.txt (pin 
 ```
 gatOS.Logging                    (no deps)            game-free logging shim
 gatOS.NineP    → Logging                              9P2000.L codec + server + VFS (M7, built)
-gatOS.SimFs    → NineP, Logging                       /sim tree, snapshots, stream/events,
-                                                      EventDiffer/SampleClock/Sanitize (M8+M9, built);
-                                                      Commands/ (SimCommand, CommandQueue,
-                                                      ControlFile/TriggerFile — G1, built)
+gatOS.SimFs    → NineP, Logging                       /sim tree, snapshots, stream/events, AlarmFile,
+                                                      EventDiffer/SampleClock/Sanitize (M8+M9+G3, built);
+                                                      Commands/ (SimCommand, CommandQueue, Control/Trigger/
+                                                      Vector/Enum/Number/Token control files — G1+G4, built)
 gatOS.Vm       → Logging, Tomlyn                      QEMU lifecycle, disks, ports, GatOsPaths (M3, built)
 gatOS.Ssh      → Vm, Logging, vendor/purrTTY, SSH.NET SshShellSession : ICustomShell (M4, built)
 gatOS.GameMod  → Ssh, SimFs, Vm, Logging, vendor/purrTTY,
@@ -370,8 +398,9 @@ host.
 1. **Game state is read *and mutated* only on the game thread** (`[StarMapBeforeGui]`). The sampler
    builds an immutable `SimSnapshot` and publishes it with a single volatile reference swap; control
    commands are *drained and executed* in the same hook (`CommandQueue.Drain` → `KsaCatalog`), so
-   writes obey rule 1 exactly like reads. (Solver-phase writes — refills/robotics — will drain in a
-   Harmony prefix on the vehicle-solver phase; not yet built.)
+   writes obey rule 1 exactly like reads. Solver-phase writes (the debug refills) drain in a Harmony
+   `Priority.First` prefix on `Universe.ExecuteNextVehicleSolvers` (`Mod.DrainSolverCommands`) — still
+   the game thread, inside the physics step (G4, built).
 2. **9p server threads never touch game state** — they read the latest published snapshot, and for
    writes they only *enqueue* an immutable `SimCommand` and await its result (never executing it).
 3. SSH I/O runs on SSH.NET's threads; `OutputReceived` may fire on any thread (purrTTY tolerates

@@ -1,3 +1,5 @@
+using Brutal.Numerics;
+using gatOS.Logging;
 using gatOS.SimFs.Snapshots;
 using gatOS.SimFs.Telemetry;
 using KSA;
@@ -11,15 +13,41 @@ namespace gatOS.GameMod.Game.Ksa.Readers;
 ///     surfaces as a build break here, not a mod crash (the churn playbook §3.4). Pure functions,
 ///     game-thread only; every double is scrubbed through <see cref="Sanitize"/>.
 /// </summary>
+/// <remarks>
+///     <see cref="Sample"/> builds the M9 core first, then runs <see cref="Enrich"/> (the G3
+///     read-surface extensions) inside a guard: if any extension API has drifted, the vessel keeps
+///     its core telemetry and the extension dirs simply don't appear — graceful degradation rather
+///     than a blanked vessel. The fault is logged once.
+/// </remarks>
 internal static class VesselReader
 {
     private const double StandardGravity = 9.80665;
     private const double RadToDeg = 180.0 / Math.PI;
+    private static bool _enrichErrorLogged;
 
     [KsaAnchor("Vehicle core state (Id/Situation/GetPositionCci/OrbitalSpeed/masses/attitude)",
         SourceFile = "KSA/Vehicle.cs", Verified = "2026-06-12", Risk = ChurnRisk.Low,
         Notes = "Verified at M9; Name = Id (KSA has no separate display name).")]
-    internal static VesselSnapshot Sample(Vehicle vehicle)
+    internal static VesselSnapshot Sample(Vehicle vehicle, string? activeVesselId, double utSeconds)
+    {
+        var core = SampleCore(vehicle, activeVesselId);
+        try
+        {
+            return Enrich(core, vehicle, utSeconds);
+        }
+        catch (Exception ex)
+        {
+            if (!_enrichErrorLogged)
+            {
+                _enrichErrorLogged = true;
+                ModLog.Log.Warn($"telemetry: vessel read extensions degraded (logged once): {ex.Message}");
+            }
+
+            return core;
+        }
+    }
+
+    private static VesselSnapshot SampleCore(Vehicle vehicle, string? activeVesselId)
     {
         var parent = vehicle.Parent; // IParentBody (=> Orbit.Parent)
         var positionCci = vehicle.GetPositionCci();
@@ -30,7 +58,7 @@ internal static class VesselReader
         {
             // The static Transform avoids the extension-method overload set (which would drag
             // BepuUtilities into overload resolution — CS0012 without that reference).
-            var positionCcf = Brutal.Numerics.double3.Transform(positionCci, parent.GetCci2Ccf());
+            var positionCcf = double3.Transform(positionCci, parent.GetCci2Ccf());
             var lla = parent.GetLlaFromCcf(positionCcf);
             latitudeDeg = Sanitize.Finite(lla.X);
             longitudeDeg = Sanitize.Finite(lla.Y);
@@ -49,6 +77,7 @@ internal static class VesselReader
 
         var attitude = vehicle.GetBody2Cci();
         var rates = vehicle.BodyRates;
+        var (batteryFraction, _) = SampleBattery(vehicle);
 
         return new VesselSnapshot(
             Id: vehicle.Id,
@@ -72,11 +101,99 @@ internal static class VesselReader
             Orbit: orbit,
             Engines: SampleEngines(vehicle),
             Tanks: SampleTanks(vehicle),
-            BatteryChargeFraction: SampleBattery(vehicle),
+            BatteryChargeFraction: batteryFraction,
             ParentBodyName: parent?.Id,
             LightsMasterOn: vehicle.LightsOn,
-            Animations: SampleAnimations(vehicle));
+            Animations: SampleAnimations(vehicle))
+        {
+            Controlled = activeVesselId is not null && vehicle.Id == activeVesselId,
+        };
     }
+
+    // ---- G3 read-surface extensions (KSA_GAME_INTEGRATION_PLAN §4.5/§4.6) -----------------
+
+    private static VesselSnapshot Enrich(VesselSnapshot core, Vehicle vehicle, double utSeconds)
+    {
+        var (_, batteryCapacity) = SampleBattery(vehicle);
+        return core with
+        {
+            PositionEcl = Vec(vehicle.GetPositionEcl()),
+            VelocityCci = Vec(vehicle.GetVelocityCci()),
+            CenterOfMass = Vec(vehicle.CenterOfMassAsmb),
+            Navball = SampleNavball(vehicle),
+            Environment = SampleEnvironment(vehicle),
+            Orbit = EnrichOrbit(core.Orbit, vehicle, utSeconds),
+            Engines = EnrichEngines(core.Engines, vehicle),
+            Tanks = EnrichTanks(core.Tanks, vehicle),
+            BatteryCapacityJoules = batteryCapacity,
+            PowerProducedW = SamplePowerProduced(vehicle),
+            PowerConsumedW = SamplePowerConsumed(vehicle),
+            Rcs = SampleRcs(vehicle),
+            Solar = SampleSolar(vehicle),
+            Generators = SampleGenerators(vehicle),
+            Lights = SampleLights(vehicle),
+            Docking = SampleDocking(vehicle),
+            Decouplers = SampleDecouplers(vehicle),
+            Encounters = SampleEncounters(vehicle),
+        };
+    }
+
+    [KsaAnchor("Orbit.StateVectors.TrueAnomaly.Degrees; LongitudeOfAscendingNode/ArgumentOfPeriapsis (rad); "
+               + "Vehicle.NextApoapsisTime/NextPeriapsisTime/NextPatchEventTime",
+        SourceFile = "KSA/Orbit.cs / KSA/Vehicle.cs", Verified = "2026-06-12", Risk = ChurnRisk.Low)]
+    private static OrbitSnapshot? EnrichOrbit(OrbitSnapshot? orbit, Vehicle vehicle, double utSeconds)
+    {
+        if (orbit is null || vehicle.Orbit is not { } o)
+            return orbit;
+        return orbit with
+        {
+            LanDeg = Sanitize.Finite(o.LongitudeOfAscendingNode * RadToDeg),
+            ArgPeDeg = Sanitize.Finite(o.ArgumentOfPeriapsis * RadToDeg),
+            TrueAnomalyDeg = Sanitize.Finite(o.StateVectors.TrueAnomaly.Degrees),
+            TimeToApoapsis = TimeUntil(vehicle.NextApoapsisTime, utSeconds),
+            TimeToPeriapsis = TimeUntil(vehicle.NextPeriapsisTime, utSeconds),
+            NextPatchEventUt = Sanitize.Finite(vehicle.NextPatchEventTime.Seconds()),
+        };
+    }
+
+    private static double TimeUntil(SimTime target, double utSeconds)
+    {
+        var dt = Sanitize.Finite(target.Seconds()) - utSeconds;
+        return dt > 0 ? dt : 0;
+    }
+
+    [KsaAnchor("Vehicle.NavBallData{AttitudeAngles(int3,deg),ThrustWeightRatio,DeltaVInVacuum,Frame,Speed}",
+        SourceFile = "KSA/NavBallData.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium,
+        Notes = "AttitudeAngles X/Y/Z = pitch/yaw/roll in whole degrees.")]
+    private static NavballSnapshot SampleNavball(Vehicle vehicle)
+    {
+        ref readonly var nb = ref vehicle.NavBallData;
+        return new NavballSnapshot(
+            nb.AttitudeAngles.X, nb.AttitudeAngles.Y, nb.AttitudeAngles.Z,
+            Sanitize.Finite(nb.ThrustWeightRatio), Sanitize.Finite(nb.DeltaVInVacuum),
+            nb.Frame.ToString(), Sanitize.Finite(nb.Speed));
+    }
+
+    [KsaAnchor("Vehicle.PhysicsEnvironment{AtmosphericPressure,AtmosphericDensity,OceanDensity,TerrainRadius}; "
+               + "PhysicalAtmosphereReference.GetDynamicPressure(Vehicle); AccelerationBody/AngularAccelerationBody",
+        SourceFile = "KSA/PhysicsEnvironment.cs / KSA/Vehicle.cs", Verified = "2026-06-12", Risk = ChurnRisk.Low)]
+    private static EnvironmentSnapshot SampleEnvironment(Vehicle vehicle)
+    {
+        ref readonly var env = ref vehicle.PhysicsEnvironment;
+        var accel = vehicle.AccelerationBody;
+        var gForce = Sanitize.Finite(accel.Length() / StandardGravity);
+        return new EnvironmentSnapshot(
+            Sanitize.Finite(env.AtmosphericPressure),
+            Sanitize.Finite(env.AtmosphericDensity),
+            Sanitize.Finite(PhysicalAtmosphereReference.GetDynamicPressure(vehicle)),
+            Sanitize.Finite(env.OceanDensity),
+            Sanitize.Finite(env.TerrainRadius),
+            Vec(accel),
+            Vec(vehicle.AngularAccelerationBody),
+            gForce);
+    }
+
+    // ---- engines (M9 core + G3 throttle/propellant/min) -----------------------------------
 
     [KsaAnchor("vehicle.Parts.Modules.Get<EngineController>(); .IsActive, .VacuumData{ThrustMax,MassFlowRateMax}",
         SourceFile = "KSA/EngineController.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium,
@@ -92,14 +209,50 @@ internal static class VesselReader
             double massFlow = engine.VacuumData.MassFlowRateMax;
             var isp = massFlow > 0 ? vacThrust / (massFlow * StandardGravity) : 0;
             engines.Add(new EngineSnapshot(i, engine.IsActive,
-                Sanitize.Finite(vacThrust), Sanitize.Finite(isp)));
+                Sanitize.Finite(vacThrust), Sanitize.Finite(isp))
+            {
+                MinThrottle = Sanitize.Finite(engine.MinimumThrottle),
+            });
         }
 
         return engines;
     }
 
-    [KsaAnchor("vehicle.Parts.Modules.Get<Tank>().Moles; vehicle.Parts.Moles.GetState(mole).Mass",
-        SourceFile = "KSA/Tank.cs", Verified = "2026-06-12", Risk = ChurnRisk.Low,
+    [KsaAnchor("EngineControllerState{CommandThrottle,IsPropellantAvailable} via ModuleStateful.TryGetFrom",
+        SourceFile = "KSA/EngineControllerState.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium)]
+    private static IReadOnlyList<EngineSnapshot> EnrichEngines(IReadOnlyList<EngineSnapshot> core, Vehicle vehicle)
+    {
+        var modules = vehicle.Parts.Modules.Get<EngineController>();
+        if (modules.Length == 0
+            || !TryStates<EngineController, EngineControllerState, EngineControllerGlobalState, EmptyStruct>(
+                vehicle, out var states))
+            return core;
+
+        var result = new List<EngineSnapshot>(core.Count);
+        foreach (var e in core)
+        {
+            if (e.Index >= 0 && e.Index < modules.Length)
+            {
+                ref readonly var st = ref states.GetState(modules[e.Index]);
+                result.Add(e with
+                {
+                    ThrottleCmd = Sanitize.Finite(st.CommandThrottle),
+                    PropellantAvailable = st.IsPropellantAvailable,
+                });
+            }
+            else
+            {
+                result.Add(e);
+            }
+        }
+
+        return result;
+    }
+
+    // ---- tanks (M9 core + G3 fraction) ----------------------------------------------------
+
+    [KsaAnchor("vehicle.Parts.Modules.Get<Tank>().Moles; vehicle.Parts.Moles.GetState(mole).Mass; Mole.FilledFraction",
+        SourceFile = "KSA/Tank.cs / KSA/Mole.cs", Verified = "2026-06-12", Risk = ChurnRisk.Low,
         Notes = "A Tank holds one Mole per substance; amounts live in the SoA Moles state list.")]
     private static List<TankSnapshot> SampleTanks(Vehicle vehicle)
     {
@@ -109,20 +262,29 @@ internal static class VesselReader
         {
             foreach (var mole in tank.Moles)
             {
-                double amount = moleStates.GetState(mole).Mass;
+                ref readonly var state = ref moleStates.GetState(mole);
+                double amount = state.Mass;
                 double capacity = mole.GetLiquidMass(mole.ContainerVolume);
                 tanks.Add(new TankSnapshot(mole.SubstancePhase.Name,
-                    Sanitize.Finite(amount), Sanitize.Finite(capacity)));
+                    Sanitize.Finite(amount), Sanitize.Finite(capacity))
+                {
+                    Fraction = Math.Clamp(Sanitize.Finite(mole.FilledFraction(in state)), 0, 1),
+                });
             }
         }
 
         return tanks;
     }
 
+    private static IReadOnlyList<TankSnapshot> EnrichTanks(IReadOnlyList<TankSnapshot> core, Vehicle vehicle)
+        => core; // SampleTanks already fills Fraction; kept as a seam for symmetry.
+
+    // ---- battery / power ------------------------------------------------------------------
+
     [KsaAnchor("vehicle.Parts.Batteries.GetState(b).Charge, b.MaximumCapacity",
         SourceFile = "KSA/Battery.cs", Verified = "2026-06-12", Risk = ChurnRisk.Low,
-        Notes = "Charge fraction summed across all batteries; null when the vehicle has none.")]
-    private static double? SampleBattery(Vehicle vehicle)
+        Notes = "Charge fraction + capacity summed across all batteries; null when the vehicle has none.")]
+    private static (double? Fraction, double? CapacityJoules) SampleBattery(Vehicle vehicle)
     {
         var batteries = vehicle.Parts.Batteries;
         double charge = 0, capacity = 0;
@@ -132,8 +294,219 @@ internal static class VesselReader
             capacity += battery.MaximumCapacity.Value();
         }
 
-        return capacity > 0 ? Math.Clamp(Sanitize.Finite(charge / capacity), 0, 1) : null;
+        return capacity > 0
+            ? (Math.Clamp(Sanitize.Finite(charge / capacity), 0, 1), Sanitize.Finite(capacity))
+            : (null, null);
     }
+
+    [KsaAnchor("SolarPanelState.Produced + GeneratorState.Produced (Joules per sample)",
+        SourceFile = "KSA/SolarPanelState.cs / KSA/GeneratorState.cs", Verified = "2026-06-12",
+        Risk = ChurnRisk.Medium, Notes = "Per-sample produced energy proxy; summed over panels + generators.")]
+    private static double SamplePowerProduced(Vehicle vehicle)
+    {
+        double total = 0;
+        if (TryStates<SolarPanel, SolarPanelState, EmptyStruct, EmptyStruct>(vehicle, out var solar))
+            foreach (var panel in solar.Modules)
+                total += solar.GetState(panel).Produced.Value();
+        if (TryStates<Generator, GeneratorState, EmptyStruct, EmptyStruct>(vehicle, out var gens))
+            foreach (var gen in gens.Modules)
+                total += gens.GetState(gen).Produced.Value();
+        return Sanitize.Finite(total);
+    }
+
+    [KsaAnchor("vehicle.Parts.PowerConsumers.GetState(c).Consumed (Joules per sample)",
+        SourceFile = "KSA/PowerConsumerState.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium)]
+    private static double SamplePowerConsumed(Vehicle vehicle)
+    {
+        double total = 0;
+        var consumers = vehicle.Parts.PowerConsumers;
+        foreach (var consumer in consumers.Modules)
+            total += consumers.GetState(consumer).Consumed.Value();
+        return Sanitize.Finite(total);
+    }
+
+    // ---- RCS / solar / generators / lights / docking / decouplers -------------------------
+
+    [KsaAnchor("vehicle.Parts.Modules.Get<ThrusterController>(); .IsActive; ThrusterControllerState{ControlMap,IsPropellantAvailable}",
+        SourceFile = "KSA/ThrusterController.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium)]
+    private static IReadOnlyList<RcsSnapshot> SampleRcs(Vehicle vehicle)
+    {
+        var modules = vehicle.Parts.Modules.Get<ThrusterController>();
+        if (modules.Length == 0)
+            return [];
+        var hasStates =
+            TryStates<ThrusterController, ThrusterControllerState, ThrusterControllerGlobalState, EmptyStruct>(
+                vehicle, out var states);
+        var result = new List<RcsSnapshot>(modules.Length);
+        for (var i = 0; i < modules.Length; i++)
+        {
+            var thruster = modules[i];
+            var map = "None";
+            var propellant = false;
+            if (hasStates)
+            {
+                ref readonly var st = ref states.GetState(thruster);
+                map = st.ControlMap.ToString();
+                propellant = st.IsPropellantAvailable;
+            }
+
+            result.Add(new RcsSnapshot(i, thruster.IsActive, propellant, map));
+        }
+
+        return result;
+    }
+
+    [KsaAnchor("vehicle.Parts.Modules.Get<SolarPanel>(); SolarPanelState{Produced,IsOccluded,SunAoA,SunEfficiency}; "
+               + "SolarTrackerState.CurrentAngle; SolarPanel.KeyframeAnimationModule",
+        SourceFile = "KSA/SolarPanel.cs / KSA/SolarTracker.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium,
+        Notes = "AnimationIndex links the panel's deploy animation to the vessel-level animation ordinal; "
+                + "tracker correlated 1:1 by index when SolarTracker count matches panel count.")]
+    private static IReadOnlyList<SolarSnapshot> SampleSolar(Vehicle vehicle)
+    {
+        var panels = vehicle.Parts.Modules.Get<SolarPanel>();
+        if (panels.Length == 0)
+            return [];
+
+        var hasStates = TryStates<SolarPanel, SolarPanelState, EmptyStruct, EmptyStruct>(vehicle, out var states);
+        var animations = vehicle.Parts.Modules.Get<KeyframeAnimationModule>();
+
+        // Trackers are separate modules; correlate 1:1 by index only when the counts match, and
+        // extract their angles up front so the StateList ref struct stays inside its guard.
+        var trackers = vehicle.Parts.Modules.Get<SolarTracker>();
+        double[]? trackerAngles = null;
+        if (trackers.Length == panels.Length
+            && TryStates<SolarTracker, SolarTrackerState, EmptyStruct, EmptyStruct>(vehicle, out var trackerStates))
+        {
+            trackerAngles = new double[trackers.Length];
+            for (var i = 0; i < trackers.Length; i++)
+                trackerAngles[i] = trackerStates.GetState(trackers[i]).CurrentAngle * RadToDeg;
+        }
+
+        var result = new List<SolarSnapshot>(panels.Length);
+        for (var i = 0; i < panels.Length; i++)
+        {
+            var panel = panels[i];
+            double produced = 0, sunAoa = 0, efficiency = 0;
+            var occluded = false;
+            if (hasStates)
+            {
+                ref readonly var st = ref states.GetState(panel);
+                produced = st.Produced.Value();
+                occluded = st.IsOccluded;
+                sunAoa = st.SunAoA * RadToDeg;
+                efficiency = st.SunEfficiency;
+            }
+
+            result.Add(new SolarSnapshot(i, Sanitize.Finite(produced), occluded,
+                Sanitize.Finite(sunAoa), Sanitize.Finite(efficiency),
+                trackerAngles is not null, Sanitize.Finite(trackerAngles?[i] ?? 0),
+                AnimationIndex: AnimationIndexOf(animations, panel.KeyframeAnimationModule)));
+        }
+
+        return result;
+    }
+
+    private static int AnimationIndexOf(System.Span<KeyframeAnimationModule> animations, KeyframeAnimationModule? target)
+    {
+        if (target is null)
+            return SolarSnapshot.NoAnimation;
+        for (var i = 0; i < animations.Length; i++)
+            if (ReferenceEquals(animations[i], target))
+                return i;
+        return SolarSnapshot.NoAnimation;
+    }
+
+    [KsaAnchor("vehicle.Parts.Modules.Get<Generator>(); GeneratorState{Active,Produced}",
+        SourceFile = "KSA/Generator.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium)]
+    private static IReadOnlyList<GeneratorSnapshot> SampleGenerators(Vehicle vehicle)
+    {
+        var modules = vehicle.Parts.Modules.Get<Generator>();
+        if (modules.Length == 0
+            || !TryStates<Generator, GeneratorState, EmptyStruct, EmptyStruct>(vehicle, out var states))
+            return [];
+        var result = new List<GeneratorSnapshot>(modules.Length);
+        for (var i = 0; i < modules.Length; i++)
+        {
+            ref readonly var st = ref states.GetState(modules[i]);
+            result.Add(new GeneratorSnapshot(i, st.Active, Sanitize.Finite(st.Produced.Value())));
+        }
+
+        return result;
+    }
+
+    [KsaAnchor("vehicle.Parts.Modules.Get<LightModule>(); .Template.Intensity.Value/.ColorRgb; "
+               + "Parent.FullPart.LightSwitch.LightIsActive",
+        SourceFile = "KSA/LightModule.cs", Verified = "2026-06-12", Risk = ChurnRisk.High,
+        Notes = "Template internals are High-churn; on-state reads the part's LightSwitch PowerConsumer.")]
+    private static IReadOnlyList<LightSnapshot> SampleLights(Vehicle vehicle)
+    {
+        var modules = vehicle.Parts.Modules.Get<LightModule>();
+        if (modules.Length == 0)
+            return [];
+        var result = new List<LightSnapshot>(modules.Length);
+        for (var i = 0; i < modules.Length; i++)
+        {
+            var light = modules[i];
+            var on = light.Parent.FullPart.LightSwitch?.LightIsActive ?? false;
+            double intensity = light.Template.Intensity.Value;
+            var rgb = light.Template.ColorRgb;
+            result.Add(new LightSnapshot(i, on, Sanitize.Finite(intensity),
+                new double3Snap(Sanitize.Finite(rgb.R), Sanitize.Finite(rgb.G), Sanitize.Finite(rgb.B))));
+        }
+
+        return result;
+    }
+
+    [KsaAnchor("vehicle.Parts.Modules.Get<DockingPort>(); .Docked, .DockedToPart.Id",
+        SourceFile = "KSA/DockingPort.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium)]
+    private static IReadOnlyList<DockingSnapshot> SampleDocking(Vehicle vehicle)
+    {
+        var modules = vehicle.Parts.Modules.Get<DockingPort>();
+        if (modules.Length == 0)
+            return [];
+        var result = new List<DockingSnapshot>(modules.Length);
+        for (var i = 0; i < modules.Length; i++)
+        {
+            var port = modules[i];
+            result.Add(new DockingSnapshot(i, port.Docked, port.DockedToPart?.Id));
+        }
+
+        return result;
+    }
+
+    [KsaAnchor("vehicle.Parts.Modules.Get<Decoupler>(); .IsActive (fired, irreversible)",
+        SourceFile = "KSA/Decoupler.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium)]
+    private static IReadOnlyList<DecouplerSnapshot> SampleDecouplers(Vehicle vehicle)
+    {
+        var modules = vehicle.Parts.Modules.Get<Decoupler>();
+        if (modules.Length == 0)
+            return [];
+        var result = new List<DecouplerSnapshot>(modules.Length);
+        for (var i = 0; i < modules.Length; i++)
+            result.Add(new DecouplerSnapshot(i, modules[i].IsActive));
+        return result;
+    }
+
+    [KsaAnchor("vehicle.Patch.Encounters; Encounter{Body.Id,GameTime,ClosestDistance}",
+        SourceFile = "KSA/PatchedConic.cs / KSA/Encounter.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium)]
+    private static IReadOnlyList<EncounterSnapshot> SampleEncounters(Vehicle vehicle)
+    {
+        var patch = vehicle.Patch;
+        var encounters = patch.Encounters;
+        if (encounters.Length == 0)
+            return [];
+        var result = new List<EncounterSnapshot>(encounters.Length);
+        foreach (var e in encounters)
+        {
+            var body = (e.Body as Astronomical)?.Id ?? "?";
+            result.Add(new EncounterSnapshot(body, Sanitize.Finite(e.GameTime.Seconds()),
+                Sanitize.Finite(e.ClosestDistance)));
+        }
+
+        return result;
+    }
+
+    // ---- animations (M9) ------------------------------------------------------------------
 
     [KsaAnchor("vehicle.Parts.Modules.Get<KeyframeAnimationModule>(); .TimeGoal, .Shared.Duration, State.{TimeCurrent,DeploymentState}",
         SourceFile = "KSA/KeyframeAnimationModule.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium,
@@ -146,8 +519,8 @@ internal static class VesselReader
         if (modules.Length == 0)
             return result;
 
-        var haveStates = ModuleStateful<KeyframeAnimationModule, KeyframeAnimationModule.State, EmptyStruct, EmptyStruct>
-            .TryGetFrom(vehicle.Parts.States, out var states);
+        var haveStates = TryStates<KeyframeAnimationModule, KeyframeAnimationModule.State, EmptyStruct, EmptyStruct>(
+            vehicle, out var states);
 
         for (var i = 0; i < modules.Length; i++)
         {
@@ -176,6 +549,15 @@ internal static class VesselReader
         return result;
     }
 
-    private static double3Snap Vec(Brutal.Numerics.double3 v)
+    /// <summary>The struct-of-arrays state list for a module type, or false when none on this vehicle.</summary>
+    private static bool TryStates<TModule, TState, TGlobal, TFx>(
+        Vehicle vehicle, out ModuleStateful<TModule, TState, TGlobal, TFx>.StateList states)
+        where TModule : ModuleStateful<TModule, TState, TGlobal, TFx>, IDisposable
+        where TState : unmanaged
+        where TGlobal : unmanaged
+        where TFx : struct
+        => ModuleStateful<TModule, TState, TGlobal, TFx>.TryGetFrom(vehicle.Parts.States, out states);
+
+    private static double3Snap Vec(double3 v)
         => new(Sanitize.Finite(v.X), Sanitize.Finite(v.Y), Sanitize.Finite(v.Z));
 }

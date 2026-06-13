@@ -107,6 +107,66 @@ public sealed class EventDifferTests
     }
 
     [Test]
+    public void EngineStateAndFlameout_AreDetected()
+    {
+        var before = TestData.Vessel() with
+        {
+            Engines = [new EngineSnapshot(0, false, 1, 1) { PropellantAvailable = true }],
+        };
+        var fired = TestData.Vessel() with
+        {
+            Engines = [new EngineSnapshot(0, true, 1, 1) { PropellantAvailable = true }],
+        };
+        var starved = TestData.Vessel() with
+        {
+            Engines = [new EngineSnapshot(0, true, 1, 1) { PropellantAvailable = false }],
+        };
+
+        var onEvents = EventDiffer.Diff(Previous(before), 2, 1, "test-1", [fired]);
+        Assert.That(onEvents.Single(e => e.Type == "engine-state").Detail, Is.EqualTo("engine 0 on"));
+
+        var flameout = EventDiffer.Diff(Previous(fired), 3, 1, "test-1", [starved]);
+        Assert.That(flameout.Any(e => e.Type == "flameout"), Is.True);
+    }
+
+    [Test]
+    public void DockingDecouplerAndAnimation_Edges()
+    {
+        var before = TestData.Vessel() with
+        {
+            Docking = [new DockingSnapshot(0, false, null)],
+            Decouplers = [new DecouplerSnapshot(0, false)],
+            Animations = [new AnimationSnapshot(0, 1, 1, "Deploying", IsSolar: false)],
+        };
+        var after = TestData.Vessel() with
+        {
+            Docking = [new DockingSnapshot(0, true, "node-7")],
+            Decouplers = [new DecouplerSnapshot(0, true)],
+            Animations = [new AnimationSnapshot(0, 1, 1, "Deployed", IsSolar: false)],
+        };
+
+        var events = EventDiffer.Diff(Previous(before), 2, 1, "test-1", [after]);
+        Assert.Multiple(() =>
+        {
+            Assert.That(events.Single(e => e.Type == "docked").Detail, Is.EqualTo("node-7"));
+            Assert.That(events.Any(e => e.Type == "decoupled"), Is.True);
+            Assert.That(events.Single(e => e.Type == "animation-complete").Detail,
+                Is.EqualTo("animation 0 Deployed"));
+        });
+    }
+
+    [Test]
+    public void BatteryDepletionAndCharge_Edges()
+    {
+        var full = TestData.Vessel(battery: 1.0);
+        var empty = TestData.Vessel(battery: 0.0);
+        Assert.That(EventDiffer.Diff(Previous(full), 2, 1, "test-1", [empty])
+            .Single(e => e.Type == "battery-depleted"), Is.Not.Null);
+        Assert.That(EventDiffer.Diff(Previous(empty), 3, 1, "test-1", [full])
+            .Single(e => e.Type == "battery-charged"), Is.Not.Null);
+    }
+
+    [Test]
     public void MultipleSimultaneousChanges_AllReported()
     {
         var previous = Previous(TestData.Vessel(situation: "Landed"));

@@ -30,6 +30,7 @@ internal sealed class TelemetrySampler
     private SimSnapshot? _previous;
     private long _sequence;
     private bool _vehicleErrorLogged;
+    private bool _bodyErrorLogged;
     private string _gameVersion = "";
 
     /// <param name="store">The exchange the 9p tree reads from.</param>
@@ -67,6 +68,8 @@ internal sealed class TelemetrySampler
         var activeId = Program.ControlledVehicle?.Id;
 
         var vessels = new List<VesselSnapshot>();
+        IReadOnlyList<BodySnapshot> bodies = [];
+        SystemSnapshot? systemSummary = null;
         if (Universe.CurrentSystem is { } system)
         {
             foreach (var astronomical in system.All.UnsafeAsList())
@@ -75,7 +78,7 @@ internal sealed class TelemetrySampler
                     continue;
                 try
                 {
-                    vessels.Add(VesselReader.Sample(vehicle));
+                    vessels.Add(VesselReader.Sample(vehicle, activeId, ut));
                 }
                 catch (Exception ex)
                 {
@@ -87,13 +90,77 @@ internal sealed class TelemetrySampler
                     }
                 }
             }
+
+            (bodies, systemSummary) = SampleBodies(system);
         }
 
         var events = EventDiffer.Diff(_previous, ut, warp, activeId, vessels);
         var snapshot = new SimSnapshot(++_sequence, ut, warp, activeId, vessels, events,
-            GameVersion(), _rateHz, _health.Snapshot());
+            GameVersion(), _rateHz, _health.Snapshot())
+        {
+            SimDtSeconds = Sanitize.Finite(Universe.GetLastSimStep().DeltaTime),
+            WarpSpeeds = SampleWarpSpeeds(),
+            AutoWarpActive = SafeAutoWarpActive(),
+            AutoWarpTargetUt = SafeAutoWarpTarget(),
+            Bodies = bodies,
+            System = systemSummary,
+        };
         _previous = snapshot;
         _store.Publish(snapshot);
+    }
+
+    private (IReadOnlyList<BodySnapshot>, SystemSnapshot?) SampleBodies(CelestialSystem system)
+    {
+        try
+        {
+            return BodyReader.Sample(system);
+        }
+        catch (Exception ex)
+        {
+            if (!_bodyErrorLogged)
+            {
+                _bodyErrorLogged = true;
+                ModLog.Log.Debug($"telemetry: body catalog sample failed (logged once): {ex.Message}");
+            }
+
+            return ([], null);
+        }
+    }
+
+    private static IReadOnlyList<double> SampleWarpSpeeds()
+    {
+        try
+        {
+            return Universe.GetSimulationSpeeds().Select(s => Sanitize.Finite(s.Value)).ToArray();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static bool SafeAutoWarpActive()
+    {
+        try
+        {
+            return Universe.IsAutoWarpActive;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static double SafeAutoWarpTarget()
+    {
+        try
+        {
+            return Universe.AutoWarpTime is { } t ? Sanitize.Finite(t.Seconds()) : 0;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     private string GameVersion()

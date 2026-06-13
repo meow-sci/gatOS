@@ -1,9 +1,10 @@
 # KSA Game Integration Plan — telemetry, control, and virtual hardware
 
-> Status: **G1 + G2 BUILT** (command pipeline + first controls + integration-layer formalization;
-> 2026-06-12). Parts 1–3 (realism stance, the four archetypes, the KSA Integration Layer) are
-> implemented and the as-built reality is in `CLAUDE.md` + `docs/KSA_INTEGRATION_MATRIX.md`. G3+
-> (read-surface expansion, full control surface, HTTP/serial transports, SDK) remain PROPOSED.
+> Status: **G1–G4 BUILT** (command pipeline + first controls + integration-layer formalization +
+> read-surface expansion + full control surface; 2026-06-12). Parts 1–5 (realism stance, the four
+> archetypes, the KSA Integration Layer, the READ catalog, the WRITE catalog) are implemented and
+> the as-built reality is in `CLAUDE.md` + `docs/KSA_INTEGRATION_MATRIX.md`. The remaining proposed
+> work is G5 (magic HTTP), G6 (SDK) and G7 (serial/bus transports).
 > This plan expands and supersedes the one-paragraph M12 P1 sketch ("writable control files")
 > in `OS_PLAN.md`. It is the central, co-located reference for **every KSA data point we read
 > and every KSA mutation we perform** — the document you update first when a new decompiled
@@ -590,8 +591,8 @@ image bump as any M10 guest changes to avoid churning `GUEST_VERSION` twice).
 |---|---|---|
 | **G1 — command pipeline + first controls** ✅ **BUILT** | `Commands/` model+queue, 9p write path (Tlopen/Twrite/Tsetattr/mode bits), `ControlFile`/`TriggerFile`, actuators: engine `active`, vessel `ignite`/`shutdown`/`lights`, animation/solar `goal`; `[control]` config | From a real guest shell: ignite, shut down, deploy panels, toggle lights; bad writes return correct errnos; suite green. **Done** (unit + 9p-client + `GATOS_IT` fixtures green; in-game pass pending the purrTTY tip release, as for T6.6) |
 | **G2 — integration layer formalization** ✅ **BUILT** | `Game/Ksa/` Readers/Actuators/Catalog refactor (TelemetrySampler absorbed), `[KsaAnchor]`, `docs/KSA_INTEGRATION_MATRIX.md` seeded, health latches + `/sim/status/` | Matrix covers the exposed points; a faulting accessor degrades gracefully and surfaces in `/sim/status/accessors`. **Done** (the `[KsaAnchor]`↔matrix consistency *test* is deferred — `gatOS.GameMod` has no test project; the matrix is maintained by hand) |
-| **G3 — read-surface expansion** | `/sim/bodies`, `/sim/system`, vessel `telemetry` JSON, environment/navball/orbit-extras/encounters, solar/lights/animations/docking/decoupler/generator/rcs read views, new event types, light color/brightness writes (template-clone) | New tree verified in-guest; `EventDiffer` tests for each new event |
-| **G4 — full control surface** | throttle, attitude/burn (FlightComputer), RCS, gimbal commands, staging, decouplers, `parts/<instanceId>` tree, solver-phase queue (Harmony prefix), `/sim/debug/*` | In-game checklist: scripted deorbit burn via files only |
+| **G3 — read-surface expansion** ✅ **BUILT** | `/sim/bodies`, `/sim/system`, `time/{sim_dt,warp_speeds,auto_warp,alarm}`, vessel `telemetry` JSON, environment/navball/orbit-extras/encounters, solar/lights/animations/docking/decoupler/generator/rcs read views, new event types, light colour/brightness writes (template-clone) | New tree verified over the 9p client; `EventDiffer` tests per new event. **Done** (in-guest pass pending the purrTTY tip release; aero `cda` deferred — private) |
+| **G4 — full control surface** ✅ **BUILT** | throttle (reflection), attitude/burn (FlightComputer), RCS, staging, decouplers, solver-phase queue (Harmony prefix on `ExecuteNextVehicleSolvers`), `/sim/debug/*` (teleport/refill/warp/switch) | Control surface verified over the 9p client + `[control]` config. **Done** (gimbal command + `parts/<instanceId>` tree + RCS pulse deferred — see matrix; scripted-burn in-game pass pending) |
 | **G5 — HTTP transport** | `gatOS.Http` (GenHTTP), REST+SSE+OpenAPI, parameterized queries, guest v3 plumbing (`gatos.httpport`, hosts entry, profile env) | `curl http://sim:4242/v1/snapshot` and SSE events from guest; OpenAPI validates |
 | **G6 — SDK + player docs** | `examples/sdk-ts` (Bun), example scripts, user-facing `docs/SIM_API.md` | Examples run in-guest against both transports |
 | **G7 — bus experiments** | `gatOS.Bus`, virtio-serial ports (mdev symlinks), NDJSON/NMEA feed, SCPI command port, CCSDS packets, 1553 BC/RT framing; SpaceWire stretch | `cat /dev/virtio-ports/gatos.tlm.0` streams; SDK decodes CCSDS/1553 frames |

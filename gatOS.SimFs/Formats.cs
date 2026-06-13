@@ -127,6 +127,110 @@ public static class Formats
         return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 
+    /// <summary>
+    ///     One <c>encounters</c> NDJSON line (no trailing LF — the file joins them):
+    ///     <c>{"body":…,"ut":…,"distance":…}</c>.
+    /// </summary>
+    public static string EncounterLine(EncounterSnapshot encounter)
+    {
+        var buffer = new ArrayBufferWriter<byte>(96);
+        using (var json = new Utf8JsonWriter(buffer, JsonOptions))
+        {
+            json.WriteStartObject();
+            json.WriteString("body", encounter.Body);
+            json.WriteNumber("ut", encounter.Ut);
+            json.WriteNumber("distance", encounter.DistanceMeters);
+            json.WriteEndObject();
+        }
+
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
+
+    /// <summary>
+    ///     The whole-vessel <c>telemetry</c> document (KSA_GAME_INTEGRATION_PLAN §4.5): a single
+    ///     JSON object so one <c>read()</c> yields one self-consistent snapshot — the atomicity
+    ///     answer for file consumers, who otherwise must stitch many scalar files together.
+    ///     Returned without a trailing LF; the file appends one.
+    /// </summary>
+    public static string VesselTelemetry(SimSnapshot snapshot, VesselSnapshot v)
+    {
+        var buffer = new ArrayBufferWriter<byte>(512);
+        using (var json = new Utf8JsonWriter(buffer, JsonOptions))
+        {
+            json.WriteStartObject();
+            json.WriteNumber("seq", snapshot.Sequence);
+            json.WriteNumber("ut", snapshot.UtSeconds);
+            json.WriteNumber("warp", snapshot.WarpFactor);
+            json.WriteString("id", v.Id);
+            json.WriteString("sit", v.Situation);
+            json.WriteBoolean("controlled", v.Controlled);
+            if (v.ParentBodyName is { } parent)
+                json.WriteString("parent", parent);
+
+            WriteVec3(json, "pos_cci", v.PositionCci);
+            WriteVec3(json, "pos_ecl", v.PositionEcl);
+            WriteVec3(json, "vel_cci", v.VelocityCci);
+            json.WriteStartObject("vel");
+            json.WriteNumber("orb", v.OrbitalSpeed);
+            json.WriteNumber("surf", v.SurfaceSpeed);
+            json.WriteNumber("inr", v.InertialSpeed);
+            json.WriteEndObject();
+
+            json.WriteStartObject("alt");
+            json.WriteNumber("baro", v.BarometricAltitude);
+            json.WriteNumber("radar", v.RadarAltitude);
+            json.WriteEndObject();
+
+            json.WriteStartObject("mass");
+            json.WriteNumber("t", v.MassTotal);
+            json.WriteNumber("d", v.MassDry);
+            json.WriteNumber("p", v.MassPropellant);
+            json.WriteEndObject();
+
+            json.WriteStartArray("att_q");
+            json.WriteNumberValue(v.AttitudeBody2Cci.X);
+            json.WriteNumberValue(v.AttitudeBody2Cci.Y);
+            json.WriteNumberValue(v.AttitudeBody2Cci.Z);
+            json.WriteNumberValue(v.AttitudeBody2Cci.W);
+            json.WriteEndArray();
+
+            if (v.Orbit is { } o)
+            {
+                json.WriteStartObject("orbit");
+                json.WriteNumber("ap", o.ApoapsisAltitude);
+                json.WriteNumber("pe", o.PeriapsisAltitude);
+                json.WriteNumber("ecc", o.Eccentricity);
+                json.WriteNumber("inc", o.InclinationDeg);
+                json.WriteNumber("sma", o.SmaMeters);
+                json.WriteNumber("period", o.PeriodSeconds);
+                json.WriteNumber("ta", o.TrueAnomalyDeg);
+                json.WriteNumber("t_ap", o.TimeToApoapsis);
+                json.WriteNumber("t_pe", o.TimeToPeriapsis);
+                json.WriteEndObject();
+            }
+
+            json.WriteStartObject("power");
+            json.WriteNumber("prod", v.PowerProducedW);
+            json.WriteNumber("cons", v.PowerConsumedW);
+            if (v.BatteryChargeFraction is { } charge)
+                json.WriteNumber("battery", charge);
+            json.WriteEndObject();
+
+            json.WriteEndObject();
+        }
+
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
+
+    private static void WriteVec3(Utf8JsonWriter json, string name, double3Snap v)
+    {
+        json.WriteStartArray(name);
+        json.WriteNumberValue(v.X);
+        json.WriteNumberValue(v.Y);
+        json.WriteNumberValue(v.Z);
+        json.WriteEndArray();
+    }
+
     private static byte[] WithNewline(ArrayBufferWriter<byte> buffer)
     {
         var line = new byte[buffer.WrittenCount + 1];

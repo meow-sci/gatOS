@@ -22,6 +22,39 @@ public sealed class FormatsTests
     }
 
     [Test]
+    public void EncounterLine_IsCompactJson()
+    {
+        var line = Formats.EncounterLine(new EncounterSnapshot("Mun", 1234.5, 67000));
+        using var json = JsonDocument.Parse(line);
+        Assert.Multiple(() =>
+        {
+            Assert.That(json.RootElement.GetProperty("body").GetString(), Is.EqualTo("Mun"));
+            Assert.That(json.RootElement.GetProperty("ut").GetDouble(), Is.EqualTo(1234.5));
+            Assert.That(json.RootElement.GetProperty("distance").GetDouble(), Is.EqualTo(67000));
+            Assert.That(line, Does.Not.EndWith("\n"), "the file joins lines with its own LF");
+        });
+    }
+
+    [Test]
+    public void VesselTelemetry_IsOneAtomicJsonObject()
+    {
+        var vessel = TestData.Vessel() with { Controlled = true };
+        var snapshot = TestData.Snapshot(7, vessel);
+        var doc = Formats.VesselTelemetry(snapshot, vessel);
+        using var json = JsonDocument.Parse(doc);
+        var root = json.RootElement;
+        Assert.Multiple(() =>
+        {
+            Assert.That(root.GetProperty("seq").GetInt64(), Is.EqualTo(7));
+            Assert.That(root.GetProperty("id").GetString(), Is.EqualTo("test-1"));
+            Assert.That(root.GetProperty("controlled").GetBoolean(), Is.True);
+            Assert.That(root.GetProperty("mass").GetProperty("t").GetDouble(), Is.EqualTo(12000));
+            Assert.That(root.GetProperty("orbit").GetProperty("ap").GetDouble(), Is.EqualTo(250000));
+            Assert.That(root.TryGetProperty("vel", out _), Is.True);
+        });
+    }
+
+    [Test]
     public void Flag_IsZeroOrOne()
     {
         Assert.Multiple(() =>

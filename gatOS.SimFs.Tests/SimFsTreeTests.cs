@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using gatOS.NineP.Protocol;
@@ -66,21 +67,30 @@ public sealed class SimFsTreeTests
 
         string[] vesselFiles =
         [
-            "id", "name", "situation", "parent",
-            "position/cci", "position/lat", "position/lon",
-            "velocity/orbital", "velocity/surface", "velocity/inertial",
+            "id", "name", "situation", "parent", "controlled", "com", "telemetry",
+            "position/cci", "position/ecl", "position/lat", "position/lon",
+            "velocity/orbital", "velocity/surface", "velocity/inertial", "velocity/cci",
             "attitude/quat", "attitude/rates",
             "altitude/barometric", "altitude/radar",
             "mass/total", "mass/dry", "mass/propellant",
-            "orbit/apoapsis", "orbit/periapsis", "orbit/ecc", "orbit/inc", "orbit/sma", "orbit/period",
-            "battery/charge",
-            "engines/0/active", "engines/0/vac_thrust", "engines/0/isp",
-            "engines/1/active", "engines/1/vac_thrust", "engines/1/isp",
-            "tanks/methalox/amount", "tanks/methalox/capacity",
-            "tanks/monoprop/amount", "tanks/monoprop/capacity",
+            "orbit/apoapsis", "orbit/periapsis", "orbit/ecc", "orbit/inc", "orbit/lan", "orbit/argpe",
+            "orbit/sma", "orbit/period", "orbit/true_anomaly", "orbit/time_to_ap", "orbit/time_to_pe",
+            "orbit/next_patch",
+            "battery/charge", "battery/fraction", "battery/capacity",
+            "power/produced", "power/consumed",
+            "engines/0/active", "engines/0/vac_thrust", "engines/0/isp", "engines/0/throttle",
+            "engines/0/propellant", "engines/0/min_throttle",
+            "engines/1/active", "engines/1/vac_thrust", "engines/1/isp", "engines/1/throttle",
+            "engines/1/propellant", "engines/1/min_throttle",
+            "tanks/methalox/amount", "tanks/methalox/capacity", "tanks/methalox/fraction",
+            "tanks/monoprop/amount", "tanks/monoprop/capacity", "tanks/monoprop/fraction",
             "stream",
         ];
-        var expected = new List<string> { "time/ut", "time/warp", "events" };
+        var expected = new List<string>
+        {
+            "time/ut", "time/warp", "time/sim_dt", "time/warp_speeds", "time/auto_warp", "time/alarm",
+            "system/name", "system/home", "system/sun", "events",
+        };
         expected.AddRange(vesselFiles.Select(f => $"vessels/active/{f}"));
         expected.AddRange(vesselFiles.Select(f => $"vessels/by-id/test-1/{f}"));
 
@@ -109,7 +119,19 @@ public sealed class SimFsTreeTests
             Assert.That(files["vessels/by-id/test-1/tanks/methalox/amount"], Is.EqualTo("7800\n"));
             Assert.That(files["vessels/active/altitude/radar"], Is.EqualTo("70950.5\n"),
                 "the active alias serves the same data");
+            Assert.That(files["vessels/by-id/test-1/controlled"], Is.EqualTo("0\n"));
+            Assert.That(files["vessels/by-id/test-1/power/produced"], Is.EqualTo("0\n"));
+            Assert.That(files["vessels/by-id/test-1/engines/0/throttle"], Is.EqualTo("0\n"));
+            Assert.That(files["vessels/by-id/test-1/engines/0/min_throttle"], Is.EqualTo("0\n"));
+            Assert.That(files["vessels/by-id/test-1/tanks/methalox/fraction"], Is.EqualTo("0\n"));
+            Assert.That(files["vessels/by-id/test-1/battery/fraction"], Is.EqualTo("0.87\n"));
+            Assert.That(files["vessels/by-id/test-1/orbit/true_anomaly"], Is.EqualTo("0\n"));
+            Assert.That(files["system/sun"], Is.EqualTo("\n"), "no bodies sampled in this fixture");
         });
+
+        // The telemetry document is one parseable JSON object for the vessel.
+        using (var telemetry = JsonDocument.Parse(files["vessels/by-id/test-1/telemetry"]))
+            Assert.That(telemetry.RootElement.GetProperty("id").GetString(), Is.EqualTo("test-1"));
 
         // The stream file's seed line is valid NDJSON for the current snapshot.
         using var stream = JsonDocument.Parse(files["vessels/by-id/test-1/stream"]);
@@ -236,6 +258,55 @@ public sealed class SimFsTreeTests
         _store.Publish(TestData.Snapshot(2, TestData.Vessel(radarAltitude: 250.5)));
         Assert.That(await ReadFileAsync("vessels", "by-id", "test-1", "altitude", "radar"),
             Is.EqualTo("250.5\n"));
+    }
+
+    [Test]
+    public async Task BodiesAndSystem_AreReadable()
+    {
+        var body = new BodySnapshot("Kerth", "Planet", "Sun", ["Mun"], 5.29e22, 600000, 3.5e12, 8.4e7,
+            2.9e-4, new double3Snap(1, 2, 3), new double3Snap(4, 5, 6),
+            new OrbitSnapshot(1000, 2000, 0.01, 0, 7e9, 9e6) { LanDeg = 10, ArgPeDeg = 20 },
+            new AtmosphereSnapshot(70000, 5000, 101325, 1.225), new OceanSnapshot(1000));
+        _store.Publish(TestData.Snapshot(1, TestData.Vessel()) with
+        {
+            Bodies = [body],
+            System = new SystemSnapshot("Sun", "Kerth", "Sun"),
+        });
+
+        Assert.That(await ReadFileAsync("system", "sun"), Is.EqualTo("Sun\n"));
+        Assert.That(await ReadFileAsync("system", "home"), Is.EqualTo("Kerth\n"));
+        Assert.That(await ReadFileAsync("bodies", "Kerth", "class"), Is.EqualTo("Planet\n"));
+        Assert.That(await ReadFileAsync("bodies", "Kerth", "radius"), Is.EqualTo("600000\n"));
+        Assert.That(await ReadFileAsync("bodies", "Kerth", "children"), Is.EqualTo("Mun\n"));
+        Assert.That(await ReadFileAsync("bodies", "Kerth", "atmosphere", "sea_level_pressure"),
+            Is.EqualTo("101325\n"));
+        Assert.That(await ReadFileAsync("bodies", "Kerth", "ocean", "density"), Is.EqualTo("1000\n"));
+    }
+
+    [Test]
+    public async Task Alarm_ArmsAndFiresOnTargetUt()
+    {
+        _store.Publish(TestData.Snapshot(1, TestData.Vessel())); // ut = 0.1
+
+        // Arm the alarm for sim time 5.
+        var armFid = _nextFid++;
+        await _client.WalkAsync(0, armFid, "time", "alarm");
+        await _client.LopenAsync(armFid, 1); // O_WRONLY
+        await _client.WriteAsync(armFid, 0, Encoding.UTF8.GetBytes("5\n"));
+        await _client.ClunkAsync(armFid);
+
+        // A read parks below the target, then completes once sim time reaches it.
+        var readFid = _nextFid++;
+        await _client.WalkAsync(0, readFid, "time", "alarm");
+        await _client.LopenAsync(readFid);
+        var readTask = _client.ReadToEndAsync(readFid);
+        await Task.Delay(100);
+        Assert.That(readTask.IsCompleted, Is.False, "alarm parks while sim time is below the target");
+
+        _store.Publish(TestData.Snapshot(60, TestData.Vessel())); // ut = 6.0
+        var reached = double.Parse(Encoding.UTF8.GetString(await readTask).Trim(), CultureInfo.InvariantCulture);
+        Assert.That(reached, Is.GreaterThanOrEqualTo(5));
+        await _client.ClunkAsync(readFid);
     }
 
     private async Task<string[]> ByIdNamesAsync()

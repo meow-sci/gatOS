@@ -23,18 +23,24 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels) : ICommandEx
             if (health.IsDegraded(accessor))
                 return new CommandResult(CommandOutcome.Unsupported, $"'{command.Action}' is latched degraded");
 
-            var vehicle = ResolveVehicle(command.VesselId);
+            var isDebug = command.Action.StartsWith("debug.", StringComparison.Ordinal);
+
+            // Vessel-agnostic debug actions (no target vehicle to resolve).
+            if (command.Action == "debug.warp")
+                return Finish(accessor, DebugActuator.SetWarp(command.Value));
+
+            // switch_vessel targets the vessel named by the token, not the (sender) VesselId.
+            var targetId = command.Action == "debug.switch_vessel" ? command.Token ?? command.VesselId : command.VesselId;
+            var vehicle = ResolveVehicle(targetId);
             if (vehicle is null)
-                return new CommandResult(CommandOutcome.NotFound, $"vessel '{command.VesselId}' is gone");
+                return new CommandResult(CommandOutcome.NotFound, $"vessel '{targetId}' is gone");
 
             // Authority gate (G-D1): with all_vessels=false only the controlled vehicle is commandable.
-            if (!allVessels && Program.ControlledVehicle?.Id != vehicle.Id)
+            // The cheat namespace is exempt — it is its own opt-in (G-D2).
+            if (!isDebug && !allVessels && Program.ControlledVehicle?.Id != vehicle.Id)
                 return new CommandResult(CommandOutcome.Denied, "control is restricted to the active vessel");
 
-            var result = Dispatch(vehicle, command);
-            if (result.IsSuccess)
-                health.Clear(accessor);
-            return result;
+            return Finish(accessor, Dispatch(vehicle, command));
         }
         catch (Exception ex)
         {
@@ -43,13 +49,45 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels) : ICommandEx
         }
     }
 
+    private CommandResult Finish(string accessor, CommandResult result)
+    {
+        if (result.IsSuccess)
+            health.Clear(accessor);
+        return result;
+    }
+
     private static CommandResult Dispatch(Vehicle vehicle, SimCommand c) => c.Action switch
     {
+        // Engines / vessel-level (G1)
         "vessel.ignite" => EngineActuator.Ignite(vehicle),
         "vessel.shutdown" => EngineActuator.Shutdown(vehicle),
         "engine.active" => EngineActuator.SetActive(vehicle, c.Ordinal, c.Value > 0.5),
+        "engine.min_throttle" => EngineActuator.SetMinThrottle(vehicle, c.Ordinal, c.Value),
         "vessel.lights" => LightActuator.SetMaster(vehicle, c.Value > 0.5),
         "animation.goal" => AnimationActuator.SetGoal(vehicle, c.Ordinal, c.Value),
+
+        // Vessel control surface (G4)
+        "vessel.throttle" => ThrottleActuator.Set(vehicle, c.Value),
+        "vessel.stage" => StagingActuator.Stage(vehicle),
+        "vessel.rcs" => RcsActuator.SetMaster(vehicle, c.Value > 0.5),
+        "vessel.attitude_mode" => FlightComputerActuator.SetAttitudeMode(vehicle, c.Token ?? ""),
+        "vessel.attitude_frame" => FlightComputerActuator.SetAttitudeFrame(vehicle, c.Token ?? ""),
+        "vessel.attitude_target" => FlightComputerActuator.SetAttitudeTarget(vehicle, c.Values ?? []),
+        "vessel.burn" => FlightComputerActuator.SetBurn(vehicle, c.Values ?? []),
+
+        // Per-module (G4)
+        "rcs.active" => RcsActuator.SetActive(vehicle, c.Ordinal, c.Value > 0.5),
+        "light.on" => LightActuator.SetOn(vehicle, c.Ordinal, c.Value > 0.5),
+        "light.brightness" => LightActuator.SetBrightness(vehicle, c.Ordinal, c.Value),
+        "light.color" => LightActuator.SetColor(vehicle, c.Ordinal, c.Values ?? []),
+        "decoupler.fire" => DecouplerActuator.Fire(vehicle, c.Ordinal),
+
+        // Cheat namespace (G4 / G-D2)
+        "debug.switch_vessel" => DebugActuator.SwitchVessel(vehicle),
+        "debug.teleport" => DebugActuator.Teleport(vehicle, c.Values ?? []),
+        "debug.refill_fuel" => DebugActuator.RefillFuel(vehicle),
+        "debug.refill_battery" => DebugActuator.RefillBattery(vehicle),
+
         _ => new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'"),
     };
 

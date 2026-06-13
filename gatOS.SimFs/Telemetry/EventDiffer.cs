@@ -59,6 +59,8 @@ public static class EventDiffer
             if (was.ParentBodyName != vessel.ParentBodyName)
                 events.Add(new SimEvent(utSeconds, "soi-changed", vessel.Id,
                     $"{was.ParentBodyName ?? "none"}→{vessel.ParentBodyName ?? "none"}"));
+
+            DiffModules(events, utSeconds, vessel.Id, was, vessel);
         }
 
         // Whatever was not matched above is gone.
@@ -66,5 +68,73 @@ public static class EventDiffer
             events.Add(new SimEvent(utSeconds, "vessel-removed", id, was.Name));
 
         return events;
+    }
+
+    /// <summary>
+    ///     Per-module edge detection (KSA_GAME_INTEGRATION_PLAN §4.7): engine activation/flameout,
+    ///     docking, decoupling, animation completion and battery depletion/charge. Modules are
+    ///     matched by their stable index; an index that appears or disappears (structural edit) is
+    ///     ignored rather than reported as a change.
+    /// </summary>
+    private static void DiffModules(
+        List<SimEvent> events, double ut, string vesselId, VesselSnapshot was, VesselSnapshot now)
+    {
+        // Engines: active flip + flameout (propellant lost while active).
+        var wasEngines = new Dictionary<int, EngineSnapshot>();
+        foreach (var e in was.Engines)
+            wasEngines.TryAdd(e.Index, e);
+        foreach (var e in now.Engines)
+        {
+            if (!wasEngines.TryGetValue(e.Index, out var prev))
+                continue;
+            if (prev.Active != e.Active)
+                events.Add(new SimEvent(ut, "engine-state", vesselId,
+                    $"engine {e.Index} {(e.Active ? "on" : "off")}"));
+            if (e.Active && prev.PropellantAvailable && !e.PropellantAvailable)
+                events.Add(new SimEvent(ut, "flameout", vesselId, $"engine {e.Index}"));
+        }
+
+        // Docking: docked/undocked.
+        var wasDock = new Dictionary<int, DockingSnapshot>();
+        foreach (var d in was.Docking)
+            wasDock.TryAdd(d.Index, d);
+        foreach (var d in now.Docking)
+        {
+            if (!wasDock.TryGetValue(d.Index, out var prev) || prev.Docked == d.Docked)
+                continue;
+            events.Add(new SimEvent(ut, d.Docked ? "docked" : "undocked", vesselId,
+                d.DockedToPart ?? $"port {d.Index}"));
+        }
+
+        // Decouplers: fired (rising edge only — firing is irreversible).
+        var wasDec = new Dictionary<int, DecouplerSnapshot>();
+        foreach (var d in was.Decouplers)
+            wasDec.TryAdd(d.Index, d);
+        foreach (var d in now.Decouplers)
+            if (wasDec.TryGetValue(d.Index, out var prev) && !prev.Fired && d.Fired)
+                events.Add(new SimEvent(ut, "decoupled", vesselId, $"decoupler {d.Index}"));
+
+        // Animations: settled to a terminal state (Deploying/Retracting → Deployed/Retracted).
+        var wasAnim = new Dictionary<int, AnimationSnapshot>();
+        foreach (var a in was.Animations)
+            wasAnim.TryAdd(a.Index, a);
+        foreach (var a in now.Animations)
+        {
+            if (!wasAnim.TryGetValue(a.Index, out var prev) || prev.DeploymentState == a.DeploymentState)
+                continue;
+            if (a.DeploymentState is "Deployed" or "Retracted"
+                && prev.DeploymentState is "Deploying" or "Retracting")
+                events.Add(new SimEvent(ut, "animation-complete", vesselId,
+                    $"animation {a.Index} {a.DeploymentState}"));
+        }
+
+        // Battery: crossing empty / full.
+        if (was.BatteryChargeFraction is { } prevCharge && now.BatteryChargeFraction is { } charge)
+        {
+            if (prevCharge > 0.01 && charge <= 0.001)
+                events.Add(new SimEvent(ut, "battery-depleted", vesselId, "0"));
+            else if (prevCharge < 0.999 && charge >= 0.999)
+                events.Add(new SimEvent(ut, "battery-charged", vesselId, "1"));
+        }
     }
 }

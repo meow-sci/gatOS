@@ -7,8 +7,10 @@ internal static class TestData
 {
     internal static VesselSnapshot Vessel(string id = "test-1", string situation = "Freefall",
         double radarAltitude = 70950.5, OrbitSnapshot? orbit = null, bool withOrbit = true,
-        double? battery = 0.87, bool lightsOn = false, IReadOnlyList<AnimationSnapshot>? animations = null)
-        => new(
+        double? battery = 0.87, bool lightsOn = false, IReadOnlyList<AnimationSnapshot>? animations = null,
+        IReadOnlyList<SolarSnapshot>? solar = null, IReadOnlyList<DecouplerSnapshot>? decouplers = null,
+        IReadOnlyList<RcsSnapshot>? rcs = null, IReadOnlyList<LightSnapshot>? lights = null)
+        => new VesselSnapshot(
             Id: id,
             Name: $"Vessel {id}",
             Situation: situation,
@@ -31,7 +33,13 @@ internal static class TestData
             BatteryChargeFraction: battery,
             ParentBodyName: "Kerth",
             LightsMasterOn: lightsOn,
-            Animations: animations ?? []);
+            Animations: animations ?? [])
+        {
+            Solar = solar ?? [],
+            Decouplers = decouplers ?? [],
+            Rcs = rcs ?? [],
+            Lights = lights ?? [],
+        };
 
     internal static SimSnapshot Snapshot(long sequence, params VesselSnapshot[] vessels)
         => new(sequence, sequence * 0.1, 1, vessels.Length > 0 ? vessels[0].Id : null, vessels, [],

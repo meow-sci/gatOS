@@ -26,6 +26,7 @@ public sealed class ControlFile : CommandFile
     {
         Flag,
         Fraction,
+        Number,
     }
 
     /// <summary>A boolean setpoint: accepts exactly <c>0</c> or <c>1</c>.</summary>
@@ -37,6 +38,11 @@ public sealed class ControlFile : CommandFile
     public static ControlFile Fraction(string name, ulong qidPath, ICommandSink sink, Func<string> read,
         Func<double, SimCommand> build)
         => new(name, qidPath, sink, read, Kind.Fraction, build);
+
+    /// <summary>An unbounded numeric setpoint: accepts any finite real (e.g. light intensity).</summary>
+    public static ControlFile Number(string name, ulong qidPath, ICommandSink sink, Func<string> read,
+        Func<double, SimCommand> build)
+        => new(name, qidPath, sink, read, Kind.Number, build);
 
     /// <inheritdoc />
     protected override SimCommand? Parse(string token)
@@ -50,6 +56,8 @@ public sealed class ControlFile : CommandFile
             case Kind.Flag when value is 0 or 1:
                 return _build(value);
             case Kind.Fraction when value is >= 0 and <= 1:
+                return _build(value);
+            case Kind.Number:
                 return _build(value);
             default:
                 return null;

@@ -4,6 +4,8 @@ using gatOS.GameMod.Game.Ksa;
 using gatOS.Logging;
 using gatOS.SimFs.Commands;
 using gatOS.Vm;
+using HarmonyLib;
+using KSA;
 using ModMenu;
 using float2 = Brutal.Numerics.float2;
 using float4 = Brutal.Numerics.float4;
@@ -57,6 +59,10 @@ public sealed partial class Mod
     private KsaHealth? _health;
     private KsaCatalog? _catalog;
     private bool _commandsDead;
+
+    // The Harmony patch draining solver-phase commands (G4). Installed in OnFullyLoaded, removed at
+    // Unload; null when the solver hook could not be installed (solver commands then never drain).
+    private Harmony? _solverHarmony;
 
     /// <summary>The "gatOS" entry in the ModMenu bar (same mechanism as purrTTY's).</summary>
     [ModMenuEntry("gatOS")]
@@ -124,14 +130,84 @@ public sealed partial class Mod
 
         try
         {
-            _health ??= new KsaHealth();
-            _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels);
-            queue.Drain(CommandPhase.Frame, _catalog, Config.MaxCommandsPerFrame);
+            EnsureControlObjects();
+            queue.Drain(CommandPhase.Frame, _catalog!, Config.MaxCommandsPerFrame);
         }
         catch (Exception ex)
         {
             _commandsDead = true;
             ModLog.Log.Error($"gatOS control disabled after a drain error: {ex.Message}");
+        }
+    }
+
+    private void EnsureControlObjects()
+    {
+        _health ??= new KsaHealth();
+        _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels);
+    }
+
+    /// <summary>
+    ///     G4: drains solver-phase commands (refills) inside the vehicle-solver step so the
+    ///     mutation is visible to the physics solvers that same tick. Called from the Harmony
+    ///     prefix on <see cref="Universe.ExecuteNextVehicleSolvers"/> — still the game thread
+    ///     (threading rule 1).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    internal void DrainSolverCommands()
+    {
+        if (_commandsDead || _commandQueue is not { } queue)
+            return;
+        EnsureControlObjects();
+        queue.Drain(CommandPhase.Solver, _catalog!, Config.MaxCommandsPerFrame);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void InstallSolverHook()
+    {
+        try
+        {
+            _solverHarmony = new Harmony("gatos.solver");
+            var original = AccessTools.Method(typeof(Universe), nameof(Universe.ExecuteNextVehicleSolvers));
+            if (original is null)
+            {
+                ModLog.Log.Warn("Solver hook: Universe.ExecuteNextVehicleSolvers not found; "
+                                + "solver-phase commands (refills) are disabled.");
+                return;
+            }
+
+            var prefix = new HarmonyMethod(typeof(Mod), nameof(SolverDrainPrefix)) { priority = Priority.First };
+            _solverHarmony.Patch(original, prefix: prefix);
+            ModLog.Log.Info("gatOS solver-phase command hook installed.");
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Error($"gatOS solver hook failed to install (solver commands disabled): {ex.Message}");
+        }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void RemoveSolverHook()
+    {
+        try
+        {
+            _solverHarmony?.UnpatchAll("gatos.solver");
+            _solverHarmony = null;
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS solver hook unpatch error: {ex.Message}");
+        }
+    }
+
+    private static void SolverDrainPrefix()
+    {
+        try
+        {
+            _instance?.DrainSolverCommands();
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS solver-phase drain error: {ex.Message}");
         }
     }
 

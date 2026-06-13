@@ -135,7 +135,8 @@ public sealed class SimMountIntegrationTests
         await using var server = new NinePServer(SimFsTree.Build(store, queue, () => "9p it"));
         await server.StartAsync();
         store.Publish(TestData.Snapshot(1, TestData.Vessel(
-            animations: [new AnimationSnapshot(0, 0, 0, "Retracted", IsSolar: true)])));
+            animations: [new AnimationSnapshot(0, 0, 0, "Retracted", IsSolar: true)],
+            solar: [new SolarSnapshot(0, 0, false, 0, 1, false, 0, AnimationIndex: 0)])));
         _ = Task.Run(() => DrainLoopAsync(queue, executor, _publisher!.Token));
 
         var host = new VmHost(new VmHostOptions

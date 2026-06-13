@@ -7,9 +7,11 @@
 > build, the failing `[KsaAnchor]` sites are the work list — fix them, then update the matching rows
 > here (anchor, `Verified`, `GameVersion`).
 
-**Status:** seeded for the **G1 (command pipeline + first controls)** and **G2 (integration-layer
-formalization)** surface plus the existing M9 read surface. Rows for G3+ read expansion and the
-G4 full control surface are intentionally absent until built.
+**Status:** covers the **G1** (command pipeline + first controls), **G2** (integration-layer
+formalization), **G3** (read-surface expansion: bodies/system, vessel extensions, per-module reads,
+new events) and **G4** (full control surface: throttle/staging/attitude/burn, RCS, per-light, decouplers,
+`/sim/debug`, solver-phase queue) surfaces. The HTTP/serial transports (G5/G7) and SDK (G6) remain
+unbuilt.
 
 **Verified:** 2026-06-12, against `thirdparty/ksa` (`VersionInfo.Current` at build time).
 
@@ -78,6 +80,83 @@ feedback. Authority gate (G-D1): `control_all_vessels=false` restricts to the ac
 | `…/solar/<n>/goal` | St | `0..1` | same as `animations/<n>/goal` (solar-filtered view, same ordinal) | Low | Frame |
 
 `vessels/active/…` is an alias for the controlled vessel and accepts the same writes.
+
+## Read surface — G3 expansion
+
+Anchors in `Game/Ksa/Readers/{VesselReader,BodyReader}.cs`. The reader builds the M9 core first,
+then a guarded enrichment pass adds the rows below; if an extension API drifts, the vessel keeps its
+core telemetry and the extension dirs vanish (logged once) rather than the sample failing.
+
+| Path | A | KSA anchor | Risk |
+|---|---|---|---|
+| `time/{sim_dt,warp_speeds,auto_warp}` | S | `Universe.GetLastSimStep().DeltaTime`, `GetSimulationSpeeds()`, `IsAutoWarpActive`/`AutoWarpTime` | M |
+| `time/alarm` | St | none — write a target `ut`, read parks on `SnapshotStore` until reached (blocking-event model) | — |
+| `system/{name,home,sun}` | S | `Universe.WorldSun` (names the system), `CelestialSystem.HomeBody` | L |
+| `bodies/<id>/{id,class,parent,children,mass,radius,mu,soi,rotation_rate}` | S | `Celestial`/`StellarBody`; `IParentBody.{Mass,Mu}`, `GetAngularVelocity` | L |
+| `bodies/<id>/position/ecl`, `velocity/ecl` | S | `Astronomical.GetPositionEcl()/GetVelocityEcl()` | L |
+| `bodies/<id>/orbit/{apoapsis,periapsis,ecc,inc,lan,argpe,sma,period}` | S | `Celestial.Orbit` (radii→altitude about parent; angles rad→deg) | L |
+| `bodies/<id>/atmosphere/{present,height,scale_height,sea_level_pressure,sea_level_density}` | S | `IParentBody.GetAtmosphereReference().Physical.*` (implicit `double`) | M |
+| `bodies/<id>/ocean/{present,density}` | S | `IParentBody.GetOceanReference().Density` | M |
+| `…/telemetry` | S | whole `VesselSnapshot` as one JSON doc (atomic read) | — |
+| `…/controlled`, `…/com` | S | `Program.ControlledVehicle`; `Vehicle.CenterOfMassAsmb` | L |
+| `…/position/ecl`, `…/velocity/cci` | S | `Vehicle.GetPositionEcl()`, `Vehicle.GetVelocityCci()` (vectors) | L |
+| `…/navball/{pitch,yaw,roll,twr,deltav,frame,speed}` | S | `Vehicle.NavBallData` (`AttitudeAngles` int3 deg) | M |
+| `…/environment/{pressure,density,dynamic_pressure,ocean_density,terrain_radius,accel,angular_accel,g_force}` | S | `Vehicle.PhysicsEnvironment`; `PhysicalAtmosphereReference.GetDynamicPressure`; `AccelerationBody`/`AngularAccelerationBody` | L |
+| `…/orbit/{lan,argpe,true_anomaly,time_to_ap,time_to_pe,next_patch}` | S | `Orbit.{LongitudeOfAscendingNode,ArgumentOfPeriapsis,StateVectors.TrueAnomaly}`; `Vehicle.Next{Apoapsis,Periapsis,PatchEvent}Time` | L |
+| `…/encounters` | S | `Vehicle.Patch.Encounters` (`Encounter.{Body.Id,GameTime,ClosestDistance}`), NDJSON | M |
+| `…/engines/<n>/{throttle,propellant,min_throttle}` | S/St | `EngineControllerState.{CommandThrottle,IsPropellantAvailable}`; `EngineController.MinimumThrottle` | M |
+| `…/tanks/<r>/fraction` | S | `Mole.FilledFraction(state)` | L |
+| `…/battery/{fraction,capacity}` | S | `Battery.MaximumCapacity` (sum); charge/capacity | L |
+| `…/power/{produced,consumed}` | S | Σ `SolarPanelState.Produced`+`GeneratorState.Produced`; Σ `PowerConsumerState.Consumed` (per-sample energy proxy) | M |
+| `…/solar/<n>/{produced,occluded,sun_aoa,efficiency,tracker_angle,state,current,goal}` | S/St | `SolarPanelState.*`; `SolarTrackerState.CurrentAngle` (1:1 by index); deploy via linked `KeyframeAnimationModule` | M |
+| `…/generators/<n>/{active,produced}` | S | `GeneratorState.{Active,Produced}` | M |
+| `…/lights/<n>/{on,brightness,color}` | S/St | `PowerConsumer.LightIsActive`; `LightModule.Template.{Intensity,ColorRgb}` | M (template H) |
+| `…/docking/<n>/{docked,docked_to}` | S | `DockingPort.Docked`/`DockedToPart.Id` | M |
+| `…/decouplers/<n>/{fired,fire}` | S/T | `Decoupler.IsActive` | M |
+
+New `/sim/events` types (snapshot diff in `EventDiffer`): `engine-state`, `flameout`, `docked`,
+`undocked`, `decoupled`, `animation-complete`, `battery-depleted`, `battery-charged`.
+
+## Control surface — G4 expansion
+
+Anchors in `Game/Ksa/Actuators/**`; routed by `KsaCatalog`. Frame phase unless noted.
+
+| Path | A | Write | KSA anchor (actuator) | Risk | Phase |
+|---|---|---|---|---|---|
+| `…/ctl/throttle` | St | `0..1` | `Vehicle._manualControlInputs.EngineThrottle` (reflection — no public setter) | H | Frame |
+| `…/ctl/stage` | T | `1` | `Parts.SequenceList.ActivateNextSequence` + `UpdateAfterPartTreeModification` | M | Frame |
+| `…/ctl/rcs` | St | `0`/`1` | `ThrusterController.SetIsActive` over all controllers | M | Frame |
+| `…/ctl/attitude_mode` | St | token | `FlightComputer.AttitudeMode`/`AttitudeTrackTarget` (`manual` → Manual; else Auto+track) | M | Frame |
+| `…/ctl/attitude_frame` | St | token | `FlightComputer.AttitudeFrame` (`VehicleReferenceFrame`) | M | Frame |
+| `…/ctl/attitude_target` | St | `x y z w` | `FlightComputer.AttitudeTarget = {Target2Cci,RatesCci}` (+Custom track) | M | Frame |
+| `…/ctl/burn` | St | `ut dvx dvy dvz` | `FlightComputer.Burn = BurnTarget{ImpulsiveInstant,DeltaVTargetCci}` | M | Frame |
+| `…/engines/<n>/min_throttle` | St | `0..1` | `EngineController.MinimumThrottle` | M | Frame |
+| `…/rcs/<n>/active` | St | `0`/`1` | `ThrusterController.SetIsActive` | M | Frame |
+| `…/lights/<n>/on` | St | `0`/`1` | `PowerConsumer.LightIsActive` | M | Frame |
+| `…/lights/<n>/brightness` | St | number | `Template.Intensity.Value` (per-instance clone) | H | Frame |
+| `…/lights/<n>/color` | St | `r g b` | `Template.ColorRgb.{R,G,B}`+`OnDataLoad` (per-instance clone) | H | Frame |
+| `…/decouplers/<n>/fire` | T | `1` | `Decoupler.SetIsActive` (re-fire → EBUSY) | M | Frame |
+
+`/sim/debug/` (G-D2; gated by `[control] debug_namespace`):
+
+| Path | A | Write | KSA anchor | Risk | Phase |
+|---|---|---|---|---|---|
+| `debug/vessels/<id>/teleport` | T | `px py pz vx vy vz` | `Orbit.CreateFromStateCci`+`Vehicle.Teleport`+`UpdatePerFrameData` | H | Frame |
+| `debug/vessels/<id>/refill_fuel` | T | `1` | `Vehicle.RefillConsumables()` | M | **Solver** |
+| `debug/vessels/<id>/refill_battery` | T | `1` | `Battery.Refill(ref state)` via `GetModuleAndAllMutableStatesForInitialization` | M | **Solver** |
+| `debug/time/warp` | St | factor | `Universe.SetSimulationSpeed(double, alert:false)` (public) | M | Frame |
+| `debug/switch_vessel` | St | vessel id | `Program.ControlledVehicle` (public static field) | M | Frame |
+
+Solver-phase commands drain in a Harmony `Priority.First` prefix on
+`Universe.ExecuteNextVehicleSolvers` (`Mod.DrainSolverCommands`).
+
+### Deferred (documented, per plan §5.4 / open questions)
+
+- **Aero `cda`** — `Vehicle._aerodynamicCdABody` is private; no public read.
+- **`parts/<instanceId>` tree** — construction-grade; deferred.
+- **Engine per-nozzle thrust/burn_time/mass_flow, gimbal read/command** — nozzle/gimbal SoA internals (M/H);
+  gimbal command is transient solver state.
+- **RCS pulse** — `CommandPulseTime` fires inside the flight-computer loop; deferred.
 
 ## The churn playbook (when a decomp drop lands)
 
