@@ -1,0 +1,24 @@
+[package]
+name = "gogogo-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal ratatui throttle + ignite/shutdown control panel over the gatOS /sim filesystem"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "gogogo-rs"
+path = "src/main.rs"
+
+[dependencies]
+# ratatui re-exports crossterm, so we use ratatui::crossterm for events + backend — the event and
+# backend crate versions then can never drift.
+ratatui = "0.29"
+# Tiny blocking HTTP client for the optional --url (HTTP /v1/fs) source; no TLS feature — the gatOS
+# API is plain http:// over slirp. The default source reads the /sim mount directly with std::fs.
+ureq = { version = "2", default-features = false }
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
