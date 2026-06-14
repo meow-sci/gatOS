@@ -4,6 +4,8 @@
 //! (throttle/battery/tank) are drawn as colored foreground block runs, not ratatui `Gauge`s (which
 //! need a bg to be visible).
 
+use std::time::Duration;
+
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -85,6 +87,7 @@ fn render_dashboard(f: &mut Frame, app: &mut App) {
         kv("warp", &format!("{}x", trim(app.snapshot.warp_factor))),
         kv("ver", val_or(&app.snapshot.game_version, "?")),
         kv("vessels", &app.snapshot.vessels.len().to_string()),
+        kv("poll", &fmt_poll(app.poll_interval)),
         control,
         Span::raw("  "),
         debug,
@@ -225,6 +228,8 @@ fn render_detail(f: &mut Frame, app: &mut App, id: &str) {
             val_or(&v.attitude_mode, "manual").to_string(),
             Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
         ),
+        Span::raw("  "),
+        kv("poll", &fmt_poll(app.poll_interval)),
     ]);
     f.render_widget(
         Paragraph::new(header).style(Style::new().bg(BAR_BG)),
@@ -441,7 +446,7 @@ fn control_items(v: &Vessel, debug_enabled: bool) -> Vec<(Action, String, Color)
         (Action::Back, "← Back".to_string(), LABEL),
         (Action::Ignite, "Ignite".to_string(), GOOD),
         (Action::Shutdown, "Shutdown".to_string(), BAD),
-        (Action::Stage, "Stage ⏏".to_string(), WARN),
+        (Action::Stage, "Stage ▲".to_string(), WARN),
         (Action::ThrottleDown, "Throttle −10%".to_string(), VALUE),
         (Action::ThrottleUp, "Throttle +10%".to_string(), VALUE),
         (Action::ThrottleZero, "Throttle 0%".to_string(), VALUE),
@@ -476,14 +481,14 @@ fn control_items(v: &Vessel, debug_enabled: bool) -> Vec<(Action, String, Color)
             on_off_color(l.on),
         ));
     }
-    items.push((Action::RefillFuel, "Refill fuel ⚙".to_string(), debug_color));
+    items.push((Action::RefillFuel, "Refill fuel ◆".to_string(), debug_color));
     items.push((
         Action::RefillBattery,
-        "Refill battery ⚙".to_string(),
+        "Refill battery ◆".to_string(),
         debug_color,
     ));
-    items.push((Action::WarpDown, "Warp ÷2 ⚙".to_string(), debug_color));
-    items.push((Action::WarpUp, "Warp ×2 ⚙".to_string(), debug_color));
+    items.push((Action::WarpDown, "Warp ÷2 ◆".to_string(), debug_color));
+    items.push((Action::WarpUp, "Warp ×2 ◆".to_string(), debug_color));
     items
 }
 
@@ -722,6 +727,17 @@ fn fmt_force(n: f64) -> String {
     } else {
         format!("{:.0}N", n)
     }
+}
+
+/// The worker's snapshot poll cadence as `<interval>ms (<rate> Hz)` — the read-back refresh rate the
+/// header advertises. The rate is the reciprocal of the interval; lower `--interval` for snappier
+/// updates (the sampler's in-game `sample_rate_hz` is the other, independent freshness gate).
+fn fmt_poll(interval: Duration) -> String {
+    let ms = interval.as_millis();
+    if ms == 0 {
+        return "—".to_string();
+    }
+    format!("{ms}ms ({} Hz)", trim(1000.0 / ms as f64))
 }
 
 fn fmt_dur(seconds: f64) -> String {

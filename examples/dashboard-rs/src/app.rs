@@ -3,6 +3,7 @@
 //! handler on the next event — so keyboard and mouse drive exactly the same [`Action`]s.
 
 use std::sync::mpsc::Sender;
+use std::time::Duration;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
@@ -114,12 +115,14 @@ pub struct App {
     pub status_line: String,
     pub status_is_error: bool,
     pub connected: bool,
+    /// The worker's snapshot poll interval (shown in the header so the read-back cadence is visible).
+    pub poll_interval: Duration,
     pub should_quit: bool,
     cmd_tx: Sender<Command>,
 }
 
 impl App {
-    pub fn new(cmd_tx: Sender<Command>) -> Self {
+    pub fn new(cmd_tx: Sender<Command>, poll_interval: Duration) -> Self {
         let mut table = TableState::default();
         table.select(Some(0));
         Self {
@@ -135,6 +138,7 @@ impl App {
             status_line: "connecting…".into(),
             status_is_error: false,
             connected: false,
+            poll_interval,
             should_quit: false,
             cmd_tx,
         }

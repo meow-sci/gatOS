@@ -35,6 +35,12 @@ it at the mod's HTTP server:
 cargo run -- --url http://127.0.0.1:4242/v1        # --interval <ms> tunes the poll rate (default 50)
 ```
 
+The header bar shows the live **poll rate** (e.g. `poll 50ms (20 Hz)`) so the read-back cadence is
+always visible. The default `--interval` is **50 ms** (~20 Hz), floored at 10 ms; raise it to poll
+less aggressively. (The poll interval is only one of two freshness gates; the other is the in-game
+`sample_rate_hz`, the rate the host samples the game — set it high there for the snapshot to actually
+change at this cadence.)
+
 ## Controls
 
 **Dashboard:** `↑`/`↓` or `j`/`k` (or the mouse wheel) select · `Enter` or click a row open it ·

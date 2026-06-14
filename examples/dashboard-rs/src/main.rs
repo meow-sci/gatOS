@@ -48,6 +48,8 @@ impl Config {
         // $GATOS_HTTP is the guest-side base (e.g. http://sim:4242/v1); fall back to the host loopback.
         let mut url =
             std::env::var("GATOS_HTTP").unwrap_or_else(|_| "http://127.0.0.1:4242/v1".to_string());
+        // Snapshot poll cadence (read-back refresh). Default 50 ms (~20 Hz) for snappy feedback;
+        // overridable via --interval, floored at 10 ms to avoid hammering the HTTP server.
         let mut interval = Duration::from_millis(50);
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -59,7 +61,7 @@ impl Config {
                 }
                 "--interval" => {
                     if let Some(ms) = args.next().and_then(|s| s.parse::<u64>().ok()) {
-                        interval = Duration::from_millis(ms.max(100));
+                        interval = Duration::from_millis(ms.max(10));
                     }
                 }
                 "-h" | "--help" => {
@@ -78,7 +80,7 @@ fn print_help() {
     println!();
     println!("USAGE: gatos-dashboard [--url <base>] [--interval <ms>]");
     println!("  --url <base>     API base (default: $GATOS_HTTP, else http://127.0.0.1:4242/v1)");
-    println!("  --interval <ms>  snapshot poll interval, min 100 (default 500)");
+    println!("  --interval <ms>  snapshot poll interval, min 10 (default 50)");
 }
 
 fn run(terminal: &mut Tui, config: Config) -> Result<()> {
@@ -86,7 +88,7 @@ fn run(terminal: &mut Tui, config: Config) -> Result<()> {
     let (update_tx, update_rx) = mpsc::channel::<Update>();
     spawn_worker(Client::new(config.url), config.interval, cmd_rx, update_tx);
 
-    let mut app = App::new(cmd_tx);
+    let mut app = App::new(cmd_tx, config.interval);
     let tick = Duration::from_millis(100);
     while !app.should_quit {
         while let Ok(update) = update_rx.try_recv() {
