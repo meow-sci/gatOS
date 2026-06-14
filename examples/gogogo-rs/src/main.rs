@@ -212,13 +212,10 @@ fn spawn_worker(
                                 send_write(&tx, r, format!("throttle \u{2192} {}%", pct(v)));
                             }
                         }
-                        ToWorker::Ignite => {
-                            let r = source.write("vessels/active/ctl/ignite", "1");
-                            send_write(&tx, r, "ignite".to_string());
-                        }
-                        ToWorker::Shutdown => {
-                            let r = source.write("vessels/active/ctl/shutdown", "1");
-                            send_write(&tx, r, "shutdown".to_string());
+                        ToWorker::Engine(on) => {
+                            // One toggle file: 1 = ignite, 0 = shutdown (the /sim ctl/engine flag).
+                            let r = source.write("vessels/active/ctl/engine", if on { "1" } else { "0" });
+                            send_write(&tx, r, if on { "ignite" } else { "shutdown" }.to_string());
                         }
                     }
                 }

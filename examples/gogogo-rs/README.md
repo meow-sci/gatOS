@@ -16,18 +16,21 @@ single-purpose throttle quadrant for the **active vessel**.
 - **Throttle slider** — drag anywhere along the bar to set the throttle live (one write per 1 %
   crossed, so a held sweep is smooth, not a flood). `↑`/`↓` (or `-`/`=`) nudge by 5 %, `0` cuts,
   `g` goes full.
-- **Ignite/shutdown toggle** — click it (or press `space`/`enter`) to light the engines or shut
-  them down. The button shows the real state: green **`[ IGNITE ]`** when cold, red
-  **`[ SHUTDOWN ]`** when lit (engine state is read back from `/sim`; over the HTTP source it
-  reflects the last command instead).
+- **Ignite/shutdown toggle** — one button that mirrors the **live game ignition state**: green
+  **`[ IGNITE ]`** when the engines are shut down, red **`[ SHUTDOWN ]`** when they're lit. Click (or
+  `space`/`enter`) to flip it. The button reflects what the game actually reports (`ctl/engine`,
+  i.e. KSA's `EngineOn`) — **never** an internal guess — so it stays correct even when the engines
+  are toggled by staging or another client; a click just commands the opposite and the button
+  follows once the game confirms.
 - **Auto orientation** — the layout picks **vertical** (tall, narrow window) or **horizontal**
   (wide, short window) from the terminal size, and **flips live** when you resize the window. The
   slider runs along the long axis either way.
 - **Disabled when there's nothing to fly** — if there is no valid active vessel, every control
   greys out and goes inert, with a `no active vessel` note.
 
-It floats over the game: like the other examples it leaves backgrounds unset so purrTTY shows the
-sim through, coloring only the foreground (the throttle bar's fill is the one painted background).
+It floats over the game: there's **no border or title** — just the two widgets — and like the other
+examples it leaves backgrounds unset so purrTTY shows the sim through, coloring only the foreground
+(the throttle bar's fill is the one painted background).
 
 ## Data interface — the `/sim` filesystem
 
@@ -37,7 +40,7 @@ field-level surface `simfs-dashboard` uses, so no vessel id is needed:
 | widget                | reads                                   | writes                          |
 | --------------------- | --------------------------------------- | ------------------------------- |
 | throttle slider       | `vessels/active/ctl/throttle`           | `vessels/active/ctl/throttle`   |
-| ignite/shutdown       | `vessels/active/engines/<n>/active`     | `vessels/active/ctl/{ignite,shutdown}` |
+| ignite/shutdown       | `vessels/active/ctl/engine`             | `vessels/active/ctl/engine` (`1`=ignite, `0`=shutdown) |
 | active-vessel gate    | `vessels/active/id`                      | —                               |
 
 - **In the guest (default):** it reads the **real `/sim` mount** directly with the filesystem — a
@@ -68,7 +71,7 @@ USAGE: gogogo-rs [--root <dir> | --url <base>] [--interval <ms>]
                  [--orientation auto|vertical|horizontal]
 ```
 
-`--interval` (default 120 ms) is how often it re-polls the throttle/engine state and how promptly a
+`--interval` (default 120 ms) is how often it re-polls the throttle and how promptly a
 drag write lands; the floor is 1 ms. As with the other examples, the second freshness gate is the
 in-game `sample_rate_hz` — the rate the host samples the game.
 
@@ -82,6 +85,6 @@ in-game `sample_rate_hz` — the rate the host samples the game.
 ## No TUI required
 
 The same fields are plain files — `echo 0.5 > /sim/vessels/active/ctl/throttle` to throttle up,
-`echo 1 > /sim/vessels/active/ctl/ignite` to light it — or the HTTP twins
-`curl -X POST "$GATOS_HTTP/fs/vessels/active/ctl/throttle" -d 0.5`. This panel is just a friendly,
-draggable face over that surface.
+`echo 1 > /sim/vessels/active/ctl/engine` to light it (and `cat` it to read the live ignition
+state) — or the HTTP twins `curl -X POST "$GATOS_HTTP/fs/vessels/active/ctl/throttle" -d 0.5`. This
+panel is just a friendly, draggable face over that surface.

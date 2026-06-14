@@ -1,16 +1,12 @@
 //! The data source for gogogo-rs: read/write the **active vessel's** `/sim` control fields by path.
 //!
 //! Everything this panel needs lives under the `vessels/active/…` alias, so it never has to know the
-//! vessel id — `vessels/active/ctl/throttle`, `vessels/active/ctl/ignite`, `…/ctl/shutdown`, and the
-//! per-engine `vessels/active/engines/<n>/active` flags it aggregates to know whether the engines are
-//! lit. This is the same field-level filesystem surface `simfs-dashboard` is built on.
+//! vessel id — `vessels/active/ctl/throttle`, `vessels/active/ctl/ignite`, `…/ctl/shutdown`.
 //!
 //! Two backends, mirroring the sibling examples:
 //! - [`FsSource`] reads the **real `/sim` mount** with `std::fs` (the in-guest default): a read is one
-//!   `read()`, a control write is one `echo value > file`, and engine discovery is one `readdir`.
+//!   `read()`, a control write is one `echo value > file`.
 //! - [`HttpSource`] uses the mod's HTTP `/v1/fs/<path>` mirror (the `--url`/`$GATOS_HTTP` dev mode).
-//!   It has no directory listing, so engine state is unknown over HTTP (the toggle falls back to the
-//!   last command's intent — see `app.rs`).
 //!
 //! One background worker thread (see `main.rs`) owns the source: it polls the few fields once per
 //! interval and applies control writes between polls, so the render/input loop never blocks on I/O.
@@ -38,11 +34,7 @@ pub trait Source: Send {
     /// a control file actuates and a failure carries the real errno.
     fn write(&self, path: &str, value: &str) -> Result<(), CmdError>;
 
-    /// The active vessel's engine indices (the `vessels/active/engines/<n>` directory names), or
-    /// `None` when listing is unsupported (HTTP) or there is no active vessel.
-    fn engine_indices(&self) -> Option<Vec<String>>;
-
-    /// A short label for the title bar (e.g. `fs:/sim` or the HTTP base URL).
+    /// A short label for the status line (e.g. `fs:/sim` or the HTTP base URL).
     fn label(&self) -> String;
 }
 
@@ -54,45 +46,34 @@ pub struct Poll {
     pub active: bool,
     /// The current throttle 0..1, if readable.
     pub throttle: Option<f64>,
-    /// Whether any engine is lit (`Some`), or unknown (`None` — HTTP, or no active vessel).
-    pub ignited: Option<bool>,
+    /// Whether the engines are ignited — the live game state (`ctl/engine` = KSA `EngineOn`), or
+    /// `None` if unreadable. The toggle reflects this and nothing else (never internal state).
+    pub engine_on: Option<bool>,
 }
 
 /// Reads the active vessel's control state in as few field reads as possible: the happy path (a live
-/// vessel) is `id` + `throttle` + the engine flags; with no active vessel it is `id` + a `time/ut`
-/// probe to tell "no vessel" from "not connected".
+/// vessel) is `id` + `throttle` + `engine`; with no active vessel it is `id` + a `time/ut` probe to
+/// tell "no vessel" from "not connected".
 pub fn poll(src: &dyn Source) -> Poll {
     if src.read("vessels/active/id").is_err() {
         return Poll {
             connected: src.read("time/ut").is_ok(),
             active: false,
             throttle: None,
-            ignited: None,
+            engine_on: None,
         };
     }
     let throttle = src
         .read("vessels/active/ctl/throttle")
         .ok()
         .and_then(|s| parse_scalar(&s));
+    let engine_on = src.read("vessels/active/ctl/engine").ok().map(|s| s.trim() == "1");
     Poll {
         connected: true,
         active: true,
         throttle,
-        ignited: engines_ignited(src),
+        engine_on,
     }
-}
-
-/// Aggregates the active vessel's engine `active` flags: `Some(true)` if any engine is lit, `None`
-/// when the indices can't be listed (HTTP).
-fn engines_ignited(src: &dyn Source) -> Option<bool> {
-    let indices = src.engine_indices()?;
-    let mut any = false;
-    for i in &indices {
-        if let Ok(v) = src.read(&format!("vessels/active/engines/{i}/active")) {
-            any |= v.trim() == "1";
-        }
-    }
-    Some(any)
 }
 
 /// Parses the leading float of a `/sim` scalar (G9 doubles). `"1"`, `"0.42"`, `"-0"` all parse.
@@ -131,17 +112,6 @@ impl Source for FsSource {
         })
     }
 
-    fn engine_indices(&self) -> Option<Vec<String>> {
-        let dir = self.root.join("vessels/active/engines");
-        let mut out = Vec::new();
-        for entry in fs::read_dir(dir).ok()?.flatten() {
-            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                out.push(entry.file_name().to_string_lossy().into_owned());
-            }
-        }
-        Some(out)
-    }
-
     fn label(&self) -> String {
         format!("fs:{}", self.root.display())
     }
@@ -167,8 +137,7 @@ fn errno_name(raw: Option<i32>) -> String {
 // ---- HTTP source (the /v1/fs mirror) ------------------------------------------------------------
 
 /// Uses the mod's HTTP `/v1/fs/<path>` field mirror. `base` is the `/v1` root, e.g.
-/// `http://sim:4242/v1` (`$GATOS_HTTP`). No directory listing, so [`Source::engine_indices`] is
-/// `None` and the ignite/shutdown toggle reflects local command intent over this transport.
+/// `http://sim:4242/v1` (`$GATOS_HTTP`).
 pub struct HttpSource {
     base: String,
     agent: ureq::Agent,
@@ -218,10 +187,6 @@ impl Source for HttpSource {
         }
     }
 
-    fn engine_indices(&self) -> Option<Vec<String>> {
-        None // no listing endpoint; the toggle falls back to command intent
-    }
-
     fn label(&self) -> String {
         self.base.clone()
     }
@@ -233,10 +198,8 @@ impl Source for HttpSource {
 pub enum ToWorker {
     /// Set the throttle (0..1) — written to `vessels/active/ctl/throttle`.
     Throttle(f64),
-    /// Fire `vessels/active/ctl/ignite`.
-    Ignite,
-    /// Fire `vessels/active/ctl/shutdown`.
-    Shutdown,
+    /// Set ignition — written to `vessels/active/ctl/engine` (`true` = ignite, `false` = shutdown).
+    Engine(bool),
 }
 
 /// A reply from the worker to the UI thread.
@@ -259,16 +222,13 @@ mod tests {
     }
 
     #[test]
-    fn fs_source_reads_writes_and_lists_engines() {
+    fn fs_source_reads_and_writes() {
         let root = std::env::temp_dir().join(format!("gogogo_src_test_{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("vessels/active/ctl")).unwrap();
-        fs::create_dir_all(root.join("vessels/active/engines/0")).unwrap();
-        fs::create_dir_all(root.join("vessels/active/engines/1")).unwrap();
         fs::write(root.join("vessels/active/id"), "Kerbal-1\n").unwrap();
         fs::write(root.join("vessels/active/ctl/throttle"), "0.5\n").unwrap();
-        fs::write(root.join("vessels/active/engines/0/active"), "1\n").unwrap();
-        fs::write(root.join("vessels/active/engines/1/active"), "0\n").unwrap();
+        fs::write(root.join("vessels/active/ctl/engine"), "1\n").unwrap();
 
         let s = FsSource::new(&root);
 
@@ -280,15 +240,11 @@ mod tests {
         s.write("vessels/active/ctl/throttle", "0.75").unwrap();
         assert_eq!(s.read("vessels/active/ctl/throttle").unwrap(), "0.75");
 
-        let mut idx = s.engine_indices().unwrap();
-        idx.sort();
-        assert_eq!(idx, vec!["0".to_string(), "1".to_string()]);
-
-        // A full poll sees a live vessel, the throttle, and "ignited" (engine 0 is lit).
+        // A full poll sees a live vessel, its throttle, and the reactive ignition state.
         let p = poll(&s);
         assert!(p.connected && p.active);
         assert_eq!(p.throttle, Some(0.75));
-        assert_eq!(p.ignited, Some(true));
+        assert_eq!(p.engine_on, Some(true));
 
         fs::remove_dir_all(&root).ok();
     }
@@ -304,7 +260,7 @@ mod tests {
         assert!(p.connected); // /sim is mounted…
         assert!(!p.active); // …but there is no active vessel
         assert_eq!(p.throttle, None);
-        assert_eq!(p.ignited, None);
+        assert_eq!(p.engine_on, None);
 
         fs::remove_dir_all(&root).ok();
     }

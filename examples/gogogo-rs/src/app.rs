@@ -46,11 +46,10 @@ pub struct App {
     /// The displayed throttle 0..1. Synced from the sim each poll, except while dragging (the user's
     /// value wins so a stale read can't snap the slider back mid-drag).
     pub throttle: f64,
-    /// Engine-lit state read back from the sim (`Some` on the fs source; `None` over HTTP).
-    ignited_real: Option<bool>,
-    /// The last ignite/shutdown command we issued — the toggle's fallback when `ignited_real` is
-    /// unknown (HTTP), and the immediate optimistic state right after a click.
-    intent: Option<bool>,
+    /// The ignite/shutdown toggle state — the **live game state** read from `ctl/engine` every poll
+    /// (KSA `EngineOn`). Never internal: a click writes the flip, and the button only changes once
+    /// the next poll reads the new state back.
+    engine_on: bool,
 
     // ---- interaction ----
     dragging: bool,
@@ -74,8 +73,7 @@ impl App {
             connected: false,
             active: false,
             throttle: 0.0,
-            ignited_real: None,
-            intent: None,
+            engine_on: false,
             dragging: false,
             last_sent_pct: None,
             status: "connecting\u{2026}".to_string(),
@@ -88,9 +86,9 @@ impl App {
         }
     }
 
-    /// The toggle's displayed state: real engine state when known, else the last commanded intent.
+    /// The toggle's displayed state — the live `ctl/engine` read (off when unreadable).
     pub fn ignited(&self) -> bool {
-        self.ignited_real.or(self.intent).unwrap_or(false)
+        self.engine_on
     }
 
     // ---- worker updates ----------------------------------------------------------------------
@@ -100,7 +98,7 @@ impl App {
             FromWorker::Poll(p) => {
                 self.connected = p.connected;
                 self.active = p.active;
-                self.ignited_real = p.ignited;
+                self.engine_on = p.engine_on.unwrap_or(false);
                 if !self.dragging {
                     if let Some(t) = p.throttle {
                         self.throttle = t;
@@ -205,15 +203,11 @@ impl App {
         if !self.active {
             return;
         }
-        if self.ignited() {
-            let _ = self.tx.send(ToWorker::Shutdown);
-            self.intent = Some(false);
-            self.set_status("shutdown", false);
-        } else {
-            let _ = self.tx.send(ToWorker::Ignite);
-            self.intent = Some(true);
-            self.set_status("ignite", false);
-        }
+        // Command the opposite of the live game state; the button flips when the next poll reads it
+        // back (never optimistically from internal state).
+        let ignite = !self.engine_on;
+        let _ = self.tx.send(ToWorker::Engine(ignite));
+        self.set_status(if ignite { "ignite" } else { "shutdown" }, false);
     }
 
     fn nudge(&mut self, delta: f64) {
@@ -289,25 +283,32 @@ mod tests {
         a.commit_throttle(0.8, false);
         assert_eq!(a.throttle, 0.0); // no write, no display change
         a.toggle();
-        assert_eq!(a.intent, None); // no command issued
+        assert!(!a.ignited()); // no command issued, state unchanged
     }
 
     #[test]
-    fn toggle_tracks_intent_then_real_state() {
+    fn toggle_reflects_game_state_not_internal() {
         let mut a = app();
         a.active = true;
-        assert!(!a.ignited());
+        // The button mirrors the live ctl/engine read — a click does NOT flip it locally.
         a.toggle();
-        assert_eq!(a.intent, Some(true));
-        assert!(a.ignited()); // optimistic until the next poll
-        // A real readback overrides the intent.
+        assert!(!a.ignited(), "stays off until the game confirms ignition");
+        // The game reports the engines lit → the button shows lit.
         a.apply(FromWorker::Poll(crate::source::Poll {
             connected: true,
             active: true,
             throttle: Some(0.3),
-            ignited: Some(false),
+            engine_on: Some(true),
+        }));
+        assert!(a.ignited());
+        assert_eq!(a.throttle, 0.3); // throttle also synced from the sim
+        // The game reports it shut down again → the button follows.
+        a.apply(FromWorker::Poll(crate::source::Poll {
+            connected: true,
+            active: true,
+            throttle: Some(0.3),
+            engine_on: Some(false),
         }));
         assert!(!a.ignited());
-        assert_eq!(a.throttle, 0.3); // synced from the sim (not dragging)
     }
 }

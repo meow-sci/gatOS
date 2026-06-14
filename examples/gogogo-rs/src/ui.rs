@@ -1,14 +1,13 @@
-//! Rendering. Two widgets, two orientations. The layout (and the bar's direction) is chosen from the
-//! terminal size every frame, so it flips live on resize. Per the project's transparent-TUI rule the
-//! panel leaves backgrounds unset — purrTTY shows the game through — and colors foregrounds; only the
-//! throttle bar paints a background, which is how it shows its fill level. The renderer also records
-//! the bar/button rects back onto the [`App`] so `app.rs` can hit-test mouse events.
+//! Rendering. Two widgets, no chrome (no border, no title — as minimal as it gets). The layout (and
+//! the bar's direction) is chosen from the terminal size every frame, so it flips live on resize.
+//! Per the project's transparent-TUI rule the panel leaves backgrounds unset — purrTTY shows the
+//! game through — and colors foregrounds; only the throttle bar paints a background, which is how it
+//! shows its fill level. The renderer also records the bar/button rects back onto the [`App`] so
+//! `app.rs` can hit-test mouse events.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Span;
-use ratatui::widgets::{Block, BorderType, Borders};
 use ratatui::Frame;
 
 use crate::app::App;
@@ -28,29 +27,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
         return;
     }
 
-    // The border defines the floating window — but only when there's room; tiny windows use it all.
-    let inner = if area.width >= 6 && area.height >= 4 {
-        let color = if app.active { Color::Gray } else { TRACK };
-        let title = format!(" gogogo \u{b7} {} ", truncate(&app.label, 18));
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(color))
-            .title(Span::styled(title, Style::default().fg(color)));
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-        inner
+    // No border, no title — just the two widgets, filling the whole window.
+    if app.orientation.is_vertical(area) {
+        layout_vertical(f, app, area);
     } else {
-        area
-    };
-    if inner.width == 0 || inner.height == 0 {
-        return;
-    }
-
-    if app.orientation.is_vertical(inner) {
-        layout_vertical(f, app, inner);
-    } else {
-        layout_horizontal(f, app, inner);
+        layout_horizontal(f, app, area);
     }
 }
 
@@ -224,15 +205,6 @@ fn put_centered(buf: &mut Buffer, x: u16, y: u16, w: u16, s: &str, style: Style)
     buf.set_string(start, y, text, style);
 }
 
-/// Truncates `s` to `max` chars, appending `…` when it was cut.
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_string();
-    }
-    let head: String = s.chars().take(max.saturating_sub(1)).collect();
-    format!("{head}\u{2026}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,7 +242,7 @@ mod tests {
             connected: true,
             active: false,
             throttle: None,
-            ignited: None,
+            engine_on: None,
         }));
         let text = render_to_text(&mut a, 40, 12);
         assert!(text.contains("no active vessel"));
@@ -298,20 +270,21 @@ mod tests {
     }
 
     #[test]
-    fn lit_engines_show_shutdown() {
+    fn lit_game_state_shows_shutdown() {
         let mut a = app(Orient::Horizontal);
         a.active = true;
+        // The button reflects the live game state: a poll reporting the engines lit → SHUTDOWN.
         a.apply(crate::source::FromWorker::Poll(crate::source::Poll {
             connected: true,
             active: true,
             throttle: Some(0.2),
-            ignited: Some(true),
+            engine_on: Some(true),
         }));
         let text = render_to_text(&mut a, 60, 8);
         assert!(text.contains("SHUTDOWN"));
     }
 
-    /// The layout must survive any size — including sizes too small for the border or any widget.
+    /// The layout must survive any size — including sizes too small for a header, status, or button.
     #[test]
     fn tiny_and_odd_sizes_never_panic() {
         for orient in [Orient::Auto, Orient::Vertical, Orient::Horizontal] {
