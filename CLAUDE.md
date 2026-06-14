@@ -438,9 +438,12 @@ tools/                          fetch-qemu.{sh,ps1} + qemu-win64-files.txt (pin 
                                 + Get-QemuImportClosure.ps1 (T11.1, built)
 .github/workflows/build.yml     CI: build + full test suite (GATOS_IT=1, KVM, fetched guest)
 .github/workflows/guest-image.yml  CI: build + publish guest-v<N> release (guest/** pushes)
-.github/workflows/mod-release.yml  CI: build + publish the all-in-one mod dist (managed
-                                payload + fetched guest image + win-x64 QEMU, zipped) —
-                                main → tip prerelease, release/<v> → release v<v> (T11.4)
+.github/workflows/mod-release.yml  CI: build + publish the mod dist as ONE release with two
+                                zips — gatOS-windows-<v> (payload + guest + bundled win-x64
+                                QEMU) and gatOS-linux-<v> (payload + guest, system QEMU on PATH;
+                                linux-x64 bundle = unbuilt T11.6). Both built on Linux runners
+                                (meta→build matrix→publish); main → tip prerelease,
+                                release/<v> → release v<v> (T11.4)
 ```
 
 ### Projects and the dependency rule

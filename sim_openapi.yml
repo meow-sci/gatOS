@@ -1,0 +1,973 @@
+openapi: 3.1.0
+
+info:
+  title: gatOS /sim HTTP API
+  version: "1"
+  summary: HTTP transport mirroring the gatOS /sim telemetry filesystem.
+  description: |
+    The **gatOS** HTTP transport. It exposes the same telemetry and the same control surface as the
+    `/sim` filesystem and the MQTT broker — all three are projections of a single published telemetry
+    snapshot and a single command pipeline, so a datum or control reachable on one is reachable on
+    all (the project's *transport-parity* invariant).
+
+    **Where it runs.** The server listens on a loopback TCP port on the host (default `4242`, with
+    ephemeral fallback on a clash). From inside the Alpine guest it is reached over QEMU user-mode
+    networking at `10.0.2.2:<port>`; the guest shell presets `$GATOS_HTTP` (and an `/etc/hosts`
+    alias `sim`) to the correct base URL, and `/run/gatos/http-port` holds the chosen port. Always
+    prefer `$GATOS_HTTP` over a hardcoded port.
+
+    **Read model.** GET reads are a JSON projection of the latest published snapshot and are atomic
+    per response. Two read *shapes* coexist and are both reachable here:
+      * the **full** record shape (`/v1/snapshot`, `/v1/vessels/{id}`, `/v1/bodies/{id}`, …) —
+        snake_case keys, vectors/quaternions as `{x,y,z[,w]}` objects;
+      * the **compact** per-vessel `telemetry` document (`/v1/vessels/{id}/telemetry`) — curated
+        short keys, vectors/quaternions as arrays. This doc is frozen as the SDK-stable surface and
+        is byte-identical across HTTP and MQTT.
+
+    **Write model.** Every mutation goes through one generic `POST /v1/command` carrying the
+    transport-agnostic `SimCommand` shape, or through a `POST /v1/fs/<path>` field write (the
+    `echo value > file` shape). Failures map a `CommandOutcome` to an HTTP status plus an
+    `{errno, message}` body.
+
+    **Live feeds.** `GET /v1/events`, `GET /v1/vessels/{id}/stream`, and `GET /v1/fs/<path>?stream=1`
+    are Server-Sent Event streams; `GET /v1/time/wait` is a long-poll.
+
+    **Field-level mirror.** `/v1/fs/<path>` mirrors the `/sim` tree leaf-by-leaf: one endpoint per
+    scalar/`ctl`/`debug` field, produced by walking the same VFS tree the 9p server serves. Adding a
+    `/sim` node lights up its HTTP endpoint automatically. Blocking/growing files (`stream`,
+    `events`, `alarm`) are excluded from the bulk field mirror and keep dedicated streaming endpoints.
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://sim:4242/v1
+    description: Guest-side base (slirp alias `sim` → 10.0.2.2). Prefer the preset `$GATOS_HTTP`.
+  - url: http://127.0.0.1:4242/v1
+    description: Host-side loopback (the actual port is allocated at boot; see `/run/gatos/http-port`).
+
+tags:
+  - name: snapshot
+    description: Whole-world and time reads.
+  - name: world
+    description: Star system and celestial bodies.
+  - name: vessels
+    description: Per-vessel telemetry reads.
+  - name: streams
+    description: Server-Sent Event feeds and the sim-time long-poll.
+  - name: fields
+    description: The field-level /sim filesystem mirror.
+  - name: control
+    description: The single command endpoint and field writes.
+  - name: meta
+    description: Health and the live OpenAPI document.
+
+paths:
+  /snapshot:
+    get:
+      tags: [snapshot]
+      operationId: getSnapshot
+      summary: The whole telemetry snapshot (atomic)
+      description: One self-consistent projection of the entire published frame.
+      responses:
+        "200":
+          description: The full snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SimSnapshot" }
+
+  /time:
+    get:
+      tags: [snapshot]
+      operationId: getTime
+      summary: Clock and time-warp state
+      responses:
+        "200":
+          description: Time projection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Time" }
+
+  /time/wait:
+    get:
+      tags: [streams]
+      operationId: waitForTime
+      summary: Long-poll until sim time reaches a target
+      description: |
+        Blocks the request until the simulation's universal time (`ut`) reaches `until`, then
+        returns. Useful for "wake me at this burn time" without polling.
+      parameters:
+        - name: until
+          in: query
+          required: true
+          description: Target universal sim time, seconds.
+          schema: { type: number, format: double }
+      responses:
+        "200":
+          description: The target time was reached.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reached_ut: { type: number, format: double }
+                required: [reached_ut]
+        "400":
+          description: Missing or invalid `until`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /status:
+    get:
+      tags: [meta]
+      operationId: getStatus
+      summary: Integration health and bound transports
+      responses:
+        "200":
+          description: Status projection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+
+  /system:
+    get:
+      tags: [world]
+      operationId: getSystem
+      summary: Current star-system summary
+      responses:
+        "200":
+          description: System summary (may be null before first sample).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/SystemSnapshot" }
+                  - { type: "null" }
+
+  /bodies:
+    get:
+      tags: [world]
+      operationId: listBodies
+      summary: All celestial bodies
+      responses:
+        "200":
+          description: Body catalog.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/BodySnapshot" }
+
+  /bodies/{id}:
+    get:
+      tags: [world]
+      operationId: getBody
+      summary: One celestial body
+      parameters: [{ $ref: "#/components/parameters/BodyId" }]
+      responses:
+        "200":
+          description: One body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BodySnapshot" }
+        "404":
+          description: No such body (gone).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /vessels:
+    get:
+      tags: [vessels]
+      operationId: listVessels
+      summary: All vessel ids
+      responses:
+        "200":
+          description: The stable vehicle ids.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+
+  /vessels/{id}:
+    get:
+      tags: [vessels]
+      operationId: getVessel
+      summary: One vessel (full record)
+      parameters: [{ $ref: "#/components/parameters/VesselId" }]
+      responses:
+        "200":
+          description: The full vessel record.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VesselSnapshot" }
+        "404":
+          description: No such vessel (gone).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /vessels/{id}/telemetry:
+    get:
+      tags: [vessels]
+      operationId: getVesselTelemetry
+      summary: Compact per-vessel telemetry document (SDK-stable)
+      description: |
+        The curated, short-key telemetry doc — frozen as the SDK surface and byte-identical to the
+        MQTT `gatos/vessels/{id}/telemetry` topic and the 9p `telemetry` file (minus the file's
+        trailing newline).
+      parameters: [{ $ref: "#/components/parameters/VesselId" }]
+      responses:
+        "200":
+          description: The compact telemetry document.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VesselTelemetry" }
+        "404":
+          description: No such vessel (gone).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /vessels/{id}/stream:
+    get:
+      tags: [streams]
+      operationId: streamVessel
+      summary: SSE of the per-vessel telemetry stream line
+      description: |
+        Server-Sent Events; one `data:` line per published frame carrying the compact stream record
+        (the HTTP twin of the 9p growing-log `stream` file). The stream pauses while the vessel is
+        absent and resumes when it reappears.
+      parameters: [{ $ref: "#/components/parameters/VesselId" }]
+      responses:
+        "200":
+          description: An `text/event-stream` of `StreamLine` records.
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+  /events:
+    get:
+      tags: [streams]
+      operationId: streamEvents
+      summary: SSE of discrete sim events
+      description: |
+        Server-Sent Events; one `data:` line per `SimEvent` (situation changes, staging, docking,
+        flameouts, battery depletion, …) as they occur. The MQTT twin is the non-retained
+        `gatos/events` topic.
+      responses:
+        "200":
+          description: An `text/event-stream` of `SimEvent` objects.
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/SimEvent" }
+
+  /fs/{path}:
+    parameters:
+      - name: path
+        in: path
+        required: true
+        description: |
+          The `/sim`-relative path of a single field, e.g. `time/ut`,
+          `vessels/by-id/{id}/altitude/radar`, or `vessels/active/ctl/throttle`. The `active` alias
+          resolves to the controlled vessel. May contain slashes.
+        schema: { type: string }
+        example: vessels/active/altitude/radar
+    get:
+      tags: [fields]
+      operationId: readField
+      summary: Read one /sim field as text (optionally as an SSE feed)
+      description: |
+        Returns the raw value of one field as `text/plain` (with a trailing newline, mirroring the
+        `/sim` file convention). With `?stream=1`, instead returns a `text/event-stream` that emits
+        the value whenever it changes.
+      parameters:
+        - name: stream
+          in: query
+          required: false
+          description: When `1`, return an SSE feed of the value on change instead of a single read.
+          schema: { type: string, enum: ["1"] }
+      responses:
+        "200":
+          description: The raw field value (or an SSE feed when `?stream=1`).
+          content:
+            text/plain:
+              schema: { type: string }
+            text/event-stream:
+              schema: { type: string }
+        "404":
+          description: No such field.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      tags: [fields, control]
+      operationId: writeField
+      summary: Write/actuate one /sim field
+      description: |
+        Writes one field — the `echo value > file` shape. Control and debug fields actuate
+        immediately; on failure the body's `write(2)`-equivalent errno is returned. Read-only fields
+        return `403 EACCES`.
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema: { type: string }
+            examples:
+              fraction: { summary: A throttle fraction, value: "0.8" }
+              flag: { summary: A boolean flag, value: "1" }
+              token: { summary: An enum token, value: "Prograde" }
+      responses:
+        "200": { $ref: "#/components/responses/CommandOk" }
+        "400": { $ref: "#/components/responses/CommandError" }
+        "403": { $ref: "#/components/responses/CommandError" }
+        "404": { $ref: "#/components/responses/CommandError" }
+        "409": { $ref: "#/components/responses/CommandError" }
+        "501": { $ref: "#/components/responses/CommandError" }
+        "504": { $ref: "#/components/responses/CommandError" }
+
+  /command:
+    post:
+      tags: [control]
+      operationId: submitCommand
+      summary: Submit one control command (synchronous)
+      description: |
+        The single write endpoint for every action. The body is a `SimCommand`. The call is
+        synchronous: it submits the command to the game-thread queue and waits for the outcome
+        (subject to the configured command timeout). `debug.*` actions require the debug namespace to
+        be enabled in config, else `403 EACCES`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SimCommand" }
+            examples:
+              ignite:
+                summary: Ignite all engines on a vessel
+                value: { vessel_id: "Vessel-1", action: "vessel.ignite", ordinal: -1, value: 1 }
+              throttle:
+                summary: Set 80% throttle
+                value: { vessel_id: "Vessel-1", action: "vessel.throttle", ordinal: -1, value: 0.8 }
+              engineActive:
+                summary: Toggle engine #0 on
+                value: { vessel_id: "Vessel-1", action: "engine.active", ordinal: 0, value: 1 }
+              attitudeMode:
+                summary: Auto-track prograde
+                value: { vessel_id: "Vessel-1", action: "vessel.attitude_mode", token: "Prograde" }
+              attitudeTarget:
+                summary: Custom attitude target quaternion (x y z w)
+                value: { vessel_id: "Vessel-1", action: "vessel.attitude_target", values: [0, 0, 0, 1] }
+              refuel:
+                summary: Cheat-refill fuel (debug namespace)
+                value: { vessel_id: "Vessel-1", action: "debug.refill_fuel", value: 1 }
+      responses:
+        "200": { $ref: "#/components/responses/CommandOk" }
+        "400": { $ref: "#/components/responses/CommandError" }
+        "403": { $ref: "#/components/responses/CommandError" }
+        "404": { $ref: "#/components/responses/CommandError" }
+        "409": { $ref: "#/components/responses/CommandError" }
+        "501": { $ref: "#/components/responses/CommandError" }
+        "504": { $ref: "#/components/responses/CommandError" }
+
+  /openapi.json:
+    get:
+      tags: [meta]
+      operationId: getOpenApi
+      summary: The live OpenAPI document the server serves
+      description: The running server serves its own OpenAPI 3.1 document here for codegen.
+      responses:
+        "200":
+          description: The OpenAPI document.
+          content:
+            application/json:
+              schema: { type: object }
+
+components:
+  parameters:
+    VesselId:
+      name: id
+      in: path
+      required: true
+      description: The stable vehicle id (or `active` for the controlled vessel, where accepted).
+      schema: { type: string }
+    BodyId:
+      name: id
+      in: path
+      required: true
+      description: The celestial body id.
+      schema: { type: string }
+
+  responses:
+    CommandOk:
+      description: The command succeeded.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              outcome: { type: string, const: "ok" }
+            required: [outcome]
+    CommandError:
+      description: |
+        The command failed. The HTTP status encodes the outcome:
+        `400` EINVAL, `403` EACCES, `404` ENOENT, `409` EBUSY, `501` EOPNOTSUPP, `504` ETIMEDOUT.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+
+    # ---- primitives -------------------------------------------------------------------------
+
+    Vec3:
+      type: object
+      description: A 3-vector, as serialized in full record reads.
+      properties:
+        x: { type: number, format: double }
+        y: { type: number, format: double }
+        z: { type: number, format: double }
+      required: [x, y, z]
+
+    Quat:
+      type: object
+      description: A quaternion, as serialized in full record reads.
+      properties:
+        x: { type: number, format: double }
+        y: { type: number, format: double }
+        z: { type: number, format: double }
+        w: { type: number, format: double }
+      required: [x, y, z, w]
+
+    Error:
+      type: object
+      description: The error body for any non-success response.
+      properties:
+        errno:
+          type: string
+          description: The symbolic errno.
+          enum: [EINVAL, EACCES, ENOENT, EBUSY, EOPNOTSUPP, ETIMEDOUT, EIO]
+        message: { type: string }
+      required: [errno, message]
+
+    # ---- command ----------------------------------------------------------------------------
+
+    SimCommand:
+      type: object
+      description: |
+        A transport-agnostic request to mutate game state. The same shape the MQTT `gatos/command`
+        topic and the 9p control files build. `ordinal` addresses a module instance (engine/light/…
+        index) or `-1` for a vessel-level action. Exactly one of `value`, `values`, or `token`
+        carries the argument, depending on the action archetype.
+      properties:
+        vessel_id:
+          type: string
+          description: Target vehicle id. `vessel` is accepted as an alias key.
+        action:
+          $ref: "#/components/schemas/ActionKey"
+        ordinal:
+          type: integer
+          default: -1
+          description: Module instance index, or `-1` for a vessel-level action.
+        value:
+          type: number
+          format: double
+          description: Scalar argument — a `0`/`1` flag, a `0..1` fraction, an unbounded number, or a trigger token (conventionally `1`).
+        values:
+          type: array
+          items: { type: number, format: double }
+          description: Vector argument (e.g. `attitude_target` quaternion `[x,y,z,w]`, `color` `[r,g,b]`, `teleport` `[x,y,z,vx,vy,vz]`).
+        token:
+          type: string
+          description: Symbolic-token argument (e.g. an `attitude_mode`/`attitude_frame` name, or `switch_vessel` target id).
+      required: [vessel_id, action]
+
+    ActionKey:
+      type: string
+      description: |
+        The stable action key the command dispatches on. The same set is reachable on every
+        transport. `debug.*` actions require the debug namespace to be enabled.
+      enum:
+        - vessel.ignite
+        - vessel.shutdown
+        - vessel.stage
+        - vessel.throttle
+        - vessel.lights
+        - vessel.rcs
+        - vessel.attitude_mode
+        - vessel.attitude_frame
+        - vessel.attitude_target
+        - vessel.burn
+        - engine.active
+        - engine.min_throttle
+        - rcs.active
+        - light.on
+        - light.brightness
+        - light.color
+        - decoupler.fire
+        - animation.goal
+        - debug.warp
+        - debug.switch_vessel
+        - debug.teleport
+        - debug.refill_fuel
+        - debug.refill_battery
+
+    AttitudeMode:
+      type: string
+      description: Accepted `vessel.attitude_mode` tokens. `manual` drops to manual; any other names a track target.
+      enum:
+        - manual
+        - Prograde
+        - Retrograde
+        - Normal
+        - AntiNormal
+        - RadialOut
+        - RadialIn
+        - Toward
+        - Away
+        - Antivel
+        - Align
+        - Forward
+        - Backward
+        - Up
+        - Down
+        - Ahead
+        - Behind
+        - Outward
+        - Inward
+        - PositiveDv
+        - NegativeDv
+        - Custom
+        - None
+
+    AttitudeFrame:
+      type: string
+      description: Accepted `vessel.attitude_frame` tokens (the vehicle reference frames).
+      enum: [EclBody, EnuBody, Lvlh, VlfBody, BurnBody, Dock]
+
+    # ---- time / status / events -------------------------------------------------------------
+
+    Time:
+      type: object
+      description: The clock projection (`/v1/time`, MQTT `gatos/time`).
+      properties:
+        ut: { type: number, format: double, description: Universal sim time, seconds. }
+        warp: { type: number, format: double, description: Current time-warp factor. }
+        sim_dt: { type: number, format: double, description: Sim seconds advanced last tick (0 ⇒ paused). }
+        warp_speeds:
+          type: array
+          items: { type: number, format: double }
+          description: The discrete warp factors the game offers.
+        auto_warp_active: { type: boolean }
+        auto_warp_target_ut: { type: number, format: double }
+      required: [ut, warp, sim_dt, warp_speeds, auto_warp_active, auto_warp_target_ut]
+
+    Status:
+      type: object
+      description: Integration health and the hosting transport's bindings (`/v1/status`, MQTT `gatos/status`).
+      properties:
+        game_version: { type: string }
+        sample_rate_hz: { type: number, format: double }
+        accessors:
+          type: array
+          description: Degraded integration accessors; empty when all healthy.
+          items: { $ref: "#/components/schemas/AccessorHealth" }
+        control: { type: boolean, description: Whether control writes are currently enabled. }
+        debug: { type: boolean, description: Whether the debug namespace is enabled. }
+        transports:
+          oneOf:
+            - { type: string }
+            - { type: "null" }
+          description: A human-readable line of bound transport ports.
+
+    AccessorHealth:
+      type: object
+      properties:
+        name: { type: string, description: 'Stable accessor name (e.g. "reader.vessel.orbit").' }
+        since_ut_seconds: { type: number, format: double }
+        error: { type: string }
+      required: [name, since_ut_seconds, error]
+
+    SimEvent:
+      type: object
+      description: One discrete event (the SSE `data:` payload and MQTT `gatos/events` body).
+      properties:
+        ut: { type: number, format: double }
+        type:
+          type: string
+          description: 'Event type (e.g. "situation-change", "staged", "docked", "flameout", "battery-depleted").'
+        vessel:
+          oneOf: [{ type: string }, { type: "null" }]
+          description: The vessel concerned, or null for global events.
+        detail: { type: string, description: 'Human-readable detail (e.g. "Landed→Freefall").' }
+      required: [ut, type, detail]
+
+    # ---- compact per-vessel telemetry (SDK-stable) ------------------------------------------
+
+    VesselTelemetry:
+      type: object
+      description: |
+        The compact, SDK-frozen per-vessel telemetry document. Short keys; vectors/quaternions as
+        arrays. Byte-identical across HTTP and MQTT.
+      properties:
+        seq: { type: integer, format: int64, description: Publish sequence of the snapshot. }
+        ut: { type: number, format: double }
+        warp: { type: number, format: double }
+        id: { type: string }
+        sit: { type: string, description: Situation string. }
+        controlled: { type: boolean }
+        parent: { type: string, description: Parent body name (omitted when unknown). }
+        pos_cci: { $ref: "#/components/schemas/Vec3Array" }
+        pos_ecl: { $ref: "#/components/schemas/Vec3Array" }
+        vel_cci: { $ref: "#/components/schemas/Vec3Array" }
+        vel:
+          type: object
+          properties:
+            orb: { type: number, format: double, description: Orbital speed, m/s. }
+            surf: { type: number, format: double, description: Surface speed, m/s. }
+            inr: { type: number, format: double, description: Inertial speed, m/s. }
+        alt:
+          type: object
+          properties:
+            baro: { type: number, format: double, description: Barometric altitude, m. }
+            radar: { type: number, format: double, description: Radar altitude, m. }
+        mass:
+          type: object
+          properties:
+            t: { type: number, format: double, description: Total mass, kg. }
+            d: { type: number, format: double, description: Dry mass, kg. }
+            p: { type: number, format: double, description: Propellant mass, kg. }
+        att_q:
+          type: array
+          items: { type: number, format: double }
+          minItems: 4
+          maxItems: 4
+          description: Body→CCI attitude quaternion [x, y, z, w].
+        orbit:
+          type: object
+          description: Present only while in orbit.
+          properties:
+            ap: { type: number, format: double, description: Apoapsis altitude, m. }
+            pe: { type: number, format: double, description: Periapsis altitude, m. }
+            ecc: { type: number, format: double }
+            inc: { type: number, format: double, description: Inclination, deg. }
+            sma: { type: number, format: double, description: Semi-major axis, m. }
+            period: { type: number, format: double, description: Period, s. }
+            ta: { type: number, format: double, description: True anomaly, deg. }
+            t_ap: { type: number, format: double, description: Time to apoapsis, s. }
+            t_pe: { type: number, format: double, description: Time to periapsis, s. }
+        power:
+          type: object
+          properties:
+            prod: { type: number, format: double, description: Power produced, W. }
+            cons: { type: number, format: double, description: Power consumed, W. }
+            battery: { type: number, format: double, description: Battery charge fraction 0..1 (omitted when no battery). }
+      required: [seq, ut, warp, id, sit, controlled, vel, alt, mass, att_q, power]
+
+    Vec3Array:
+      type: array
+      items: { type: number, format: double }
+      minItems: 3
+      maxItems: 3
+      description: A 3-vector as [x, y, z] (compact-doc encoding).
+
+    # ---- full snapshot records --------------------------------------------------------------
+    # Full reads serialize the underlying records with snake_case keys; null-valued fields are
+    # omitted. Optional sections (orbit, navball, environment, battery, module lists) are present
+    # only when applicable.
+
+    SimSnapshot:
+      type: object
+      properties:
+        sequence: { type: integer, format: int64 }
+        ut_seconds: { type: number, format: double }
+        warp_factor: { type: number, format: double }
+        active_vessel_id:
+          oneOf: [{ type: string }, { type: "null" }]
+        vessels:
+          type: array
+          items: { $ref: "#/components/schemas/VesselSnapshot" }
+        new_events:
+          type: array
+          items: { $ref: "#/components/schemas/SimEvent" }
+        game_version: { type: string }
+        sample_rate_hz: { type: number, format: double }
+        accessors:
+          type: array
+          items: { $ref: "#/components/schemas/AccessorHealth" }
+        sim_dt_seconds: { type: number, format: double }
+        warp_speeds:
+          type: array
+          items: { type: number, format: double }
+        auto_warp_active: { type: boolean }
+        auto_warp_target_ut: { type: number, format: double }
+        bodies:
+          type: array
+          items: { $ref: "#/components/schemas/BodySnapshot" }
+        system:
+          oneOf:
+            - { $ref: "#/components/schemas/SystemSnapshot" }
+            - { type: "null" }
+      required: [sequence, ut_seconds, warp_factor, vessels, new_events, game_version, sample_rate_hz, accessors]
+
+    VesselSnapshot:
+      type: object
+      description: One vessel's full record. Vectors/quaternions are `{x,y,z[,w]}` objects here.
+      properties:
+        id: { type: string }
+        name: { type: string }
+        situation: { type: string }
+        position_cci: { $ref: "#/components/schemas/Vec3" }
+        latitude_deg: { type: number, format: double }
+        longitude_deg: { type: number, format: double }
+        orbital_speed: { type: number, format: double }
+        surface_speed: { type: number, format: double }
+        inertial_speed: { type: number, format: double }
+        attitude_body2_cci: { $ref: "#/components/schemas/Quat" }
+        body_rates_rad_s: { $ref: "#/components/schemas/Vec3" }
+        barometric_altitude: { type: number, format: double }
+        radar_altitude: { type: number, format: double }
+        mass_total: { type: number, format: double }
+        mass_dry: { type: number, format: double }
+        mass_propellant: { type: number, format: double }
+        orbit:
+          oneOf: [{ $ref: "#/components/schemas/OrbitSnapshot" }, { type: "null" }]
+        engines:
+          type: array
+          items: { $ref: "#/components/schemas/EngineSnapshot" }
+        tanks:
+          type: array
+          items: { $ref: "#/components/schemas/TankSnapshot" }
+        battery_charge_fraction:
+          oneOf: [{ type: number, format: double }, { type: "null" }]
+        parent_body_name:
+          oneOf: [{ type: string }, { type: "null" }]
+        lights_master_on: { type: boolean }
+        animations:
+          type: array
+          items: { $ref: "#/components/schemas/AnimationSnapshot" }
+        position_ecl: { $ref: "#/components/schemas/Vec3" }
+        velocity_cci: { $ref: "#/components/schemas/Vec3" }
+        center_of_mass: { $ref: "#/components/schemas/Vec3" }
+        controlled: { type: boolean }
+        navball:
+          oneOf: [{ $ref: "#/components/schemas/NavballSnapshot" }, { type: "null" }]
+        throttle_cmd: { type: number, format: double }
+        attitude_mode: { type: string }
+        attitude_frame: { type: string }
+        rcs_on: { type: boolean }
+        environment:
+          oneOf: [{ $ref: "#/components/schemas/EnvironmentSnapshot" }, { type: "null" }]
+        power_produced_w: { type: number, format: double }
+        power_consumed_w: { type: number, format: double }
+        battery_capacity_joules:
+          oneOf: [{ type: number, format: double }, { type: "null" }]
+        rcs:
+          type: array
+          items: { $ref: "#/components/schemas/RcsSnapshot" }
+        solar:
+          type: array
+          items: { $ref: "#/components/schemas/SolarSnapshot" }
+        generators:
+          type: array
+          items: { $ref: "#/components/schemas/GeneratorSnapshot" }
+        lights:
+          type: array
+          items: { $ref: "#/components/schemas/LightSnapshot" }
+        docking:
+          type: array
+          items: { $ref: "#/components/schemas/DockingSnapshot" }
+        decouplers:
+          type: array
+          items: { $ref: "#/components/schemas/DecouplerSnapshot" }
+        encounters:
+          type: array
+          items: { $ref: "#/components/schemas/EncounterSnapshot" }
+      required: [id, name, situation, engines, tanks]
+
+    OrbitSnapshot:
+      type: object
+      description: Orbit elements (altitudes above the parent surface, not radii).
+      properties:
+        apoapsis_altitude: { type: number, format: double }
+        periapsis_altitude: { type: number, format: double }
+        eccentricity: { type: number, format: double }
+        inclination_deg: { type: number, format: double }
+        sma_meters: { type: number, format: double }
+        period_seconds: { type: number, format: double }
+        lan_deg: { type: number, format: double }
+        arg_pe_deg: { type: number, format: double }
+        true_anomaly_deg: { type: number, format: double }
+        time_to_apoapsis: { type: number, format: double }
+        time_to_periapsis: { type: number, format: double }
+        next_patch_event_ut: { type: number, format: double }
+
+    EngineSnapshot:
+      type: object
+      properties:
+        index: { type: integer }
+        active: { type: boolean }
+        vac_thrust_n: { type: number, format: double }
+        isp_s: { type: number, format: double }
+        throttle_cmd: { type: number, format: double }
+        propellant_available: { type: boolean }
+        min_throttle: { type: number, format: double }
+      required: [index, active, vac_thrust_n, isp_s]
+
+    TankSnapshot:
+      type: object
+      properties:
+        resource: { type: string }
+        amount: { type: number, format: double }
+        capacity: { type: number, format: double }
+        fraction: { type: number, format: double, description: Fill fraction 0..1. }
+      required: [resource, amount, capacity]
+
+    RcsSnapshot:
+      type: object
+      properties:
+        index: { type: integer }
+        active: { type: boolean }
+        propellant_available: { type: boolean }
+        control_map: { type: string, description: 'Active control-axis flags (e.g. "Pitch|Yaw").' }
+      required: [index, active, propellant_available, control_map]
+
+    SolarSnapshot:
+      type: object
+      properties:
+        index: { type: integer }
+        produced_w: { type: number, format: double }
+        occluded: { type: boolean }
+        sun_aoa_deg: { type: number, format: double }
+        efficiency: { type: number, format: double, description: Sun efficiency 0..1. }
+        has_tracker: { type: boolean }
+        tracker_angle_deg: { type: number, format: double }
+        animation_index: { type: integer, description: Deploy-animation ordinal, or -1 for a fixed panel. }
+      required: [index, produced_w, occluded, sun_aoa_deg, efficiency, has_tracker, tracker_angle_deg]
+
+    GeneratorSnapshot:
+      type: object
+      properties:
+        index: { type: integer }
+        active: { type: boolean }
+        produced_w: { type: number, format: double }
+      required: [index, active, produced_w]
+
+    LightSnapshot:
+      type: object
+      properties:
+        index: { type: integer }
+        on: { type: boolean }
+        intensity: { type: number, format: double }
+        color: { $ref: "#/components/schemas/Vec3" }
+      required: [index, on, intensity, color]
+
+    DockingSnapshot:
+      type: object
+      properties:
+        index: { type: integer }
+        docked: { type: boolean }
+        docked_to_part:
+          oneOf: [{ type: string }, { type: "null" }]
+      required: [index, docked]
+
+    DecouplerSnapshot:
+      type: object
+      properties:
+        index: { type: integer }
+        fired: { type: boolean, description: Irreversible once true. }
+      required: [index, fired]
+
+    EncounterSnapshot:
+      type: object
+      properties:
+        body: { type: string }
+        ut: { type: number, format: double }
+        distance_meters: { type: number, format: double }
+      required: [body, ut, distance_meters]
+
+    NavballSnapshot:
+      type: object
+      properties:
+        pitch_deg: { type: integer }
+        yaw_deg: { type: integer }
+        roll_deg: { type: integer }
+        thrust_weight_ratio: { type: number, format: double }
+        delta_v_vacuum_ms: { type: number, format: double }
+        frame: { type: string }
+        speed_ms: { type: number, format: double }
+      required: [pitch_deg, yaw_deg, roll_deg, thrust_weight_ratio, delta_v_vacuum_ms, frame, speed_ms]
+
+    EnvironmentSnapshot:
+      type: object
+      properties:
+        pressure_pa: { type: number, format: double }
+        density_kg_m3: { type: number, format: double }
+        dynamic_pressure_pa: { type: number, format: double }
+        ocean_density_kg_m3: { type: number, format: double }
+        terrain_radius_m: { type: number, format: double }
+        accel_body: { $ref: "#/components/schemas/Vec3" }
+        angular_accel_body: { $ref: "#/components/schemas/Vec3" }
+        g_force: { type: number, format: double, description: '|accel| / g0.' }
+      required: [pressure_pa, density_kg_m3, dynamic_pressure_pa, ocean_density_kg_m3, terrain_radius_m, accel_body, angular_accel_body, g_force]
+
+    AnimationSnapshot:
+      type: object
+      properties:
+        index: { type: integer }
+        goal_fraction: { type: number, format: double, description: Commanded deploy 0..1. }
+        current_fraction: { type: number, format: double, description: Actual deploy 0..1. }
+        deployment_state: { type: string, description: 'Deployed | Retracted | Deploying | Retracting | Broken.' }
+        is_solar: { type: boolean }
+      required: [index, goal_fraction, current_fraction, deployment_state, is_solar]
+
+    BodySnapshot:
+      type: object
+      properties:
+        id: { type: string }
+        class: { type: string, description: 'Planet | Moon | Star | …' }
+        parent_id:
+          oneOf: [{ type: string }, { type: "null" }]
+        child_ids:
+          type: array
+          items: { type: string }
+        mass: { type: number, format: double }
+        mean_radius: { type: number, format: double }
+        mu: { type: number, format: double, description: Standard gravitational parameter, m³/s². }
+        soi_meters: { type: number, format: double }
+        rotation_rate_rad_s: { type: number, format: double }
+        position_ecl: { $ref: "#/components/schemas/Vec3" }
+        velocity_ecl: { $ref: "#/components/schemas/Vec3" }
+        orbit:
+          oneOf: [{ $ref: "#/components/schemas/OrbitSnapshot" }, { type: "null" }]
+        atmosphere:
+          oneOf: [{ $ref: "#/components/schemas/AtmosphereSnapshot" }, { type: "null" }]
+        ocean:
+          oneOf: [{ $ref: "#/components/schemas/OceanSnapshot" }, { type: "null" }]
+      required: [id, class, child_ids, mass, mean_radius, mu, soi_meters, rotation_rate_rad_s, position_ecl, velocity_ecl]
+
+    AtmosphereSnapshot:
+      type: object
+      properties:
+        height_m: { type: number, format: double }
+        scale_height_m: { type: number, format: double }
+        sea_level_pressure_pa: { type: number, format: double }
+        sea_level_density_kg_m3: { type: number, format: double }
+      required: [height_m, scale_height_m, sea_level_pressure_pa, sea_level_density_kg_m3]
+
+    OceanSnapshot:
+      type: object
+      properties:
+        density_kg_m3: { type: number, format: double }
+      required: [density_kg_m3]
+
+    SystemSnapshot:
+      type: object
+      properties:
+        name: { type: string }
+        home_body_id:
+          oneOf: [{ type: string }, { type: "null" }]
+        sun_id:
+          oneOf: [{ type: string }, { type: "null" }]
+      required: [name]

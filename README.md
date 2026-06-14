@@ -1,170 +1,540 @@
 # gatOS
 
-A real, minimal operating system for [Kitten Space Agency](https://www.kittenspaceagency.com/) (KSA).
+**A real Linux computer for your spacecraft in [Kitten Space Agency](https://ahwoo.com/app/100000/kitten-space-agency).**
 
-gatOS is a **standalone KSA mod** that boots a genuine **Alpine Linux** inside a lightweight
-**QEMU microVM** and surfaces it through the [**purrTTY**](../purrtty) terminal emulator. You get a
-real shell, a real package manager (`apk`), real pipes, jobs, pagers and editors — off-the-shelf,
-not reimplemented. Live vehicle telemetry is mounted into the guest at `/sim` as plain files, so the
-whole unix toolbox becomes the game's data API:
+Yes, "gato" is Spanish for cat. Yes, your astronauts are kittens. No, we will not apologize for the
+pun. gatOS gives every kitten-crewed rocket an honest-to-goodness onboard computer — and turns your
+flight telemetry into files you can `cat`, `grep`, and `tail -f` like it's 1989 mission control.
+
+> **gatOS + [purrTTY](../purrtty) are two mods that work together.** purrTTY is the terminal window
+> you type into; gatOS is the little Linux machine behind it. Install both.
+
+---
+
+## What is this, actually?
+
+Most game "terminals" are fake — a text box that recognizes ten hardcoded commands and sasses you
+for the rest. gatOS is the opposite. It boots a genuine, tiny **Alpine Linux** inside a lightweight
+virtual machine running quietly alongside the game, and lets you open real shell sessions into it
+through the **purrTTY** terminal mod.
+
+That means real `bash`, real `vim`, a real package manager (`apk add cowsay`, go on), real pipes,
+real `ssh`-into-your-spaceship energy. Nothing is reimplemented or faked — it's Linux.
+
+The fun part: your live vehicle telemetry is mounted inside that Linux box as a folder of files at
+`/sim`. So the entire Unix toolbox suddenly becomes the game's data API:
 
 ```sh
+# Watch your altitude tick up, once a second
 watch -n1 cat /sim/vessels/active/altitude/radar
+
+# Follow your surface velocity as a live stream
 tail -f /sim/vessels/active/stream | jq .vel.surface
+
+# Light the engines (yes, writing to a file flies the rocket)
+echo 1 > /sim/vessels/active/ctl/ignite
 ```
 
-## Three ways in, one data model
+If you'd rather build a dashboard or an autopilot in your favorite language, the **same** telemetry
+and controls are also served over **HTTP** and **MQTT** — same data, same buttons, your choice of
+plumbing. (See [Talking to the game](#talking-to-the-game-the-data-interfaces).)
 
-`/sim` is the native surface, but the same telemetry **and** the same controls are also served over
-**HTTP** and **MQTT** for clients that prefer them. All three are projections of a single telemetry
-snapshot and a single command pipeline, so they expose the **same** data granularity, the same
-control points, and the same debug cheats — pick whichever fits the job:
+---
 
-- **`/sim` files** — shell-native; `cat`, `watch`, `tail -f`, `jq` pipelines (above), and write to a
-  control file to act (`echo 1 > /sim/vessels/active/ctl/ignite`).
-- **HTTP** (`$GATOS_HTTP`) — `GET /v1/snapshot` (one atomic JSON read), `/v1/vessels/<id>/telemetry`,
-  `/v1/system`, `/v1/bodies`, Server-Sent Events `/v1/events` and `/v1/vessels/<id>/stream`, and one
-  `POST /v1/command` for every action. `GET /v1/openapi.json` builds a typed client in any language.
-- **MQTT** (`$GATOS_MQTT`) — subscribe `gatos/#` for retained `gatos/time`, `gatos/status`,
-  `gatos/system`, `gatos/bodies`, `gatos/snapshot` and per-vessel `telemetry`/`snapshot` topics (plus
-  live `gatos/events`); publish a command JSON to `gatos/command`.
+## 🎥 Video demo
 
-Both HTTP and MQTT also expose the `/sim` tree **field-by-field**, so an MQTT explorer or a dashboard
-sees every individual reading and control as its own endpoint, not just JSON blobs:
+> _Watch gatOS boot a rocket's onboard Linux and fly a launch from the command line:_
 
-- **HTTP**: `GET /v1/fs/vessels/by-id/<id>/altitude/radar` returns the raw value; add `?stream=1` for
-  an SSE feed of that one value; `POST /v1/fs/.../ctl/throttle` (body `0.8`) actuates it.
-- **MQTT**: each leaf is its own retained topic, e.g. `gatos/sim/vessels/by-id/<id>/altitude/radar`;
-  write a control point by publishing to its `…/set` topic (e.g. `gatos/sim/.../ctl/ignite/set`).
+<!-- TODO: replace VIDEO_ID with the real YouTube ID once the demo is up -->
+<!--
+[![gatOS demo](https://img.youtube.com/vi/VIDEO_ID/maxresdefault.jpg)](https://www.youtube.com/watch?v=VIDEO_ID)
+-->
 
-`$GATOS_HTTP` and `$GATOS_MQTT` are preset in the guest shell, and each transport (and its field-level
-mirror) can be turned on or off in `gatos.toml`.
+_📺 Demo video coming soon — this space is reserved for the embed._
 
-## Status
+---
 
-Early development, building milestone by milestone. Working today: the guest image pipeline, the
-QEMU VM lifecycle, SSH shell sessions (purrTTY's custom-shell contract, with live resize), the
-in-game mod integration (lazy VM boot, config, diagnostics menu + status window), and the whole
-`/sim` telemetry stack wired end to end — a C# 9P2000.L server, the `/sim` file tree (scalars,
-NDJSON `stream`/`events` files) and the game-thread sampler that feeds it live vehicle data
-(position, velocity, attitude, orbit, engines, tanks, battery, flight events). The guest mounts
-`/sim` automatically at boot; the first in-game validation flight is pending. Still to come:
-per-save persistence polish and release packaging. See `OS_PLAN.md` for the roadmap and
-`OS_ANALYSIS.md` (in this repo and `../purrtty`) for the architecture rationale.
+## Installation
 
-## In game
+Grab the right download for your OS — the releases ship a **`gatOS-windows-*.zip`** and a
+**`gatOS-linux-*.zip`**. Both bundle the Linux guest image; the **Windows** zip *also* bundles a
+trimmed copy of QEMU, so on Windows it's truly everything-in-the-box (no separate downloads, no
+"install Linux first," no Docker). On **Linux** you install QEMU once from your package manager — see
+[Linux support](#linux-support) below.
 
-Open a session from purrTTY's **New Tab / New Window** menus — **gatOS** appears alongside the
-regular shells. The first session boots the VM (a few seconds; longer without hardware
-acceleration); closing tabs never stops the VM, quitting the game does.
+1. **Install [purrTTY](../purrtty)** (the terminal emulator mod) using your usual KSA mod method.
+2. **Install gatOS** the same way (use the zip for your OS).
+3. _(Optional but nice)_ Install the **ModMenu** mod — it gives gatOS a handy diagnostics menu and
+   status window. Everything works without it; you just lose the dashboard.
+4. Launch KSA. That's it.
 
-If the **ModMenu** mod is installed, a *gatOS* menu offers a status window (VM state, accelerator,
-ports, last fault), Start / Shut Down VM, Open Data Folder, and **Reset Disk…** (wipes everything
-inside the guest back to factory state). ModMenu is optional — without it everything still works
-through purrTTY's menus; you only lose the diagnostics UI.
+> 🪟 **Windows players:** gatOS runs out of the box, but for a *snappy* boot you'll want to enable
+> hardware acceleration (the **Windows Hypervisor Platform** feature). It's a one-time, 5-minute
+> setup — see [Performance & hardware acceleration](#performance--hardware-acceleration) below.
+> Without it gatOS still works fine; the VM just boots in ~7 seconds instead of ~1 and feels a touch
+> slower.
+>
+> 🐧 **Linux players:** install `qemu-system-x86_64` from your package manager first — the Linux mod
+> uses your system QEMU rather than a bundled one. One-time, two minutes — see
+> [Linux support](#linux-support) below.
 
-User data (disks, logs, the `gatos.toml` config) lives under
-`Documents/My Games/Kitten Space Agency/mods/gatOS/`.
+---
 
-## Requirements
+## Linux support
 
-- **The purrTTY mod** — gatOS uses it as the terminal UI (it can also load headless without it).
-- **QEMU:** bundled with the mod on both player platforms (D5) — no installation needed.
-  - **Windows:** trimmed win-x64 build in the dist. For hardware acceleration, enable the **Windows
-    Hypervisor Platform** feature — see [Hardware acceleration (Windows)](#hardware-acceleration-windows)
-    below. Without it, gatOS falls back to slower pure emulation (TCG), still playable for shell work.
-  - **Linux:** portable linux-x64 bundle in the dist (lands with M11/T11.6; until then, install
-    QEMU from your distro). Acceleration wants `/dev/kvm` access (add your user to the `kvm`
-    group); TCG fallback otherwise. A system QEMU on `PATH` is still honored when the bundle is
-    absent.
-  - **macOS (dev only):** `brew install qemu`.
+gatOS runs great on Linux — with one difference from the Windows build: the **Linux mod does not
+bundle QEMU**. Instead it uses the `qemu-system-x86_64` already on your system (gatOS finds it on your
+`PATH`). So before launching, install QEMU once from your distro's package manager:
 
-## Hardware acceleration (Windows)
+```sh
+# Debian / Ubuntu / Pop!_OS / Mint
+sudo apt install qemu-system-x86
 
-QEMU runs the guest under one of two backends, and gatOS picks automatically — no configuration
-needed. It prefers hardware acceleration and silently falls back to software emulation:
+# Fedora / RHEL
+sudo dnf install qemu-system-x86
 
-- **WHPX** (Windows Hypervisor Platform) — hardware-accelerated; the guest boots in a second or two
-  and the VM is responsive. **Recommended.**
-- **TCG** — pure software emulation; works everywhere with zero setup, but boots in ~7 s and is
-  noticeably slower. The in-game *gatOS* status window flags this and points at the fix.
+# Arch / Manjaro
+sudo pacman -S qemu-system-x86_64
 
-Unlike the full **Hyper-V** role, the Windows Hypervisor Platform feature is available on **Windows
-Home** as well as Pro/Enterprise/Education. Enabling it is a one-time setup that needs a reboot.
-
-### 1. Enable CPU virtualization in firmware (one time)
-
-WHPX needs the CPU's virtualization extensions turned on. Check first: open **Task Manager →
-Performance → CPU** and look for **Virtualization: Enabled**. If it reads *Disabled*, reboot into
-your BIOS/UEFI (usually <kbd>Del</kbd> or <kbd>F2</kbd> at power-on) and enable:
-
-- **Intel:** *Intel VT-x* / *Intel Virtualization Technology*
-- **AMD:** *SVM Mode* / *AMD-V*
-
-Save and exit. Most machines ship with this already on.
-
-### 2. Turn on the Windows Hypervisor Platform feature
-
-Pick **any one** of these (all require a reboot afterward):
-
-**Windows Features dialog (GUI)**
-1. Press <kbd>Win</kbd>+<kbd>R</kbd>, type `optionalfeatures`, press <kbd>Enter</kbd>.
-2. Tick **Windows Hypervisor Platform**.
-3. Click **OK**, then **Restart now**.
-
-**DISM** — in an **elevated** (Run as administrator) PowerShell or Command Prompt:
-
-```powershell
-DISM /Online /Enable-Feature /FeatureName:HypervisorPlatform /All
+# openSUSE
+sudo zypper install qemu-x86
 ```
 
-**PowerShell** — in an **elevated** PowerShell:
+That's the only extra step — the guest image itself is bundled in the mod, same as on Windows.
 
-```powershell
-Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform
-```
+**Hardware acceleration is automatic on Linux.** If your user can access `/dev/kvm`, gatOS uses
+**KVM** and the guest boots in about a second; otherwise it falls back to software emulation (TCG,
+~7 s boot — still perfectly usable). Most desktop distros grant `/dev/kvm` access out of the box; if
+yours doesn't, add yourself to the `kvm` group (`sudo usermod -aG kvm "$USER"`, then log out and back
+in).
 
-Then **reboot** — the feature only takes effect after a restart.
+**Check it worked:** open a gatOS terminal (or, with ModMenu, the status window) — the **accelerator**
+line should read `kvm` (accelerated) or `tcg` (software). Either is fine; `kvm` is just faster.
 
-### 3. Verify
+> **Why isn't QEMU bundled on Linux too?** A portable, self-contained Linux QEMU bundle is on the
+> roadmap but not built yet. Until it ships, the Linux mod relies on your system QEMU. A standard
+> distro package is all it needs — gatOS doesn't care which version, as long as
+> `qemu-system-x86_64` is on the `PATH`.
 
-Launch KSA and open a gatOS terminal (or the *gatOS* status window, if the ModMenu mod is
-installed). The VM should boot in a second or two, and the status window's accelerator line reads
-**whpx**. If it still says **tcg** with the "Running under TCG software emulation" warning, see
+---
+
+## Performance & hardware acceleration
+
+gatOS runs the guest inside QEMU, and QEMU can drive it one of two ways. gatOS picks the best one
+available automatically — but on Windows the fast path needs a one-time setup, so it's worth knowing
+about.
+
+| Backend | Speed | Setup |
+| --- | --- | --- |
+| **WHPX** (Windows Hypervisor Platform) | Boots in a second or two; responsive. **Recommended.** | One-time, needs a reboot (below). |
+| **KVM** (Linux) / **HVF** (macOS) | Same hardware-accelerated speed. | Works out of the box (Linux wants `/dev/kvm` access). |
+| **TCG** (software emulation) | Boots in ~7 s; noticeably slower, but totally fine for shell work. | None — the universal fallback. |
+
+You never *have* to do any of this — TCG works everywhere with zero configuration. This just makes
+boots near-instant on Windows.
+
+### Check what you're using now
+
+Open the **gatOS** status window (the *gatOS* menu, if the ModMenu mod is installed) and read the
+**accelerator** line:
+
+- **`whpx`** / `kvm` / `hvf` → you're hardware-accelerated. Nothing to do. 🎉
+- **`tcg`** → software emulation. The window also shows a "Running under TCG" hint. On Windows,
+  follow the steps below to switch to WHPX.
+
+No ModMenu? You can tell by feel — an accelerated VM boots in about a second, TCG takes several — or
+check the newest log in `…\mods\gatOS\logs\` for the chosen `accel`.
+
+### Enable WHPX on Windows (one time)
+
+Unlike the full **Hyper-V** role, the Windows Hypervisor Platform feature is available on Windows
+**Home** as well as Pro/Enterprise. Each step below needs a reboot to take effect.
+
+**1. Turn on CPU virtualization in firmware.** Open **Task Manager → Performance → CPU** and look for
+**Virtualization: Enabled**. If it reads *Disabled*, reboot into your BIOS/UEFI (usually
+<kbd>Del</kbd> or <kbd>F2</kbd> at power-on) and enable *Intel VT-x* (a.k.a. *Intel Virtualization
+Technology*) or *AMD SVM Mode* / *AMD-V*. Most machines ship with this already on.
+
+**2. Turn on the Windows Hypervisor Platform feature.** Pick whichever you like:
+
+- **GUI:** press <kbd>Win</kbd>+<kbd>R</kbd>, run `optionalfeatures`, tick **Windows Hypervisor
+  Platform**, click **OK**, then **Restart now**.
+- **PowerShell (elevated):**
+  ```powershell
+  Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform
+  ```
+- **DISM (elevated):**
+  ```powershell
+  DISM /Online /Enable-Feature /FeatureName:HypervisorPlatform /All
+  ```
+
+**3. Reboot** — the feature only kicks in after a restart.
+
+### Validate it worked
+
+Launch KSA, open a gatOS terminal (or the status window). The VM should boot in a blink, and the
+status window's **accelerator** line should now read **whpx**. Still on `tcg`? See the quick fixes
 below.
 
-### Troubleshooting
+### If it's still on TCG
 
-- **Still on TCG after the reboot?** Re-check step 1 — Task Manager must show *Virtualization:
-  Enabled*. Virtualization disabled in firmware is the most common cause.
-- **Core Isolation / Memory Integrity.** On some Home builds, *Windows Security → Device security →
-  Core isolation → Memory integrity* can stop third-party hypervisor clients from initializing. If
-  WHPX won't start, toggle Memory integrity off and reboot.
-- **The Windows hypervisor must actually be running.** If you previously turned it off (e.g.
-  `bcdedit /set hypervisorlaunchtype off` to satisfy an anti-cheat game), re-enable it with an
-  elevated `bcdedit /set hypervisorlaunchtype auto` and reboot.
-- **Force a backend.** You can pin the accelerator in `gatos.toml` — `accel_override = "whpx"` or
-  `"tcg"`; leave it `""` for the automatic ladder. The config lives under
-  `Documents/My Games/Kitten Space Agency/mods/gatOS/`.
-- **CPU model.** Under WHPX, gatOS deliberately runs a named guest CPU model (not host-passthrough):
-  the Windows Hypervisor Platform rejects `-cpu host`/`max` on many CPUs (the guest faults at boot
-  with "WHPX: Unexpected VP exit code 4" and silently drops to TCG). The default is broadly
-  compatible and keeps AES-NI for fast in-guest SSH; override it only if needed with
-  `cpu_model = "host"` (or another QEMU model) in `gatos.toml` (`""` = automatic).
-- gatOS's WHPX backend needs **Windows 10 version 2004 or newer**.
+- **Re-check step 1.** Task Manager must show *Virtualization: Enabled* — disabled-in-firmware is the
+  single most common cause.
+- **Core Isolation / Memory Integrity.** On some builds, *Windows Security → Device security → Core
+  isolation → Memory integrity* blocks third-party hypervisor clients. Toggle it off and reboot.
+- **The hypervisor must actually be running.** If you once ran `bcdedit /set hypervisorlaunchtype off`
+  (a common anti-cheat workaround), turn it back on with an elevated
+  `bcdedit /set hypervisorlaunchtype auto` and reboot.
+- **Force a backend** in `gatos.toml`: `accel_override = "whpx"` (or `"tcg"`); `""` = auto.
+- WHPX needs **Windows 10 version 2004 or newer**.
 
-## Build & test (developers)
+> **Why a named CPU model under WHPX?** WHPX rejects QEMU's `-cpu host`/`max` on many CPUs — the guest
+> triple-faults at boot ("Unexpected VP exit code 4") and silently drops back to TCG. gatOS sidesteps
+> this by running a broadly-compatible named CPU model under WHPX automatically; you don't need to do
+> anything. Override it with `cpu_model` in `gatos.toml` only if you have a reason to.
 
-```bash
-dotnet build gatos.slnx
-dotnet test  gatos.slnx --nologo -v quiet
+The full deep-dive lives in **[`README_DETAILS.md`](./README_DETAILS.md#hardware-acceleration-windows)**.
+
+---
+
+## Getting started (in game)
+
+### 1. Open a gatOS terminal
+
+Open purrTTY's **New Tab** or **New Window** menu. Alongside the normal shells you'll see a
+**gatOS** entry — pick it.
+
+The very first session boots the little VM (a few seconds, longer without acceleration). After that,
+new tabs are instant. Closing a tab never shuts the VM down; quitting the game does.
+
+<!-- TODO: screenshot — purrTTY's New Tab menu showing the "gatOS" shell entry -->
+> _📸 Screenshot: the purrTTY New Tab menu with the gatOS option highlighted._
+
+### 2. Poke around
+
+You're dropped into a real shell on a machine named `gatos`. Try the classics:
+
+```sh
+ls /sim                       # the whole telemetry tree
+cat /sim/time/ut              # universal time, right now
+ls /sim/vessels/active        # everything about the vessel you're flying
+apk add jq htop               # install real software (needs internet; see config)
 ```
 
-The KSA reference assemblies resolve via `Directory.Build.props` (env `KSA_DLL_DIR`, a sibling
-`ksa-game-assemblies` checkout, or a per-OS default). Only `gatOS.GameMod` needs them; the rest of
-the solution builds without. See **`CLAUDE.md`** for conventions and the project map.
+<!-- TODO: screenshot — a gatOS terminal session showing /sim being explored -->
+> _📸 Screenshot: a live gatOS session exploring `/sim`._
+
+### 3. Fly something from the command line
+
+Telemetry is read-only fun; the control files are where it gets dangerous. Each active vessel has a
+`ctl/` directory full of files you write to:
+
+```sh
+echo 0.8 > /sim/vessels/active/ctl/throttle     # 80% throttle
+echo 1   > /sim/vessels/active/ctl/ignite        # light it
+echo 1   > /sim/vessels/active/ctl/stage          # next stage
+```
+
+A write that the game rejects comes back as a normal shell error (non-zero exit, real `errno`), so
+your scripts can actually branch on success. Welcome to spaceflight-as-shell-scripting.
+
+<!-- TODO: screenshot — launching a rocket via echo > ctl files -->
+> _📸 Screenshot: a launch driven entirely from the terminal._
+
+### 4. The gatOS menu (with ModMenu)
+
+If ModMenu is installed, a **gatOS** menu appears with a status window (VM state, accelerator, ports,
+uptime, last fault) and buttons for **Start / Shut Down VM**, **Restart SimFs**, **Open Data
+Folder**, and **Reset Disk…** (nuke the guest back to factory state — handy if you `rm -rf` something
+you shouldn't have).
+
+<!-- TODO: screenshot — the gatOS status window -->
+> _📸 Screenshot: the gatOS status window._
+
+---
+
+## Talking to the game: the data interfaces
+
+Here's the trick that makes gatOS more than a novelty terminal: your spacecraft's live state is
+exposed through **four interchangeable interfaces**, and they all show the **same** data and accept
+the **same** commands. Read your altitude from a shell file, an HTTP endpoint, or an MQTT topic —
+it's the same number, sampled from the same place. Pick whatever fits the job.
+
+> Every reading is a live snapshot. Telemetry files update as the game does; control points act the
+> instant you write them. IDs in paths below (`<id>`) are vehicle ids; `active` is always an alias
+> for the vessel you're currently flying.
+
+### 1. `/sim` — the filesystem (the native way)
+
+Mounted inside the guest at `/sim`. This is the one you'll use from the terminal. The tree mirrors
+your spacecraft:
+
+```
+/sim/
+├── time/           ut, warp, sim_dt, warp_speeds, auto_warp, alarm
+├── system/         name, home (body), sun
+├── bodies/<id>/    celestial catalog: mass, radius, mu, soi, orbit/, atmosphere/, ocean/
+├── vessels/
+│   ├── active/     → alias of the vessel you're flying
+│   └── by-id/<id>/
+│        ├── id name situation parent controlled com telemetry
+│        ├── position/{cci,ecl,lat,lon}   velocity/{orbital,surface,inertial,cci}
+│        ├── attitude/{quat,rates}        altitude/{barometric,radar}
+│        ├── mass/{total,dry,propellant}  orbit/{apoapsis,periapsis,ecc,inc,…}
+│        ├── navball/  environment/  battery/  power/
+│        ├── engines/<n>/{active,vac_thrust,isp,throttle,propellant,min_throttle}
+│        ├── tanks/<resource>/{amount,capacity,fraction}
+│        ├── rcs/ solar/ generators/ lights/ docking/ decouplers/ animations/
+│        ├── stream      ← growing NDJSON log; tail -f it
+│        └── ctl/        ← write here to fly (see below)
+├── events           ← blocking NDJSON feed of flight events
+├── status/          integration health (game version, sampler, accessors, transports)
+└── debug/           cheat surface (teleport, refuel, warp…) — gated by config
+```
+
+**Reading** is just `cat`, and because these are real files the whole toolbox works:
+
+```sh
+cat /sim/vessels/active/altitude/radar          # one value
+watch -n1 cat /sim/vessels/active/velocity/surface
+tail -f /sim/vessels/active/stream | jq .alt     # live stream, piped to jq
+cat /sim/vessels/active/telemetry | jq .          # one atomic JSON doc of everything
+
+# A two-line "is my burn done?" alarm:
+cat /sim/events &                                 # blocks until the next flight event
+echo "waiting for apoapsis…"; cat /sim/vessels/active/orbit/time_to_ap
+```
+
+**Writing** to a file under `ctl/` (or a writable module file) actuates immediately. A rejected write
+returns a real shell error, so scripts can branch:
+
+```sh
+echo 0.8 > /sim/vessels/active/ctl/throttle      # 80% throttle
+echo 1   > /sim/vessels/active/ctl/ignite         # light the engine(s)
+echo 1   > /sim/vessels/active/ctl/stage           # next stage
+echo Prograde > /sim/vessels/active/ctl/attitude_mode   # point the flight computer
+echo 1   > /sim/vessels/active/engines/0/active    # toggle one engine
+echo 1   > /sim/vessels/active/lights/0/on          # a single light
+
+# A tiny gravity-turn-ish launch script:
+echo 1.0 > /sim/vessels/active/ctl/throttle
+echo Prograde > /sim/vessels/active/ctl/attitude_mode
+echo 1 > /sim/vessels/active/ctl/ignite
+while [ "$(cat /sim/vessels/active/altitude/radar)" -lt 70000 ] 2>/dev/null; do sleep 1; done
+echo "70 km — cutting throttle"; echo 0 > /sim/vessels/active/ctl/throttle
+```
+
+### 2. HTTP — for dashboards and scripts (`$GATOS_HTTP`)
+
+A small REST-ish API served on the host; from the guest shell it's at `$GATOS_HTTP` (already set for
+you). Great for a browser, `curl`, or any language.
+
+```sh
+curl $GATOS_HTTP/v1/snapshot | jq .               # the whole world, one JSON read
+curl $GATOS_HTTP/v1/time
+curl $GATOS_HTTP/v1/vessels                         # list vessel ids
+curl $GATOS_HTTP/v1/vessels/<id>/telemetry | jq .   # compact per-vessel doc
+curl $GATOS_HTTP/v1/system   $GATOS_HTTP/v1/bodies
+
+# Live feeds (Server-Sent Events):
+curl -N $GATOS_HTTP/v1/events                       # flight events as they happen
+curl -N $GATOS_HTTP/v1/vessels/<id>/stream          # the HTTP twin of the `stream` file
+
+# Long-poll until a sim time is reached:
+curl "$GATOS_HTTP/v1/time/wait?until=123456.0"
+
+# One generic command endpoint for every action:
+curl -X POST $GATOS_HTTP/v1/command \
+  -d '{"vessel_id":"<id>","action":"vessel.ignite","ordinal":-1,"value":1}'
+```
+
+Want a typed client in your language of choice? Point any OpenAPI generator at
+`$GATOS_HTTP/v1/openapi.json`.
+
+It also mirrors the `/sim` tree **field by field**, so each individual reading is its own URL:
+
+```sh
+curl $GATOS_HTTP/v1/fs/vessels/active/altitude/radar       # one raw value
+curl -N "$GATOS_HTTP/v1/fs/vessels/active/altitude/radar?stream=1"   # SSE of that value
+curl -X POST $GATOS_HTTP/v1/fs/vessels/active/ctl/throttle -d '0.8'  # actuate one field
+```
+
+### 3. MQTT — for pub/sub and home-automation tools (`$GATOS_MQTT`)
+
+An embedded broker, reachable from the guest at `$GATOS_MQTT`. Point any MQTT client (Node-RED, a
+Grafana plugin, `mosquitto_sub`, an ESP32 on your desk…) at it.
+
+```sh
+# Subscribe to everything (retained, so you get the latest value immediately):
+mosquitto_sub -h sim -t 'gatos/#' -v
+
+# Specific topics:
+#   gatos/time  gatos/status  gatos/system  gatos/bodies  gatos/snapshot
+#   gatos/vessels/<id>/telemetry   gatos/vessels/<id>/snapshot
+#   gatos/events                   (live, not retained)
+mosquitto_sub -h sim -t 'gatos/vessels/+/telemetry'
+
+# Send a command (result comes back on gatos/command/result):
+mosquitto_pub -h sim -t gatos/command \
+  -m '{"vessel_id":"<id>","action":"vessel.stage","ordinal":-1,"value":1}'
+```
+
+Like HTTP, MQTT also mirrors `/sim` leaf-by-leaf under `gatos/sim/<path>` (one retained topic per
+field), and you actuate a field by publishing to its `…/set` topic:
+
+```sh
+mosquitto_sub -h sim -t 'gatos/sim/vessels/by-id/+/altitude/radar' -v
+mosquitto_pub -h sim -t gatos/sim/vessels/active/ctl/ignite/set -m 1
+```
+
+### 4. Serial — for the full mission-control cosplay
+
+Off by default. Flip on `serial_telemetry_port` / `serial_command_port` in `gatos.toml` and gatOS
+exposes a virtual serial port inside the guest at `/dev/virtio-ports/gatos.serial`. Telemetry streams
+out (NDJSON, or real **NMEA** sentences, or **CCSDS** space packets — your pick via `serial_mode`),
+and **SCPI**-style command lines go in:
+
+```sh
+# Watch telemetry frames stream by:
+cat /dev/virtio-ports/gatos.serial
+
+# Fire a command, SCPI-style (replies OK / ERR <errno>):
+echo 'CTL:ENG0:ACT 1' > /dev/virtio-ports/gatos.serial
+```
+
+### The golden rule: one data model, four windows
+
+Every reading projects from a single telemetry snapshot; every command funnels through a single
+pipeline. So a control you can reach in `/sim` you can reach over HTTP, MQTT, and serial too — and
+the `/sim/debug` cheats (teleport, refuel, time warp) are reachable everywhere as well, when enabled.
+Add nothing, learn one model, use any door.
+
+Each interface can be turned on or off independently in `gatos.toml` (see the appendix). The action
+keys (`vessel.ignite`, `engine.active`, `vessel.attitude_mode`, `debug.refill_fuel`, …) are the same
+across every transport.
+
+---
+
+## Where your stuff lives
+
+Two folders matter:
+
+- **The mod folder** (read-only install) — the code, the bundled Linux image, and bundled QEMU. You
+  generally never touch this.
+- **The data folder** (yours to mess with):
+  `Documents\My Games\Kitten Space Agency\mods\gatOS\`
+
+  This is where your config, your persistent guest disk, and logs live. The fastest way to open it
+  is the **Open Data Folder** button in the gatOS menu.
+
+---
+
+# Appendix: configuration & customization
+
+For the genuinely curious. Everything below is optional — gatOS works great with zero configuration.
+The deeper developer/architecture docs live in **[`README_DETAILS.md`](./README_DETAILS.md)**.
+
+## The `gatos.toml` config file
+
+On first launch gatOS writes a self-documenting `gatos.toml` into your **data folder**
+(`Documents\My Games\Kitten Space Agency\mods\gatOS\gatos.toml`). Edit it in any text editor; gatOS
+reads it at startup. Delete the file to restore every default. If you typo something, gatOS clamps it
+back into range (and logs what it did) rather than refusing to boot — and a totally unparseable file
+just falls back to defaults without overwriting your work.
+
+### The settings that matter most
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `memory_mb` | `256` | Guest RAM in MiB. Bump it if you install heavy software. |
+| `cpus` | `2` | Guest virtual CPU count. |
+| `restrict_network` | `false` | `true` = no internet for the guest (an "offline ship computer"). Off by default so `apk add` works. |
+| `accel_override` | `""` | Force an accelerator: `"whpx"`, `"kvm"`, `"hvf"`, or `"tcg"`. Empty = pick the best automatically. |
+| `cpu_model` | `""` | Override the guest CPU model. Empty = automatic (see the WHPX note below). |
+
+### Control & safety
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `control_enabled` | `true` | Master switch for *all* writes to `/sim`. Set `false` and every control file becomes read-only (look but don't touch). |
+| `control_all_vessels` | `true` | `true` = command any vessel; `false` = only the one you're actively flying. |
+| `debug_namespace` | `true` | Exposes `/sim/debug/` cheat controls (teleport, refuel, warp, switch vessel). Turn off for an honest playthrough. |
+| `command_timeout_ms` | `2000` | How long a control write waits on the game thread before giving up (`ETIMEDOUT`). |
+| `max_commands_per_frame` | `64` | Cap on control commands processed per frame, so a runaway script can't stall the game. |
+
+### The other ways in (HTTP / MQTT / serial)
+
+gatOS exposes the **same** telemetry and controls over three extra transports, so you can write a
+dashboard or autopilot outside the game. Inside the guest shell, `$GATOS_HTTP` and `$GATOS_MQTT` are
+already set to the right addresses.
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `http_enabled` | `true` | Serve the HTTP API at `$GATOS_HTTP` — `GET /v1/snapshot`, SSE event streams, `POST /v1/command`, and `GET /v1/openapi.json` to generate a client in any language. |
+| `http_preferred_port` | `4242` | Preferred HTTP port (falls back to a random free one on a clash; `0` = always random). |
+| `mqtt_enabled` | `true` | Run an embedded MQTT broker at `$GATOS_MQTT` — subscribe `gatos/#` for retained telemetry topics, publish to `gatos/command`. |
+| `mqtt_preferred_port` | `1883` | Preferred MQTT port (same fallback rule). |
+| `http_field_endpoints` | `true` | Mirror every `/sim` file as its own HTTP endpoint (`GET /v1/fs/<path>`, `?stream=1` for live SSE, `POST` to actuate). |
+| `mqtt_field_topics` | `true` | Mirror every `/sim` file as its own retained MQTT topic (`gatos/sim/<path>`, write `…/set` to actuate). |
+| `field_feed_hz` | `4` | How often (Hz) the MQTT field mirror refreshes (1–30). |
+| `serial_telemetry_port` | `false` | Stream telemetry out over a virtual serial port (for the spacecraft-engineer cosplay). |
+| `serial_command_port` | `false` | Accept SCPI-style commands in over that serial port. |
+| `serial_mode` | `"ndjson"` | Serial wire format: `ndjson`, `nmea`, or `ccsds` (yes, real CCSDS space packets). |
+| `serial_interval_ms` | `500` | Serial telemetry cadence in milliseconds. |
+
+### Boot & tuning
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `sample_rate_hz` | `10` | How often telemetry is sampled into `/sim` (1–120 Hz). |
+| `boot_timeout_seconds` | `0` | `0` = automatic (60 s accelerated, 300 s under software emulation). |
+
+## What's in the mod folder
+
+The installed mod folder is self-contained — here's the tour, in case you ever go looking:
+
+- **`*.dll`, `mod.toml`, `*.deps.json`** — the mod's own code and StarMap manifest. `mod.toml` is
+  also how gatOS borrows purrTTY's loaded assemblies so the two mods share one terminal contract.
+- **`guest/`** — the bundled Linux machine, built reproducibly from pinned Alpine mirrors:
+  - `base.qcow2` — the pristine, compressed root filesystem image (your changes go into a
+    *separate* overlay in your data folder, so this stays factory-fresh).
+  - `vmlinuz-virt` / `initramfs-virt` — the Linux kernel and boot image.
+  - `manifest.toml` — the host↔guest boot contract: kernel command line, SSH user, and the pinned
+    host-key fingerprint gatOS verifies on every connection.
+  - `id_ed25519` (+ `.pub`) — the SSH keypair used for the loopback-only connection. It's committed
+    on purpose and only ever used over `127.0.0.1`, so it's safe.
+- **`qemu/win-x64/`** _(Windows)_ — a trimmed, portable QEMU build. On Linux/macOS gatOS uses a
+  system QEMU (or a bundled portable build where shipped).
+
+## What's in your data folder
+
+`Documents\My Games\Kitten Space Agency\mods\gatOS\`:
+
+- **`gatos.toml`** — your config (above).
+- **`disks/`** — your persistent guest disk lives here as a qcow2 *overlay* stacked on top of the
+  factory `base.qcow2`. Install packages, write files, make a mess — it persists here and never
+  touches the shipped image. **Reset Disk…** in the menu deletes this to start fresh.
+- **`logs/`** — QEMU boot/serial logs, rotated. The first place to look if a boot misbehaves.
+
+## Making it fast
+
+Hardware acceleration (and how to validate it) has its own section up top — see
+[Performance & hardware acceleration](#performance--hardware-acceleration). The short version: on
+Windows, enable the **Windows Hypervisor Platform** feature for near-instant boots; everywhere else
+it's automatic.
+
+## The HTTP API spec
+
+The full HTTP `/v1` surface is formally described in **[`sim_openapi.yml`](./sim_openapi.yml)** in the
+project root. Point any OpenAPI tool at it to generate a typed client, or read it as the authoritative
+endpoint reference. (The running server also serves the same spec live at `$GATOS_HTTP/v1/openapi.json`.)
+
+---
 
 ## License
 
-The mod's own code is **MIT** (`LICENSE`). Bundled third-party components (QEMU, the Alpine guest,
-SSH.NET, Tomlyn, …) keep their own licenses — see `THIRD-PARTY-NOTICES.md`.
+The mod's own code is **MIT** (see [`LICENSE`](./LICENSE)). Bundled third-party components (QEMU, the
+Alpine guest, SSH.NET, Tomlyn, and friends) keep their own licenses — see
+[`THIRD-PARTY-NOTICES.md`](./THIRD-PARTY-NOTICES.md).
+
+_Now go forth and `ssh` into a rocket. The kittens are counting on you._ 🐱🛰️
