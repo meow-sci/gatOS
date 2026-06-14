@@ -109,7 +109,7 @@ impl Config {
         };
         widgets.truncate(512); // a sane upper bound on a hand-edited file
 
-        let interval = Duration::from_millis(interval_ms.or(def_interval).unwrap_or(250).max(20));
+        let interval = Duration::from_millis(interval_ms.or(def_interval).unwrap_or(250).max(1));
         let columns = columns.unwrap_or(def_cols).clamp(1, 8);
         let border_opacity = opacity.unwrap_or(def_opacity).min(100);
         let source = resolve_source(url, root);
@@ -161,7 +161,7 @@ fn print_help() {
         "  --root <dir>              read the /sim mount at <dir> (default: /sim when present)"
     );
     println!("  --url <base>              read via HTTP /v1/fs instead (e.g. $GATOS_HTTP)");
-    println!("  --interval <ms>           field re-read cadence, min 20 (default 250)");
+    println!("  --interval <ms>           field re-read cadence, min 1 (default 250)");
     println!("  --columns <n>             dashboard grid columns, 1-8 (default 3)");
     println!("  --border-opacity <0-100>  card-border brightness over the game (default 100)");
     println!();
