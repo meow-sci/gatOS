@@ -64,9 +64,27 @@ public sealed partial class Mod
     // Unload; null when the solver hook could not be installed (solver commands then never drain).
     private Harmony? _solverHarmony;
 
-    /// <summary>The "gatOS" entry in the ModMenu bar (same mechanism as purrTTY's).</summary>
+    // The Harmony patch drawing the fallback top-level "gatOS" menu when the ModMenu mod is absent
+    // (see InstallMenuFallback). Cached ModMenu-presence probe, dropped on unload.
+    private Harmony? _menuHarmony;
+    private static bool? _modMenuPresent;
+
+    /// <summary>
+    ///     The "gatOS" entry drawn two ways with identical content (same mechanism as purrTTY's):
+    ///     via this <c>[ModMenuEntry]</c> attribute when the ModMenu companion mod is present, and
+    ///     via the <see cref="MenuFallbackPostfix"/> Harmony postfix on KSA's
+    ///     <c>Program.DrawProgramMenusHook()</c> otherwise. Both call the shared
+    ///     <see cref="DrawMenuContentSafe"/>.
+    /// </summary>
     [ModMenuEntry("gatOS")]
-    public static void DrawMenu()
+    public static void DrawMenu() => DrawMenuContentSafe();
+
+    /// <summary>
+    ///     The shared menu-item body reused by both the ModMenu entry and the fallback injected
+    ///     menu. Resolves the live mod instance (kept alive even when init failed so the player can
+    ///     see why) and swallows per-frame draw errors so a UI bug never breaks the game's frame.
+    /// </summary>
+    private static void DrawMenuContentSafe()
     {
         if (_instance is not { } mod)
         {
@@ -83,6 +101,35 @@ public sealed partial class Mod
             ModLog.Log.Debug($"gatOS menu draw error: {ex.Message}");
         }
     }
+
+    /// <summary>
+    ///     Draws the fallback top-level "gatOS" menu via the <c>DrawProgramMenusHook()</c> extension
+    ///     point KSA calls at the end of its menu bar — used only when the ModMenu companion mod is
+    ///     absent (with ModMenu present, the <c>[ModMenuEntry]</c> path draws the same content under
+    ///     the Mods menu instead). Installed by <see cref="InstallMenuFallback"/>.
+    /// </summary>
+    private static void MenuFallbackPostfix()
+    {
+        try
+        {
+            if (IsModMenuPresent())
+                return;
+
+            if (ImGui.BeginMenu("gatOS"))
+            {
+                // Keep the (possibly auto-hidden) menu bar shown while our menu is open.
+                Program.MainViewport.MenuBarInUse = true;
+                DrawMenuContentSafe();
+                ImGui.EndMenu();
+            }
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS fallback menu draw error: {ex.Message}");
+        }
+    }
+
+    private static bool IsModMenuPresent() => _modMenuPresent ??= ModLibrary.Find("ModMenu") is not null;
 
     // NoInlining on the partial impls: their bodies reference game assemblies, and a missing
     // assembly must fail at the call site (where Mod.cs catches it), not at the JIT of the
@@ -200,6 +247,50 @@ public sealed partial class Mod
         }
     }
 
+    /// <summary>
+    ///     Installs the fallback game-menu Harmony postfix (see <see cref="MenuFallbackPostfix"/>),
+    ///     so the gatOS menu is reachable even without the ModMenu mod. Installed early (right after
+    ///     the instance is published) so the menu surfaces a failed init just like the ModMenu path.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void InstallMenuFallback()
+    {
+        try
+        {
+            _menuHarmony = new Harmony("gatos.menu");
+            var original = AccessTools.Method(typeof(Program), nameof(Program.DrawProgramMenusHook));
+            if (original is null)
+            {
+                ModLog.Log.Warn("Menu fallback: Program.DrawProgramMenusHook not found; "
+                                + "the gatOS menu is only available via the ModMenu mod.");
+                return;
+            }
+
+            var postfix = new HarmonyMethod(typeof(Mod), nameof(MenuFallbackPostfix));
+            _menuHarmony.Patch(original, postfix: postfix);
+            ModLog.Log.Info("gatOS fallback menu hook installed.");
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Error($"gatOS menu fallback failed to install (menu only via ModMenu): {ex.Message}");
+        }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void RemoveMenuFallback()
+    {
+        try
+        {
+            _menuHarmony?.UnpatchAll("gatos.menu");
+            _menuHarmony = null;
+            _modMenuPresent = null; // statics survive a StarMap reload; re-probe next install
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS menu fallback unpatch error: {ex.Message}");
+        }
+    }
+
     private static void SolverDrainPrefix()
     {
         try
@@ -256,7 +347,7 @@ public sealed partial class Mod
     {
         var status = CurrentVmStatus;
         var open = true;
-        ImGui.SetNextWindowSize(new float2(560f, 0f), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(new float2(840f, 0f), ImGuiCond.FirstUseEver);
         if (ImGui.Begin(StatusWindowId, ref open, ImGuiWindowFlags.AlwaysAutoResize))
             DrawStatusContent(status);
         ImGui.End();
@@ -268,7 +359,7 @@ public sealed partial class Mod
     {
         if (ImGui.BeginTable("##gatos_status_rows", 2, ImGuiTableFlags.SizingStretchProp))
         {
-            ImGui.TableSetupColumn("##label", ImGuiTableColumnFlags.WidthFixed, 150f);
+            ImGui.TableSetupColumn("##label", ImGuiTableColumnFlags.WidthFixed, 340f);
             ImGui.TableSetupColumn("##value", ImGuiTableColumnFlags.WidthStretch, 3f);
 
             Row("VM state");

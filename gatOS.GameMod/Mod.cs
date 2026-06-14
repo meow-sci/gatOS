@@ -118,6 +118,12 @@ public sealed partial class Mod
             TryInstallGameLogging();
             _instance = this;
 
+            // Install the fallback "gatOS" menu now (before any early return below) so the menu is
+            // reachable even when ModMenu is absent and even when init fails — mirroring the way the
+            // [ModMenuEntry] path keeps the menu alive to surface the failure (partial seam: drops
+            // out without the KSA assemblies).
+            InstallMenuFallback();
+
             if (ResolveModDir() is not { } modDir)
                 return; // already logged; _assets carries the reason for the status window
 
@@ -237,7 +243,8 @@ public sealed partial class Mod
         {
             _instance = null;
             IsInitialized = false;
-            RemoveSolverHook(); // partial: drops out without the KSA assemblies
+            RemoveSolverHook();   // partial: drops out without the KSA assemblies
+            RemoveMenuFallback(); // partial: drops out without the KSA assemblies
 
             // Stop the serial bridge first (it follows the VM); then drop our status subscription.
             StopSerialConnector();
@@ -666,4 +673,6 @@ public sealed partial class Mod
     partial void DrainCommands();
     partial void InstallSolverHook();
     partial void RemoveSolverHook();
+    partial void InstallMenuFallback();
+    partial void RemoveMenuFallback();
 }

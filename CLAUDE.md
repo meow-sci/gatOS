@@ -131,8 +131,12 @@ temp+rename save, first-run file with comment header; bad files → in-memory de
 overwritten), build `VmHost`+`VmConnectionBroker` (**no boot**, D2), register shell `"gatos"`
 (purrTTY absence detected after the fact: the contract assembly resolving from gatOS's own folder
 means the vendored fallback loaded). `Unload` = `broker.DisposeAsync().AsTask().Wait(15 s)` (the
-dispose is the 10 s-grace QGA→QMP→kill ladder). T6.4 diagnostics: `[ModMenuEntry("gatOS")]` menu
-(Status/Start VM/Shut Down VM/Restart SimFs (M9)/Open Data Folder/Reset Disk…+confirm-modal) and
+dispose is the 10 s-grace QGA→QMP→kill ladder). T6.4 diagnostics: the gatOS menu
+(Status/Start VM/Shut Down VM/Restart SimFs (M9)/Open Data Folder/Reset Disk…+confirm-modal),
+drawn two ways with **identical content** (purrTTY's exact pattern): via `[ModMenuEntry("gatOS")]`
+when the ModMenu mod is present, else via a Harmony postfix on `KSA.Program.DrawProgramMenusHook()`
+adding a top-level `gatOS` menu (`MenuFallbackPostfix`/`InstallMenuFallback` in `Game/Mod.Game.cs`,
+gated on `ModLibrary.Find("ModMenu")`) — both call the shared `DrawMenuContentSafe`; plus
 an ImGui status window (state, accel + WHPX DISM hint when tcg-on-Windows, ports, uptime, guest version, config,
 newest qemu log — cached per `VmStatus` transition — fault reason, asset status, action note); all
 actions `Task.Run`, draw code reads volatile state only (rule 5). Two load-order subtleties worth
