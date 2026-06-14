@@ -108,6 +108,9 @@ pub struct App {
     /// The throttle bar's clickable rect on the detail telemetry pane (set each render); a click
     /// inside it sets the throttle to the clicked fraction.
     pub throttle_bar: Rect,
+    /// While the left button is held after pressing on the throttle bar, the last throttle percent
+    /// sent — drives live click-and-drag scrubbing and dedupes repeats. `None` when not scrubbing.
+    throttle_drag: Option<u8>,
     /// The active modal picker overlay, or `None` when no popup is open.
     pub picker: Option<Picker>,
     /// Data-rows area of the dashboard table (excl. header), for click → row mapping.
@@ -145,6 +148,7 @@ impl App {
             controls: Vec::new(),
             focus: 0,
             throttle_bar: Rect::default(),
+            throttle_drag: None,
             picker: None,
             dashboard_area: Rect::default(),
             status_line: "connecting…".into(),
@@ -422,6 +426,8 @@ impl App {
             MouseEventKind::ScrollUp => self.scroll(-1),
             MouseEventKind::ScrollDown => self.scroll(1),
             MouseEventKind::Down(MouseButton::Left) => self.on_click(m.column, m.row),
+            MouseEventKind::Drag(MouseButton::Left) => self.on_drag(m.column, m.row),
+            MouseEventKind::Up(MouseButton::Left) => self.throttle_drag = None,
             _ => {}
         }
     }
@@ -457,6 +463,8 @@ impl App {
     }
 
     fn on_click(&mut self, x: u16, y: u16) {
+        // Any press disarms throttle-drag; the throttle bar re-arms it below.
+        self.throttle_drag = None;
         // The settings button lives on the header of every screen.
         if self.settings_button.contains(Position { x, y }) {
             self.open_settings();
@@ -480,10 +488,12 @@ impl App {
             }
             Screen::Detail(_) => {
                 let pos = Position { x, y };
-                // A click anywhere along the throttle bar sets the throttle to that fraction.
+                // Pressing anywhere along the throttle bar sets the throttle and arms click-and-drag,
+                // so holding and sweeping scrubs it live (like the settings slider).
                 if self.throttle_bar.width > 0 && self.throttle_bar.contains(pos) {
-                    let rel = (x - self.throttle_bar.x) as f64 + 0.5;
-                    self.set_throttle(rel / self.throttle_bar.width as f64);
+                    let pct = self.throttle_pct_at(x);
+                    self.throttle_drag = Some(pct);
+                    self.set_throttle(pct as f64 / 100.0);
                     return;
                 }
                 if let Some(i) = self.controls.iter().position(|(r, _)| r.contains(pos)) {
@@ -493,6 +503,29 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Live throttle scrubbing while the left button is held after pressing on the bar (`on_click`
+    /// armed it via `throttle_drag`). Dedupes by percent so a held sweep only re-sends a command
+    /// when the value actually changes — one `POST /v1/command` per 1% step crossed, not per event.
+    fn on_drag(&mut self, x: u16, _y: u16) {
+        if let Some(last) = self.throttle_drag {
+            let pct = self.throttle_pct_at(x);
+            if pct != last {
+                self.throttle_drag = Some(pct);
+                self.set_throttle(pct as f64 / 100.0);
+            }
+        }
+    }
+
+    /// The throttle percent (0–100) a click/drag at column `x` maps to along the throttle bar.
+    fn throttle_pct_at(&self, x: u16) -> u8 {
+        let bar = self.throttle_bar;
+        if bar.width == 0 {
+            return 0;
+        }
+        let rel = x.saturating_sub(bar.x) as f64 + 0.5;
+        ((rel / bar.width as f64).clamp(0.0, 1.0) * 100.0).round() as u8
     }
 
     // ---- command dispatch --------------------------------------------------------------------
