@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -62,8 +63,17 @@ public sealed class SimMqttBroker : IAsyncDisposable
     private readonly Func<string>? _transports;
     private readonly VfsDirectory? _simRoot;
     private readonly int _fieldFeedHz;
+    private readonly Dictionary<string, byte[]> _lastWorld = new(); // owned by the world pump task only
     private readonly Dictionary<string, string> _lastFields = new(); // owned by the field pump task only
     private readonly CancellationTokenSource _cts = new();
+    // Per-pump wake signals: a client connect releases these so a parked pump republishes the
+    // current state immediately, rather than waiting for the next snapshot (which, with no sampler,
+    // might never come — and the new client needs its retained baseline now).
+    private readonly SemaphoreSlim _worldWake = new(0, int.MaxValue);
+    private readonly SemaphoreSlim _fieldWake = new(0, int.MaxValue);
+    private int _connectedClients;
+    private int _worldForce;
+    private int _fieldForce;
     private MqttServer? _server;
     private Task? _pump;
     private Task? _fieldPump;
@@ -88,6 +98,20 @@ public sealed class SimMqttBroker : IAsyncDisposable
 
     /// <summary>The bound TCP port (valid after <see cref="StartAsync"/>).</summary>
     public int Port { get; private set; }
+
+    /// <summary>
+    ///     MQTT clients connected right now (for the sampler idle gate and the publish-when-consumed
+    ///     optimization). Zero ⇒ the publish pumps do no serialization work.
+    /// </summary>
+    public int ConnectedClients => Volatile.Read(ref _connectedClients);
+
+    /// <summary>
+    ///     Timing of one world-publish cycle (serialize every retained topic + inject the changed
+    ///     ones), recorded only while a client is connected. This runs on a background pump — it never
+    ///     blocks the game thread — but it is the heaviest CPU gatOS spends, so the status window
+    ///     surfaces it. Allocation-free.
+    /// </summary>
+    public PerfStat PublishStats { get; } = new();
 
     /// <summary>
     ///     Starts the broker. Tries <paramref name="preferredPort"/> (the conventional 1883) and
@@ -130,7 +154,27 @@ public sealed class SimMqttBroker : IAsyncDisposable
             .Build();
         var server = new MqttFactory().CreateMqttServer(options);
         server.InterceptingPublishAsync += OnClientPublishAsync;
+        server.ClientConnectedAsync += OnClientConnectedAsync;
+        server.ClientDisconnectedAsync += OnClientDisconnectedAsync;
         return server;
+    }
+
+    private Task OnClientConnectedAsync(ClientConnectedEventArgs e)
+    {
+        Interlocked.Increment(ref _connectedClients);
+        // Force one full (re)publish on both pumps and wake them: the new client needs a fresh
+        // retained baseline now, even if prior snapshots were skipped while no client was connected.
+        Interlocked.Exchange(ref _worldForce, 1);
+        Interlocked.Exchange(ref _fieldForce, 1);
+        _worldWake.Release();
+        _fieldWake.Release();
+        return Task.CompletedTask;
+    }
+
+    private Task OnClientDisconnectedAsync(ClientDisconnectedEventArgs e)
+    {
+        Interlocked.Decrement(ref _connectedClients);
+        return Task.CompletedTask;
     }
 
     private static int FreePort()
@@ -235,7 +279,7 @@ public sealed class SimMqttBroker : IAsyncDisposable
             SimSnapshot snapshot;
             try
             {
-                snapshot = await _store.WaitForNextAsync(lastSeq, ct).ConfigureAwait(false);
+                snapshot = await WaitForWorkAsync(lastSeq, _worldWake, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -243,33 +287,44 @@ public sealed class SimMqttBroker : IAsyncDisposable
             }
 
             lastSeq = snapshot.Sequence;
+            var force = Interlocked.Exchange(ref _worldForce, 0) != 0;
+            // Nobody is listening and no forced refresh is pending: skip the whole serialize+inject.
+            // The last-published retained messages stay valid, so a future subscriber still gets them
+            // (MQTTnet redelivers retained topics on subscribe) — we just stop doing work for no one.
+            if (!force && ConnectedClients <= 0)
+                continue;
+
+            var startTs = Stopwatch.GetTimestamp();
             try
             {
                 // World-level retained topics — the same projections the HTTP /v1 reads serve, via
-                // the shared SimJson layer (cross-transport parity).
-                await PublishAsync("gatos/time", SimJson.Time(snapshot), retain: true).ConfigureAwait(false);
-                await PublishAsync("gatos/status", SimJson.Status(snapshot,
-                        _commands is { ControlEnabled: true }, _commands is { DebugEnabled: true },
-                        _transports?.Invoke()), retain: true).ConfigureAwait(false);
-                await PublishAsync("gatos/system", SimJson.Serialize(snapshot.System), retain: true)
+                // the shared SimJson layer (cross-transport parity). Each is published changed-only.
+                await PublishChangedAsync("gatos/time", SimJson.TimeBytes(snapshot), force).ConfigureAwait(false);
+                await PublishChangedAsync("gatos/status", SimJson.StatusBytes(snapshot,
+                    _commands is { ControlEnabled: true }, _commands is { DebugEnabled: true },
+                    _transports?.Invoke()), force).ConfigureAwait(false);
+                await PublishChangedAsync("gatos/system", SimJson.SerializeToUtf8Bytes(snapshot.System), force)
                     .ConfigureAwait(false);
-                await PublishAsync("gatos/bodies", SimJson.Serialize(snapshot.Bodies), retain: true)
+                await PublishChangedAsync("gatos/bodies", SimJson.SerializeToUtf8Bytes(snapshot.Bodies), force)
                     .ConfigureAwait(false);
-                await PublishAsync("gatos/snapshot", SimJson.Serialize(snapshot), retain: true)
+                await PublishChangedAsync("gatos/snapshot", SimJson.SerializeToUtf8Bytes(snapshot), force)
                     .ConfigureAwait(false);
 
                 // Per vessel: the compact telemetry doc (SDK-stable) and the full granular snapshot.
                 foreach (var vessel in snapshot.Vessels)
                 {
-                    await PublishAsync($"gatos/vessels/{vessel.Id}/telemetry",
-                        Formats.VesselTelemetry(snapshot, vessel), retain: true).ConfigureAwait(false);
-                    await PublishAsync($"gatos/vessels/{vessel.Id}/snapshot",
-                        SimJson.Serialize(vessel), retain: true).ConfigureAwait(false);
+                    await PublishChangedAsync($"gatos/vessels/{vessel.Id}/telemetry",
+                        Formats.VesselTelemetryUtf8(snapshot, vessel), force).ConfigureAwait(false);
+                    await PublishChangedAsync($"gatos/vessels/{vessel.Id}/snapshot",
+                        SimJson.SerializeToUtf8Bytes(vessel), force).ConfigureAwait(false);
                 }
 
+                // Events are discrete (not retained) — always emit, never changed-only-suppressed.
                 foreach (var simEvent in snapshot.NewEvents)
-                    await PublishAsync("gatos/events", SimJson.Event(simEvent), retain: false)
+                    await PublishAsync("gatos/events", SimJson.EventBytes(simEvent), retain: false)
                         .ConfigureAwait(false);
+
+                PublishStats.Add(Stopwatch.GetTimestamp() - startTs); // a complete cycle only
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -277,6 +332,44 @@ public sealed class SimMqttBroker : IAsyncDisposable
             }
         }
     }
+
+    /// <summary>
+    ///     Injects a retained world topic only when its bytes changed since the last publish (or
+    ///     <paramref name="force"/> — a fresh client's baseline). Static topics (<c>system</c>/
+    ///     <c>bodies</c>) and a paused sim thus publish once and then go quiet. Owned by the world
+    ///     pump task, so <see cref="_lastWorld"/> needs no lock.
+    /// </summary>
+    private async Task PublishChangedAsync(string topic, byte[] payload, bool force)
+    {
+        if (!force && _lastWorld.TryGetValue(topic, out var last) && last.AsSpan().SequenceEqual(payload))
+            return;
+        _lastWorld[topic] = payload;
+        await PublishAsync(topic, payload, retain: true).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     Waits for either the next snapshot or a connect wake. The wake unparks the pump so a newly
+    ///     connected client gets its retained baseline at once; the loser of the race is cancelled via
+    ///     a linked token so it never leaves a stale waiter queued on the semaphore.
+    /// </summary>
+    private async Task<SimSnapshot> WaitForWorkAsync(long lastSeq, SemaphoreSlim wake, CancellationToken ct)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var nextTask = _store.WaitForNextAsync(lastSeq, linked.Token).AsTask();
+        var wakeTask = wake.WaitAsync(linked.Token);
+        var winner = await Task.WhenAny(nextTask, wakeTask).ConfigureAwait(false);
+        await linked.CancelAsync().ConfigureAwait(false); // unblock + drop the loser's waiter
+        Observe(nextTask);
+        Observe(wakeTask);
+
+        ct.ThrowIfCancellationRequested();
+        return winner == nextTask && nextTask.IsCompletedSuccessfully ? nextTask.Result : _store.Current;
+    }
+
+    private static void Observe(Task task)
+        => _ = task.ContinueWith(static t => _ = t.Exception, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     // ---- outbound: field-level /sim mirror (gatos/sim/<path>) ----------------------------
 
@@ -296,7 +389,7 @@ public sealed class SimMqttBroker : IAsyncDisposable
             SimSnapshot snapshot;
             try
             {
-                snapshot = await _store.WaitForNextAsync(lastSeq, ct).ConfigureAwait(false);
+                snapshot = await WaitForWorkAsync(lastSeq, _fieldWake, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -304,13 +397,18 @@ public sealed class SimMqttBroker : IAsyncDisposable
             }
 
             lastSeq = snapshot.Sequence;
-            try
+            var force = Interlocked.Exchange(ref _fieldForce, 0) != 0;
+            // The field walk reads every /sim leaf — skip it entirely when no client is connected.
+            if (force || ConnectedClients > 0)
             {
-                await PublishFieldsAsync(root, snapshot, ct).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                ModLog.Log.Debug($"mqtt: field feed failed: {ex.Message}");
+                try
+                {
+                    await PublishFieldsAsync(root, snapshot, force, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    ModLog.Log.Debug($"mqtt: field feed failed: {ex.Message}");
+                }
             }
 
             try
@@ -324,8 +422,10 @@ public sealed class SimMqttBroker : IAsyncDisposable
         }
     }
 
-    private async Task PublishFieldsAsync(VfsDirectory root, SimSnapshot snapshot, CancellationToken ct)
+    private async Task PublishFieldsAsync(VfsDirectory root, SimSnapshot snapshot, bool force, CancellationToken ct)
     {
+        if (force)
+            _lastFields.Clear(); // a fresh client: republish every leaf as its retained baseline
         var current = new Dictionary<string, string>(_lastFields.Count);
         // Canonical vessels/by-id only — the `active` alias would duplicate a whole subtree; expose
         // the active vessel id as a small pointer instead.
@@ -382,13 +482,16 @@ public sealed class SimMqttBroker : IAsyncDisposable
         await PublishAsync(CommandResultTopic, resultJson, retain: false).ConfigureAwait(false);
     }
 
-    private async Task PublishAsync(string topic, string payload, bool retain)
+    private Task PublishAsync(string topic, string payload, bool retain)
+        => PublishAsync(topic, Encoding.UTF8.GetBytes(payload), retain);
+
+    private async Task PublishAsync(string topic, byte[] payload, bool retain)
     {
         if (_server is not { } server)
             return;
         var message = new MqttApplicationMessageBuilder()
             .WithTopic(topic)
-            .WithPayload(Encoding.UTF8.GetBytes(payload))
+            .WithPayload(payload)
             .WithRetainFlag(retain)
             .Build();
         await server.InjectApplicationMessage(new InjectedMqttApplicationMessage(message)).ConfigureAwait(false);
@@ -430,5 +533,7 @@ public sealed class SimMqttBroker : IAsyncDisposable
         }
 
         _cts.Dispose();
+        _worldWake.Dispose();
+        _fieldWake.Dispose();
     }
 }

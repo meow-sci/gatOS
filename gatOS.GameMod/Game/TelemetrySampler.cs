@@ -1,6 +1,7 @@
 using gatOS.GameMod.Game.Ksa;
 using gatOS.GameMod.Game.Ksa.Readers;
 using gatOS.Logging;
+using gatOS.SimFs;
 using gatOS.SimFs.Snapshots;
 using gatOS.SimFs.Telemetry;
 using KSA;
@@ -26,7 +27,10 @@ internal sealed class TelemetrySampler
     private readonly SnapshotStore _store;
     private readonly SampleClock _clock;
     private readonly KsaHealth _health;
-    private readonly double _rateHz;
+    private readonly TelemetrySettings _settings;
+    private readonly PerfStat _sampleStats;
+    private int _appliedRateHz;
+    private IReadOnlyList<double> _warpSpeeds = [];
     private SimSnapshot? _previous;
     private long _sequence;
     private bool _vehicleErrorLogged;
@@ -34,31 +38,46 @@ internal sealed class TelemetrySampler
     private string _gameVersion = "";
 
     /// <param name="store">The exchange the 9p tree reads from.</param>
-    /// <param name="rateHz">Config <c>sample_rate_hz</c> (already clamped to 1–120).</param>
+    /// <param name="settings">
+    ///     The runtime-mutable cadence + per-stream gates (seeded from config, retuned in-game).
+    ///     Read every tick so a menu change takes effect on the next sample.
+    /// </param>
     /// <param name="health">Accessor-health latches, shared with the command executor.</param>
-    internal TelemetrySampler(SnapshotStore store, double rateHz, KsaHealth health)
+    /// <param name="sampleStats">Timing accumulator for one <see cref="Sample"/> (the status window reads it).</param>
+    internal TelemetrySampler(SnapshotStore store, TelemetrySettings settings, KsaHealth health, PerfStat sampleStats)
     {
         _store = store;
-        _clock = new SampleClock(rateHz);
+        _settings = settings;
+        _appliedRateHz = settings.SampleRateHz;
+        _clock = new SampleClock(_appliedRateHz);
         _health = health;
-        _rateHz = rateHz;
+        _sampleStats = sampleStats;
     }
 
     /// <summary>
     ///     Per-frame tick, game thread only. <paramref name="active"/> gates the work: while the
-    ///     VM is down and no 9p session exists there is nobody to read <c>/sim</c>, so the sampler
-    ///     idles for free (T9.1).
+    ///     VM is down and no transport client exists there is nobody to read <c>/sim</c>, so the
+    ///     sampler idles for free (T9.1). The master <c>telemetry_enabled</c> gate idles it too.
     /// </summary>
     internal void Tick(double dt, bool active)
     {
-        if (!active)
+        if (!active || !_settings.Enabled)
         {
             _clock.Reset();
             return;
         }
 
+        // Pick up an in-game rate change (cheap int read; only touches the clock when it moved).
+        var rate = _settings.SampleRateHz;
+        if (rate != _appliedRateHz)
+        {
+            _appliedRateHz = rate;
+            _clock.SetRate(rate);
+        }
+
         if (_clock.Tick(dt))
-            Sample();
+            using (_sampleStats.Measure()) // two timestamp reads; alloc-free
+                Sample();
     }
 
     private void Sample()
@@ -66,6 +85,7 @@ internal sealed class TelemetrySampler
         var ut = Sanitize.Finite(Universe.GetElapsedSimTime().Seconds());
         var warp = Sanitize.Finite(Universe.SimulationSpeed);
         var activeId = Program.ControlledVehicle?.Id;
+        var detail = _settings.VesselDetail;
 
         var vessels = new List<VesselSnapshot>();
         IReadOnlyList<BodySnapshot> bodies = [];
@@ -78,7 +98,7 @@ internal sealed class TelemetrySampler
                     continue;
                 try
                 {
-                    vessels.Add(VesselReader.Sample(vehicle, activeId, ut));
+                    vessels.Add(VesselReader.Sample(vehicle, activeId, ut, detail));
                 }
                 catch (Exception ex)
                 {
@@ -91,12 +111,15 @@ internal sealed class TelemetrySampler
                 }
             }
 
-            (bodies, systemSummary) = SampleBodies(system);
+            if (_settings.Bodies)
+                (bodies, systemSummary) = SampleBodies(system);
         }
 
-        var events = EventDiffer.Diff(_previous, ut, warp, activeId, vessels);
+        var events = _settings.Events
+            ? EventDiffer.Diff(_previous, ut, warp, activeId, vessels)
+            : [];
         var snapshot = new SimSnapshot(++_sequence, ut, warp, activeId, vessels, events,
-            GameVersion(), _rateHz, _health.Snapshot())
+            GameVersion(), _appliedRateHz, _health.Snapshot())
         {
             SimDtSeconds = Sanitize.Finite(Universe.GetLastSimStep().DeltaTime),
             WarpSpeeds = SampleWarpSpeeds(),
@@ -127,16 +150,22 @@ internal sealed class TelemetrySampler
         }
     }
 
-    private static IReadOnlyList<double> SampleWarpSpeeds()
+    private IReadOnlyList<double> SampleWarpSpeeds()
     {
+        // The warp ladder is a fixed per-session list; cache it after the first successful read so
+        // we stop allocating an array (+ a LINQ enumerator and delegate) every single sample.
+        if (_warpSpeeds.Count > 0)
+            return _warpSpeeds;
         try
         {
-            return Universe.GetSimulationSpeeds().Select(s => Sanitize.Finite(s.Value)).ToArray();
+            _warpSpeeds = Universe.GetSimulationSpeeds().Select(s => Sanitize.Finite(s.Value)).ToArray();
         }
         catch
         {
-            return [];
+            _warpSpeeds = [];
         }
+
+        return _warpSpeeds;
     }
 
     private static bool SafeAutoWarpActive()

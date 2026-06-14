@@ -58,6 +58,21 @@ public sealed partial class Mod
     private VfsDirectory? _simRoot;
     private volatile NinePServer? _simServer;
 
+    // Runtime-mutable telemetry cadence + per-stream gates. Seeded from config at init; the sampler
+    // (game thread) reads it every tick and the gatOS menu / status window mutate it live. Its fields
+    // are volatile, so this needs no lock (threading rule 5).
+    private TelemetrySettings _telemetrySettings = new();
+
+    // Timing of one telemetry sample (game thread, written by the sampler; read by the status
+    // window). Allocation-free; owned here so the status window can read it before the sampler
+    // is lazily constructed and survive its disposal.
+    private readonly PerfStat _sampleStats = new();
+
+    // Timing of one command-queue drain (game thread — both the per-frame Frame-phase drain and the
+    // solver-phase drain accumulate here). Usually ~0 (empty queue); the max catches a hitch when a
+    // burst of control commands actuates KSA on a frame.
+    private readonly PerfStat _drainStats = new();
+
     // The magic HTTP transport (G5): same SnapshotStore + command pipeline as the 9p tree, on a
     // loopback port the guest reaches at 10.0.2.2. Volatile — read by the render thread (status)
     // and the VM boot's HttpPortProvider on their own threads.
@@ -92,6 +107,15 @@ public sealed partial class Mod
 
     /// <summary>The loaded user config, for the status window.</summary>
     internal GatOsConfig Config => _config;
+
+    /// <summary>The live, runtime-mutable telemetry cadence + stream gates (menu/status window edit it).</summary>
+    internal TelemetrySettings Telemetry => _telemetrySettings;
+
+    /// <summary>Timing of one telemetry sample, for the status window's perf readout.</summary>
+    internal PerfStat SampleStats => _sampleStats;
+
+    /// <summary>Timing of one command-queue drain (game thread), for the status window's perf readout.</summary>
+    internal PerfStat DrainStats => _drainStats;
 
     /// <summary>Transient result of the last menu action, for the status window.</summary>
     internal string? LastActionNote => _lastActionNote;
@@ -136,6 +160,9 @@ public sealed partial class Mod
             // and the guest's sim-mount supervisor mounts /sim on its own. The store stays at
             // SimSnapshot.Empty until the sampler's first publish.
             _simStore = new SnapshotStore();
+            _telemetrySettings = new TelemetrySettings(
+                _config.SampleRateHz, _config.TelemetryEnabled, _config.TelemetryVesselDetail,
+                _config.TelemetryBodies, _config.TelemetryEvents);
             _commandQueue = new CommandQueue(_config.ControlEnabled, _config.DebugNamespace,
                 TimeSpan.FromMilliseconds(_config.CommandTimeoutMs));
             _simRoot = SimFsTree.Build(_simStore, _commandQueue, SimTransportsStatus);
@@ -580,6 +607,28 @@ public sealed partial class Mod
     }
 
     private void Note(string? message) => _lastActionNote = message;
+
+    /// <summary>
+    ///     Persists the current config to disk on a background task so an in-game settings change
+    ///     becomes the next session's startup default. Off the render thread (threading rule 5: no
+    ///     file I/O in draw code); failures are logged, never thrown — the live change already took
+    ///     effect via <see cref="Telemetry"/>.
+    /// </summary>
+    private void PersistConfig()
+    {
+        var config = _config;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                config.Save(GatOsPaths.ConfigFile);
+            }
+            catch (Exception ex)
+            {
+                ModLog.Log.Warn($"Could not persist gatOS settings: {ex.Message}");
+            }
+        });
+    }
 
     /// <summary>
     ///     Isolates the game-logging swap so its failure can never abort init: a missing game

@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -49,10 +50,19 @@ public static class SimJson
     public static string Serialize<T>(T value) => JsonSerializer.Serialize(value, Options);
 
     /// <summary>
+    ///     Serializes straight to UTF-8 bytes — the form push transports (MQTT) want, skipping the
+    ///     intermediate <see cref="string"/> and a re-encode. Byte-identical to <see cref="Serialize{T}"/>.
+    /// </summary>
+    public static byte[] SerializeToUtf8Bytes<T>(T value) => JsonSerializer.SerializeToUtf8Bytes(value, Options);
+
+    /// <summary>
     ///     The clock projection: <c>{ut, warp, sim_dt, warp_speeds, auto_warp_active,
     ///     auto_warp_target_ut}</c> (the HTTP <c>/v1/time</c> and MQTT <c>gatos/time</c> body).
     /// </summary>
-    public static string Time(SimSnapshot s) => Serialize(new
+    public static string Time(SimSnapshot s) => Encoding.UTF8.GetString(TimeBytes(s));
+
+    /// <summary><see cref="Time"/> as UTF-8 bytes (the MQTT push path).</summary>
+    public static byte[] TimeBytes(SimSnapshot s) => SerializeToUtf8Bytes(new
     {
         ut = s.UtSeconds,
         warp = s.WarpFactor,
@@ -68,22 +78,30 @@ public static class SimJson
     ///     control/debug flags and the transports line come from the hosting transport (only the mod
     ///     knows the bindings), matching the <c>/sim/status</c> tree.
     /// </summary>
-    public static string Status(SimSnapshot s, bool control, bool debug, string? transports) => Serialize(new
-    {
-        game_version = s.GameVersion,
-        sample_rate_hz = s.SampleRateHz,
-        accessors = s.Accessors,
-        control,
-        debug,
-        transports,
-    });
+    public static string Status(SimSnapshot s, bool control, bool debug, string? transports)
+        => Encoding.UTF8.GetString(StatusBytes(s, control, debug, transports));
+
+    /// <summary><see cref="Status"/> as UTF-8 bytes (the MQTT push path).</summary>
+    public static byte[] StatusBytes(SimSnapshot s, bool control, bool debug, string? transports)
+        => SerializeToUtf8Bytes(new
+        {
+            game_version = s.GameVersion,
+            sample_rate_hz = s.SampleRateHz,
+            accessors = s.Accessors,
+            control,
+            debug,
+            transports,
+        });
 
     /// <summary>
     ///     One discrete event: <c>{ut, type, vessel, detail}</c> (<c>vessel</c> dropped when global).
     ///     Shared by the HTTP SSE stream and the MQTT <c>gatos/events</c> topic; mirrors the NDJSON
     ///     <see cref="Formats.EventLine"/> the 9p <c>/sim/events</c> file emits.
     /// </summary>
-    public static string Event(SimEvent e) => Serialize(new
+    public static string Event(SimEvent e) => Encoding.UTF8.GetString(EventBytes(e));
+
+    /// <summary><see cref="Event"/> as UTF-8 bytes (the MQTT push path).</summary>
+    public static byte[] EventBytes(SimEvent e) => SerializeToUtf8Bytes(new
     {
         ut = e.UtSeconds,
         type = e.Type,

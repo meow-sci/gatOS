@@ -31,7 +31,11 @@ public sealed class GatOsConfig
         # restrict_network      true = guest gets no internet, only the gatOS channels (D3)
         # accel_override        force one accelerator: "whpx" | "kvm" | "hvf" | "tcg" ("" = auto)
         # cpu_model             override guest CPU model ("" = auto; WHPX needs a named model, not host)
-        # sample_rate_hz        /sim telemetry sampling rate (used once the 9p server lands, M9)
+        # sample_rate_hz        master /sim telemetry sampling rate in Hz (clamped 1..120; retune in-game)
+        # telemetry_enabled     master gate for sampling (false = telemetry freezes; VM/shells unaffected)
+        # telemetry_vessel_detail sample the per-vessel detail (navball/environment/per-module); off = core only
+        # telemetry_bodies      sample the celestial-body catalog + system summary (/sim/bodies, /sim/system)
+        # telemetry_events      diff snapshots into /sim/events entries (and the event topics/streams)
         # boot_timeout_seconds  0 = automatic (60 s accelerated, 300 s under TCG)
         # control_enabled       master switch for /sim writes (false = every control write EACCES)
         # control_all_vessels   true = command any vessel; false = only the active vessel (G-D1)
@@ -78,8 +82,24 @@ public sealed class GatOsConfig
     /// </summary>
     public string CpuModel { get; set; } = "";
 
-    /// <summary>Telemetry sampling rate for the <c>/sim</c> tree (consumed by the M9 sampler).</summary>
+    /// <summary>Master telemetry sampling rate for the <c>/sim</c> tree, Hz (consumed by the M9 sampler).</summary>
     public int SampleRateHz { get; set; } = 10;
+
+    /// <summary>Master gate for telemetry sampling; <c>false</c> freezes <c>/sim</c> at the last frame.</summary>
+    public bool TelemetryEnabled { get; set; } = true;
+
+    /// <summary>
+    ///     Sample the per-vessel detail pass (G3: navball, environment, RCS/solar/generators/lights/
+    ///     docking/decouplers/encounters, orbit extras, throttle/power read-backs). The heaviest
+    ///     per-vessel work; <c>false</c> keeps only the core flight telemetry.
+    /// </summary>
+    public bool TelemetryVesselDetail { get; set; } = true;
+
+    /// <summary>Sample the celestial-body catalog and system summary (<c>/sim/bodies</c>, <c>/sim/system</c>).</summary>
+    public bool TelemetryBodies { get; set; } = true;
+
+    /// <summary>Diff consecutive snapshots into <c>/sim/events</c> entries (and the event streams/topics).</summary>
+    public bool TelemetryEvents { get; set; } = true;
 
     /// <summary>Overall boot timeout in seconds; 0 = automatic (60 s accelerated / 300 s TCG).</summary>
     public int BootTimeoutSeconds { get; set; }

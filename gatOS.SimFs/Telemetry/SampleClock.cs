@@ -8,7 +8,7 @@ namespace gatOS.SimFs.Telemetry;
 /// </summary>
 public sealed class SampleClock
 {
-    private readonly double _intervalSeconds;
+    private double _intervalSeconds;
     private double _accumulator;
 
     /// <param name="rateHz">Samples per second (caller clamps; gatos.toml allows 1–120).</param>
@@ -17,6 +17,17 @@ public sealed class SampleClock
         if (rateHz <= 0 || !double.IsFinite(rateHz))
             throw new ArgumentOutOfRangeException(nameof(rateHz), rateHz, "Sample rate must be positive.");
         _intervalSeconds = 1.0 / rateHz;
+    }
+
+    /// <summary>
+    ///     Changes the cadence live (the user retuned <c>sample_rate_hz</c> in-game). The accumulated
+    ///     phase is kept, so a rate change never fires an immediate extra sample nor stalls a due one;
+    ///     a non-positive or non-finite rate is ignored (the clock keeps its current interval).
+    /// </summary>
+    public void SetRate(double rateHz)
+    {
+        if (rateHz > 0 && double.IsFinite(rateHz))
+            _intervalSeconds = 1.0 / rateHz;
     }
 
     /// <summary>Advances by one frame; true = take a sample now.</summary>

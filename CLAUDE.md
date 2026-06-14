@@ -132,13 +132,16 @@ overwritten), build `VmHost`+`VmConnectionBroker` (**no boot**, D2), register sh
 (purrTTY absence detected after the fact: the contract assembly resolving from gatOS's own folder
 means the vendored fallback loaded). `Unload` = `broker.DisposeAsync().AsTask().Wait(15 s)` (the
 dispose is the 10 s-grace QGA→QMP→kill ladder). T6.4 diagnostics: the gatOS menu
-(Status/Start VM/Shut Down VM/Restart SimFs (M9)/Open Data Folder/Reset Disk…+confirm-modal),
+(Status/Start VM/Shut Down VM/**Telemetry submenu**/Restart SimFs (M9)/Open Data Folder/Reset
+Disk…+confirm-modal),
 drawn two ways with **identical content** (purrTTY's exact pattern): via `[ModMenuEntry("gatOS")]`
 when the ModMenu mod is present, else via a Harmony postfix on `KSA.Program.DrawProgramMenusHook()`
 adding a top-level `gatOS` menu (`MenuFallbackPostfix`/`InstallMenuFallback` in `Game/Mod.Game.cs`,
 gated on `ModLibrary.Find("ModMenu")`) — both call the shared `DrawMenuContentSafe`; plus
 an ImGui status window (state, accel + WHPX DISM hint when tcg-on-Windows, ports, uptime, guest version, config,
-newest qemu log — cached per `VmStatus` transition — fault reason, asset status, action note); all
+newest qemu log — cached per `VmStatus` transition — fault reason, asset status, action note, **a
+Telemetry block: sample-rate slider + per-stream checkboxes + a live perf readout (sample-time
+avg/max/last, command-drain avg/max, and MQTT publish avg/max via `PerfStat`, with a Reset)**); all
 actions `Task.Run`, draw code reads volatile state only (rule 5). Two load-order subtleties worth
 keeping: game-typed *statics* live in a nested `Palette` class (field types resolve at type load;
 `Mod` must load without game DLLs) and the partial impls are `NoInlining` so missing-assembly
@@ -201,7 +204,9 @@ events read, and Tflush-survival — this **supersedes the planned ubuntu mount-
 game-free `gatOS.SimFs/Telemetry/` (as-built deviation — GameMod has no test project):
 `EventDiffer` (previous/current snapshot pair → the six fixed event types; a null previous is
 the baseline, no events), `SampleClock` (dt accumulator, drift-free phase, long-frame backlog
-dropped), `Sanitize` (NaN/Inf→0, radius→altitude for KSA's from-center apsides). The
+dropped; **rate mutable live via `SetRate`**), `Sanitize` (NaN/Inf→0, radius→altitude for KSA's
+from-center apsides), and `TelemetrySettings` (the runtime-mutable cadence + per-stream gates —
+volatile fields the sampler reads every tick; see "Runtime telemetry tuning" below). The
 game-coupled accessor half is `gatOS.GameMod/Game/TelemetrySampler.cs` (compile-gated like all
 `Game/**`): every KSA read verified against the decompiled sources — vessels via
 `Universe.CurrentSystem.All.UnsafeAsList()`, `Name = Id` (KSA has no separate display name),
@@ -214,8 +219,12 @@ overload. Wire-up (T9.3) in `Mod`: `OnFullyLoaded` builds `SnapshotStore` + `Sim
 binds the `NinePServer` (ephemeral loopback port) **before** the `VmHost`, whose
 `SimPortProvider` hands the port to the kernel cmdline (null when the bind failed → guest
 idles); `OnBeforeUi` → `SampleTelemetry` partial seam (NoInlining, one-error disable latch);
-idle gate = VM Starting/Running or `NinePServer.ActiveSessions > 0`; `Unload` disposes the
-server after the VM. Diagnostics: **Restart SimFs** menu item (rebinds the **same port** —
+idle gate = VM Starting/Running or a connected transport client (`NinePServer`/`SimHttpServer`/
+`SimMqttBroker` session count > 0) — the sampler does zero work otherwise; `Unload` disposes the
+server after the VM. The sampler reads `TelemetrySettings` each tick: the master `Enabled` gate,
+the per-stream gates (`VesselDetail` = the expensive G3 enrich pass, `Bodies`, `Events`) skip
+their KSA reads when off, and `SampleRateHz` retunes `SampleClock` live (warp ladder cached, so
+no per-tick LINQ alloc). Diagnostics: **Restart SimFs** menu item (rebinds the **same port** —
 it is baked into the running guest's cmdline; the supervisor re-establishes the mount unaided)
 and a SimFs status row. **Verified 2026-06-12 by the headless dist smoke** (supervisor mounts
 `/sim` by itself during boot, warp readable, restart-remount unaided, 3.3 s clean unload —
@@ -346,7 +355,13 @@ port (guest reaches it at `10.0.2.2:<port>`, like the others — no external bro
 emits retained topics `gatos/time`, `gatos/status`, `gatos/system`, `gatos/bodies`, `gatos/snapshot`
 (whole world), `gatos/vessels/<id>/telemetry` (the compact SDK-stable doc) and
 `gatos/vessels/<id>/snapshot` (the full granular vessel record), plus the non-retained
-`gatos/events`; clients publish a JSON `SimCommand`
+`gatos/events`. **Efficiency (unlike the lazy 9p/HTTP transports, this one pushes): both pumps do
+zero serialization while no MQTT client is connected** (`ConnectedClients` gate — the only eager
+transport, so this is what keeps idle cost near-zero; a connect wakes the parked pump via a
+linked-CTS race on `_worldWake`/`_fieldWake` and force-republishes the current retained baseline),
+**publish changed-only** (byte-compare vs the last payload, so static topics like `system`/`bodies`
+and a paused sim go quiet after one publish), and **serialize straight to UTF-8** (`SimJson.*Bytes`
+/ `Formats.VesselTelemetryUtf8`, no intermediate string). Clients publish a JSON `SimCommand`
 to `gatos/command` and the outcome is published to `gatos/command/result` (debug.* gated). A second
 pump (config `[mqtt] mqtt_field_topics`, cadence `field_feed_hz`=4) mirrors the **whole `/sim`
 filesystem leaf-by-leaf** under retained `gatos/sim/<path>` (one topic per scalar/`ctl`/`debug` field,
@@ -449,14 +464,18 @@ tools/                          fetch-qemu.{sh,ps1} + qemu-win64-files.txt (pin 
 ### Projects and the dependency rule
 
 ```
-gatOS.Logging                    (no deps)            game-free logging shim
+gatOS.Logging                    (no deps)            game-free logging shim + PerfStat
+                                                      (alloc-free single-writer timing accumulator)
 gatOS.NineP    → Logging                              9P2000.L codec + server + VFS (M7, built);
                                                       VfsScan (walk/read/write) + VfsFile.IsStreaming
                                                       back the field-level transport mirrors
 gatOS.SimFs    → NineP, Logging                       /sim tree, snapshots, stream/events, AlarmFile,
                                                       EventDiffer/SampleClock/Sanitize (M8+M9+G3, built);
+                                                      TelemetrySettings (runtime-mutable sample rate +
+                                                      per-stream gates the sampler reads each tick);
                                                       Formats + SimJson (the shared JSON projection
-                                                      HTTP/MQTT both serve — transport parity);
+                                                      HTTP/MQTT both serve — transport parity; UTF-8
+                                                      byte variants for the MQTT push path);
                                                       Commands/ (SimCommand, CommandQueue, Control/Trigger/
                                                       Vector/Enum/Number/Token control files — G1+G4, built)
 gatOS.Http     → SimFs, Logging                       magic HTTP /v1 server (raw TcpListener; G5, built)
@@ -554,6 +573,36 @@ host.
    `EnsureStartedAsync` callers await the same in-flight boot task.
 5. Nothing in gatOS ever blocks the render thread: menu/draw code reads cached state (volatile
    fields) only; all VM operations are async or background.
+
+## Runtime telemetry tuning (cadence + per-stream gates)
+
+The data feed has **one master cadence** and **per-stream gates**, all tunable from config and
+live in-game; the design keeps the pipeline cheap by gating at the single best point.
+
+- **Cadence.** `sample_rate_hz` (config, default 10; clamped 1–120) seeds `TelemetrySettings`
+  (game-free, `gatOS.SimFs`) whose volatile fields the game-thread sampler reads **every tick**.
+  The gatOS menu's *Telemetry* submenu (rate presets) and the status window (a 1–120 slider) write
+  it live and persist to `gatos.toml` (background `PersistConfig`, never on the render thread). The
+  rate drives `SampleClock.SetRate`. Everything downstream is a consumer of the published snapshot,
+  so this one knob sets the whole system's refresh rate.
+- **Per-stream gates** (all default on; `telemetry_enabled` master + `telemetry_vessel_detail` /
+  `telemetry_bodies` / `telemetry_events`). Gating **at the sampler** is deliberate: a disabled
+  stream skips its (often expensive) KSA reads *and* shrinks the published snapshot, so every
+  transport (9p/HTTP/MQTT/serial) serves less **by construction** — no per-transport gate to keep
+  in sync (transport-parity stays structural). `telemetry_vessel_detail` is the big lever: off
+  drops the whole G3 enrich pass (navball, environment, every per-module `StateList` read, and the
+  second `VesselSnapshot` the `with`-clone allocates), leaving only core flight telemetry — and,
+  as a consequence, module-level events (flameout/dock/decouple) the differ can no longer see.
+- **Consumer cost scales with use.** 9p and HTTP are lazy (a snapshot costs nothing until a guest
+  reads). The MQTT broker is the one eager pusher and is gated on `ConnectedClients` + changed-only
+  (see its note above), so an unused transport is ~free. Other cadences are independent knobs:
+  `field_feed_hz` (MQTT field mirror, default 4) and `serial_interval_ms` (default 500).
+- **Measured live.** The status window's Telemetry block shows `PerfStat` readouts for the
+  game-thread costs — the **sample** time (avg/max/last) and the **command drain** (avg/max, the
+  per-frame + solver-phase `CommandQueue.Drain`) — plus the background **MQTT publish** time
+  (avg/max, while a client is connected). All recorded allocation-free (two
+  `Stopwatch.GetTimestamp()` reads per interval); use them to see the cost of the current
+  rate/stream config and confirm a toggle's effect.
 
 ## Conventions (decided — do not re-litigate; see OS_PLAN.md Part 1)
 

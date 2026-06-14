@@ -153,6 +153,10 @@ public static class Formats
     ///     Returned without a trailing LF; the file appends one.
     /// </summary>
     public static string VesselTelemetry(SimSnapshot snapshot, VesselSnapshot v)
+        => Encoding.UTF8.GetString(VesselTelemetryUtf8(snapshot, v));
+
+    /// <summary><see cref="VesselTelemetry"/> as raw UTF-8 bytes (no trailing LF) — the MQTT push path.</summary>
+    public static byte[] VesselTelemetryUtf8(SimSnapshot snapshot, VesselSnapshot v)
     {
         var buffer = new ArrayBufferWriter<byte>(512);
         using (var json = new Utf8JsonWriter(buffer, JsonOptions))
@@ -219,7 +223,7 @@ public static class Formats
             json.WriteEndObject();
         }
 
-        return Encoding.UTF8.GetString(buffer.WrittenSpan);
+        return buffer.WrittenSpan.ToArray();
     }
 
     private static void WriteVec3(Utf8JsonWriter json, string name, double3Snap v)

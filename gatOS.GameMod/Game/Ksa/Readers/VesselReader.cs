@@ -28,9 +28,15 @@ internal static class VesselReader
     [KsaAnchor("Vehicle core state (Id/Situation/GetPositionCci/OrbitalSpeed/masses/attitude)",
         SourceFile = "KSA/Vehicle.cs", Verified = "2026-06-12", Risk = ChurnRisk.Low,
         Notes = "Verified at M9; Name = Id (KSA has no separate display name).")]
-    internal static VesselSnapshot Sample(Vehicle vehicle, string? activeVesselId, double utSeconds)
+    internal static VesselSnapshot Sample(Vehicle vehicle, string? activeVesselId, double utSeconds, bool detail)
     {
         var core = SampleCore(vehicle, activeVesselId);
+        // detail off (config telemetry_vessel_detail): skip the whole G3 enrich pass. It is the
+        // most expensive per-vessel work (navball, environment + every per-module StateList read)
+        // and the second VesselSnapshot allocation the `with` clone makes — so a player who only
+        // needs core flight telemetry pays neither.
+        if (!detail)
+            return core;
         try
         {
             return Enrich(core, vehicle, utSeconds);
