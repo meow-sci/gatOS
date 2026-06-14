@@ -84,10 +84,12 @@ fn render_header_button(f: &mut Frame, app: &mut App, top: Rect) -> Rect {
 // ---- dashboard --------------------------------------------------------------------------------
 
 fn render_dashboard(f: &mut Frame, app: &mut App) {
+    // header (top) + status bar (moved up under it) + content; the whole bottom stays transparent
+    // so the game shows through it cleanly.
     let chunks = Layout::vertical([
         Constraint::Length(1),
-        Constraint::Min(0),
         Constraint::Length(1),
+        Constraint::Min(0),
     ])
     .split(f.area());
 
@@ -160,20 +162,20 @@ fn render_dashboard(f: &mut Frame, app: &mut App) {
         .header(head)
         .row_highlight_style(Style::new().fg(FOCUS).add_modifier(Modifier::BOLD))
         .highlight_symbol("▶ ");
-    f.render_stateful_widget(table, chunks[1], &mut app.table);
+    f.render_stateful_widget(table, chunks[2], &mut app.table);
 
-    // The data-rows area (below the 1-row header) — used to map a click row to a vessel index.
+    // The data-rows area (below the table's 1-row header) — used to map a click row to a vessel index.
     app.dashboard_area = Rect {
-        x: chunks[1].x,
-        y: chunks[1].y.saturating_add(1),
-        width: chunks[1].width,
-        height: chunks[1].height.saturating_sub(1),
+        x: chunks[2].x,
+        y: chunks[2].y.saturating_add(1),
+        width: chunks[2].width,
+        height: chunks[2].height.saturating_sub(1),
     };
 
     let hints = "↑↓/scroll select · Enter/click open · s settings · q quit";
     f.render_widget(
         Paragraph::new(Span::styled(hints, Style::new().fg(LABEL))).style(Style::new().bg(BAR_BG)),
-        chunks[2],
+        chunks[1],
     );
 }
 
@@ -206,10 +208,12 @@ fn vessel_row(v: &Vessel) -> Row<'static> {
 // ---- vessel detail ----------------------------------------------------------------------------
 
 fn render_detail(f: &mut Frame, app: &mut App, id: &str) {
+    // header (top) + status bar (moved up under it) + content; the whole bottom stays transparent
+    // so the game shows through it cleanly.
     let chunks = Layout::vertical([
         Constraint::Length(1),
-        Constraint::Min(0),
         Constraint::Length(1),
+        Constraint::Min(0),
     ])
     .split(f.area());
 
@@ -274,7 +278,7 @@ fn render_detail(f: &mut Frame, app: &mut App, id: &str) {
     );
 
     // Body: telemetry (left) + controls (right).
-    let body = Layout::horizontal([Constraint::Min(34), Constraint::Length(30)]).split(chunks[1]);
+    let body = Layout::horizontal([Constraint::Min(34), Constraint::Length(30)]).split(chunks[2]);
     let (telem_borders, telem_border) = border_spec(app.border_weight);
     let telem = Block::new()
         .borders(telem_borders)
@@ -300,7 +304,7 @@ fn render_detail(f: &mut Frame, app: &mut App, id: &str) {
 
     render_controls(f, app, &v, body[1]);
 
-    // Status bar — last command outcome / connection.
+    // Status bar (top, under the header) — last command outcome / connection.
     let (msg, color) = if app.status_line.is_empty() {
         (
             "Tab/↑↓ focus · Enter/click activate · −/= throttle · s settings · Esc back · q quit"
@@ -314,7 +318,7 @@ fn render_detail(f: &mut Frame, app: &mut App, id: &str) {
     };
     f.render_widget(
         Paragraph::new(Span::styled(msg, Style::new().fg(color))).style(Style::new().bg(BAR_BG)),
-        chunks[2],
+        chunks[1],
     );
 }
 
