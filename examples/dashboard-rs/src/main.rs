@@ -48,7 +48,7 @@ impl Config {
         // $GATOS_HTTP is the guest-side base (e.g. http://sim:4242/v1); fall back to the host loopback.
         let mut url =
             std::env::var("GATOS_HTTP").unwrap_or_else(|_| "http://127.0.0.1:4242/v1".to_string());
-        let mut interval = Duration::from_millis(500);
+        let mut interval = Duration::from_millis(50);
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
             match arg.as_str() {

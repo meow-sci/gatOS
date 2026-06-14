@@ -24,15 +24,15 @@ HTTP's atomic snapshot + one command endpoint is the natural fit for a polling T
 Alpine ships Rust:
 
 ```sh
-apk add --no-cache cargo gcc musl-dev      # one-time, in the guest
-cargo run --release --manifest-path /path/to/examples/dashboard-rs/Cargo.toml
+apk add --no-cache cargo rust      # one-time, in the guest
+cargo run --release
 ```
 
 `$GATOS_HTTP` is preset in the guest shell, so no arguments are needed. On the host (for dev), point
 it at the mod's HTTP server:
 
 ```sh
-cargo run -- --url http://127.0.0.1:4242/v1        # --interval <ms> tunes the poll rate (default 500)
+cargo run -- --url http://127.0.0.1:4242/v1        # --interval <ms> tunes the poll rate (default 50)
 ```
 
 ## Controls
