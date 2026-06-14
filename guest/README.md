@@ -10,7 +10,7 @@ Architecture/background: `OS_ANALYSIS.md` §3.8; task specs: `OS_PLAN.md` M2; ha
 
 | Artifact | What it is |
 |---|---|
-| `base.qcow2` | zstd-compressed qcow2; **partitionless ext4 root** (mount it as `/dev/vda`, no partition table) |
+| `base.qcow2` | zstd-compressed qcow2; **partitionless ext4 root** (mount it as `/dev/vda`, no partition table). Built small (`DISK_SIZE_MB`, 1.5 GiB); the host grows the per-save overlay to `[disk_size_gb]` and `init-gatos` runs `resize2fs /dev/vda` at boot to fill it |
 | `vmlinuz-virt` | Alpine `linux-virt` kernel, used via QEMU direct kernel boot (no bootloader in the image) |
 | `initramfs-virt` | trimmed initramfs (`features="base virtio ext4"`), regenerated from the overlay's `mkinitfs.conf` |
 | `manifest.toml` | the host-side boot contract: kernel cmdline, ssh user/key, host-key pin, guest version |
@@ -27,6 +27,8 @@ which supervises exactly four things: `init-gatos` (sysinit: mounts, static slir
 10.0.2.15/gw 10.0.2.2, device nodes), dropbear (`-s`, key-only), `qga-gatos` (qemu-guest-agent once
 its virtio-serial port appears), and `sim-mount` (the 9p `/sim` remount supervisor — reads
 `gatos.simport=<port>` from the kernel cmdline; absent or `0` means no 9p server, it idles).
+`init-gatos` also runs `resize2fs /dev/vda` (best-effort) so the root ext4 grows online to fill a
+host-resized overlay — `resize2fs` comes from `e2fsprogs-extra` (busybox has none).
 
 ## Branding (login banner + `/etc/os-release`)
 

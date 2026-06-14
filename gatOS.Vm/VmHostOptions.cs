@@ -12,6 +12,13 @@ public sealed record VmHostOptions
     /// <summary>Guest vCPU count.</summary>
     public int Cpus { get; init; } = VmLaunchSpec.DefaultCpus;
 
+    /// <summary>
+    ///     Minimum overlay disk size in bytes (config <c>disk_size_gb</c>). Before boot the host
+    ///     grows the profile's overlay to at least this size (grow-only — the guest grows its ext4
+    ///     online with <c>resize2fs</c>); <c>0</c> leaves the overlay at the base image's size.
+    /// </summary>
+    public long DiskSizeBytes { get; init; }
+
     /// <summary>D3: restrict slirp to the explicit forwards (no guest internet).</summary>
     public bool RestrictNetwork { get; init; }
 

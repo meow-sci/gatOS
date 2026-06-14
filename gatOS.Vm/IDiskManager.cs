@@ -30,6 +30,14 @@ public interface IDiskManager
     /// <summary>Returns the overlay disk for <paramref name="profile"/>, creating it if absent.</summary>
     string GetOrCreateOverlay(string profile);
 
+    /// <summary>
+    ///     Grows the overlay's virtual block-device size to at least <paramref name="minBytes"/>,
+    ///     returning the resulting virtual size in bytes. Grow-only: a request at or below the
+    ///     current size is a no-op (overlays never shrink, since the guest can only grow its ext4
+    ///     online). The guest's boot-time <c>resize2fs</c> then expands the filesystem to fill it.
+    /// </summary>
+    long EnsureOverlaySize(string profile, long minBytes);
+
     /// <summary>Takes the single-writer lock for <paramref name="profile"/>'s overlay.</summary>
     IDisposable AcquireOverlayLock(string profile);
 }

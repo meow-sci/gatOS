@@ -427,6 +427,41 @@ Two folders matter:
   This is where your config, your persistent guest disk, and logs live. The fastest way to open it
   is the **Open Data Folder** button in the gatOS menu.
 
+### Disk space
+
+The guest gets a real, finite disk — and it's surprisingly easy to fill (a single `cargo build` or a
+big `apk` install can do it). When it's full you'll see the classic Linux symptom:
+
+```
+No space left on device (os error 28)
+```
+
+**The default is 8 GiB**, set by `disk_size_gb` in `gatos.toml`. Each save profile has its own disk (a
+qcow2 *overlay* in `disks/`), so the number only costs real space as you actually use it — an 8 GiB
+disk that's 1 GiB full takes ~1 GiB on your drive, not 8.
+
+**To give yourself more room**, edit `gatos.toml`:
+
+```toml
+disk_size_gb = 32
+```
+
+then **relaunch KSA** (gatOS reads `gatos.toml` at launch). On the next VM boot it grows the current
+save's disk and the guest expands its filesystem to fill it automatically — no commands, no `resize2fs`
+by hand. You can confirm the new size from inside the guest with `df -h /`.
+
+A few things worth knowing:
+
+- **It's grow-only.** Raising `disk_size_gb` enlarges the disk; *lowering* it does nothing (gatOS never
+  shrinks a disk — that would risk your data). To actually reclaim space, use **Reset Disk…** in the
+  gatOS menu (which wipes the save back to factory) or clean up files inside the guest (`rm -rf` that
+  `target/` directory, `apk cache clean`, etc.).
+- **Already wedged and can't even `apk add`?** You don't need to install anything — just bump
+  `disk_size_gb`, relaunch KSA, and the extra space appears. Then delete whatever filled it.
+- **Auto-grow needs guest image v9 or newer.** Brand-new installs and any save you **Reset** get it
+  automatically. A save created with an older guest keeps its old size; **Reset Disk…** moves it to the
+  current image.
+
 ---
 
 # Appendix: configuration & customization
@@ -448,6 +483,7 @@ just falls back to defaults without overwriting your work.
 | --- | --- | --- |
 | `memory_mb` | `256` | Guest RAM in MiB. Bump it if you install heavy software. |
 | `cpus` | `2` | Guest virtual CPU count. |
+| `disk_size_gb` | `8` | Guest disk size in GiB (1–128). **Grow-only:** raising it expands the current save's disk on the next boot; lowering it does nothing. See [Disk space](#disk-space) below. |
 | `restrict_network` | `false` | `true` = no internet for the guest (an "offline ship computer"). Off by default so `apk add` works. |
 | `accel_override` | `""` | Force an accelerator: `"whpx"`, `"kvm"`, `"hvf"`, or `"tcg"`. Empty = pick the best automatically. |
 | `cpu_model` | `""` | Override the guest CPU model. Empty = automatic (see the WHPX note below). |

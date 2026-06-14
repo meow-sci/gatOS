@@ -15,6 +15,11 @@ mount -t tmpfs tmpfs /tmp 2>/dev/null
 
 mount -o remount,rw / 2>/dev/null
 
+# Grow the root filesystem to fill the block device. The host sizes the per-save overlay from
+# the gatOS [disk_size_gb] config (grow-only); resize2fs expands the ext4 online to match. The
+# root mount already created /dev/vda. No-op (exit 0) once the fs already fills the device.
+resize2fs /dev/vda 2>/dev/null
+
 # Device nodes + drivers for the fixed QEMU hardware (q35 + virtio-net + virtio-serial).
 mdev -s 2>/dev/null
 modprobe -a virtio_net virtio_console 2>/dev/null

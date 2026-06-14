@@ -453,7 +453,7 @@ public sealed partial class Mod
             Row("Guest");
             ImGui.Text(Assets?.Manifest is { } m ? $"v{m.GuestVersion} (Alpine {m.AlpineVersion})" : "—");
             Row("Config");
-            ImGui.Text($"{Config.MemoryMb} MB RAM, {Config.Cpus} vCPU"
+            ImGui.Text($"{Config.MemoryMb} MB RAM, {Config.Cpus} vCPU, {Config.DiskSizeGb} GB disk"
                        + (Config.RestrictNetwork ? ", network restricted" : ""));
             Row("Newest QEMU log");
             ImGui.TextWrapped(NewestQemuLog(status) ?? "—");

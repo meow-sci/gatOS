@@ -182,6 +182,27 @@ public sealed class VmHostTests
     }
 
     [Test]
+    public async Task DiskSizeBytes_GrowsTheOverlayBeforeBoot()
+    {
+        const long size = 8L * 1024 * 1024 * 1024;
+        await using var host = CreateHost(options: new VmHostOptions { DiskSizeBytes = size });
+        await host.EnsureStartedAsync(CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(_disks.ResizeCalls, Is.EqualTo(1));
+            Assert.That(_disks.ResizedToBytes, Is.EqualTo(size));
+        });
+    }
+
+    [Test]
+    public async Task DiskSizeBytes_Zero_LeavesTheOverlayUntouched()
+    {
+        await using var host = CreateHost(); // default options ⇒ DiskSizeBytes 0
+        await host.EnsureStartedAsync(CancellationToken.None);
+        Assert.That(_disks.ResizeCalls, Is.EqualTo(0));
+    }
+
+    [Test]
     public async Task PortClashOnStart_RetriesOnceWithFreshPorts()
     {
         await using var host = CreateHost();

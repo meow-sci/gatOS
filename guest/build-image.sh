@@ -43,9 +43,13 @@ ALPINE_KEYS_SHA256=dd211936d544f4050924ce8aec078d24e7b1b036ae70b30bd07867349587c
 # alpine-release provides /etc/alpine-release (the manifest stamps its exact
 # version) and a stock /etc/os-release that apply_branding later overwrites with
 # the gatOS-branded one (split out of baselayout in modern Alpine).
+# e2fsprogs-extra carries resize2fs (busybox has none): init-gatos grows the root
+# ext4 online to fill a host-resized overlay (config disk_size_gb). The base image
+# stays small (DISK_SIZE_MB); the per-save overlay is what the host grows.
 GUEST_PACKAGES="alpine-baselayout alpine-release busybox busybox-suid musl musl-utils
                 alpine-keys apk-tools linux-virt dropbear dropbear-scp dropbear-convert
                 openssh-sftp-server qemu-guest-agent ca-certificates
+                e2fsprogs e2fsprogs-extra
                 bash zsh shadow vim neovim less curl wget git "
 
 DISK_SIZE_MB=1536

@@ -44,7 +44,10 @@ the M7 VFS must support.
 **M2 — guest image pipeline: DONE.** `guest/build-image.sh` reproducibly builds the guest from
 pinned Alpine 3.24 mirrors — no setup-alpine, no openrc; busybox init runs the hand-written
 `guest/rootfs-overlay/` (static slirp net 10.0.2.15, dropbear key-only, qemu-ga via wrapper,
-`sim-mount` 9p supervisor driven by the `gatos.simport=<port>` kernel cmdline, 0/absent = idle).
+`sim-mount` 9p supervisor driven by the `gatos.simport=<port>` kernel cmdline, 0/absent = idle;
+`init-gatos` also runs best-effort `resize2fs /dev/vda` so the root ext4 grows online to fill a
+host-resized overlay — `resize2fs` ships via `e2fsprogs-extra`, guest **v9+**). The base stays small
+(`DISK_SIZE_MB`, 1.5 GiB); the host grows the per-save overlay to `[disk_size_gb]` (default 8 GiB).
 Artifacts in `guest/out/` (never committed): partitionless-ext4 `base.qcow2` (zstd qcow2),
 `vmlinuz-virt`, trimmed `initramfs-virt` (`features="base virtio ext4"`), `manifest.toml` (the
 host boot contract: kernel cmdline, ssh user/key, host-key pin = sha256 hex of the raw key blob),
@@ -71,7 +74,12 @@ Supporting cast (all `gatOS.Vm/`, all game-free): `GatOsPaths`; `PortAllocator`;
 all install-once via `CopyIfMissing`; **boots and pins the host key against the *installed* manifest
 read back from `disks/guest-v<N>/`, never the bundled dist copy** — so a re-keyed rebuild of the same
 version can't desync the pin from the already-installed base; overlays with **bare relative backing
-refs**, PID lock files with stale reclaim, never `qemu-img commit`); `QemuCommandBuilder` (per-OS accel ladders `whpx|kvm|hvf→tcg`, **non-x64
+refs**, PID lock files with stale reclaim, never `qemu-img commit`; **`EnsureOverlaySize(profile,
+minBytes)` grows an overlay's virtual size grow-only** — `qemu-img info --output=json` reads the
+current size, `qemu-img resize` only when the target exceeds it (never shrinks), so `disk_size_gb`
+can be raised but lowering it is a no-op; `VmHost.BootAsync` calls it after taking the disk lock and
+before spawn, best-effort, and the guest's `init-gatos` `resize2fs /dev/vda` grows ext4 to match);
+`QemuCommandBuilder` (per-OS accel ladders `whpx|kvm|hvf→tcg`, **non-x64
 hosts collapse to tcg**, `-cpu` per accel — `host` on KVM/HVF, a **named model (`Haswell`) on
 WHPX** (WHPX triple-faults the guest on `-cpu host`/`max` — "Unexpected VP exit code 4", confirmed
 on a Raptor Lake i9-13900K; any named model boots), `max` on TCG; `cpu_model` config overrides —

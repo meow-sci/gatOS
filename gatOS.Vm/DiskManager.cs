@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using gatOS.Logging;
 
@@ -117,6 +119,47 @@ public sealed partial class DiskManager : IDiskManager
         return File.Exists(overlayPath) ? overlayPath : CreateOverlay(profile);
     }
 
+    /// <inheritdoc/>
+    public long EnsureOverlaySize(string profile, long minBytes)
+    {
+        ValidateProfileName(profile);
+        var overlayPath = OverlayPath(profile);
+        if (!File.Exists(overlayPath))
+            throw new DiskOperationException($"Overlay '{overlayPath}' does not exist.");
+
+        var current = ReadVirtualSize(overlayPath);
+        // Grow-only: the guest can only grow ext4 online (resize2fs), never shrink it in place.
+        // A request at or below the current size is a no-op, so lowering disk_size_gb is harmless.
+        if (minBytes <= current)
+            return current;
+
+        // cwd = DisksDir + bare filename, like CreateOverlay; resize touches only the overlay's
+        // own size header (its backing image is left untouched, so sibling overlays are unaffected).
+        RunQemuImg(GatOsPaths.DisksDir,
+            "resize", Path.GetFileName(overlayPath), minBytes.ToString(CultureInfo.InvariantCulture));
+        ModLog.Log.Info(
+            $"Grew overlay '{Path.GetFileName(overlayPath)}' from {current / (1024 * 1024)} MiB "
+            + $"to {minBytes / (1024 * 1024)} MiB (virtual); the guest grows its filesystem on boot.");
+        return minBytes;
+    }
+
+    /// <summary>Reads an image's virtual (block-device) size in bytes via <c>qemu-img info</c>.</summary>
+    private long ReadVirtualSize(string overlayPath)
+    {
+        var json = RunQemuImg(GatOsPaths.DisksDir,
+            "info", "--output=json", Path.GetFileName(overlayPath));
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.GetProperty("virtual-size").GetInt64();
+        }
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException)
+        {
+            throw new DiskOperationException(
+                $"Could not read the overlay's virtual size from qemu-img info: {ex.Message}", ex);
+        }
+    }
+
     /// <summary>Deletes a profile's overlay and its metadata. The shared base image is kept.</summary>
     /// <exception cref="DiskOperationException">The overlay is locked by a live process.</exception>
     public void DeleteOverlay(string profile)
@@ -179,7 +222,8 @@ public sealed partial class DiskManager : IDiskManager
         return destination;
     }
 
-    private void RunQemuImg(string workingDirectory, params string[] args)
+    /// <summary>Runs qemu-img and returns its stdout; throws <see cref="DiskOperationException"/> on failure.</summary>
+    private string RunQemuImg(string workingDirectory, params string[] args)
     {
         var qemuImg = _qemuImgResolver();
         var psi = new ProcessStartInfo(qemuImg)
@@ -196,12 +240,16 @@ public sealed partial class DiskManager : IDiskManager
         {
             using var process = Process.Start(psi)
                                 ?? throw new DiskOperationException($"Failed to start '{qemuImg}'.");
+            // Read stdout async while draining stderr so neither pipe can fill and deadlock
+            // (info --output=json puts a large payload on stdout).
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
             var stderr = process.StandardError.ReadToEnd();
-            process.StandardOutput.ReadToEnd();
             process.WaitForExit();
+            var stdout = stdoutTask.GetAwaiter().GetResult();
             if (process.ExitCode != 0)
                 throw new DiskOperationException(
                     $"qemu-img {string.Join(' ', args)} failed (exit {process.ExitCode}): {stderr.Trim()}");
+            return stdout;
         }
         catch (SystemException ex) // Win32Exception / InvalidOperationException from Process.Start
         {

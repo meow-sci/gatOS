@@ -28,6 +28,9 @@ public sealed class GatOsConfig
         #
         # memory_mb             guest RAM in MiB
         # cpus                  guest vCPU count
+        # disk_size_gb          guest disk size in GiB (grow-only; clamped 1..128). Raising this grows
+        #                       the current save's disk on the next boot; lowering it does nothing
+        #                       (the disk never shrinks — Reset Disk to reclaim space).
         # restrict_network      true = guest gets no internet, only the gatOS channels (D3)
         # accel_override        force one accelerator: "whpx" | "kvm" | "hvf" | "tcg" ("" = auto)
         # cpu_model             override guest CPU model ("" = auto; WHPX needs a named model, not host)
@@ -66,6 +69,14 @@ public sealed class GatOsConfig
 
     /// <summary>Guest vCPU count.</summary>
     public int Cpus { get; set; } = 2;
+
+    /// <summary>
+    ///     Guest disk size in GiB (clamped 1..128). The base image ships small; before boot the host
+    ///     grows the active save's overlay to this size (grow-only) and the guest expands its ext4 to
+    ///     fill it. Raise it for heavy software (compilers, big package installs); lowering it is a
+    ///     no-op (disks never shrink — use Reset Disk to reclaim space).
+    /// </summary>
+    public int DiskSizeGb { get; set; } = 8;
 
     /// <summary>
     ///     When <c>true</c>, the guest is launched with <c>-netdev user,restrict=on</c> (no outbound
@@ -217,6 +228,7 @@ public sealed class GatOsConfig
     {
         MemoryMb = Clamp(nameof(MemoryMb), MemoryMb, 128, 8192); // Alpine floor / sanity ceiling
         Cpus = Clamp(nameof(Cpus), Cpus, 1, 16);
+        DiskSizeGb = Clamp(nameof(DiskSizeGb), DiskSizeGb, 1, 128);
         SampleRateHz = Clamp(nameof(SampleRateHz), SampleRateHz, 1, 120);
         BootTimeoutSeconds = Clamp(nameof(BootTimeoutSeconds), BootTimeoutSeconds, 0, 3600);
         CommandTimeoutMs = Clamp(nameof(CommandTimeoutMs), CommandTimeoutMs, 100, 30000);

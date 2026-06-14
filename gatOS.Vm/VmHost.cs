@@ -168,6 +168,21 @@ public sealed class VmHost : IAsyncDisposable
             var installed = _disks.EnsureBaseInstalled();
             var overlay = _disks.GetOrCreateOverlay(_options.Profile);
             diskLock = _disks.AcquireOverlayLock(_options.Profile);
+
+            // Grow the overlay to the configured size while we hold the lock and before QEMU opens
+            // it (grow-only). Best-effort: a resize failure must not block a boot that would still
+            // succeed at the current size — the guest's resize2fs just has less room to grow into.
+            if (_options.DiskSizeBytes > 0)
+            {
+                try
+                {
+                    _disks.EnsureOverlaySize(_options.Profile, _options.DiskSizeBytes);
+                }
+                catch (DiskOperationException ex)
+                {
+                    ModLog.Log.Warn($"Disk resize skipped (booting at the current size): {ex.Message}");
+                }
+            }
             var simPort = _options.SimPortProvider?.Invoke();
             var httpPort = _options.HttpPortProvider?.Invoke();
             var mqttPort = _options.MqttPortProvider?.Invoke();

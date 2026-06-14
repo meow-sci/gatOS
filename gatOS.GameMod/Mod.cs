@@ -176,6 +176,7 @@ public sealed partial class Mod
                 Profile = Profile,
                 MemoryMb = _config.MemoryMb,
                 Cpus = _config.Cpus,
+                DiskSizeBytes = (long)_config.DiskSizeGb * 1024 * 1024 * 1024,
                 RestrictNetwork = _config.RestrictNetwork,
                 AccelOverride = _config.AccelOverride,
                 CpuModel = _config.CpuModel,

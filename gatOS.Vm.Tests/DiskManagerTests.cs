@@ -112,6 +112,27 @@ public sealed class DiskManagerTests
     }
 
     [Test]
+    public void EnsureOverlaySize_GrowsTheOverlay_AndIsGrowOnly()
+    {
+        var qemu = TestEnv.RequireQemu();
+        WriteFakeAssets(realQcow2: qemu.QemuImg); // base.qcow2 is created at 16 MiB
+        var manager = new DiskManager(_assetsDir, () => qemu.QemuImg);
+        var overlay = manager.GetOrCreateOverlay("grow"); // inherits the 16 MiB base size
+
+        const long target = 64L * 1024 * 1024;
+        var grown = manager.EnsureOverlaySize("grow", target);
+        Assert.That(grown, Is.EqualTo(target));
+        using (var info = JsonDocument.Parse(QemuImgInfo(qemu.QemuImg, overlay)))
+            Assert.That(info.RootElement.GetProperty("virtual-size").GetInt64(), Is.EqualTo(target));
+
+        // Grow-only: a request at or below the current size is a no-op (never shrinks).
+        var unchanged = manager.EnsureOverlaySize("grow", 16L * 1024 * 1024);
+        Assert.That(unchanged, Is.EqualTo(target));
+        using (var info = JsonDocument.Parse(QemuImgInfo(qemu.QemuImg, overlay)))
+            Assert.That(info.RootElement.GetProperty("virtual-size").GetInt64(), Is.EqualTo(target));
+    }
+
+    [Test]
     public void DeleteOverlay_Refuses_WhileTheOverlayIsLocked()
     {
         var qemu = TestEnv.RequireQemu();

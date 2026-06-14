@@ -24,6 +24,16 @@ internal sealed class FakeDiskManager : IDiskManager
 
     public string GetOrCreateOverlay(string profile) => $"/fake/{profile}.qcow2";
 
+    public long ResizedToBytes = -1;
+    public int ResizeCalls;
+
+    public long EnsureOverlaySize(string profile, long minBytes)
+    {
+        Interlocked.Increment(ref ResizeCalls);
+        ResizedToBytes = minBytes;
+        return minBytes;
+    }
+
     public IDisposable AcquireOverlayLock(string profile)
     {
         Interlocked.Increment(ref LocksTaken);
