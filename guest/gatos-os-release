@@ -25,6 +25,3 @@ LOGO=gatos
 @BANNER@
 
 @TAGLINE@
-
-A real, minimal Alpine Linux running inside a QEMU microVM.
-Vehicle telemetry mounts at /sim when the game provides it.
