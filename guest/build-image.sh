@@ -38,11 +38,13 @@ ALPINE_KEYS_SHA256=dd211936d544f4050924ce8aec078d24e7b1b036ae70b30bd07867349587c
 
 # OS_PLAN.md T2.1: deliberately no openrc — busybox init + the hand-written
 # inittab in rootfs-overlay/. linux-virt pulls mkinitfs automatically.
-# alpine-release provides /etc/alpine-release + /etc/os-release (split out of
-# baselayout in modern Alpine; the manifest stamps its exact version).
+# alpine-release provides /etc/alpine-release (the manifest stamps its exact
+# version) and a stock /etc/os-release that apply_branding later overwrites with
+# the gatOS-branded one (split out of baselayout in modern Alpine).
 GUEST_PACKAGES="alpine-baselayout alpine-release busybox busybox-suid musl musl-utils
                 alpine-keys apk-tools linux-virt dropbear dropbear-scp
-                openssh-sftp-server qemu-guest-agent ca-certificates"
+                openssh-sftp-server qemu-guest-agent ca-certificates
+                bash zsh shadow vim neovim less curl wget git "
 
 DISK_SIZE_MB=1536
 # Spike-validated cmdline (spike/NOTES.md T1.1), adjusted for the partitionless
@@ -121,8 +123,51 @@ configure_rootfs() {
         > "$ROOTFS/etc/apk/repositories"   # in-guest `apk add`; apk appends <arch>/ itself
     sed -i -E 's/^root:[^:]*:/root:!:/' "$ROOTFS/etc/shadow"      # lock root password (key-only)
     mkdir -p "$ROOTFS/sim"
+
+    apply_branding
+
     rm -rf "$ROOTFS"/var/cache/apk/*
 }
+
+# gatOS branding: the SSH login banner and a rebranded /etc/os-release, both
+# driven by the editable source files in guest/ (gatos-banner, gatos-tagline,
+# gatos-os-release) so they can be tweaked and rebuilt over time.
+apply_branding() {
+    log "applying gatOS branding (login banner + /etc/os-release)"
+
+    # Login banner: stitched logo + tagline, baked once at build time. The static
+    # overlay /etc/profile.d/zz-gatos-banner.sh cats this on each interactive login.
+    mkdir -p "$ROOTFS/etc/gatos"
+    "$SCRIPT_DIR/gatos-banner.sh" > "$ROOTFS/etc/gatos/banner"
+
+    # /etc/os-release from the gatos-os-release template: substitute version
+    # placeholders, expand the @BANNER@/@TAGLINE@ markers with the colour art.
+    # This overwrites the file the alpine-release package shipped (nothing in the
+    # guest sources it — the manifest reads /etc/alpine-release instead).
+    local tmpl="$SCRIPT_DIR/gatos-os-release" out="$ROOTFS/etc/os-release"
+    local alpine_release version line
+    alpine_release="$(cat "$ROOTFS/etc/alpine-release")"
+    version="$GUEST_VERSION (Alpine $alpine_release)"
+    : > "$out"
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"                       # tolerate a CRLF-edited template
+        case "$line" in
+            '@BANNER@')  emit_art "$SCRIPT_DIR/gatos-banner"  "$out" ;;
+            '@TAGLINE@') emit_art "$SCRIPT_DIR/gatos-tagline" "$out" ;;
+            \#*)         : ;;   # drop the template's own comment lines
+            *)
+                line="${line//@VERSION_ID@/$GUEST_VERSION}"
+                line="${line//@VERSION@/$version}"
+                line="${line//@ALPINE@/$alpine_release}"
+                printf '%s\n' "$line" >> "$out"
+                ;;
+        esac
+    done < "$tmpl"
+}
+
+# Emit an art file into $2: strip CR (art may be CRLF-authored) and guarantee a
+# trailing newline (the art files carry none, so a bare cat runs into the next line).
+emit_art() { tr -d '\r' < "$1" >> "$2"; [ -z "$(tail -c1 -- "$1")" ] || printf '\n' >> "$2"; }
 
 generate_keys() {
     log "generating SSH session keypair + dropbear host key"

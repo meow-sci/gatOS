@@ -1,0 +1,30 @@
+# gatOS /etc/os-release template — edit this file, then rebuild the guest image.
+#
+# build-image.sh fills the @PLACEHOLDERS@ and expands the @BANNER@ / @TAGLINE@
+# markers with the colour art from gatos-banner / gatos-tagline, writing the
+# result to the guest's /etc/os-release.
+#
+#   @VERSION_ID@  guest image version (guest/GUEST_VERSION)
+#   @ALPINE@      Alpine release the image was built from (e.g. 3.24.0)
+#   @VERSION@     a combined "<guest> (Alpine <alpine>)" string
+#
+# The standard KEY=value fields below stay machine-readable; the banner/tagline
+# and the free-form lines underneath are purely cosmetic (this file is shown by
+# `cat /etc/os-release`, not sourced by anything in the guest).
+NAME="gatOS"
+ID=gatos
+ID_LIKE=alpine
+VERSION="@VERSION@"
+VERSION_ID=@VERSION_ID@
+PRETTY_NAME="gatOS @VERSION_ID@ - a Kitten Space Agency OS, based on Alpine Linux @ALPINE@"
+HOME_URL="https://github.com/meow-sci/gatOS"
+SUPPORT_URL="https://github.com/meow-sci/gatOS"
+BUG_REPORT_URL="https://github.com/meow-sci/gatOS/issues"
+LOGO=gatos
+
+@BANNER@
+
+@TAGLINE@
+
+A real, minimal Alpine Linux running inside a QEMU microVM.
+Vehicle telemetry mounts at /sim when the game provides it.

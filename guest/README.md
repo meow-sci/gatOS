@@ -24,6 +24,30 @@ which supervises exactly four things: `init-gatos` (sysinit: mounts, static slir
 its virtio-serial port appears), and `sim-mount` (the 9p `/sim` remount supervisor — reads
 `gatos.simport=<port>` from the kernel cmdline; absent or `0` means no 9p server, it idles).
 
+## Branding (login banner + `/etc/os-release`)
+
+Three editable source files in `guest/` drive the gatOS look-and-feel; tweak them and rebuild:
+
+| File | Drives |
+|---|---|
+| `gatos-banner` | the colour ASCII logo (raw 24-bit ANSI escapes, no trailing newline) |
+| `gatos-tagline` | the colour ASCII tagline shown under the logo |
+| `gatos-os-release` | the `/etc/os-release` template: `KEY=value` fields + `@BANNER@`/`@TAGLINE@` markers + free-form text lines |
+
+`build-image.sh` (`apply_branding`) bakes these two ways:
+
+- **Login banner** — `gatos-banner.sh` stitches logo + blank line + tagline into `/etc/gatos/banner`.
+  The overlay `etc/profile.d/zz-gatos-banner.sh` `cat`s it for every **interactive (login)** shell,
+  i.e. each SSH session a player opens. Non-interactive `ssh host cmd` runs a non-login shell and
+  skips it, so gatOS's own `echo ok` health probes stay clean. Run `./gatos-banner.sh` locally to
+  preview.
+- **`/etc/os-release`** — rendered from `gatos-os-release`: version placeholders (`@VERSION_ID@`,
+  `@ALPINE@`, `@VERSION@`) are filled in, the markers expand to the colour art, and the result
+  overwrites the file `alpine-release` shipped. The `KEY=value` fields up top stay machine-readable;
+  the art + free-form lines below are cosmetic (nothing in the guest *sources* os-release — the
+  manifest reads the separate `/etc/alpine-release`). CR is stripped on bake, so a CRLF-edited
+  source file is fine.
+
 ## Consuming prebuilt artifacts (the normal path)
 
 ```sh
