@@ -347,8 +347,10 @@ public sealed partial class Mod
     {
         var status = CurrentVmStatus;
         var open = true;
-        ImGui.SetNextWindowSize(new float2(840f, 0f), ImGuiCond.FirstUseEver);
-        if (ImGui.Begin(StatusWindowId, ref open, ImGuiWindowFlags.AlwaysAutoResize))
+        // Default to 650 wide (height auto-fits content the first time) and leave the window
+        // user-resizable — no AlwaysAutoResize, so a long QEMU log line wraps instead of stretching.
+        ImGui.SetNextWindowSize(new float2(650f, 0f), ImGuiCond.FirstUseEver);
+        if (ImGui.Begin(StatusWindowId, ref open))
             DrawStatusContent(status);
         ImGui.End();
         if (!open)
@@ -359,7 +361,7 @@ public sealed partial class Mod
     {
         if (ImGui.BeginTable("##gatos_status_rows", 2, ImGuiTableFlags.SizingStretchProp))
         {
-            ImGui.TableSetupColumn("##label", ImGuiTableColumnFlags.WidthFixed, 340f);
+            ImGui.TableSetupColumn("##label", ImGuiTableColumnFlags.WidthFixed, 130f);
             ImGui.TableSetupColumn("##value", ImGuiTableColumnFlags.WidthStretch, 3f);
 
             Row("VM state");
