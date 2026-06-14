@@ -117,9 +117,10 @@ pub struct App {
     pub connected: bool,
     /// The worker's snapshot poll interval (shown in the header so the read-back cadence is visible).
     pub poll_interval: Duration,
-    /// Pane-border foreground opacity 0–100 (borders fade toward black as it drops, so they recede
-    /// over the game). Seeded by `--border-opacity`; tuned live in the settings overlay.
-    pub border_opacity: u8,
+    /// Pane-border weight 0–100: how much border is drawn (full box ≥67, a top rule ≥34, nothing
+    /// below), so lowering it lets the game show through the freed cells. Seeded by `--border-weight`;
+    /// tuned live in the settings overlay.
+    pub border_weight: u8,
     /// Whether the settings overlay is open; while open it swallows all keyboard/mouse input.
     pub settings_open: bool,
     /// Settings popup outer rect + the opacity slider's track rect, written each render while
@@ -133,7 +134,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cmd_tx: Sender<Command>, poll_interval: Duration, border_opacity: u8) -> Self {
+    pub fn new(cmd_tx: Sender<Command>, poll_interval: Duration, border_weight: u8) -> Self {
         let mut table = TableState::default();
         table.select(Some(0));
         Self {
@@ -150,7 +151,7 @@ impl App {
             status_is_error: false,
             connected: false,
             poll_interval,
-            border_opacity: border_opacity.min(100),
+            border_weight: border_weight.min(100),
             settings_open: false,
             settings_area: Rect::default(),
             settings_slider: Rect::default(),
@@ -236,12 +237,12 @@ impl App {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter | KeyCode::Char(' ') => {
                 self.settings_open = false;
             }
-            KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('-') => self.adjust_opacity(-5),
+            KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('-') => self.adjust_border(-1),
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('=') | KeyCode::Char('+') => {
-                self.adjust_opacity(5)
+                self.adjust_border(1)
             }
-            KeyCode::Home => self.border_opacity = 0,
-            KeyCode::End => self.border_opacity = 100,
+            KeyCode::Home => self.border_weight = 0,
+            KeyCode::End => self.border_weight = 100,
             _ => {}
         }
     }
@@ -250,25 +251,27 @@ impl App {
         self.settings_open = true;
     }
 
-    fn adjust_opacity(&mut self, delta: i32) {
-        self.border_opacity = (self.border_opacity as i32 + delta).clamp(0, 100) as u8;
+    /// Steps the border weight by one tier (-1 = less border, +1 = more); see [`border_tier`].
+    fn adjust_border(&mut self, dir: i32) {
+        let next = (border_tier(self.border_weight) as i32 + dir).clamp(0, 2) as usize;
+        self.border_weight = [0u8, 50, 100][next];
     }
 
-    /// Sets opacity from a click/drag at column `x` along the slider track.
-    fn set_opacity_from_click(&mut self, x: u16) {
+    /// Sets the border weight from a click/drag at column `x` along the slider track (continuous).
+    fn set_border_from_click(&mut self, x: u16) {
         let track = self.settings_slider;
         if track.width == 0 {
             return;
         }
         let rel = x.saturating_sub(track.x) as f64 + 0.5;
-        self.border_opacity = ((rel / track.width as f64).clamp(0.0, 1.0) * 100.0).round() as u8;
+        self.border_weight = ((rel / track.width as f64).clamp(0.0, 1.0) * 100.0).round() as u8;
     }
 
     /// A click inside the slider scrubs opacity; a click outside the popup closes settings.
     fn settings_click(&mut self, x: u16, y: u16) {
         let pos = Position { x, y };
         if self.settings_slider.contains(pos) {
-            self.set_opacity_from_click(x);
+            self.set_border_from_click(x);
         } else if !self.settings_area.contains(pos) {
             self.settings_open = false;
         }
@@ -277,7 +280,7 @@ impl App {
     /// Dragging along the slider's row scrubs the value, for a natural slider feel.
     fn settings_drag(&mut self, x: u16, y: u16) {
         if self.settings_slider.width > 0 && y == self.settings_slider.y {
-            self.set_opacity_from_click(x);
+            self.set_border_from_click(x);
         }
     }
 
@@ -398,8 +401,8 @@ impl App {
     pub fn on_mouse(&mut self, m: MouseEvent) {
         if self.settings_open {
             match m.kind {
-                MouseEventKind::ScrollUp => self.adjust_opacity(5),
-                MouseEventKind::ScrollDown => self.adjust_opacity(-5),
+                MouseEventKind::ScrollUp => self.adjust_border(1),
+                MouseEventKind::ScrollDown => self.adjust_border(-1),
                 MouseEventKind::Down(MouseButton::Left) => self.settings_click(m.column, m.row),
                 MouseEventKind::Drag(MouseButton::Left) => self.settings_drag(m.column, m.row),
                 _ => {}
@@ -573,6 +576,18 @@ impl App {
         let _ = self.cmd_tx.send(cmd);
         self.status_line = "sending…".into();
         self.status_is_error = false;
+    }
+}
+
+/// The border-weight tier for a 0–100 weight: 2 = full box, 1 = top rule, 0 = off. The settings
+/// slider and `--border-weight` share this mapping (see `ui::border_spec`).
+pub fn border_tier(weight: u8) -> usize {
+    if weight >= 67 {
+        2
+    } else if weight >= 34 {
+        1
+    } else {
+        0
     }
 }
 

@@ -47,10 +47,15 @@ change at this cadence.)
 `s` or click `[settings]` (top-right) opens settings · `q` quit.
 
 **Settings overlay** (`s`, or the `[settings]` button on the top bar of any screen): a modal with a
-**border-opacity** slider (0–100) — the pane borders are a bright blue by default, which can be
-intrusive over the game; drag/click the slider or use `←`/`→` (or the wheel) to fade them toward
-invisible. `Esc` (or a click outside) closes it. The startup value comes from `--border-opacity`
-(default 100); the detail-pane borders preview the change live behind the popup.
+**border-weight** slider — the pane borders are a bright blue box by default, which can be intrusive
+over the game. Lowering the weight draws *fewer* borders so the game shows through: **full box** (≥67)
+→ a single **top rule** under the title (≥34) → **off** (no lines at all). This is real transparency —
+a terminal can't make an opaque line translucent (no per-glyph alpha over SGR), so the only way to
+reduce the overlay is to draw less. `←`/`→` (or the wheel) step between the three tiers, drag/click
+the slider for fine positioning, `Esc` (or a click outside) closes. The startup value comes from
+`--border-weight` (0–100, default 100); the detail-pane borders preview the change live behind the
+popup. (For a true global alpha that dims *all* terminal text over the game, purrTTY itself has a
+`foreground_opacity` window setting — that's outside this app.)
 
 **Vessel detail** — the header shows the current attitude mode; a keyboard focus ring **and**
 clickable buttons drive the same actions: `Tab`/`↑`/`↓` (or wheel) move focus · `Enter`/`Space` or

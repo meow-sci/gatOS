@@ -9,11 +9,11 @@ use std::time::Duration;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Cell, Clear, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table};
 use ratatui::Frame;
 
 use crate::api::Vessel;
-use crate::app::{Action, App, Screen};
+use crate::app::{border_tier, Action, App, Screen};
 
 /// Columns the throttle label + percent occupy before the bar starts (`"Throttle "` = 9, a
 /// 4-wide right-aligned percent, a space). The bar's clickable rect is anchored at this offset.
@@ -32,9 +32,6 @@ const EMPTY: Color = Color::DarkGray; // the unfilled run of a fg bar
                                       // The only background fills — header and status/footer bars.
 const BAR_BG: Color = Color::Rgb(24, 28, 44);
 
-// Pane-border color at full opacity (scaled toward black as opacity drops — terminals can't
-// alpha-blend a foreground glyph against the game behind it, so "opacity" is realized as brightness).
-const BORDER_BASE: (u8, u8, u8) = (0, 200, 220);
 // The header settings button (ASCII so it can't land on an unsupported glyph).
 const SETTINGS_LABEL: &str = " [settings] ";
 
@@ -278,8 +275,10 @@ fn render_detail(f: &mut Frame, app: &mut App, id: &str) {
 
     // Body: telemetry (left) + controls (right).
     let body = Layout::horizontal([Constraint::Min(34), Constraint::Length(30)]).split(chunks[1]);
-    let telem = Block::bordered()
-        .border_style(Style::new().fg(border_color(app.border_opacity)))
+    let (telem_borders, telem_border) = border_spec(app.border_weight);
+    let telem = Block::new()
+        .borders(telem_borders)
+        .border_style(Style::new().fg(telem_border))
         .title(Span::styled(
             " telemetry ",
             Style::new().fg(TITLE).add_modifier(Modifier::BOLD),
@@ -434,8 +433,10 @@ fn telemetry_lines(v: &Vessel, bar_w: usize) -> Vec<Line<'static>> {
 /// Builds the control ring (and records each control's `Rect` into `app.controls` for mouse
 /// hit-testing), then renders one button per row — the focused one bright-bold with a `▶ ` marker.
 fn render_controls(f: &mut Frame, app: &mut App, v: &Vessel, area: Rect) {
-    let block = Block::bordered()
-        .border_style(Style::new().fg(border_color(app.border_opacity)))
+    let (ctl_borders, ctl_border) = border_spec(app.border_weight);
+    let block = Block::new()
+        .borders(ctl_borders)
+        .border_style(Style::new().fg(ctl_border))
         .title(Span::styled(
             " controls ",
             Style::new().fg(TITLE).add_modifier(Modifier::BOLD),
@@ -616,7 +617,7 @@ fn render_picker(f: &mut Frame, app: &mut App) {
 
 // ---- settings overlay -------------------------------------------------------------------------
 
-/// The settings modal: currently the border-opacity slider. Like the picker it trades transparency
+/// The settings modal: currently the border-weight slider. Like the picker it trades transparency
 /// for readability (bg fill + `Clear`) and records its hit-test rects (popup area + slider track)
 /// back into `app` for the next mouse event. The live detail-pane borders behind the (small) popup
 /// update as you drag, previewing the effect.
@@ -643,11 +644,11 @@ fn render_settings(f: &mut Frame, app: &mut App) {
         return;
     }
 
-    // Row 0: label.  Row 1: slider track + percent.  Last row: hint.
-    let op = app.border_opacity.min(100);
-    let pct = format!(" {op:>3}%");
-    let pct_w = pct.chars().count() as u16;
-    let track_w = inner.width.saturating_sub(pct_w).max(1);
+    // Row 0: label.  Row 1: slider track + tier name.  Last row: hint.
+    let weight = app.border_weight.min(100);
+    let tag = format!("  {}", border_tier_name(weight));
+    let tag_w = tag.chars().count() as u16;
+    let track_w = inner.width.saturating_sub(tag_w).max(1);
     let slider_y = (inner.y + 1).min(inner.y + inner.height - 1);
     app.settings_slider = Rect {
         x: inner.x,
@@ -657,7 +658,7 @@ fn render_settings(f: &mut Frame, app: &mut App) {
     };
 
     f.render_widget(
-        Paragraph::new(Span::styled("Border opacity", Style::new().fg(VALUE))),
+        Paragraph::new(Span::styled("Borders", Style::new().fg(VALUE))),
         Rect {
             x: inner.x,
             y: inner.y,
@@ -665,9 +666,9 @@ fn render_settings(f: &mut Frame, app: &mut App) {
             height: 1,
         },
     );
-    let mut spans = bar_spans(op as f64 / 100.0, track_w as usize, ACCENT);
+    let mut spans = bar_spans(weight as f64 / 100.0, track_w as usize, ACCENT);
     spans.push(Span::styled(
-        pct,
+        tag,
         Style::new().fg(VALUE).add_modifier(Modifier::BOLD),
     ));
     f.render_widget(
@@ -694,12 +695,26 @@ fn render_settings(f: &mut Frame, app: &mut App) {
     );
 }
 
-/// The pane-border foreground at `opacity` (0–100): the bright [`BORDER_BASE`] cyan scaled toward
-/// black, so lowering it lets the borders recede over the (usually dark) game scene.
-fn border_color(opacity: u8) -> Color {
-    let f = opacity.min(100) as f64 / 100.0;
-    let scale = |c: u8| (c as f64 * f).round() as u8;
-    Color::Rgb(scale(BORDER_BASE.0), scale(BORDER_BASE.1), scale(BORDER_BASE.2))
+/// How much border to draw for the current border weight, plus its color. Lowering the weight
+/// removes border cells outright (full box → a top rule under the title → nothing), so the game
+/// shows through the freed cells — real transparency, not a recolor (a terminal can't alpha-blend an
+/// opaque line against what's behind it). Color is constant; the title row is kept in every tier.
+fn border_spec(weight: u8) -> (Borders, Color) {
+    let borders = match border_tier(weight) {
+        2 => Borders::ALL,
+        1 => Borders::TOP,
+        _ => Borders::NONE,
+    };
+    (borders, TITLE)
+}
+
+/// The human-readable tier the border weight currently resolves to (shown on the settings slider).
+fn border_tier_name(weight: u8) -> &'static str {
+    match border_tier(weight) {
+        2 => "full box",
+        1 => "top rule",
+        _ => "off",
+    }
 }
 
 // ---- span / formatting helpers ----------------------------------------------------------------
