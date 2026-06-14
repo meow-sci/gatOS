@@ -56,8 +56,9 @@ O(placed widgets) — it never walks the whole tree to refresh; the directory wa
 you open the search popup. The toolbar shows the live cadence (e.g. `poll 250ms (4 Hz)`), exactly
 like `dashboard-rs`.
 
-The default is a relaxed **250 ms (~4 Hz)**, floored at 20 ms — plenty for a hand-built panel, and
-gentle on the filesystem. Lower it for snappier readouts. (As with `dashboard-rs`, the poll rate is
+The default is a relaxed **250 ms (~4 Hz)**, floored at 1 ms — plenty for a hand-built panel, and
+gentle on the filesystem. Lower it for snappier readouts (1 ms polls hard; useful mostly when the
+in-game `sample_rate_hz` is also high). (As with `dashboard-rs`, the poll rate is
 only one of two freshness gates; the other is the in-game `sample_rate_hz`, the rate the host
 samples the game — raise it there for the values to actually change at this cadence.)
 
