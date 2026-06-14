@@ -34,8 +34,11 @@
              qemu/ subdirs are deliberately NOT wiped: they hold large, content-stable blobs
              (~59 MB guest image, ~90 MB win-x64 QEMU) that are instead copied with
              SkipUnchangedFiles, keeping the per-build deploy cost near zero. -->
+        <!-- gatos.toml is excluded: on Windows the install dir and the runtime data dir are the same
+             folder, so the live config lives here. Wiping it would discard the player's settings on
+             every rebuild/redeploy. The shipped default is the separate gatos.default.toml below. -->
         <ItemGroup>
-            <StaleDistFile Include="$(DistDir)*"/>
+            <StaleDistFile Include="$(DistDir)*" Exclude="$(DistDir)gatos.toml"/>
         </ItemGroup>
         <Delete Files="@(StaleDistFile)"/>
         <RemoveDir Directories="$(DistDir)third-party-licenses"/>
@@ -45,6 +48,14 @@
              dependencies through an AssemblyDependencyResolver, which reads the deps.json). -->
         <Copy SourceFiles="$(TargetDir)mod.toml" DestinationFolder="$(DistDir)" Condition="Exists('$(TargetDir)mod.toml')"/>
         <Copy SourceFiles="$(ProjectDepsFilePath)" DestinationFolder="$(DistDir)" Condition="Exists('$(ProjectDepsFilePath)')"/>
+
+        <!-- Pre-generated default config: shipped in the install folder so the common knobs (VM
+             memory/CPUs/disk) are visible and editable before the first launch. Shipped as
+             gatos.default.toml (NOT the live gatos.toml — see the wipe note above): on first run
+             gatOS seeds the data-dir gatos.toml from it (GatOsConfig.LoadOrCreate /
+             GatOsPaths.BundledConfigFile), and a mod-update can never clobber the player's config.
+             Keep gatos.default.toml in sync with GatOsConfig defaults. -->
+        <Copy SourceFiles="$(MSBuildThisFileDirectory)Configuration\gatos.default.toml" DestinationFolder="$(DistDir)" Condition="Exists('$(MSBuildThisFileDirectory)Configuration\gatos.default.toml')"/>
 
         <!-- Managed payload: everything in the build output EXCEPT the loader-supplied
              assemblies (StarMap provides 0Harmony + StarMap.API to every mod ALC; shipping a

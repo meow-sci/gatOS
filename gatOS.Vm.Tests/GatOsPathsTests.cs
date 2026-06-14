@@ -51,12 +51,14 @@ public sealed class GatOsPathsTests
     {
         Assert.Throws<InvalidOperationException>(() => _ = GatOsPaths.GuestAssetsDir);
         Assert.Throws<InvalidOperationException>(() => _ = GatOsPaths.BundledQemuDir);
+        Assert.Throws<InvalidOperationException>(() => _ = GatOsPaths.BundledConfigFile);
 
         GatOsPaths.ModDir = "/opt/ksa/mods/gatOS";
         Assert.Multiple(() =>
         {
             Assert.That(GatOsPaths.GuestAssetsDir, Is.EqualTo(Path.Combine("/opt/ksa/mods/gatOS", "guest")));
             Assert.That(GatOsPaths.BundledQemuDir, Is.EqualTo(Path.Combine("/opt/ksa/mods/gatOS", "qemu")));
+            Assert.That(GatOsPaths.BundledConfigFile, Is.EqualTo(Path.Combine("/opt/ksa/mods/gatOS", "gatos.default.toml")));
         });
     }
 }

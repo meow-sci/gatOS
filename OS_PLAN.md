@@ -1086,6 +1086,21 @@ file); write through an atomic temp+rename helper (copy the pattern from purrTTY
 > overwrites the user's file; only a *missing* file is written (with a `#`-comment field
 > reference header). `Normalize()` clamps memory 128–8192 / cpus 1–16 / sample 1–120 /
 > timeout 0–3600 and whitelists `accel_override`, each correction logged.)
+>
+> (Revised: a config **template is now shipped pre-generated in the mod folder** so common knobs are
+> editable before the first launch. The committed `gatOS.GameMod/Configuration/gatos.default.toml`
+> deploys to `<dist>/gatOS/gatos.default.toml` (`CopyCustomContent`); `GatOsConfig.LoadOrCreate(
+> ConfigFile, GatOsPaths.BundledConfigFile)` seeds the data-dir `gatos.toml` from it on first run when
+> present (so pre-launch edits carry over), else writes generated defaults. The template uses a
+> **distinct filename** because on Windows the mod-install dir and the data dir are the *same folder*
+> (`Documents/My Games/Kitten Space Agency/mods/gatOS/`): shipping the live `gatos.toml` would let a
+> mod-update overwrite the player's config, and the deploy wipe (`$(DistDir)*`) would delete it on
+> every rebuild — so the wipe now `Exclude`s `gatos.toml`. The on-disk layout changed from a single
+> comment block + flat body to `GatOsConfig.Serialize()`: Tomlyn renders each `key = value`, then the
+> lines are regrouped under `# ===== COMMON/TELEMETRY/CONTROL/TRANSPORTS =====` headers (common
+> first) with per-key inline comments, plus a catch-all section so an added property is never silently
+> dropped. Existing flat `gatos.toml` files still load unchanged and are rewritten in the sectioned
+> layout on the next save.)
 
 ## T6.4 — Diagnostics menu + status window
 

@@ -471,11 +471,22 @@ The deeper developer/architecture docs live in **[`README_DETAILS.md`](./README_
 
 ## The `gatos.toml` config file
 
-On first launch gatOS writes a self-documenting `gatos.toml` into your **data folder**
-(`Documents\My Games\Kitten Space Agency\mods\gatOS\gatos.toml`). Edit it in any text editor; gatOS
-reads it at startup. Delete the file to restore every default. If you typo something, gatOS clamps it
+A self-documenting template, **`gatos.default.toml`**, ships inside the mod folder you just installed
+(`…\mods\gatOS\gatos.default.toml`), so you can set the common options — memory, CPUs, disk — before
+you ever launch the game. Open it in any text editor; the settings most people touch sit right at the
+top under a `# ===== COMMON =====` header, with the advanced surface (telemetry, control, transports)
+grouped below.
+
+On first launch gatOS copies that template to **`gatos.toml`** — including any edits you made — and
+from then on reads and writes `gatos.toml`, your live config. In-game settings changes are saved
+there too, and because it's a separate file from the shipped template, **a mod update never overwrites
+your settings**. Delete `gatos.toml` to restore every default. If you typo something, gatOS clamps it
 back into range (and logs what it did) rather than refusing to boot — and a totally unparseable file
 just falls back to defaults without overwriting your work.
+
+> On Windows the mod folder and your data folder are the same directory, so you'll see both
+> `gatos.default.toml` (the shipped template) and `gatos.toml` (your live config) sitting side by
+> side there. Edit `gatos.toml`.
 
 ### The settings that matter most
 
@@ -531,6 +542,9 @@ The installed mod folder is self-contained — here's the tour, in case you ever
 
 - **`*.dll`, `mod.toml`, `*.deps.json`** — the mod's own code and StarMap manifest. `mod.toml` is
   also how gatOS borrows purrTTY's loaded assemblies so the two mods share one terminal contract.
+- **`gatos.default.toml`** — the config template, shipped so you can edit the common options before
+  the first launch. It's copied to `gatos.toml` (your live config) on first run, and never overwrites
+  an existing `gatos.toml`, so updating the mod can't clobber your settings.
 - **`guest/`** — the bundled Linux machine, built reproducibly from pinned Alpine mirrors:
   - `base.qcow2` — the pristine, compressed root filesystem image (your changes go into a
     *separate* overlay in your data folder, so this stays factory-fresh).

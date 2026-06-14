@@ -134,9 +134,21 @@ through `partial void` seams (`InstallGameLogging`, `DrawGameUi`) whose calls dr
 while `LogSystem.IsEnabled` is false (calls would silently no-op) — then resolve
 `GatOsPaths.ModDir` from the entry assembly, `ModAssets.Validate()` (T6.2: manifest schema +
 artifact files + `QemuLocator.Find()`, all problems folded into one `AssetStatus.Error` string),
-`GatOsConfig.LoadOrCreate` (T6.3: Tomlyn 2.6 serializer, snake_case, clamp+log normalize, atomic
-temp+rename save, first-run file with comment header; bad files → in-memory defaults, never
-overwritten), build `VmHost`+`VmConnectionBroker` (**no boot**, D2), register shell `"gatos"`
+`GatOsConfig.LoadOrCreate(ConfigFile, BundledConfigFile)` (T6.3: Tomlyn 2.6 serializer, snake_case,
+clamp+log normalize; **section-grouped save** — `GatOsConfig.Serialize()` lets Tomlyn render each
+`key = value`, then regroups the lines under `# ===== COMMON/TELEMETRY/CONTROL/TRANSPORTS =====`
+headers with per-key inline comments, common knobs first, plus a catch-all so a newly added property
+is never dropped — written atomically temp+rename; bad files → in-memory defaults, never
+overwritten. **First run seeds the data-dir `gatos.toml` from the template shipped in the mod folder**
+(`GatOsPaths.BundledConfigFile` = `<modDir>/gatos.default.toml`, the committed
+`gatOS.GameMod/Configuration/gatos.default.toml`) so settings edited before launch take effect; if
+that template is absent it writes generated defaults instead. The template is a **distinct filename**
+on purpose: on Windows the install dir and the data dir are the **same folder**
+(`Documents/My Games/Kitten Space Agency/mods/gatOS/`), so shipping the live `gatos.toml` would let a
+mod-update overwrite a player's config — and the deploy now **excludes `gatos.toml` from its wipe** for
+the same reason. Existing flat `gatos.toml` files load unchanged and are rewritten in the sectioned
+layout on the next save), build `VmHost`+`VmConnectionBroker`
+(**no boot**, D2), register shell `"gatos"`
 (purrTTY absence detected after the fact: the contract assembly resolving from gatOS's own folder
 means the vendored fallback loaded). `Unload` = `broker.DisposeAsync().AsTask().Wait(15 s)` (the
 dispose is the 10 s-grace QGA→QMP→kill ladder). T6.4 diagnostics: the gatOS menu
@@ -425,7 +437,10 @@ dotnet build gatOS.GameMod                       # also deploys the mod folder (
 
 Every `gatOS.GameMod` build deploys the complete mod folder via its `CopyCustomContent`
 target (T6.5): managed payload (all output DLLs except loader-supplied 0Harmony/StarMap.API),
-mod.toml + deps.json, licenses, `guest/out/**` → `<dist>/gatOS/guest/` (High-importance
+mod.toml + deps.json, **the pre-generated default config (`Configuration/gatos.default.toml` →
+`<dist>/gatOS/gatos.default.toml`, the template the live `gatos.toml` is seeded from — see T6.3; the
+wipe step excludes `gatos.toml` so a rebuild never deletes the player's config)**,
+licenses, `guest/out/**` → `<dist>/gatOS/guest/` (High-importance
 message when missing — fetch or build the guest first for an in-game-usable dist), and
 `vendor/qemu/win-x64/**` when present. Destination: `GATOS_DIST_DIR` (CI) else the per-OS KSA
 mods dir (`SelectedDistModDir` in `Directory.Build.props`). The managed payload is

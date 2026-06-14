@@ -1,0 +1,110 @@
+# gatOS configuration.
+#
+# The mod ships a template, gatos.default.toml, in its folder — edit it to set the common
+# options (memory, CPUs, disk) before you ever launch the game. On first launch gatOS copies
+# it to gatos.toml and from then on reads and writes gatos.toml (your live config, which
+# survives mod updates); in-game changes are saved there too. Delete gatos.toml to restore
+# every default. Out-of-range values are clamped (and logged), not rejected.
+#
+# Common settings are grouped first; the advanced surface follows.
+
+schema = 1
+
+# ===== COMMON — most players only need to touch these =====
+
+# Guest RAM in MiB. Bump it if you install heavy software.
+memory_mb = 256
+
+# Guest virtual CPU count.
+cpus = 2
+
+# Guest disk size in GiB (clamped 1..128). Grow-only: raising it expands the active
+# save's disk on the next boot; lowering it is a no-op (use Reset Disk to reclaim space).
+disk_size_gb = 8
+
+# true = guest gets no internet, only the gatOS channels (off = wan works visa host network).
+restrict_network = false
+
+# Force one accelerator: "whpx" | "kvm" | "hvf" | "tcg" ("" = auto ladder).
+accel_override = ""
+
+# Override the guest CPU model ("" = auto; WHPX needs a named model, not host).
+cpu_model = ""
+
+# Overall boot timeout in seconds; 0 = automatic (60 s accelerated / 300 s TCG).
+boot_timeout_seconds = 0
+
+# ===== TELEMETRY — the /sim data feed (all tunable live in-game) =====
+
+# Master /sim sampling rate in Hz (clamped 1..120; retune live in-game).
+sample_rate_hz = 10
+
+# Master gate for sampling (false = /sim freezes; VM and shells unaffected).
+telemetry_enabled = true
+
+# Sample per-vessel detail (navball/environment/per-module); off = core only.
+telemetry_vessel_detail = true
+
+# Sample the celestial-body catalog + system summary (/sim/bodies, /sim/system).
+telemetry_bodies = true
+
+# Diff snapshots into /sim/events entries (and the event topics/streams).
+telemetry_events = true
+
+# ===== CONTROL — the /sim write surface =====
+
+# Master switch for all /sim writes (false = every control write EACCES).
+control_enabled = true
+
+# true = command any vessel; false = only the active vessel.
+control_all_vessels = true
+
+# Expose the /sim/debug cheat surface (teleport / refuel / warp / switch vessel).
+debug_namespace = true
+
+# How long a control write waits for the game thread before ETIMEDOUT.
+command_timeout_ms = 2000
+
+# Upper bound on control commands executed per game frame.
+max_commands_per_frame = 64
+
+# ===== TRANSPORTS — HTTP, MQTT, serial & bus bridges =====
+
+# Serve the magic HTTP API (guest reaches it at $GATOS_HTTP / 10.0.2.2).
+http_enabled = true
+
+# Preferred HTTP port (4242); 0 = ephemeral only; falls back on a clash.
+http_preferred_port = 4242
+
+# Serve the per-field /v1/fs/<path> filesystem mirror (reads + SSE + writes).
+http_field_endpoints = true
+
+# Run the embedded MQTT broker (guest reaches it at $GATOS_MQTT / 10.0.2.2).
+mqtt_enabled = true
+
+# Preferred MQTT port (1883); 0 = ephemeral only; falls back on a clash.
+mqtt_preferred_port = 1883
+
+# Publish the per-field gatos/sim/<path> filesystem mirror (one topic per leaf).
+mqtt_field_topics = true
+
+# Cadence of the MQTT field mirror in Hz (default 4; clamped 1..30).
+field_feed_hz = 4
+
+# Stream telemetry out over the gatos.serial virtio-serial port.
+serial_telemetry_port = false
+
+# Accept SCPI command lines in over the gatos.serial virtio-serial port.
+serial_command_port = false
+
+# Serial telemetry wire format: ndjson | nmea | ccsds (default ndjson).
+serial_mode = "ndjson"
+
+# Serial telemetry cadence in milliseconds (default 500; clamped 50..60000).
+serial_interval_ms = 500
+
+# Expose a CCSDS space-packet TM/TC feed (reserved — not yet served).
+bus_ccsds = false
+
+# Expose a MIL-STD-1553 BC/RT framing feed (reserved — not yet served).
+bus_1553 = false

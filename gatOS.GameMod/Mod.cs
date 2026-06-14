@@ -153,7 +153,9 @@ public sealed partial class Mod
 
             GatOsPaths.ModDir = modDir;
             _assets = ModAssets.Validate();
-            _config = GatOsConfig.LoadOrCreate(GatOsPaths.ConfigFile);
+            // Seed the data-dir config from the copy shipped in the mod folder on first run, so
+            // common settings (memory/CPUs/disk) edited before launch take effect (T6.3 as-built).
+            _config = GatOsConfig.LoadOrCreate(GatOsPaths.ConfigFile, GatOsPaths.BundledConfigFile);
 
             // T9.3: the /sim stack. The 9p server binds an ephemeral loopback port now, so a
             // VM booted at any later moment finds gatos.simport=<port> on its kernel cmdline

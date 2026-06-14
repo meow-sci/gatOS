@@ -62,6 +62,16 @@ public static class GatOsPaths
     public static string BundledQemuDir => Path.Combine(RequireModDir(), "qemu");
 
     /// <summary>
+    ///     The pre-generated default config shipped in the mod folder (<c>gatos.default.toml</c>).
+    ///     Editable before the first launch; <see cref="ConfigFile"/> is seeded from it on first run
+    ///     when it exists. Deliberately a different name from <see cref="ConfigFile"/>: on Windows the
+    ///     mod folder and the data dir are the same directory, so shipping the live <c>gatos.toml</c>
+    ///     would let a mod-update overwrite a player's customizations — the template never does.
+    /// </summary>
+    /// <exception cref="InvalidOperationException"><see cref="ModDir"/> has not been set.</exception>
+    public static string BundledConfigFile => Path.Combine(RequireModDir(), "gatos.default.toml");
+
+    /// <summary>
     ///     Redirects <see cref="DataDir"/> to an arbitrary directory for tests. Pass <c>null</c>
     ///     to restore the default per-OS location.
     /// </summary>

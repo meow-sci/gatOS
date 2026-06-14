@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using gatOS.Logging;
 using Tomlyn;
@@ -6,8 +7,11 @@ namespace gatOS.GameMod.Configuration;
 
 /// <summary>
 ///     User configuration for gatOS, persisted as <c>gatos.toml</c> in the data dir
-///     (<see cref="gatOS.Vm.GatOsPaths.ConfigFile"/>; OS_PLAN.md T6.3). Loading never throws:
-///     a missing file is created with defaults, an unparseable one is logged and replaced by
+///     (<see cref="gatOS.Vm.GatOsPaths.ConfigFile"/>; OS_PLAN.md T6.3). A pre-generated, fully
+///     commented copy also ships in the mod folder (<see cref="gatOS.Vm.GatOsPaths.BundledConfigFile"/>)
+///     so the common knobs (memory/CPUs/disk) are visible and editable before the first launch; on
+///     first run the data-dir file is seeded from that copy when present. Loading never throws:
+///     a missing file is seeded or created with defaults, an unparseable one is logged and replaced by
 ///     in-memory defaults while the file on disk is left untouched for the user to fix, and
 ///     out-of-range values are clamped with a warning.
 /// </summary>
@@ -24,45 +28,75 @@ public sealed class GatOsConfig
 
     private const string FileHeader =
         """
-        # gatOS configuration. Deleting this file restores all defaults.
+        # gatOS configuration.
         #
-        # memory_mb             guest RAM in MiB
-        # cpus                  guest vCPU count
-        # disk_size_gb          guest disk size in GiB (grow-only; clamped 1..128). Raising this grows
-        #                       the current save's disk on the next boot; lowering it does nothing
-        #                       (the disk never shrinks — Reset Disk to reclaim space).
-        # restrict_network      true = guest gets no internet, only the gatOS channels (D3)
-        # accel_override        force one accelerator: "whpx" | "kvm" | "hvf" | "tcg" ("" = auto)
-        # cpu_model             override guest CPU model ("" = auto; WHPX needs a named model, not host)
-        # sample_rate_hz        master /sim telemetry sampling rate in Hz (clamped 1..120; retune in-game)
-        # telemetry_enabled     master gate for sampling (false = telemetry freezes; VM/shells unaffected)
-        # telemetry_vessel_detail sample the per-vessel detail (navball/environment/per-module); off = core only
-        # telemetry_bodies      sample the celestial-body catalog + system summary (/sim/bodies, /sim/system)
-        # telemetry_events      diff snapshots into /sim/events entries (and the event topics/streams)
-        # boot_timeout_seconds  0 = automatic (60 s accelerated, 300 s under TCG)
-        # control_enabled       master switch for /sim writes (false = every control write EACCES)
-        # control_all_vessels   true = command any vessel; false = only the active vessel (G-D1)
-        # debug_namespace       expose the /sim/debug cheat surface (G-D2; reserved for G4+)
-        # command_timeout_ms    how long a control write waits for the game thread before ETIMEDOUT
-        # max_commands_per_frame upper bound on control commands executed per game frame
-        # http_enabled          serve the magic HTTP API (guest reaches it at $GATOS_HTTP / 10.0.2.2)
-        # http_preferred_port   preferred HTTP port (4242); 0 = ephemeral only; falls back on a clash
-        # mqtt_enabled          run the embedded MQTT broker (guest reaches it at $GATOS_MQTT / 10.0.2.2)
-        # mqtt_preferred_port   preferred MQTT port (1883); 0 = ephemeral only; falls back on a clash
-        # http_field_endpoints  serve the per-field /v1/fs/<path> filesystem mirror (reads + SSE + writes)
-        # mqtt_field_topics     publish the per-field gatos/sim/<path> filesystem mirror (one topic per leaf)
-        # field_feed_hz         cadence of the MQTT field mirror in Hz (default 4; clamped 1..30)
-        # serial_telemetry_port stream telemetry over the gatos.serial virtio-serial port (G7)
-        # serial_command_port   accept SCPI commands over the gatos.serial virtio-serial port (G7)
-        # serial_mode           serial telemetry wire format: ndjson | nmea | ccsds (default ndjson)
-        # serial_interval_ms    serial telemetry cadence in milliseconds (default 500; clamped 50..60000)
-        # bus_ccsds             expose a CCSDS space-packet TM/TC feed (G7; reserved)
-        # bus_1553              expose a MIL-STD-1553 BC/RT framing feed (G7; reserved)
+        # The mod ships a template, gatos.default.toml, in its folder — edit it to set the common
+        # options (memory, CPUs, disk) before you ever launch the game. On first launch gatOS copies
+        # it to gatos.toml and from then on reads and writes gatos.toml (your live config, which
+        # survives mod updates); in-game changes are saved there too. Delete gatos.toml to restore
+        # every default. Out-of-range values are clamped (and logged), not rejected.
+        #
+        # Common settings are grouped first; the advanced surface follows.
 
         """;
 
+    // The file layout: each serialized key is emitted under a section header with a short comment.
+    // Common knobs come first so a player never has to scroll past the advanced surface. Tomlyn
+    // still renders every value (quoting/escaping/bools) — this table only controls grouping,
+    // ordering, and the inline docs. A key the table forgets still ships (see Serialize's catch-all),
+    // so adding a property can never silently drop it from the file.
+    private static readonly (string Title, (string Key, string Comment)[] Keys)[] Sections =
+    {
+        ("COMMON — most players only need to touch these", new[]
+        {
+            ("memory_mb", "Guest RAM in MiB. Bump it if you install heavy software."),
+            ("cpus", "Guest virtual CPU count."),
+            ("disk_size_gb",
+                "Guest disk size in GiB (clamped 1..128). Grow-only: raising it expands the active\n"
+                + "save's disk on the next boot; lowering it is a no-op (use Reset Disk to reclaim space)."),
+            ("restrict_network", "true = guest gets no internet, only the gatOS channels (off = apk works)."),
+            ("accel_override", "Force one accelerator: \"whpx\" | \"kvm\" | \"hvf\" | \"tcg\" (\"\" = auto ladder)."),
+            ("cpu_model", "Override the guest CPU model (\"\" = auto; WHPX needs a named model, not host)."),
+            ("boot_timeout_seconds", "Overall boot timeout in seconds; 0 = automatic (60 s accelerated / 300 s TCG)."),
+        }),
+        ("TELEMETRY — the /sim data feed (all tunable live in-game)", new[]
+        {
+            ("sample_rate_hz", "Master /sim sampling rate in Hz (clamped 1..120; retune live in-game)."),
+            ("telemetry_enabled", "Master gate for sampling (false = /sim freezes; VM and shells unaffected)."),
+            ("telemetry_vessel_detail", "Sample per-vessel detail (navball/environment/per-module); off = core only."),
+            ("telemetry_bodies", "Sample the celestial-body catalog + system summary (/sim/bodies, /sim/system)."),
+            ("telemetry_events", "Diff snapshots into /sim/events entries (and the event topics/streams)."),
+        }),
+        ("CONTROL — the /sim write surface", new[]
+        {
+            ("control_enabled", "Master switch for all /sim writes (false = every control write EACCES)."),
+            ("control_all_vessels", "true = command any vessel; false = only the active vessel."),
+            ("debug_namespace", "Expose the /sim/debug cheat surface (teleport / refuel / warp / switch vessel)."),
+            ("command_timeout_ms", "How long a control write waits for the game thread before ETIMEDOUT."),
+            ("max_commands_per_frame", "Upper bound on control commands executed per game frame."),
+        }),
+        ("TRANSPORTS — HTTP, MQTT, serial & bus bridges", new[]
+        {
+            ("http_enabled", "Serve the magic HTTP API (guest reaches it at $GATOS_HTTP / 10.0.2.2)."),
+            ("http_preferred_port", "Preferred HTTP port (4242); 0 = ephemeral only; falls back on a clash."),
+            ("http_field_endpoints", "Serve the per-field /v1/fs/<path> filesystem mirror (reads + SSE + writes)."),
+            ("mqtt_enabled", "Run the embedded MQTT broker (guest reaches it at $GATOS_MQTT / 10.0.2.2)."),
+            ("mqtt_preferred_port", "Preferred MQTT port (1883); 0 = ephemeral only; falls back on a clash."),
+            ("mqtt_field_topics", "Publish the per-field gatos/sim/<path> filesystem mirror (one topic per leaf)."),
+            ("field_feed_hz", "Cadence of the MQTT field mirror in Hz (default 4; clamped 1..30)."),
+            ("serial_telemetry_port", "Stream telemetry out over the gatos.serial virtio-serial port."),
+            ("serial_command_port", "Accept SCPI command lines in over the gatos.serial virtio-serial port."),
+            ("serial_mode", "Serial telemetry wire format: ndjson | nmea | ccsds (default ndjson)."),
+            ("serial_interval_ms", "Serial telemetry cadence in milliseconds (default 500; clamped 50..60000)."),
+            ("bus_ccsds", "Expose a CCSDS space-packet TM/TC feed (reserved — not yet served)."),
+            ("bus_1553", "Expose a MIL-STD-1553 BC/RT framing feed (reserved — not yet served)."),
+        }),
+    };
+
     /// <summary>Schema version of the file (readers reject anything but <see cref="CurrentSchema"/>).</summary>
     public int Schema { get; set; } = CurrentSchema;
+
+    // ---- COMMON: the knobs a player is most likely to change (no in-game UI; hand-edit + relaunch). ----
 
     /// <summary>Guest RAM in MiB (OS_ANALYSIS §3.3 default).</summary>
     public int MemoryMb { get; set; } = 256;
@@ -93,6 +127,11 @@ public sealed class GatOsConfig
     /// </summary>
     public string CpuModel { get; set; } = "";
 
+    /// <summary>Overall boot timeout in seconds; 0 = automatic (60 s accelerated / 300 s TCG).</summary>
+    public int BootTimeoutSeconds { get; set; }
+
+    // ---- TELEMETRY: the /sim data feed (all live-tunable from the in-game menu/status window). ----
+
     /// <summary>Master telemetry sampling rate for the <c>/sim</c> tree, Hz (consumed by the M9 sampler).</summary>
     public int SampleRateHz { get; set; } = 10;
 
@@ -112,8 +151,7 @@ public sealed class GatOsConfig
     /// <summary>Diff consecutive snapshots into <c>/sim/events</c> entries (and the event streams/topics).</summary>
     public bool TelemetryEvents { get; set; } = true;
 
-    /// <summary>Overall boot timeout in seconds; 0 = automatic (60 s accelerated / 300 s TCG).</summary>
-    public int BootTimeoutSeconds { get; set; }
+    // ---- CONTROL: the /sim write surface. ----
 
     /// <summary>Master switch for all <c>/sim</c> control writes (KSA_GAME_INTEGRATION_PLAN Part 7).</summary>
     public bool ControlEnabled { get; set; } = true;
@@ -130,20 +168,22 @@ public sealed class GatOsConfig
     /// <summary>Upper bound on control commands executed per game frame.</summary>
     public int MaxCommandsPerFrame { get; set; } = 64;
 
+    // ---- TRANSPORTS: the HTTP, MQTT, serial and bus bridges. ----
+
     /// <summary>Serve the magic HTTP API (KSA_GAME_INTEGRATION_PLAN Part 6 T2 / Part 7).</summary>
     public bool HttpEnabled { get; set; } = true;
 
     /// <summary>Preferred HTTP port (4242); 0 = ephemeral only; falls back to ephemeral on a clash.</summary>
     public int HttpPreferredPort { get; set; } = 4242;
 
+    /// <summary>Serve the per-field <c>/v1/fs/&lt;path&gt;</c> filesystem mirror (reads, SSE, writes).</summary>
+    public bool HttpFieldEndpoints { get; set; } = true;
+
     /// <summary>Run the embedded MQTT broker (an additional game-data bridge).</summary>
     public bool MqttEnabled { get; set; } = true;
 
     /// <summary>Preferred MQTT port (1883); 0 = ephemeral only; falls back to ephemeral on a clash.</summary>
     public int MqttPreferredPort { get; set; } = 1883;
-
-    /// <summary>Serve the per-field <c>/v1/fs/&lt;path&gt;</c> filesystem mirror (reads, SSE, writes).</summary>
-    public bool HttpFieldEndpoints { get; set; } = true;
 
     /// <summary>Publish the per-field <c>gatos/sim/&lt;path&gt;</c> filesystem mirror (one topic per leaf).</summary>
     public bool MqttFieldTopics { get; set; } = true;
@@ -170,26 +210,47 @@ public sealed class GatOsConfig
     public bool Bus1553 { get; set; }
 
     /// <summary>
-    ///     Loads the config from <paramref name="path"/>, creating it with defaults on first run.
-    ///     Never throws: parse failures and schema mismatches fall back to defaults (logged), and
-    ///     the existing file is never overwritten by a fallback.
+    ///     Loads the config from <paramref name="path"/>. On first run (the file is missing) it is
+    ///     seeded from <paramref name="bundledDefaultPath"/> when that copy exists — so settings a
+    ///     player edited in the install folder before launching take effect — otherwise it is created
+    ///     with generated defaults. Never throws: parse failures and schema mismatches fall back to
+    ///     defaults (logged), and the existing file is never overwritten by a fallback.
     /// </summary>
-    public static GatOsConfig LoadOrCreate(string path)
+    public static GatOsConfig LoadOrCreate(string path, string? bundledDefaultPath = null)
     {
         if (!File.Exists(path))
         {
-            var fresh = new GatOsConfig();
-            try
+            // Prefer seeding from the bundled default so pre-launch edits in the install folder
+            // carry over; the copied file is then read below like any existing config.
+            if (bundledDefaultPath is not null && File.Exists(bundledDefaultPath))
             {
-                fresh.Save(path);
-                ModLog.Log.Info($"Created the default config at '{path}'.");
-            }
-            catch (Exception ex)
-            {
-                ModLog.Log.Warn($"Could not write the default config to '{path}': {ex.Message}");
+                try
+                {
+                    File.Copy(bundledDefaultPath, path);
+                    ModLog.Log.Info($"Seeded the config at '{path}' from the bundled default '{bundledDefaultPath}'.");
+                }
+                catch (Exception ex)
+                {
+                    ModLog.Log.Warn(
+                        $"Could not seed the config from '{bundledDefaultPath}' ({ex.Message}); writing defaults instead.");
+                }
             }
 
-            return fresh;
+            if (!File.Exists(path))
+            {
+                var fresh = new GatOsConfig();
+                try
+                {
+                    fresh.Save(path);
+                    ModLog.Log.Info($"Created the default config at '{path}'.");
+                }
+                catch (Exception ex)
+                {
+                    ModLog.Log.Warn($"Could not write the default config to '{path}': {ex.Message}");
+                }
+
+                return fresh;
+            }
         }
 
         GatOsConfig config;
@@ -219,9 +280,60 @@ public sealed class GatOsConfig
         return config;
     }
 
-    /// <summary>Writes the config atomically (temp + rename) with a field-reference header.</summary>
-    public void Save(string path)
-        => AtomicFile.WriteAllText(path, FileHeader + TomlSerializer.Serialize(this, TomlOptions));
+    /// <summary>Writes the config atomically (temp + rename) in the sectioned, commented layout.</summary>
+    public void Save(string path) => AtomicFile.WriteAllText(path, Serialize());
+
+    /// <summary>
+    ///     Renders the config to the on-disk TOML: the <see cref="FileHeader"/> preamble, then the
+    ///     <c>schema</c> line, then every value grouped under its <see cref="Sections"/> header with
+    ///     an inline comment. Tomlyn formats each <c>key = value</c>; this only regroups the lines.
+    /// </summary>
+    public string Serialize()
+    {
+        // Index the rendered lines by key so we can re-emit them in section order. Tomlyn owns the
+        // value formatting; we never reformat a value ourselves.
+        var byKey = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var line in TomlSerializer.Serialize(this, TomlOptions)
+                     .Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = line.IndexOf('=');
+            if (eq > 0)
+                byKey[line[..eq].Trim()] = line;
+        }
+
+        var sb = new StringBuilder();
+        sb.Append(FileHeader);
+
+        // schema sits above the sections: it is the file-format version, not a tunable.
+        if (byKey.Remove("schema", out var schemaLine))
+            sb.Append('\n').Append(schemaLine).Append('\n');
+
+        foreach (var (title, keys) in Sections)
+        {
+            sb.Append("\n# ===== ").Append(title).Append(" =====\n");
+            foreach (var (key, comment) in keys)
+            {
+                if (!byKey.Remove(key, out var valueLine))
+                    continue; // property removed from the class since this table was written
+
+                sb.Append('\n');
+                foreach (var commentLine in comment.Split('\n'))
+                    sb.Append("# ").Append(commentLine).Append('\n');
+                sb.Append(valueLine).Append('\n');
+            }
+        }
+
+        // Catch-all: any key the section table did not place (e.g. a freshly added property) still
+        // ships, so the generated file is always complete even if this table lags the class.
+        if (byKey.Count > 0)
+        {
+            sb.Append("\n# ===== OTHER =====\n\n");
+            foreach (var line in byKey.Values)
+                sb.Append(line).Append('\n');
+        }
+
+        return sb.ToString();
+    }
 
     /// <summary>Clamps out-of-range values into something bootable, logging each correction.</summary>
     internal void Normalize()
