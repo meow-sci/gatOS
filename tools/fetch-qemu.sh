@@ -42,8 +42,11 @@ if [ "$force" -eq 0 ] && [ -f "$stamp_file" ] && [ "$(head -n1 "$stamp_file")" =
 fi
 
 # ---- tools ----
+# Prefer 7zz (official 7-Zip): the Weil installer is NSIS, which the older p7zip `7z`
+# (Ubuntu's p7zip-full) cannot unpack — only full 7-Zip can. Fall back to 7z when 7zz
+# is absent (e.g. a dev box with only p7zip and a non-NSIS pin).
 sevenzip=
-for c in 7z 7zz; do
+for c in 7zz 7z; do
     if command -v "$c" >/dev/null 2>&1; then sevenzip=$c; break; fi
 done
 [ -n "$sevenzip" ] || {

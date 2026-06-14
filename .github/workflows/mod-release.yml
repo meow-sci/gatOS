@@ -1,0 +1,188 @@
+name: Mod release
+
+# Builds the COMPLETE gatOS mod dist — managed payload + the bundled guest image
+# (guest/fetch-guest.sh) + the win-x64 QEMU bundle (tools/fetch-qemu.sh), assembled
+# all-in-one by gatOS.GameMod's CopyCustomContent target — and publishes it as a
+# GitHub release. This is a Windows-runnable, ready-to-unzip mod folder.
+#
+# Deliberately NOT run on every commit (that's build.yml's job: build + full test
+# suite on main / release/** / feature/** / PRs). This workflow only fires for the
+# tip of main and named releases:
+#
+#   push to main        → prerelease  "gatOS tip <UTC timestamp>"  (tag tip-<stamp>)
+#   push to release/<v> → release     "gatOS <v>"                  (tag v<v>)
+#
+# (build.yml runs the test gate on the same commit for both refs.)
+#
+# The KSA reference assemblies are licensed game files in the private repo
+# meow-sci/ksa-game-assemblies (DLLs under current/dll/). A real release MUST compile
+# gatOS.GameMod against them (the game-coupled Game/** half is compile-gated on
+# KSA.dll), so the checkout here is unconditional — access needs the
+# KSA_GAME_ASSEMBLIES_PAT repo secret (fine-grained read-only Contents, same pattern
+# as purrtty / build.yml).
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write    # create/update/delete releases + tags
+
+# One in-flight release build per ref; a newer push supersedes an older run — except
+# on release/* refs: cancelling a publish between `gh release delete` and
+# `gh release create` would leave the release missing until the next push.
+concurrency:
+  group: mod-release-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/heads/release/') }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Directory.Build.props resolves this before any per-OS default.
+      KSA_DLL_DIR: ${{ github.workspace }}/.tmp/ksa-game-assemblies/current/dll
+      # CopyCustomContent assembles the mod folder at $GATOS_DIST_DIR/gatOS/.
+      GATOS_DIST_DIR: ${{ github.workspace }}/.tmp/dist
+    steps:
+      - name: Checkout gatOS
+        uses: actions/checkout@v6
+
+      - name: Checkout private KSA assemblies
+        uses: actions/checkout@v6
+        with:
+          repository: meow-sci/ksa-game-assemblies
+          path: .tmp/ksa-game-assemblies
+          token: ${{ secrets.KSA_GAME_ASSEMBLIES_PAT }}
+          persist-credentials: false
+          ref: main
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      # tools/fetch-qemu.sh unpacks the Weil NSIS installer, which needs full 7-Zip
+      # (7zz). The `7zip` apt package provides it.
+      - name: Install 7-Zip
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends 7zip
+
+      # Bundle the pinned guest image (guest-v<N> release) into guest/out/.
+      - name: Fetch pinned guest image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: guest/fetch-guest.sh
+
+      # Bundle the pinned win-x64 QEMU into vendor/qemu/win-x64/ so the mod runs on
+      # Windows without a system QEMU install (D5).
+      - name: Fetch pinned win-x64 QEMU
+        run: tools/fetch-qemu.sh
+
+      # Branch-derived values are validated here and consumed by later steps via env:,
+      # never interpolated raw into run scripts (a ref name can contain shell/sed
+      # metacharacters; this job has contents: write).
+      - name: Compute release metadata
+        id: meta
+        run: |
+          BASE="$(sed -nE 's/^version = "(.*)"/\1/p' gatOS.GameMod/mod.toml)"
+          if [[ ! "$BASE" =~ ^[0-9A-Za-z._-]+$ ]]; then
+            echo "::error::could not parse a usable base version from gatOS.GameMod/mod.toml (got: '$BASE')"
+            exit 1
+          fi
+          GUESTVER="$(cat guest/GUEST_VERSION)"
+          echo "guestver=$GUESTVER" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF_NAME" == release/* ]]; then
+            NAME="${GITHUB_REF_NAME#release/}"
+            if [[ ! "$NAME" =~ ^[0-9A-Za-z._-]+$ ]]; then
+              echo "::error::release branch suffix '$NAME' must match ^[0-9A-Za-z._-]+\$ (no slashes or shell metacharacters)"
+              exit 1
+            fi
+            echo "version=$NAME"            >> "$GITHUB_OUTPUT"
+            echo "modversion=$NAME"         >> "$GITHUB_OUTPUT"
+            echo "tag=v$NAME"               >> "$GITHUB_OUTPUT"
+            echo "title=gatOS $NAME"        >> "$GITHUB_OUTPUT"
+            echo "prerelease=false"         >> "$GITHUB_OUTPUT"
+          else
+            # main (the only other ref this workflow runs on): timestamped tip prerelease.
+            STAMP="$(date -u +%Y%m%d-%H%M%S)"
+            echo "version=tip-$STAMP"          >> "$GITHUB_OUTPUT"
+            echo "modversion=$BASE-tip.$STAMP" >> "$GITHUB_OUTPUT"
+            echo "tag=tip-$STAMP"              >> "$GITHUB_OUTPUT"
+            echo "title=gatOS tip $STAMP (UTC)" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true"             >> "$GITHUB_OUTPUT"
+          fi
+
+      # The version users see in-game / in mod.toml matches the release. MODVERSION is
+      # validated above to [0-9A-Za-z._-]+, so it cannot contain the sed delimiter or
+      # replacement metacharacters.
+      - name: Stamp mod version
+        env:
+          MODVERSION: ${{ steps.meta.outputs.modversion }}
+        run: |
+          sed -i -E "s/^version = \".*\"/version = \"$MODVERSION\"/" gatOS.GameMod/mod.toml
+          grep '^version' gatOS.GameMod/mod.toml
+
+      # GameMod's CopyCustomContent target assembles the full mod folder — managed
+      # payload + guest/out/** + vendor/qemu/win-x64/** — at $GATOS_DIST_DIR/gatOS/.
+      - name: Build mod dist
+        run: dotnet build gatOS.GameMod -c Release --nologo -v quiet
+
+      - name: Package
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          cd "$GATOS_DIST_DIR"
+          zip -r "gatOS-$VERSION.zip" gatOS
+          unzip -l "gatOS-$VERSION.zip" | tail -n 20
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          TITLE: ${{ steps.meta.outputs.title }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          GUESTVER: ${{ steps.meta.outputs.guestver }}
+        run: |
+          ZIP="$GATOS_DIST_DIR/gatOS-$VERSION.zip"
+          # Re-pushing a release/<v> branch rebuilds that release: drop the old release
+          # + tag so the tag moves to the new commit. (Tip tags are timestamped and
+          # never collide.)
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+          cat > .tmp/release-notes.md <<EOF
+          All-in-one gatOS mod (bundled guest image v$GUESTVER + win-x64 QEMU).
+
+          **Installing over an existing install:** delete the old \`gatOS/\` folder from your mods directory before unzipping — files removed from the mod are not removed by unzipping over it.
+          EOF
+          EXTRA=()
+          [[ "$PRERELEASE" == "true" ]] && EXTRA+=(--prerelease --latest=false)
+          gh release create "$TAG" "$ZIP" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$TITLE" \
+            --notes-file .tmp/release-notes.md \
+            --generate-notes \
+            "${EXTRA[@]}"
+
+      # Keep the 5 newest tip prereleases; delete older ones (and their tags) so main
+      # doesn't accumulate releases forever. Named releases untouched.
+      - name: Prune old tip releases
+        if: steps.meta.outputs.prerelease == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 200 \
+            --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease and (.tagName | startswith("tip-"))) | .tagName' \
+            | tail -n +6 \
+            | while read -r tag; do
+                echo "Pruning $tag"
+                gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+              done

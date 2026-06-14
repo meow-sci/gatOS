@@ -1,7 +1,10 @@
 name: Build and test
 
 # One Linux job builds the whole solution and runs the test suite on every push.
-# Release packaging (QEMU fetch/trim, guest bundle, dist zip) is added at M11 (T11.4).
+# This is the TEST GATE (build + full GATOS_IT suite). The complete all-in-one mod
+# dist (guest image + win-x64 QEMU bundled, zipped, published as a GitHub release) is
+# built separately by mod-release.yml, which fires only for the tip of main and
+# release/<v> refs — not every commit.
 #
 # The KSA reference assemblies are licensed game files in the private repo
 # meow-sci/ksa-game-assemblies (DLLs under current/dll/). Only gatOS.GameMod
