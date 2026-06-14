@@ -65,6 +65,21 @@ public sealed class ControlSurfaceTests
     }
 
     [Test]
+    public async Task CtlEngine_ReadsIgnitionState_AndWritesToggle()
+    {
+        // Reads the live EngineOn (false in the default fixture)…
+        Assert.That(await ReadAsync("vessels", "by-id", "test-1", "ctl", "engine"), Is.EqualTo("0\n"));
+        // …and a fresh publish with the engines lit reads back "1".
+        _store.Publish(TestData.Snapshot(2, TestData.Vessel(engineOn: true)));
+        Assert.That(await ReadAsync("vessels", "by-id", "test-1", "ctl", "engine"), Is.EqualTo("1\n"));
+        // Writing the flag toggles ignition (1 = ignite, 0 = shutdown).
+        await WriteAsync("1\n", "vessels", "by-id", "test-1", "ctl", "engine");
+        Assert.That(_sink.Last, Is.EqualTo(new SimCommand("test-1", "vessel.engine", SimCommand.NoOrdinal, 1)));
+        await WriteAsync("0\n", "vessels", "by-id", "test-1", "ctl", "engine");
+        Assert.That(_sink.Last, Is.EqualTo(new SimCommand("test-1", "vessel.engine", SimCommand.NoOrdinal, 0)));
+    }
+
+    [Test]
     public async Task EngineActive_IsReadableAndWritable()
     {
         Assert.That(await ReadAsync("vessels", "by-id", "test-1", "engines", "0", "active"),

@@ -94,6 +94,7 @@ feedback. Authority gate (G-D1): `control_all_vessels=false` restricts to the ac
 |---|---|---|---|---|---|
 | `…/ctl/ignite` | T | `1` | `Vehicle.SetEnum(VehicleEngine.MainIgnite)` | Medium | Frame |
 | `…/ctl/shutdown` | T | `1` | `Vehicle.SetEnum(VehicleEngine.MainShutdown)` | Medium | Frame |
+| `…/ctl/engine` | St | `0`/`1` | `EngineActuator.SetEngineOn` (ignite/shutdown); reads `EngineOn` (see read surface) | Medium | Frame |
 | `…/ctl/lights` | St | `0`/`1` | `Vehicle.LightsOn` + per-`PowerConsumer.LightIsActive` | Low | Frame |
 | `…/engines/<n>/active` | St | `0`/`1` | `EngineController.SetIsActive(vehicle, bool)` | Low | Frame |
 | `…/animations/<n>/goal` | St | `0..1` | `KeyframeAnimationModule.TimeGoal = f × Shared.Duration` | Low | Frame |
@@ -164,6 +165,12 @@ that samples it back. These are populated in `VesselReader.Enrich` (anchor `Samp
 (`manual` when Manual, else the track-target name), `ctl/attitude_frame` ← `FlightComputer.AttitudeFrame`.
 (Before this wiring the snapshot reported the record defaults — throttle `0`, attitude `""` — on every
 transport regardless of the real state.)
+
+The `ctl/engine` ignition master is read in `VesselReader.SampleCore` (anchor `ReadEngineOn`, always
+on — not gated by the detail pass): `ctl/engine` ← `Vehicle.IsSet(VehicleEngine.MainIgnite, false)`
+(= `_manualControlInputs.EngineOn`, the live state `ctl/ignite`/`ctl/shutdown` set — the same boolean
+the game's ignite button reads). This is distinct from the per-engine `engines/<n>/active`
+"allowed to fire" flag.
 
 `/sim/debug/` (G-D2; gated by `[control] debug_namespace`):
 

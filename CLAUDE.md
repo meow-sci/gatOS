@@ -256,8 +256,10 @@ thread), and the two writable archetypes `ControlFile` (STATE: `Flag`/`Fraction`
 (TRIGGER) over a shared line-buffered `CommandFile` (actuates on the first newline → real errno on
 the failed `write(2)`; unterminated writes actuate best-effort on clunk). `SimFsTree.Build` gained
 an overload taking an `ICommandSink` + transports provider: with a sink it adds the writable
-surface — `engines/<n>/active` (STATE), `ctl/{ignite,shutdown,lights}`, `animations/<n>/goal`,
-`solar/<n>/goal` (solar-filtered animation view, same ordinal) — and the `/sim/status/`
+surface — `engines/<n>/active` (STATE), `ctl/{ignite,shutdown,engine,lights}`
+(`ctl/engine` is the readable+writable ignition toggle: read = live `EngineOn`, write `1`/`0` =
+ignite/shutdown — distinct from the per-engine "allowed to fire" `engines/<n>/active`),
+`animations/<n>/goal`, `solar/<n>/goal` (solar-filtered animation view, same ordinal) — and the `/sim/status/`
 integration-health tree (`game_version`, `sampler`, `accessors` NDJSON, `transports`); **with no
 sink the tree is byte-for-byte the old read-only tree** (existing tests unchanged). The
 **integration layer** — the only KSA-touching code, all under `gatOS.GameMod/Game/Ksa/` (compile-

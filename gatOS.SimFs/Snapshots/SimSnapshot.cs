@@ -138,6 +138,13 @@ public sealed record VesselSnapshot(
     /// <summary>Whether any RCS thruster controller is active (<c>ctl/rcs</c> read).</summary>
     public bool RcsOn { get; init; }
 
+    /// <summary>
+    ///     Whether the vessel's main engines are ignited — the master that <c>ctl/ignite</c> and
+    ///     <c>ctl/shutdown</c> toggle (KSA <c>EngineOn</c>, read via <c>IsSet(VehicleEngine.MainIgnite)</c>).
+    ///     The reactive <c>ctl/engine</c> read; not the per-engine "allowed to fire" <c>engines/n/active</c>.
+    /// </summary>
+    public bool EngineOn { get; init; }
+
     /// <summary>Local physics environment (pressure, density, accelerations); null when unavailable.</summary>
     public EnvironmentSnapshot? Environment { get; init; }
 

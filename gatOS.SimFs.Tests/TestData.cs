@@ -7,7 +7,8 @@ internal static class TestData
 {
     internal static VesselSnapshot Vessel(string id = "test-1", string situation = "Freefall",
         double radarAltitude = 70950.5, OrbitSnapshot? orbit = null, bool withOrbit = true,
-        double? battery = 0.87, bool lightsOn = false, IReadOnlyList<AnimationSnapshot>? animations = null,
+        double? battery = 0.87, bool lightsOn = false, bool engineOn = false,
+        IReadOnlyList<AnimationSnapshot>? animations = null,
         IReadOnlyList<SolarSnapshot>? solar = null, IReadOnlyList<DecouplerSnapshot>? decouplers = null,
         IReadOnlyList<RcsSnapshot>? rcs = null, IReadOnlyList<LightSnapshot>? lights = null)
         => new VesselSnapshot(
@@ -39,6 +40,7 @@ internal static class TestData
             Decouplers = decouplers ?? [],
             Rcs = rcs ?? [],
             Lights = lights ?? [],
+            EngineOn = engineOn,
         };
 
     /// <summary>

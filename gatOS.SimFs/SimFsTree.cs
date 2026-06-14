@@ -471,6 +471,10 @@ public static class SimFsTree
                     new SimCommand(vesselId, "vessel.ignite", SimCommand.NoOrdinal, 1)),
                 new TriggerFile("shutdown", Qid($"{q}/shutdown"), sink,
                     new SimCommand(vesselId, "vessel.shutdown", SimCommand.NoOrdinal, 1)),
+                // The ignite/shutdown master as one readable toggle: read = EngineOn (the live game
+                // state ignite/shutdown set), write 1 = ignite / 0 = shutdown.
+                FlagControl($"{q}/engine", "engine", vesselId, "vessel.engine", SimCommand.NoOrdinal,
+                    () => Formats.Flag(Vessel(vesselId).EngineOn)),
                 new TriggerFile("stage", Qid($"{q}/stage"), sink,
                     new SimCommand(vesselId, "vessel.stage", SimCommand.NoOrdinal, 1)),
                 FractionControl($"{q}/throttle", "throttle", vesselId, "vessel.throttle", SimCommand.NoOrdinal,

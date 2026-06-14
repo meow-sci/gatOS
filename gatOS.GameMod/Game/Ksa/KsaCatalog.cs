@@ -61,6 +61,7 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels) : ICommandEx
         // Engines / vessel-level (G1)
         "vessel.ignite" => EngineActuator.Ignite(vehicle),
         "vessel.shutdown" => EngineActuator.Shutdown(vehicle),
+        "vessel.engine" => EngineActuator.SetEngineOn(vehicle, c.Value > 0.5),
         "engine.active" => EngineActuator.SetActive(vehicle, c.Ordinal, c.Value > 0.5),
         "engine.min_throttle" => EngineActuator.SetMinThrottle(vehicle, c.Ordinal, c.Value),
         "vessel.lights" => LightActuator.SetMaster(vehicle, c.Value > 0.5),

@@ -113,8 +113,15 @@ internal static class VesselReader
             Animations: SampleAnimations(vehicle))
         {
             Controlled = activeVesselId is not null && vehicle.Id == activeVesselId,
+            EngineOn = ReadEngineOn(vehicle),
         };
     }
+
+    [KsaAnchor("Vehicle.IsSet(VehicleEngine.MainIgnite, false) => _manualControlInputs.EngineOn",
+        SourceFile = "KSA/Vehicle.cs", Verified = "2026-06-14", Risk = ChurnRisk.Medium,
+        Notes = "The live ignition master ctl/ignite (MainIgnite) and ctl/shutdown (MainShutdown) toggle; "
+            + "the same state the game's ignite button reads. NOT per-engine IsActive (allowed-to-fire).")]
+    private static bool ReadEngineOn(Vehicle vehicle) => vehicle.IsSet(VehicleEngine.MainIgnite, false);
 
     // ---- G3 read-surface extensions (KSA_GAME_INTEGRATION_PLAN §4.5/§4.6) -----------------
 

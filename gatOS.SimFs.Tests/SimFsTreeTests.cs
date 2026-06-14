@@ -164,6 +164,7 @@ public sealed class SimFsTreeTests
             "status/game_version", "status/sampler", "status/accessors", "status/transports",
             // vessel control surface
             "vessels/by-id/test-1/ctl/ignite", "vessels/by-id/test-1/ctl/shutdown",
+            "vessels/by-id/test-1/ctl/engine",
             "vessels/by-id/test-1/ctl/stage", "vessels/by-id/test-1/ctl/throttle",
             "vessels/by-id/test-1/ctl/lights", "vessels/by-id/test-1/ctl/rcs",
             "vessels/by-id/test-1/ctl/attitude_mode", "vessels/by-id/test-1/ctl/attitude_frame",

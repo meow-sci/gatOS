@@ -28,6 +28,10 @@ internal static class EngineActuator
         return CommandResult.Ok;
     }
 
+    /// <summary>The <c>ctl/engine</c> toggle: ignite when <paramref name="on"/>, else shut down.</summary>
+    internal static CommandResult SetEngineOn(Vehicle vehicle, bool on)
+        => on ? Ignite(vehicle) : Shutdown(vehicle);
+
     [KsaAnchor("EngineController.SetIsActive(Vehicle, bool)", SourceFile = "KSA/EngineController.cs",
         Verified = "2026-06-12", Risk = ChurnRisk.Low,
         Notes = "Ordinal is the vessel-level engine index from VesselReader.SampleEngines.")]
