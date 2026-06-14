@@ -32,6 +32,12 @@ const EMPTY: Color = Color::DarkGray; // the unfilled run of a fg bar
                                       // The only background fills — header and status/footer bars.
 const BAR_BG: Color = Color::Rgb(24, 28, 44);
 
+// Pane-border color at full opacity (scaled toward black as opacity drops — terminals can't
+// alpha-blend a foreground glyph against the game behind it, so "opacity" is realized as brightness).
+const BORDER_BASE: (u8, u8, u8) = (0, 200, 220);
+// The header settings button (ASCII so it can't land on an unsupported glyph).
+const SETTINGS_LABEL: &str = " [settings] ";
+
 pub fn render(f: &mut Frame, app: &mut App) {
     // Resolve the screen id first so the `&app.screen` borrow is released before the mutable
     // `render_*(f, app, …)` call.
@@ -46,6 +52,36 @@ pub fn render(f: &mut Frame, app: &mut App) {
     if app.picker.is_some() {
         render_picker(f, app);
     }
+    if app.settings_open {
+        render_settings(f, app);
+    }
+}
+
+/// Draws the settings button at the right end of the top bar, records its clickable rect, and
+/// returns the remaining (left) area the screen's header line should render into. On every screen.
+fn render_header_button(f: &mut Frame, app: &mut App, top: Rect) -> Rect {
+    let bw = (SETTINGS_LABEL.chars().count() as u16).min(top.width);
+    let button = Rect {
+        x: top.x + top.width.saturating_sub(bw),
+        y: top.y,
+        width: bw,
+        height: top.height,
+    };
+    app.settings_button = button;
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            SETTINGS_LABEL,
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::new().bg(BAR_BG)),
+        button,
+    );
+    Rect {
+        x: top.x,
+        y: top.y,
+        width: top.width.saturating_sub(bw),
+        height: top.height,
+    }
 }
 
 // ---- dashboard --------------------------------------------------------------------------------
@@ -58,7 +94,8 @@ fn render_dashboard(f: &mut Frame, app: &mut App) {
     ])
     .split(f.area());
 
-    // Header bar (bg-filled).
+    // Header bar (bg-filled). Reserve the right end for the settings button.
+    let header_area = render_header_button(f, app, chunks[0]);
     let conn = if app.connected {
         Span::styled("● online", Style::new().fg(GOOD))
     } else {
@@ -96,7 +133,7 @@ fn render_dashboard(f: &mut Frame, app: &mut App) {
     ]);
     f.render_widget(
         Paragraph::new(header).style(Style::new().bg(BAR_BG)),
-        chunks[0],
+        header_area,
     );
 
     // Vessel table (transparent; header row + data rows, no border so the click→row math is exact).
@@ -136,7 +173,7 @@ fn render_dashboard(f: &mut Frame, app: &mut App) {
         height: chunks[1].height.saturating_sub(1),
     };
 
-    let hints = "↑↓/scroll select · Enter/click open · q quit";
+    let hints = "↑↓/scroll select · Enter/click open · s settings · q quit";
     f.render_widget(
         Paragraph::new(Span::styled(hints, Style::new().fg(LABEL))).style(Style::new().bg(BAR_BG)),
         chunks[2],
@@ -179,6 +216,9 @@ fn render_detail(f: &mut Frame, app: &mut App, id: &str) {
     ])
     .split(f.area());
 
+    // Reserve the right end of the top bar for the settings button (present on every screen).
+    let header_area = render_header_button(f, app, chunks[0]);
+
     let Some(v) = app.snapshot.vessels.iter().find(|v| v.id == id).cloned() else {
         f.render_widget(
             Paragraph::new(Line::from(vec![
@@ -189,7 +229,7 @@ fn render_detail(f: &mut Frame, app: &mut App, id: &str) {
                 Span::styled("is gone — Esc to go back", Style::new().fg(LABEL)),
             ]))
             .style(Style::new().bg(BAR_BG)),
-            chunks[0],
+            header_area,
         );
         app.controls.clear();
         return;
@@ -233,13 +273,13 @@ fn render_detail(f: &mut Frame, app: &mut App, id: &str) {
     ]);
     f.render_widget(
         Paragraph::new(header).style(Style::new().bg(BAR_BG)),
-        chunks[0],
+        header_area,
     );
 
     // Body: telemetry (left) + controls (right).
     let body = Layout::horizontal([Constraint::Min(34), Constraint::Length(30)]).split(chunks[1]);
     let telem = Block::bordered()
-        .border_style(Style::new().fg(TITLE))
+        .border_style(Style::new().fg(border_color(app.border_opacity)))
         .title(Span::styled(
             " telemetry ",
             Style::new().fg(TITLE).add_modifier(Modifier::BOLD),
@@ -264,7 +304,7 @@ fn render_detail(f: &mut Frame, app: &mut App, id: &str) {
     // Status bar — last command outcome / connection.
     let (msg, color) = if app.status_line.is_empty() {
         (
-            "Tab/↑↓ focus · Enter/click activate · −/= or click bar: throttle · Esc back · q quit"
+            "Tab/↑↓ focus · Enter/click activate · −/= throttle · s settings · Esc back · q quit"
                 .to_string(),
             LABEL,
         )
@@ -395,7 +435,7 @@ fn telemetry_lines(v: &Vessel, bar_w: usize) -> Vec<Line<'static>> {
 /// hit-testing), then renders one button per row — the focused one bright-bold with a `▶ ` marker.
 fn render_controls(f: &mut Frame, app: &mut App, v: &Vessel, area: Rect) {
     let block = Block::bordered()
-        .border_style(Style::new().fg(TITLE))
+        .border_style(Style::new().fg(border_color(app.border_opacity)))
         .title(Span::styled(
             " controls ",
             Style::new().fg(TITLE).add_modifier(Modifier::BOLD),
@@ -481,14 +521,14 @@ fn control_items(v: &Vessel, debug_enabled: bool) -> Vec<(Action, String, Color)
             on_off_color(l.on),
         ));
     }
-    items.push((Action::RefillFuel, "Refill fuel ◆".to_string(), debug_color));
+    items.push((Action::RefillFuel, "Refill fuel +".to_string(), debug_color));
     items.push((
         Action::RefillBattery,
-        "Refill battery ◆".to_string(),
+        "Refill battery +".to_string(),
         debug_color,
     ));
-    items.push((Action::WarpDown, "Warp ÷2 ◆".to_string(), debug_color));
-    items.push((Action::WarpUp, "Warp ×2 ◆".to_string(), debug_color));
+    items.push((Action::WarpDown, "Warp ÷2".to_string(), debug_color));
+    items.push((Action::WarpUp, "Warp ×2".to_string(), debug_color));
     items
 }
 
@@ -572,6 +612,94 @@ fn render_picker(f: &mut Frame, app: &mut App) {
             rect,
         );
     }
+}
+
+// ---- settings overlay -------------------------------------------------------------------------
+
+/// The settings modal: currently the border-opacity slider. Like the picker it trades transparency
+/// for readability (bg fill + `Clear`) and records its hit-test rects (popup area + slider track)
+/// back into `app` for the next mouse event. The live detail-pane borders behind the (small) popup
+/// update as you drag, previewing the effect.
+fn render_settings(f: &mut Frame, app: &mut App) {
+    let screen = f.area();
+    let width = 48u16.min(screen.width.saturating_sub(2)).max(24);
+    let height = 7u16.min(screen.height).max(5);
+    let x = screen.x + screen.width.saturating_sub(width) / 2;
+    let y = screen.y + screen.height.saturating_sub(height) / 2;
+    let popup = Rect { x, y, width, height };
+    app.settings_area = popup;
+
+    f.render_widget(Clear, popup);
+    let block = Block::bordered()
+        .border_style(Style::new().fg(ACCENT))
+        .title(Span::styled(
+            " settings ",
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::new().bg(BAR_BG));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    // Row 0: label.  Row 1: slider track + percent.  Last row: hint.
+    let op = app.border_opacity.min(100);
+    let pct = format!(" {op:>3}%");
+    let pct_w = pct.chars().count() as u16;
+    let track_w = inner.width.saturating_sub(pct_w).max(1);
+    let slider_y = (inner.y + 1).min(inner.y + inner.height - 1);
+    app.settings_slider = Rect {
+        x: inner.x,
+        y: slider_y,
+        width: track_w,
+        height: 1,
+    };
+
+    f.render_widget(
+        Paragraph::new(Span::styled("Border opacity", Style::new().fg(VALUE))),
+        Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: 1,
+        },
+    );
+    let mut spans = bar_spans(op as f64 / 100.0, track_w as usize, ACCENT);
+    spans.push(Span::styled(
+        pct,
+        Style::new().fg(VALUE).add_modifier(Modifier::BOLD),
+    ));
+    f.render_widget(
+        Paragraph::new(Line::from(spans)),
+        Rect {
+            x: inner.x,
+            y: slider_y,
+            width: inner.width,
+            height: 1,
+        },
+    );
+    let hint_y = inner.y + inner.height.saturating_sub(1);
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            "←/→ or drag · Esc close",
+            Style::new().fg(LABEL),
+        )),
+        Rect {
+            x: inner.x,
+            y: hint_y,
+            width: inner.width,
+            height: 1,
+        },
+    );
+}
+
+/// The pane-border foreground at `opacity` (0–100): the bright [`BORDER_BASE`] cyan scaled toward
+/// black, so lowering it lets the borders recede over the (usually dark) game scene.
+fn border_color(opacity: u8) -> Color {
+    let f = opacity.min(100) as f64 / 100.0;
+    let scale = |c: u8| (c as f64 * f).round() as u8;
+    Color::Rgb(scale(BORDER_BASE.0), scale(BORDER_BASE.1), scale(BORDER_BASE.2))
 }
 
 // ---- span / formatting helpers ----------------------------------------------------------------

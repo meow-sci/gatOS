@@ -38,9 +38,14 @@ fn main() -> Result<()> {
     result
 }
 
+/// Default pane-border opacity (0–100) when `--border-opacity` is not given; borders are brightest
+/// at 100. Overridable per-run via the flag and live via the in-app settings overlay.
+const DEFAULT_BORDER_OPACITY: u8 = 100;
+
 struct Config {
     url: String,
     interval: Duration,
+    border_opacity: u8,
 }
 
 impl Config {
@@ -51,6 +56,8 @@ impl Config {
         // Snapshot poll cadence (read-back refresh). Default 50 ms (~20 Hz) for snappy feedback;
         // overridable via --interval, floored at 10 ms to avoid hammering the HTTP server.
         let mut interval = Duration::from_millis(50);
+        // Pane-border opacity (0–100); tunable live in the settings overlay (see DEFAULT_BORDER_OPACITY).
+        let mut border_opacity = DEFAULT_BORDER_OPACITY;
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -64,6 +71,11 @@ impl Config {
                         interval = Duration::from_millis(ms.max(10));
                     }
                 }
+                "--border-opacity" => {
+                    if let Some(v) = args.next().and_then(|s| s.parse::<u8>().ok()) {
+                        border_opacity = v.min(100);
+                    }
+                }
                 "-h" | "--help" => {
                     print_help();
                     std::process::exit(0);
@@ -71,16 +83,21 @@ impl Config {
                 _ => {}
             }
         }
-        Self { url, interval }
+        Self {
+            url,
+            interval,
+            border_opacity,
+        }
     }
 }
 
 fn print_help() {
     println!("gatos-dashboard — interactive TUI for the gatOS /sim HTTP API");
     println!();
-    println!("USAGE: gatos-dashboard [--url <base>] [--interval <ms>]");
+    println!("USAGE: gatos-dashboard [--url <base>] [--interval <ms>] [--border-opacity <0-100>]");
     println!("  --url <base>     API base (default: $GATOS_HTTP, else http://127.0.0.1:4242/v1)");
     println!("  --interval <ms>  snapshot poll interval, min 10 (default 50)");
+    println!("  --border-opacity <0-100>  pane-border brightness over the game (default 100)");
 }
 
 fn run(terminal: &mut Tui, config: Config) -> Result<()> {
@@ -88,7 +105,7 @@ fn run(terminal: &mut Tui, config: Config) -> Result<()> {
     let (update_tx, update_rx) = mpsc::channel::<Update>();
     spawn_worker(Client::new(config.url), config.interval, cmd_rx, update_tx);
 
-    let mut app = App::new(cmd_tx, config.interval);
+    let mut app = App::new(cmd_tx, config.interval, config.border_opacity);
     let tick = Duration::from_millis(100);
     while !app.should_quit {
         while let Ok(update) = update_rx.try_recv() {

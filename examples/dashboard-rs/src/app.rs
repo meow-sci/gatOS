@@ -117,12 +117,23 @@ pub struct App {
     pub connected: bool,
     /// The worker's snapshot poll interval (shown in the header so the read-back cadence is visible).
     pub poll_interval: Duration,
+    /// Pane-border foreground opacity 0–100 (borders fade toward black as it drops, so they recede
+    /// over the game). Seeded by `--border-opacity`; tuned live in the settings overlay.
+    pub border_opacity: u8,
+    /// Whether the settings overlay is open; while open it swallows all keyboard/mouse input.
+    pub settings_open: bool,
+    /// Settings popup outer rect + the opacity slider's track rect, written each render while
+    /// `settings_open` so the next mouse event can hit-test them.
+    pub settings_area: Rect,
+    pub settings_slider: Rect,
+    /// The header settings button's clickable rect (written each render, on every screen).
+    pub settings_button: Rect,
     pub should_quit: bool,
     cmd_tx: Sender<Command>,
 }
 
 impl App {
-    pub fn new(cmd_tx: Sender<Command>, poll_interval: Duration) -> Self {
+    pub fn new(cmd_tx: Sender<Command>, poll_interval: Duration, border_opacity: u8) -> Self {
         let mut table = TableState::default();
         table.select(Some(0));
         Self {
@@ -139,6 +150,11 @@ impl App {
             status_is_error: false,
             connected: false,
             poll_interval,
+            border_opacity: border_opacity.min(100),
+            settings_open: false,
+            settings_area: Rect::default(),
+            settings_slider: Rect::default(),
+            settings_button: Rect::default(),
             should_quit: false,
             cmd_tx,
         }
@@ -183,6 +199,11 @@ impl App {
     // ---- keyboard ----------------------------------------------------------------------------
 
     pub fn on_key(&mut self, key: KeyEvent) {
+        // The settings overlay (then the picker) swallow all input while open.
+        if self.settings_open {
+            self.on_key_settings(key);
+            return;
+        }
         // A modal picker swallows all input until it is confirmed or cancelled.
         if self.picker.is_some() {
             self.on_key_picker(key);
@@ -205,6 +226,58 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => self.picker_move(1),
             KeyCode::Enter | KeyCode::Char(' ') => self.picker_confirm(),
             _ => {}
+        }
+    }
+
+    // ---- settings overlay --------------------------------------------------------------------
+
+    fn on_key_settings(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter | KeyCode::Char(' ') => {
+                self.settings_open = false;
+            }
+            KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('-') => self.adjust_opacity(-5),
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('=') | KeyCode::Char('+') => {
+                self.adjust_opacity(5)
+            }
+            KeyCode::Home => self.border_opacity = 0,
+            KeyCode::End => self.border_opacity = 100,
+            _ => {}
+        }
+    }
+
+    fn open_settings(&mut self) {
+        self.settings_open = true;
+    }
+
+    fn adjust_opacity(&mut self, delta: i32) {
+        self.border_opacity = (self.border_opacity as i32 + delta).clamp(0, 100) as u8;
+    }
+
+    /// Sets opacity from a click/drag at column `x` along the slider track.
+    fn set_opacity_from_click(&mut self, x: u16) {
+        let track = self.settings_slider;
+        if track.width == 0 {
+            return;
+        }
+        let rel = x.saturating_sub(track.x) as f64 + 0.5;
+        self.border_opacity = ((rel / track.width as f64).clamp(0.0, 1.0) * 100.0).round() as u8;
+    }
+
+    /// A click inside the slider scrubs opacity; a click outside the popup closes settings.
+    fn settings_click(&mut self, x: u16, y: u16) {
+        let pos = Position { x, y };
+        if self.settings_slider.contains(pos) {
+            self.set_opacity_from_click(x);
+        } else if !self.settings_area.contains(pos) {
+            self.settings_open = false;
+        }
+    }
+
+    /// Dragging along the slider's row scrubs the value, for a natural slider feel.
+    fn settings_drag(&mut self, x: u16, y: u16) {
+        if self.settings_slider.width > 0 && y == self.settings_slider.y {
+            self.set_opacity_from_click(x);
         }
     }
 
@@ -266,6 +339,7 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
             KeyCode::Enter | KeyCode::Char('l') => self.open_selected(),
+            KeyCode::Char('s') => self.open_settings(),
             _ => {}
         }
     }
@@ -284,6 +358,7 @@ impl App {
                     self.activate(action);
                 }
             }
+            KeyCode::Char('s') => self.open_settings(),
             _ => {}
         }
     }
@@ -321,6 +396,16 @@ impl App {
     // ---- mouse -------------------------------------------------------------------------------
 
     pub fn on_mouse(&mut self, m: MouseEvent) {
+        if self.settings_open {
+            match m.kind {
+                MouseEventKind::ScrollUp => self.adjust_opacity(5),
+                MouseEventKind::ScrollDown => self.adjust_opacity(-5),
+                MouseEventKind::Down(MouseButton::Left) => self.settings_click(m.column, m.row),
+                MouseEventKind::Drag(MouseButton::Left) => self.settings_drag(m.column, m.row),
+                _ => {}
+            }
+            return;
+        }
         if self.picker.is_some() {
             match m.kind {
                 MouseEventKind::ScrollUp => self.picker_move(-1),
@@ -369,6 +454,11 @@ impl App {
     }
 
     fn on_click(&mut self, x: u16, y: u16) {
+        // The settings button lives on the header of every screen.
+        if self.settings_button.contains(Position { x, y }) {
+            self.open_settings();
+            return;
+        }
         match self.screen {
             Screen::Dashboard => {
                 let area = self.dashboard_area;

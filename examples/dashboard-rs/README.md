@@ -44,12 +44,18 @@ change at this cadence.)
 ## Controls
 
 **Dashboard:** `↑`/`↓` or `j`/`k` (or the mouse wheel) select · `Enter` or click a row open it ·
-`q` quit.
+`s` or click `[settings]` (top-right) opens settings · `q` quit.
+
+**Settings overlay** (`s`, or the `[settings]` button on the top bar of any screen): a modal with a
+**border-opacity** slider (0–100) — the pane borders are a bright blue by default, which can be
+intrusive over the game; drag/click the slider or use `←`/`→` (or the wheel) to fade them toward
+invisible. `Esc` (or a click outside) closes it. The startup value comes from `--border-opacity`
+(default 100); the detail-pane borders preview the change live behind the popup.
 
 **Vessel detail** — the header shows the current attitude mode; a keyboard focus ring **and**
 clickable buttons drive the same actions: `Tab`/`↑`/`↓` (or wheel) move focus · `Enter`/`Space` or
-click activate · `−`/`=` (or `←`/`→`) nudge throttle · `Esc`/`Backspace` back · `q` quit. Available
-controls:
+click activate · `−`/`=` (or `←`/`→`) nudge throttle · `s` settings · `Esc`/`Backspace` back ·
+`q` quit. Available controls:
 
 - **Flight:** ignite, shutdown, stage, throttle (−/+, 0 %, 100 %), lights, RCS, attitude mode.
 - **Throttle bar:** click anywhere along the throttle bar in the telemetry pane to set it directly.
