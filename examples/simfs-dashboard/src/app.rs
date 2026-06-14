@@ -45,6 +45,7 @@ pub enum ZoneAction {
 pub enum Modal {
     None,
     Search(SearchModal),
+    Manage(ManageModal),
     Input(InputModal),
     Picker(PickerModal),
     Settings(SettingsModal),
@@ -56,6 +57,9 @@ pub enum Modal {
 pub struct SearchModal {
     pub query: String,
     pub all: Vec<Candidate>,
+    /// Lowercased `"<path> <title>"` haystack per candidate (parallel to `all`), precomputed when
+    /// the catalog arrives so re-filtering on every keystroke does no per-candidate allocation.
+    pub hays: Vec<String>,
     pub filtered: Vec<usize>,
     pub selected: usize,
     pub offset: usize,
@@ -69,19 +73,40 @@ pub struct SearchModal {
 pub const CUSTOM_ROW: usize = usize::MAX;
 
 impl SearchModal {
-    fn refilter(&mut self) {
-        let q = self.query.to_lowercase();
-        self.filtered = self
+    /// Caches the lowercased search haystacks (call whenever [`Self::all`] changes).
+    fn rebuild_hays(&mut self) {
+        self.hays = self
             .all
             .iter()
-            .enumerate()
-            .filter(|(_, c)| {
-                q.is_empty()
-                    || c.path.to_lowercase().contains(&q)
-                    || c.title.to_lowercase().contains(&q)
-            })
-            .map(|(i, _)| i)
+            .map(|c| format!("{} {}", c.path, c.title).to_lowercase())
             .collect();
+    }
+
+    /// Fuzzy, space-separated **AND** filter: the query splits into whitespace terms and a
+    /// candidate must match *every* term (case-insensitively) — each term as a substring or, failing
+    /// that, an in-order subsequence of the candidate's path+title. So `rocket vel surf` keeps only
+    /// fields matching `rocket` AND `vel` AND `surf`. Results are ranked best-match first.
+    fn refilter(&mut self) {
+        let terms: Vec<String> = self
+            .query
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect();
+        let mut scored: Vec<(i64, usize)> = self
+            .hays
+            .iter()
+            .enumerate()
+            .filter_map(|(i, hay)| {
+                let mut total = 0i64;
+                for term in &terms {
+                    total += fuzzy_score(term, hay)?; // any term that fails to match drops the row
+                }
+                Some((total, i))
+            })
+            .collect();
+        // Stable sort by score (desc); ties keep the original path-sorted order of `all`.
+        scored.sort_by_key(|&(score, _)| std::cmp::Reverse(score));
+        self.filtered = scored.into_iter().map(|(_, i)| i).collect();
         if self.selected >= self.filtered.len() {
             self.selected = self.filtered.len().saturating_sub(1);
         }
@@ -98,6 +123,26 @@ impl SearchModal {
     pub fn row_count(&self) -> usize {
         self.filtered.len() + usize::from(self.allow_custom())
     }
+}
+
+/// The "manage widgets" popup: a list of every placed widget, each row carrying clickable
+/// move-up / move-down / delete buttons (and keyboard equivalents). Selection reuses
+/// [`App::selected`] so the dashboard and this list stay in sync.
+pub struct ManageModal {
+    pub offset: usize,
+    pub area: Rect,
+    /// (rect, action) for the per-row buttons, hit-tested on the next click.
+    pub buttons: Vec<(Rect, ManageAction)>,
+    /// (rect, widget index) for selecting a row by clicking its label.
+    pub row_rects: Vec<(Rect, usize)>,
+}
+
+/// A per-row action in the manage popup (the `usize` is the widget index the button belongs to).
+#[derive(Clone, Copy)]
+pub enum ManageAction {
+    MoveUp(usize),
+    MoveDown(usize),
+    Delete(usize),
 }
 
 pub struct InputModal {
@@ -153,6 +198,7 @@ pub struct App {
     pub card_rects: Vec<(Rect, usize)>,
     pub zones: Vec<Zone>,
     pub tb_add: Rect,
+    pub tb_manage: Rect,
     pub tb_save: Rect,
     pub tb_settings: Rect,
 
@@ -189,6 +235,7 @@ impl App {
             card_rects: Vec::new(),
             zones: Vec::new(),
             tb_add: Rect::default(),
+            tb_manage: Rect::default(),
             tb_save: Rect::default(),
             tb_settings: Rect::default(),
             cmd_tx,
@@ -252,6 +299,7 @@ impl App {
                 self.debug_enabled = health.debug;
                 if let Modal::Search(s) = &mut self.modal {
                     s.all = candidates;
+                    s.rebuild_hays();
                     s.loading = false;
                     s.refilter();
                 }
@@ -282,6 +330,7 @@ impl App {
     pub fn on_key(&mut self, key: KeyEvent) {
         match &mut self.modal {
             Modal::Search(_) => self.on_key_search(key),
+            Modal::Manage(_) => self.on_key_manage(key),
             Modal::Input(_) => self.on_key_input(key),
             Modal::Picker(_) => self.on_key_picker(key),
             Modal::Settings(_) => self.on_key_settings(key),
@@ -297,6 +346,7 @@ impl App {
             KeyCode::Left | KeyCode::Char('h') => self.move_selection(-1, 0),
             KeyCode::Right | KeyCode::Char('l') => self.move_selection(1, 0),
             KeyCode::Char('a') => self.open_search(),
+            KeyCode::Char('m') => self.open_manage(),
             KeyCode::Char('w') => self.open_save(),
             KeyCode::Char('s') => self.open_settings(),
             KeyCode::Char('R') => self.open_rename(),
@@ -327,6 +377,20 @@ impl App {
                 s.query.push(c);
                 s.refilter();
             }
+            _ => {}
+        }
+    }
+
+    fn on_key_manage(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('m') | KeyCode::Enter => {
+                self.modal = Modal::None
+            }
+            KeyCode::Up | KeyCode::Char('k') => self.manage_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.manage_move(1),
+            KeyCode::Char('[') => self.reorder(-1),
+            KeyCode::Char(']') => self.reorder(1),
+            KeyCode::Char('x') | KeyCode::Delete => self.remove_selected(),
             _ => {}
         }
     }
@@ -374,6 +438,7 @@ impl App {
     pub fn on_mouse(&mut self, m: MouseEvent) {
         match &mut self.modal {
             Modal::Search(_) => self.on_mouse_search(m),
+            Modal::Manage(_) => self.on_mouse_manage(m),
             Modal::Picker(_) => self.on_mouse_picker(m),
             Modal::Settings(_) => self.on_mouse_settings(m),
             Modal::Input(_) => {
@@ -406,6 +471,10 @@ impl App {
         let pos = Position { x, y };
         if self.tb_add.contains(pos) {
             self.open_search();
+            return;
+        }
+        if self.tb_manage.contains(pos) {
+            self.open_manage();
             return;
         }
         if self.tb_save.contains(pos) {
@@ -445,6 +514,46 @@ impl App {
                         self.search_confirm();
                     }
                 } else if !s.area.contains(pos) {
+                    self.modal = Modal::None;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_mouse_manage(&mut self, m: MouseEvent) {
+        match m.kind {
+            MouseEventKind::ScrollUp => self.manage_move(-1),
+            MouseEventKind::ScrollDown => self.manage_move(1),
+            MouseEventKind::Down(MouseButton::Left) => {
+                let pos = Position {
+                    x: m.column,
+                    y: m.row,
+                };
+                // Copy the hit info out so the borrow of `self.modal` ends before we mutate widgets.
+                let (button, row, inside) = match &self.modal {
+                    Modal::Manage(mm) => (
+                        mm.buttons
+                            .iter()
+                            .find(|(r, _)| r.contains(pos))
+                            .map(|&(_, a)| a),
+                        mm.row_rects
+                            .iter()
+                            .find(|(r, _)| r.contains(pos))
+                            .map(|&(_, i)| i),
+                        mm.area.contains(pos),
+                    ),
+                    _ => return,
+                };
+                if let Some(action) = button {
+                    match action {
+                        ManageAction::MoveUp(i) => self.move_widget(i, -1),
+                        ManageAction::MoveDown(i) => self.move_widget(i, 1),
+                        ManageAction::Delete(i) => self.delete_widget(i),
+                    }
+                } else if let Some(i) = row {
+                    self.selected = i;
+                } else if !inside {
                     self.modal = Modal::None;
                 }
             }
@@ -526,12 +635,23 @@ impl App {
         self.selected = next as usize;
     }
 
-    fn reorder(&mut self, dir: i32) {
+    /// Moves selection by `delta` through the flat widget list, wrapping (used by the manage popup).
+    fn manage_move(&mut self, delta: i32) {
         let n = self.widgets.len();
-        if n < 2 {
+        if n == 0 {
             return;
         }
-        let i = self.selected.min(n - 1);
+        let cur = self.selected.min(n - 1) as i32;
+        self.selected = (cur + delta).rem_euclid(n as i32) as usize;
+    }
+
+    /// Moves the widget at index `i` one slot earlier/later (`dir` = -1/+1) and follows it with the
+    /// selection. The dashboard grid reflows automatically.
+    fn move_widget(&mut self, i: usize, dir: i32) {
+        let n = self.widgets.len();
+        if n < 2 || i >= n {
+            return;
+        }
         let j = i as i32 + dir;
         if j < 0 || j >= n as i32 {
             return;
@@ -541,11 +661,11 @@ impl App {
         self.dirty = true;
     }
 
-    fn remove_selected(&mut self) {
-        if self.widgets.is_empty() {
+    /// Removes the widget at index `i`, clamps the selection, and re-subscribes.
+    fn delete_widget(&mut self, i: usize) {
+        if i >= self.widgets.len() {
             return;
         }
-        let i = self.selected.min(self.widgets.len() - 1);
         let removed = self.widgets.remove(i);
         if self.selected >= self.widgets.len() {
             self.selected = self.widgets.len().saturating_sub(1);
@@ -554,6 +674,16 @@ impl App {
         self.resubscribe();
         self.status_line = format!("removed {}", removed.title);
         self.status_is_error = false;
+    }
+
+    fn reorder(&mut self, dir: i32) {
+        self.move_widget(self.selected, dir);
+    }
+
+    fn remove_selected(&mut self) {
+        if !self.widgets.is_empty() {
+            self.delete_widget(self.selected.min(self.widgets.len() - 1));
+        }
     }
 
     fn selected_widget(&self) -> Option<&Widget> {
@@ -667,6 +797,7 @@ impl App {
         self.modal = Modal::Search(SearchModal {
             query: String::new(),
             all: Vec::new(),
+            hays: Vec::new(),
             filtered: Vec::new(),
             selected: 0,
             offset: 0,
@@ -676,6 +807,15 @@ impl App {
             item_rects: Vec::new(),
         });
         self.request_refresh();
+    }
+
+    fn open_manage(&mut self) {
+        self.modal = Modal::Manage(ManageModal {
+            offset: 0,
+            area: Rect::default(),
+            buttons: Vec::new(),
+            row_rects: Vec::new(),
+        });
     }
 
     fn open_save(&mut self) {
@@ -957,6 +1097,46 @@ fn pct(frac: f64) -> String {
     format!("{}%", (frac.clamp(0.0, 1.0) * 100.0).round() as i64)
 }
 
+/// Scores one (already-lowercased) `term` against an (already-lowercased) `hay`, or `None` when it
+/// does not match at all. A contiguous **substring** match scores high (with a bonus at a word
+/// boundary and for matching early); a scattered **subsequence** match scores low but still counts
+/// — the fuzzy fallback. Higher is better.
+fn fuzzy_score(term: &str, hay: &str) -> Option<i64> {
+    if term.is_empty() {
+        return Some(0);
+    }
+    if let Some(pos) = hay.find(term) {
+        let boundary =
+            pos == 0 || matches!(hay.as_bytes()[pos - 1], b'/' | b' ' | b'-' | b'_' | b'.');
+        let mut score = 1000 - pos.min(500) as i64;
+        if boundary {
+            score += 300;
+        }
+        return Some(score);
+    }
+    subsequence_score(term, hay)
+}
+
+/// Scores an in-order subsequence match (every char of `term` appears in `hay` in order), favoring
+/// tighter matches (fewer intervening chars). `None` when `term` is not a subsequence of `hay`.
+fn subsequence_score(term: &str, hay: &str) -> Option<i64> {
+    let mut chars = term.chars();
+    let mut need = chars.next();
+    let mut gaps = 0i64;
+    let mut started = false;
+    for hc in hay.chars() {
+        match need {
+            Some(tc) if tc == hc => {
+                started = true;
+                need = chars.next();
+            }
+            _ if started => gaps += 1,
+            _ => {}
+        }
+    }
+    need.is_none().then(|| 100 - gaps.min(90))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1000,5 +1180,65 @@ mod tests {
         assert_eq!(back.columns, 3);
         assert_eq!(back.border_opacity, 100);
         assert_eq!(back.widgets.len(), 1);
+    }
+
+    fn search_with(paths: &[&str]) -> SearchModal {
+        let all: Vec<Candidate> = paths
+            .iter()
+            .map(|p| {
+                let spec = crate::catalog::classify(p);
+                Candidate {
+                    path: p.to_string(),
+                    title: spec.title,
+                    kind: spec.kind,
+                }
+            })
+            .collect();
+        let mut m = SearchModal {
+            query: String::new(),
+            all,
+            hays: Vec::new(),
+            filtered: Vec::new(),
+            selected: 0,
+            offset: 0,
+            loading: false,
+            area: Rect::default(),
+            input_rect: Rect::default(),
+            item_rects: Vec::new(),
+        };
+        m.rebuild_hays();
+        m
+    }
+
+    #[test]
+    fn search_is_fuzzy_and_combinatorial() {
+        let mut m = search_with(&[
+            "vessels/by-id/rocket/velocity/surface",
+            "vessels/by-id/probe/velocity/surface",
+            "vessels/by-id/rocket/velocity/orbital",
+            "vessels/by-id/rocket/orbit/sma",
+        ]);
+
+        // Every space-separated term must match (AND): only the rocket-velocity-surface field has
+        // all three of rocket, vel, surf.
+        m.query = "rocket vel surf".into();
+        m.refilter();
+        let got: Vec<&str> = m.filtered.iter().map(|&i| m.all[i].path.as_str()).collect();
+        assert_eq!(got, vec!["vessels/by-id/rocket/velocity/surface"]);
+
+        // Case-insensitive.
+        m.query = "ROCKET VEL SURF".into();
+        m.refilter();
+        assert_eq!(m.filtered.len(), 1);
+
+        // Empty query keeps everything (original path order).
+        m.query = String::new();
+        m.refilter();
+        assert_eq!(m.filtered.len(), 4);
+
+        // Substring matches rank ahead of scattered subsequence matches.
+        m.query = "velocity".into();
+        m.refilter();
+        assert!(m.all[m.filtered[0]].path.contains("velocity"));
     }
 }

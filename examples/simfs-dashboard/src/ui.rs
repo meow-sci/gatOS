@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::Frame;
 
-use crate::app::{App, InputPurpose, Modal, Zone, ZoneAction, CUSTOM_ROW};
+use crate::app::{App, InputPurpose, ManageAction, Modal, Zone, ZoneAction, CUSTOM_ROW};
 use crate::widget::{parse_flag, parse_scalar, Kind};
 
 // Foreground palette (the dashboard is otherwise transparent).
@@ -42,6 +42,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     match &app.modal {
         Modal::Search(_) => render_search(f, app),
+        Modal::Manage(_) => render_manage(f, app),
         Modal::Input(_) => render_input(f, app),
         Modal::Picker(_) => render_picker(f, app),
         Modal::Settings(_) => render_settings(f, app),
@@ -52,10 +53,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
 // ---- toolbar ------------------------------------------------------------------------------------
 
 fn render_toolbar(f: &mut Frame, app: &mut App, area: Rect) {
-    // Right-aligned buttons: [+ add] [save] [settings]; record their rects for click hit-testing.
-    let buttons = [" [+ add] ", " [save] ", " [settings] "];
+    // Right-aligned buttons; record their rects for click hit-testing.
+    let buttons = [" [+ add] ", " [manage] ", " [save] ", " [settings] "];
     let mut x = area.x + area.width;
-    let mut rects = [Rect::default(); 3];
+    let mut rects = [Rect::default(); 4];
     for (i, label) in buttons.iter().enumerate().rev() {
         let w = (label.chars().count() as u16).min(x.saturating_sub(area.x));
         x = x.saturating_sub(w);
@@ -67,8 +68,9 @@ fn render_toolbar(f: &mut Frame, app: &mut App, area: Rect) {
         };
     }
     app.tb_add = rects[0];
-    app.tb_save = rects[1];
-    app.tb_settings = rects[2];
+    app.tb_manage = rects[1];
+    app.tb_save = rects[2];
+    app.tb_settings = rects[3];
 
     let used: u16 = buttons.iter().map(|b| b.chars().count() as u16).sum();
     let left = Rect {
@@ -456,7 +458,7 @@ fn render_value(f: &mut Frame, rect: Rect, text: &str, color: Color) {
 fn render_status(f: &mut Frame, app: &App, area: Rect) {
     let (msg, color) = if app.status_line.is_empty() {
         (
-            "a add \u{b7} Enter/click act \u{b7} -/= nudge \u{b7} [ ] move \u{b7} R rename \u{b7} x remove \u{b7} w save \u{b7} s settings \u{b7} q quit"
+            "a add \u{b7} m manage \u{b7} Enter/click act \u{b7} -/= nudge \u{b7} [ ] move \u{b7} R rename \u{b7} x remove \u{b7} w save \u{b7} s settings \u{b7} q quit"
                 .to_string(),
             LABEL,
         )
@@ -487,7 +489,7 @@ fn render_search(f: &mut Frame, app: &mut App) {
             Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
         ))
         .title_bottom(Span::styled(
-            " type to filter \u{b7} \u{2191}\u{2193} select \u{b7} Enter add \u{b7} Esc close ",
+            " fuzzy filter (space = AND) \u{b7} \u{2191}\u{2193} select \u{b7} Enter add \u{b7} Esc close ",
             Style::new().fg(LABEL),
         ))
         .style(Style::new().bg(BAR_BG));
@@ -604,6 +606,147 @@ fn tag_color(kind: &Kind) -> Color {
         ACCENT
     } else {
         LABEL
+    }
+}
+
+// ---- manage modal -------------------------------------------------------------------------------
+
+/// The manage popup: a scrollable list of every placed widget, each row with `[\u{2191}] [\u{2193}]
+/// [\u{2715}]` buttons (move up / move down / delete) whose rects are recorded for click handling.
+/// The selected row mirrors the dashboard selection.
+fn render_manage(f: &mut Frame, app: &mut App) {
+    let screen = f.area();
+    let width = (screen.width * 3 / 4).clamp(30, screen.width.saturating_sub(2));
+    let height = (screen.height * 3 / 4).clamp(6, screen.height.saturating_sub(2));
+    let popup = centered(screen, width, height);
+
+    f.render_widget(Clear, popup);
+    let block = Block::bordered()
+        .border_style(Style::new().fg(ACCENT))
+        .title(Span::styled(
+            " manage widgets ",
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            " \u{2191}\u{2193} select \u{b7} [ ] move \u{b7} x delete \u{b7} Esc close ",
+            Style::new().fg(LABEL),
+        ))
+        .style(Style::new().bg(BAR_BG));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    // Snapshot the rows up front so we don't borrow `app.widgets` and `app.modal` at once.
+    let rows: Vec<(String, String)> = app
+        .widgets
+        .iter()
+        .map(|w| (w.title.clone(), w.path.clone()))
+        .collect();
+    let selected = app.selected.min(rows.len().saturating_sub(1));
+
+    let Modal::Manage(mm) = &mut app.modal else {
+        return;
+    };
+    mm.area = popup;
+    mm.buttons.clear();
+    mm.row_rects.clear();
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    if rows.is_empty() {
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                "no widgets \u{2014} add some first (a)",
+                Style::new().fg(LABEL),
+            )),
+            inner,
+        );
+        return;
+    }
+
+    let visible = inner.height as usize;
+    if selected < mm.offset {
+        mm.offset = selected;
+    } else if selected >= mm.offset + visible {
+        mm.offset = selected + 1 - visible;
+    }
+
+    // Buttons live in a fixed 11-col gutter at the left: "[\u{2191}] [\u{2193}] [\u{2715}] ".
+    for row in 0..inner.height {
+        let idx = mm.offset + row as usize;
+        if idx >= rows.len() {
+            break;
+        }
+        let y = inner.y + row;
+        let row_rect = Rect {
+            x: inner.x,
+            y,
+            width: inner.width,
+            height: 1,
+        };
+        mm.row_rects.push((row_rect, idx));
+
+        let up = Rect {
+            x: inner.x,
+            y,
+            width: 3,
+            height: 1,
+        };
+        let down = Rect {
+            x: inner.x + 4,
+            y,
+            width: 3,
+            height: 1,
+        };
+        let del = Rect {
+            x: inner.x + 8,
+            y,
+            width: 3,
+            height: 1,
+        };
+        mm.buttons.push((up, ManageAction::MoveUp(idx)));
+        mm.buttons.push((down, ManageAction::MoveDown(idx)));
+        mm.buttons.push((del, ManageAction::Delete(idx)));
+
+        let (title, path) = &rows[idx];
+        let text_x = inner.x + 12;
+        let text_w = inner.width.saturating_sub(12) as usize;
+        let focused = idx == selected;
+        let title_style = if focused {
+            Style::new().fg(FOCUS).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(VALUE)
+        };
+
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("[\u{2191}]", Style::new().fg(ACCENT)),
+                Span::raw(" "),
+                Span::styled("[\u{2193}]", Style::new().fg(ACCENT)),
+                Span::raw(" "),
+                Span::styled("[\u{2715}]", Style::new().fg(BAD)),
+            ])),
+            Rect {
+                x: inner.x,
+                y,
+                width: 11,
+                height: 1,
+            },
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    format!("{}  ", trunc(title, text_w.saturating_sub(2))),
+                    title_style,
+                ),
+                Span::styled(trunc(path, text_w), Style::new().fg(LABEL)),
+            ])),
+            Rect {
+                x: text_x,
+                y,
+                width: inner.width.saturating_sub(12),
+                height: 1,
+            },
+        );
     }
 }
 

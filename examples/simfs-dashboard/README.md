@@ -63,23 +63,32 @@ samples the game — raise it there for the values to actually change at this ca
 
 ## Building a dashboard
 
-1. **Add** (`a`, or click `[+ add]`): a search popup lists every addable `/sim` field — type to
-   filter by path or name, `↑`/`↓` to select, `Enter`/click to place it. In `/sim` (filesystem)
-   mode the list is the live directory walk, so every engine/light/tank index shows up. Over HTTP
-   the list is the curated catalog expanded per vessel/body; to add an exotic or indexed path that
-   isn't listed, just type the full path — an **"add custom path"** row appears.
+1. **Add** (`a`, or click `[+ add]`): a search popup lists every addable `/sim` field. The filter is
+   **fuzzy and AND-combinatorial** — space-separated terms must *all* match (case-insensitive), each
+   as a substring or subsequence of the path or name, ranked best-match first. So `rocket vel surf`
+   narrows to fields matching `rocket` **and** `vel` **and** `surf`. `↑`/`↓` select, `Enter`/click
+   places it. In `/sim` (filesystem) mode the list is the live directory walk, so every
+   engine/light/tank index shows up. Over HTTP the list is the curated catalog expanded per
+   vessel/body; to add an exotic or indexed path that isn't listed, just type the full path — an
+   **"add custom path"** row appears.
 2. **Arrange:** `↑↓←→`/`hjkl` (or the wheel) move the selection; `[` / `]` move the selected widget
    earlier/later in the grid; `R` renames it; `x`/`Del` removes it. The grid reflows automatically.
-3. **Customize:** `s` (or `[settings]`) opens a modal with a **columns** stepper (1–8) and a
+3. **Manage** (`m`, or click `[manage]`): a popup lists every widget with per-row **`[↑] [↓] [✕]`**
+   buttons — move it up, move it down, or delete it — plus the same `[` `]` / `x` keys. The cleanest
+   way to reorder and prune a busy dashboard.
+4. **Customize:** `s` (or `[settings]`) opens a modal with a **columns** stepper (1–8) and a
    **border-opacity** slider (the card borders fade toward invisible over the game).
-4. **Save** (`w`, or click `[save]`): prompts for a filename and writes the layout as **TOML** to
+5. **Save** (`w`, or click `[save]`): prompts for a filename and writes the layout as **TOML** to
    the current directory. Reload it next time with `--file`.
 
 ## Controls
 
-**Dashboard:** `a` add · `↑↓←→`/`hjkl`/wheel select · `Enter`/`Space` or click activate a control ·
-`-`/`=` nudge the selected throttle/number · `[` `]` move widget · `R` rename · `x` remove ·
-`w` save · `s` settings · `q` quit.
+**Dashboard:** `a` add · `m` manage · `↑↓←→`/`hjkl`/wheel select · `Enter`/`Space` or click activate
+a control · `-`/`=` nudge the selected throttle/number · `[` `]` move widget · `R` rename · `x`
+remove · `w` save · `s` settings · `q` quit.
+
+**Manage popup:** `↑`/`↓` select · `[` `]` (or the `[↑]`/`[↓]` buttons) reorder · `x` (or `[✕]`)
+delete · `Esc` close.
 
 **Control widgets** (the interactive ones — derived from first-party knowledge):
 
