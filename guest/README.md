@@ -14,9 +14,13 @@ Architecture/background: `OS_ANALYSIS.md` §3.8; task specs: `OS_PLAN.md` M2; ha
 | `vmlinuz-virt` | Alpine `linux-virt` kernel, used via QEMU direct kernel boot (no bootloader in the image) |
 | `initramfs-virt` | trimmed initramfs (`features="base virtio ext4"`), regenerated from the overlay's `mkinitfs.conf` |
 | `manifest.toml` | the host-side boot contract: kernel cmdline, ssh user/key, host-key pin, guest version |
-| `id_ed25519`(+`.pub`) | session keypair; the pub is baked into root's `authorized_keys` (D8 — loopback-only hostfwd makes this safe) |
-| `host_key_fingerprint.txt` | sha256 **hex of the raw ssh-ed25519 host public key blob** — what `gatOS.Ssh` pins against (D8) |
+| `id_ed25519`(+`.pub`) | the **static committed** session keypair (copied from `guest/keys/`); the pub is baked into root's `authorized_keys` (D8 — loopback-only hostfwd makes this safe) |
+| `host_key_fingerprint.txt` | sha256 **hex of the raw ssh-ed25519 host public key blob** — what `gatOS.Ssh` pins against (D8); **stable across builds** since the host key (`guest/keys/host_ed25519`) is committed too |
 | `sha256sums.txt` | checksums over all of the above |
+
+> **SSH keys are static and committed under `guest/keys/`** — every build, every guest version, bakes
+> the same session + host keys, so the host-key pin can never drift across rebuilds/versions. This is
+> safe (loopback-only access; key carries no real authority) and deliberate — see `guest/keys/README.md`.
 
 The guest is deliberately tiny: **no openrc** — busybox init runs `rootfs-overlay/etc/inittab`,
 which supervises exactly four things: `init-gatos` (sysinit: mounts, static slirp network

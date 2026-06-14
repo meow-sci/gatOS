@@ -7,8 +7,10 @@
 #   vmlinuz-virt              Alpine virt kernel (direct kernel boot — no bootloader)
 #   initramfs-virt            trimmed initramfs (features: base virtio ext4)
 #   manifest.toml             everything the host (gatOS.Vm) needs to boot it
-#   id_ed25519 / .pub         SSH keypair baked into root's authorized_keys (D8)
-#   host_key_fingerprint.txt  sha256 hex of the dropbear host key blob (D8 pinning)
+#   id_ed25519 / .pub         the STATIC committed session keypair (guest/keys/), the
+#                             pubkey baked into root's authorized_keys (D8)
+#   host_key_fingerprint.txt  sha256 hex of the dropbear host key blob (D8 pinning);
+#                             stable across builds since the host key is committed too
 #   sha256sums.txt            checksums of all of the above
 #
 # Build host: Linux, root (chroot + rootfs ownership). CI runs it on
@@ -42,7 +44,7 @@ ALPINE_KEYS_SHA256=dd211936d544f4050924ce8aec078d24e7b1b036ae70b30bd07867349587c
 # version) and a stock /etc/os-release that apply_branding later overwrites with
 # the gatOS-branded one (split out of baselayout in modern Alpine).
 GUEST_PACKAGES="alpine-baselayout alpine-release busybox busybox-suid musl musl-utils
-                alpine-keys apk-tools linux-virt dropbear dropbear-scp
+                alpine-keys apk-tools linux-virt dropbear dropbear-scp dropbear-convert
                 openssh-sftp-server qemu-guest-agent ca-certificates
                 bash zsh shadow vim neovim less curl wget git "
 
@@ -169,21 +171,41 @@ apply_branding() {
 # trailing newline (the art files carry none, so a bare cat runs into the next line).
 emit_art() { tr -d '\r' < "$1" >> "$2"; [ -z "$(tail -c1 -- "$1")" ] || printf '\n' >> "$2"; }
 
-generate_keys() {
-    log "generating SSH session keypair + dropbear host key"
+install_keys() {
+    # The SSH keys are STATIC and committed under guest/keys/ — every build (and every
+    # guest version) bakes the same session keypair + dropbear host key, so the host-key
+    # pin never drifts and a re-keyed rebuild can never desync from an installed base
+    # image (D8; see guest/keys/README.md). This is safe: the guest is reachable only
+    # over a loopback-only hostfwd, so the keys carry no real-world authority.
+    log "installing committed static SSH keys (guest/keys/)"
+    local keys="$SCRIPT_DIR/keys"
+    [ -f "$keys/id_ed25519" ] && [ -f "$keys/id_ed25519.pub" ] && [ -f "$keys/host_ed25519" ] \
+        || die "missing committed keys under $keys (expected id_ed25519[.pub] + host_ed25519)"
+
+    # Session keypair: the host authenticates as root with the private key; the public
+    # half is root's authorized_keys. The private key ships in out/ for the host side.
     rm -f "$OUT/id_ed25519" "$OUT/id_ed25519.pub"
-    ssh-keygen -q -t ed25519 -N '' -C gatos -f "$OUT/id_ed25519"
-    install -D -m 0600 -o root -g root "$OUT/id_ed25519.pub" "$ROOTFS/root/.ssh/authorized_keys"
+    install -m 0600 "$keys/id_ed25519"     "$OUT/id_ed25519"
+    install -m 0644 "$keys/id_ed25519.pub" "$OUT/id_ed25519.pub"
+    install -D -m 0600 -o root -g root "$keys/id_ed25519.pub" "$ROOTFS/root/.ssh/authorized_keys"
     chmod 0700 "$ROOTFS/root/.ssh"; chmod 0700 "$ROOTFS/root"
 
-    mkdir -p "$ROOTFS/etc/dropbear"
-    chroot "$ROOTFS" /usr/bin/dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >/dev/null
-    # Pin format (D8, consumed by gatOS.Ssh host-key verification in M4):
-    # sha256 hex of the raw ssh-ed25519 public key blob (the base64 payload).
+    # Dropbear host key: convert the committed OpenSSH ed25519 host key into dropbear's
+    # own key format (dropbear cannot read OpenSSH host keys directly).
+    mkdir -p "$ROOTFS/etc/dropbear" "$ROOTFS/tmp"
+    install -m 0600 "$keys/host_ed25519" "$ROOTFS/tmp/host_ed25519.openssh"
+    chroot "$ROOTFS" /usr/bin/dropbearconvert openssh dropbear \
+        /tmp/host_ed25519.openssh /etc/dropbear/dropbear_ed25519_host_key >/dev/null 2>&1 \
+        || die "dropbearconvert could not import guest/keys/host_ed25519 (need the dropbear-convert package)"
+    rm -f "$ROOTFS/tmp/host_ed25519.openssh"
+
+    # Pin format (D8, consumed by gatOS.Ssh host-key verification in M4): sha256 hex of
+    # the raw ssh-ed25519 public key blob. Derive it from the key actually baked in, which
+    # cross-checks the conversion (a bad convert would change the blob and fail the smoke test).
     local blob
     blob="$(chroot "$ROOTFS" /usr/bin/dropbearkey -y -f /etc/dropbear/dropbear_ed25519_host_key \
             | grep '^ssh-ed25519 ' | awk '{print $2}')"
-    [ -n "$blob" ] || die "could not extract dropbear host public key"
+    [ -n "$blob" ] || die "could not read back the dropbear host public key"
     HOST_KEY_SHA256="$(sha256_hex_of_b64 "$blob")"
     echo "$HOST_KEY_SHA256" > "$OUT/host_key_fingerprint.txt"
 }
@@ -358,7 +380,7 @@ main() {
     fetch_bootstrap
     build_rootfs
     configure_rootfs
-    generate_keys
+    install_keys
     build_initramfs
     extract_boot_and_make_image
     write_manifest_and_sums

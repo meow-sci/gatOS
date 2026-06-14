@@ -48,7 +48,10 @@ pinned Alpine 3.24 mirrors — no setup-alpine, no openrc; busybox init runs the
 Artifacts in `guest/out/` (never committed): partitionless-ext4 `base.qcow2` (zstd qcow2),
 `vmlinuz-virt`, trimmed `initramfs-virt` (`features="base virtio ext4"`), `manifest.toml` (the
 host boot contract: kernel cmdline, ssh user/key, host-key pin = sha256 hex of the raw key blob),
-baked ed25519 session keypair, `sha256sums.txt`. Build needs root on Linux (macOS dev: Docker;
+the **static committed** ed25519 session keypair (the SSH keys live in `guest/keys/` and are reused
+by every build/version — the dropbear host key is `dropbearconvert`ed from the committed OpenSSH key —
+so the host-key pin never drifts across rebuilds; loopback-only access makes the committed keys safe),
+`sha256sums.txt`. Build needs root on Linux (macOS dev: Docker;
 both documented in `guest/README.md`); a built-in smoke test (also `--smoke-only`) boots the
 artifacts, checks `ssh 'echo ok'`, **verifies the host-key pin**, and powers off — measured cold
 boot→sshd **5 s under TCG** on the dev Mac. `.github/workflows/guest-image.yml` builds and
@@ -65,8 +68,10 @@ Supporting cast (all `gatOS.Vm/`, all game-free): `GatOsPaths`; `PortAllocator`;
 (bundled `win-x64/` on Windows per D5, PATH + Homebrew prefixes on unix); `GuestManifest`
 (Tomlyn-parsed `manifest.toml` — the host↔guest boot contract); `DiskManager`+`DiskLock`
 (versioned `base-v<N>.qcow2` install, kernel/initrd/manifest/ssh-key under `disks/guest-v<N>/`,
-overlays with **bare relative backing refs**, PID lock files with stale reclaim, never
-`qemu-img commit`); `QemuCommandBuilder` (per-OS accel ladders `whpx|kvm|hvf→tcg`, **non-x64
+all install-once via `CopyIfMissing`; **boots and pins the host key against the *installed* manifest
+read back from `disks/guest-v<N>/`, never the bundled dist copy** — so a re-keyed rebuild of the same
+version can't desync the pin from the already-installed base; overlays with **bare relative backing
+refs**, PID lock files with stale reclaim, never `qemu-img commit`); `QemuCommandBuilder` (per-OS accel ladders `whpx|kvm|hvf→tcg`, **non-x64
 hosts collapse to tcg**, `-cpu` per accel — `host` on KVM/HVF, a **named model (`Haswell`) on
 WHPX** (WHPX triple-faults the guest on `-cpu host`/`max` — "Unexpected VP exit code 4", confirmed
 on a Raptor Lake i9-13900K; any named model boots), `max` on TCG; `cpu_model` config overrides —

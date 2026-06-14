@@ -55,21 +55,29 @@ public sealed partial class DiskManager : IDiskManager
                     $"Guest assets are missing ('{manifestSource}' not found). "
                     + "The mod install is incomplete: re-install gatOS, or on a dev checkout run guest/fetch-guest.sh.");
 
-            var manifest = GuestManifest.Load(manifestSource);
+            // The manifest bundled with the mod ("dist") tells us what to install. But the base
+            // image, kernel/initrd, SSH key and manifest are each installed once per version
+            // (CopyIfMissing) and never overwritten — so a later mod build that ships the SAME
+            // guest version with a different host key would leave the dist manifest's pin drifted
+            // away from the already-installed base image, breaking the host-key check. Always
+            // boot and PIN against the *installed* manifest (read back below), which is the one
+            // matching the installed base + SSH key, never the possibly-newer dist copy.
+            var distManifest = GuestManifest.Load(manifestSource);
             var disksDir = GatOsPaths.DisksDir;
-            var versionDir = Path.Combine(disksDir, $"guest-v{manifest.GuestVersion}");
+            var versionDir = Path.Combine(disksDir, $"guest-v{distManifest.GuestVersion}");
             Directory.CreateDirectory(versionDir);
 
-            var basePath = Path.Combine(disksDir, BaseImageName(manifest.GuestVersion));
-            CopyIfMissing(Path.Combine(assets, manifest.BaseImage), basePath);
+            var basePath = Path.Combine(disksDir, BaseImageName(distManifest.GuestVersion));
+            CopyIfMissing(Path.Combine(assets, distManifest.BaseImage), basePath);
 
-            var kernelPath = CopyIfMissing(Path.Combine(assets, manifest.Kernel), Path.Combine(versionDir, manifest.Kernel));
-            var initrdPath = CopyIfMissing(Path.Combine(assets, manifest.Initrd), Path.Combine(versionDir, manifest.Initrd));
-            CopyIfMissing(manifestSource, Path.Combine(versionDir, "manifest.toml"));
-            var keyPath = CopyIfMissing(Path.Combine(assets, manifest.SshKey), Path.Combine(versionDir, manifest.SshKey));
+            var kernelPath = CopyIfMissing(Path.Combine(assets, distManifest.Kernel), Path.Combine(versionDir, distManifest.Kernel));
+            var initrdPath = CopyIfMissing(Path.Combine(assets, distManifest.Initrd), Path.Combine(versionDir, distManifest.Initrd));
+            var installedManifestPath = CopyIfMissing(manifestSource, Path.Combine(versionDir, "manifest.toml"));
+            var keyPath = CopyIfMissing(Path.Combine(assets, distManifest.SshKey), Path.Combine(versionDir, distManifest.SshKey));
             if (!OperatingSystem.IsWindows())
                 File.SetUnixFileMode(keyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
 
+            var manifest = GuestManifest.Load(installedManifestPath);
             ModLog.Log.Info($"Guest v{manifest.GuestVersion} (Alpine {manifest.AlpineVersion}) installed under {disksDir}");
             return _installed = new InstalledGuest(manifest, basePath, kernelPath, initrdPath, keyPath);
         }
