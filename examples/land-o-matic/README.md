@@ -39,7 +39,12 @@ Built incrementally by milestone (see the plan §12):
   G-limit caps the deceleration on **both** legs. Validated by a host closed-loop sim that exercises the
   full **braking → terminal → touchdown** sequence (soft landing, peak-g ≤ G-limit, fuel to spare).
   ⚠️ the in-KSA flight pass is still pending.
-- M6+ — trajectory canvas, infeasible/abort/warp/stale UX, successive convexification, atmosphere.
+- **M6 — polish & robustness** ✅ — the **trajectory canvas** (downrange × altitude: planned path,
+  glide-slope cone, pad, current marker), **pause / time-warp / stale-telemetry holds** (guidance
+  suspended with no control writes + a prominent banner), and the optional **exact rotating-frame**
+  (Coriolis/centrifugal) G-FOLD dynamics. ⚠️ the in-game validation pass (vacuum + atmospheric body) is
+  deferred, like the rest of the repo's in-game checks.
+- M7 — atmosphere/drag term (descent model), aero-entry hooks.
 
 ## Build & run (in-guest)
 

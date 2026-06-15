@@ -179,6 +179,7 @@ fn spawn_worker(
             let mut guidance = None;
             let mut status = None;
             let mut hold = None;
+            let mut plan = None;
 
             if let (Some(tel), Some(body)) = (tick.telemetry.as_ref(), tick.body.as_ref()) {
                 // Robustness (plan §9.3): never command during pause / time-warp / stale telemetry.
@@ -217,10 +218,12 @@ fn spawn_worker(
                         };
                         last_guidance = Some(gv);
                         guidance = Some(gv);
+                        plan = autopilot.last_plan.clone();
                     }
                 } else {
                     // Held: keep the last plan visible, write no controls this tick.
                     guidance = last_guidance;
+                    plan = autopilot.last_plan.clone();
                 }
             } else {
                 spec = None; // lost the vessel; re-read engines when it returns
@@ -229,7 +232,7 @@ fn spawn_worker(
                 stale_count = 0;
             }
 
-            if tx.send(FromWorker::Tick { tick, guidance, status, hold }).is_err() {
+            if tx.send(FromWorker::Tick { tick, guidance, status, hold, plan }).is_err() {
                 return;
             }
 

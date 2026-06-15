@@ -115,6 +115,19 @@ pub struct UpfgStatus {
     pub iters: u32,
 }
 
+/// The planned descent projected to the **downrange × altitude** plane for the trajectory canvas
+/// (plan §9.1). Downrange is the horizontal distance from the pad (m); altitude is height above the site
+/// (m). Both the path and the current marker live in this 2-D plane so the HUD can draw them directly.
+#[derive(Debug, Clone, Default)]
+pub struct PlanView {
+    /// Planned nodes `(downrange, altitude)`, pad at the origin.
+    pub path: Vec<(f64, f64)>,
+    /// The vehicle's current `(downrange, altitude)`.
+    pub current: (f64, f64),
+    /// `cot(γ_gs)` — the glide-slope cone the canvas draws from the pad.
+    pub glide_slope_cot: f64,
+}
+
 /// One control command for the worker to apply.
 #[derive(Debug, Clone, Copy)]
 pub struct Command {
@@ -151,6 +164,8 @@ pub struct Autopilot {
     terminal_latched: bool,
     /// The most recent solved trajectory (for the HUD).
     pub last: Option<gfold::Trajectory>,
+    /// The most recent planned descent in the downrange×altitude plane (for the trajectory canvas).
+    pub last_plan: Option<PlanView>,
 }
 
 impl Autopilot {
@@ -164,6 +179,7 @@ impl Autopilot {
             ignition_ut: None,
             terminal_latched: false,
             last: None,
+            last_plan: None,
         }
     }
 
@@ -190,9 +206,11 @@ impl Autopilot {
     /// Compute the control command for the current state.
     pub fn step(&mut self, state: &State, spec: &VehicleSpec) -> Command {
         if self.aborted {
+            self.last_plan = None;
             return release(Phase::Abort);
         }
         if !self.armed {
+            self.last_plan = None;
             return release(Phase::Idle);
         }
 
@@ -258,6 +276,11 @@ impl Autopilot {
             .map(|n| n.thrust_accel.norm() / G0)
             .fold(0.0, f64::max);
         let predicted_mass = traj.final_mass();
+        self.last_plan = Some(PlanView {
+            path: traj.nodes.iter().map(|n| (n.r.x.hypot(n.r.y), n.r.z)).collect(),
+            current: (r0.x.hypot(r0.y), r0.z),
+            glide_slope_cot: 1.0 / self.inputs.glide_slope_deg.to_radians().tan(),
+        });
         self.last = Some(traj);
 
         Command {
@@ -278,6 +301,16 @@ impl Autopilot {
     fn terminal_step(&mut self, state: &State, spec: &VehicleSpec, target_cci: Vec3, v_surf: Vec3) -> Command {
         let up = state.pos_cci.normalize();
         let gravity = state.mu / state.pos_cci.norm_squared();
+
+        // Canvas plan: the remaining straight descent from here to the pad.
+        let basis = frames::enu_basis(target_cci);
+        let r_enu = frames::to_enu(state.pos_cci - target_cci, &basis);
+        let cur = (r_enu.x.hypot(r_enu.y), r_enu.z.max(0.0));
+        self.last_plan = Some(PlanView {
+            path: vec![cur, (0.0, 0.0)],
+            current: cur,
+            glide_slope_cot: 1.0 / self.inputs.glide_slope_deg.to_radians().tan(),
+        });
 
         let stage = upfg::VehicleStage {
             thrust: spec.thrust_max,

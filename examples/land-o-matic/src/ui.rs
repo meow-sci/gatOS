@@ -3,13 +3,16 @@
 //! backgrounds unset (purrTTY shows the game through) and colors foregrounds only. (Plan §9; the
 //! trajectory canvas is a later polish item.)
 
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
+use ratatui::widgets::canvas::{Canvas, Line as CanvasLine, Points};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::app::App;
-use crate::guidance::autopilot::Phase;
+use crate::guidance::autopilot::{Phase, PlanView};
 use crate::sim::Telemetry;
 
 const KEY: Color = Color::DarkGray;
@@ -70,7 +73,88 @@ pub fn render(f: &mut Frame, app: &App) {
         );
         lines.insert(1, Line::from(""));
     }
+
+    // Split: numeric HUD on the left, the trajectory canvas on the right when there's room and a plan.
+    if let Some(plan) = app.plan.as_ref().filter(|p| p.path.len() >= 2) {
+        if inner.width >= 64 && inner.height >= 8 {
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Length(46), Constraint::Min(16)])
+                .split(inner);
+            f.render_widget(Paragraph::new(lines), cols[0]);
+            render_trajectory(f, cols[1], plan);
+            return;
+        }
+    }
     f.render_widget(Paragraph::new(lines), inner);
+}
+
+/// The downrange × altitude trajectory plot (plan §9.1): the planned path, the glide-slope cone from the
+/// pad, the pad at the origin, and the current-position marker. Backgrounds unset (transparent rule);
+/// only foreground colors.
+fn render_trajectory(f: &mut Frame, area: Rect, plan: &PlanView) {
+    if area.width < 8 || area.height < 4 {
+        return;
+    }
+    let max_dr = plan
+        .path
+        .iter()
+        .map(|p| p.0)
+        .chain(std::iter::once(plan.current.0))
+        .fold(1.0_f64, f64::max);
+    let max_alt = plan
+        .path
+        .iter()
+        .map(|p| p.1)
+        .chain(std::iter::once(plan.current.1))
+        .fold(1.0_f64, f64::max);
+    let xb = [-(max_dr * 0.05), max_dr * 1.1];
+    let yb = [-(max_alt * 0.05), max_alt * 1.1];
+    let path = plan.path.clone();
+    let current = plan.current;
+    let gs_cot = plan.glide_slope_cot;
+
+    let canvas = Canvas::default()
+        .block(
+            Block::default()
+                .borders(Borders::LEFT)
+                .title(Span::styled(" trajectory \u{2193}", Style::default().fg(KEY))),
+        )
+        .marker(Marker::Braille)
+        .x_bounds(xb)
+        .y_bounds(yb)
+        .paint(move |ctx| {
+            // Glide-slope cone from the pad: altitude = downrange / cot(γ).
+            if gs_cot > 0.0 {
+                ctx.draw(&CanvasLine {
+                    x1: 0.0,
+                    y1: 0.0,
+                    x2: xb[1],
+                    y2: xb[1] / gs_cot,
+                    color: Color::DarkGray,
+                });
+            }
+            // Planned descent path.
+            for w in path.windows(2) {
+                ctx.draw(&CanvasLine {
+                    x1: w[0].0,
+                    y1: w[0].1,
+                    x2: w[1].0,
+                    y2: w[1].1,
+                    color: Color::Blue,
+                });
+            }
+            // Pad at the origin, then the current-position marker on top.
+            ctx.draw(&Points {
+                coords: &[(0.0, 0.0)],
+                color: Color::LightGreen,
+            });
+            ctx.draw(&Points {
+                coords: &[current],
+                color: Color::LightCyan,
+            });
+        });
+    f.render_widget(canvas, area);
 }
 
 fn state_lines(app: &App, t: &Telemetry) -> Vec<Line<'static>> {
@@ -313,6 +397,7 @@ mod tests {
             guidance: None,
             status: None,
             hold: None,
+            plan: None,
         }
     }
 
@@ -341,9 +426,35 @@ mod tests {
             guidance: None,
             status: None,
             hold: Some("TIME-WARP 4\u{d7} \u{2014} guidance held".into()),
+            plan: None,
         });
         let text = render_to_text(&a, 76, 24);
         assert!(text.contains("TIME-WARP"));
+    }
+
+    #[test]
+    fn renders_trajectory_canvas() {
+        use crate::guidance::autopilot::PlanView;
+        let mut a = app();
+        a.apply(FromWorker::Tick {
+            tick: Tick {
+                connected: true,
+                telemetry: Some(telemetry()),
+                body: None,
+            },
+            guidance: None,
+            status: None,
+            hold: None,
+            plan: Some(PlanView {
+                path: vec![(500.0, 1500.0), (200.0, 600.0), (0.0, 0.0)],
+                current: (500.0, 1500.0),
+                glide_slope_cot: 1.7,
+            }),
+        });
+        // Wide enough to trigger the split; must not panic and must show the canvas title.
+        let text = render_to_text(&a, 90, 24);
+        assert!(text.contains("trajectory"));
+        assert!(text.contains("Kerbal-1")); // the numeric HUD still renders alongside
     }
 
     #[test]

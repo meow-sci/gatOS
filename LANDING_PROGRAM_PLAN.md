@@ -21,13 +21,12 @@ of PEGAS's "watch as I change the G-Limit and the rocket recalculates."
 
 ## 0. How to read this / status
 
-- **M0–M5 built** (`examples/land-o-matic/`, lib + bin, host-tested green): read-only HUD, the
+- **M0–M6 built** (`examples/land-o-matic/`, lib + bin, host-tested green): read-only HUD, the
   reference-frame + KSA-quaternion core, the G-FOLD SOCP (Clarabel), the closed-loop MPC that flies the
-  vessel, the UPFG terminal-guidance port (CSE conic propagator + steering, run directly in CCI), and
-  the **hybrid handoff** — G-FOLD braking for the high divert, UPFG terminal for the precise touchdown,
-  with the G-limit capping deceleration on both legs (host closed-loop braking→terminal→touchdown sim).
-  The in-KSA flight pass and M6+ (trajectory canvas, robustness/UX, successive convexification,
-  atmosphere) remain. As-built deviations worth noting:
+  vessel, the UPFG terminal-guidance port (CSE conic propagator + steering, run directly in CCI), the
+  **hybrid handoff** (G-FOLD braking + UPFG terminal, G-limit capping both legs), and **M6 polish**: the
+  trajectory canvas, pause/warp/stale guidance holds, and the optional exact rotating-frame dynamics.
+  The in-KSA flight pass and M7 (atmosphere/drag) remain. As-built deviations worth noting:
   - **G-FOLD:** the SOCP is non-dimensionalized for solver conditioning; node 0 is bounded (the
     reference's unbounded first node injects a nonphysical impulse); the single-shot Taylor bound is
     valid for G-limits near the fuel-optimal (≈[2.5 g, ∞) on the test lander) — successive

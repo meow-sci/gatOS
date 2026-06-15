@@ -6,7 +6,7 @@ use std::sync::mpsc::Sender;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::guidance::autopilot::{Phase, UpfgStatus};
+use crate::guidance::autopilot::{Phase, PlanView, UpfgStatus};
 use crate::guidance::frames;
 use crate::guidance::ksa_quat::{self, Quat};
 use crate::guidance::Vec3;
@@ -44,6 +44,8 @@ pub enum FromWorker {
         /// A prominent hold banner (paused / time-warp / stale telemetry) — guidance is suspended and no
         /// controls are written while this is set.
         hold: Option<String>,
+        /// The planned descent for the trajectory canvas.
+        plan: Option<PlanView>,
     },
 }
 
@@ -60,6 +62,8 @@ pub struct App {
     pub guidance: Option<GuidanceView>,
     /// A prominent hold banner (paused / warp / stale), if active.
     pub hold: Option<String>,
+    /// The planned descent for the trajectory canvas.
+    pub plan: Option<PlanView>,
 
     // ---- pilot levers (mirrors of the worker's autopilot inputs, for display + adjustment) ----
     pub g_limit: f64,
@@ -80,6 +84,7 @@ impl App {
             derived: None,
             guidance: None,
             hold: None,
+            plan: None,
             g_limit: crate::guidance::autopilot::Inputs::default().g_limit,
             status: "connecting\u{2026}".to_string(),
             status_err: false,
@@ -93,6 +98,7 @@ impl App {
                 guidance,
                 status,
                 hold,
+                plan,
             } => {
                 self.connected = tick.connected;
                 self.telemetry = tick.telemetry;
@@ -100,6 +106,7 @@ impl App {
                 self.derived = self.telemetry.as_ref().map(|t| derive(t, self.body));
                 self.guidance = guidance;
                 self.hold = hold;
+                self.plan = plan;
                 if let Some((msg, err)) = status {
                     self.status = msg;
                     self.status_err = err;
@@ -224,6 +231,7 @@ mod tests {
             guidance: None,
             status: None,
             hold: None,
+            plan: None,
         }
     }
 
