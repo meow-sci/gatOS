@@ -41,6 +41,9 @@ pub enum FromWorker {
         guidance: Option<GuidanceView>,
         /// A control-write status line (message, is_error), if anything notable happened this tick.
         status: Option<(String, bool)>,
+        /// A prominent hold banner (paused / time-warp / stale telemetry) — guidance is suspended and no
+        /// controls are written while this is set.
+        hold: Option<String>,
     },
 }
 
@@ -55,6 +58,8 @@ pub struct App {
     pub body: Option<Body>,
     pub derived: Option<Derived>,
     pub guidance: Option<GuidanceView>,
+    /// A prominent hold banner (paused / warp / stale), if active.
+    pub hold: Option<String>,
 
     // ---- pilot levers (mirrors of the worker's autopilot inputs, for display + adjustment) ----
     pub g_limit: f64,
@@ -74,6 +79,7 @@ impl App {
             body: None,
             derived: None,
             guidance: None,
+            hold: None,
             g_limit: crate::guidance::autopilot::Inputs::default().g_limit,
             status: "connecting\u{2026}".to_string(),
             status_err: false,
@@ -86,12 +92,14 @@ impl App {
                 tick,
                 guidance,
                 status,
+                hold,
             } => {
                 self.connected = tick.connected;
                 self.telemetry = tick.telemetry;
                 self.body = tick.body;
                 self.derived = self.telemetry.as_ref().map(|t| derive(t, self.body));
                 self.guidance = guidance;
+                self.hold = hold;
                 if let Some((msg, err)) = status {
                     self.status = msg;
                     self.status_err = err;
@@ -215,6 +223,7 @@ mod tests {
             },
             guidance: None,
             status: None,
+            hold: None,
         }
     }
 

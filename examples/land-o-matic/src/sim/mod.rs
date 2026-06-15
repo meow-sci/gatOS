@@ -182,7 +182,8 @@ pub fn read_body(src: &dyn Source, parent: &str) -> Option<Body> {
     })
 }
 
-fn read_scalar(src: &dyn Source, path: &str) -> Option<f64> {
+/// Reads a single `/sim` scalar field (leading float), or `None` if absent/unparsable.
+pub fn read_scalar(src: &dyn Source, path: &str) -> Option<f64> {
     src.read(path).ok().and_then(|s| parse_scalar(&s))
 }
 

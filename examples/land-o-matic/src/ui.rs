@@ -47,7 +47,7 @@ pub fn render(f: &mut Frame, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let lines = match &app.telemetry {
+    let mut lines = match &app.telemetry {
         Some(t) => state_lines(app, t),
         None => vec![
             Line::from(Span::styled(
@@ -58,6 +58,18 @@ pub fn render(f: &mut Frame, app: &App) {
             keys_line(),
         ],
     };
+    // A prominent hold banner (paused / warp / stale) — a status bar, so a fill is allowed (transparent
+    // rule: bars may set a background).
+    if let Some(h) = &app.hold {
+        lines.insert(
+            0,
+            Line::from(Span::styled(
+                format!(" \u{29c8} {h} "),
+                Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD),
+            )),
+        );
+        lines.insert(1, Line::from(""));
+    }
     f.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -300,6 +312,7 @@ mod tests {
             },
             guidance: None,
             status: None,
+            hold: None,
         }
     }
 
@@ -314,6 +327,23 @@ mod tests {
         assert!(text.contains("1.24 km"));
         assert!(text.contains("guidance"));
         assert!(text.contains("engage"));
+    }
+
+    #[test]
+    fn renders_hold_banner() {
+        let mut a = app();
+        a.apply(FromWorker::Tick {
+            tick: Tick {
+                connected: true,
+                telemetry: Some(telemetry()),
+                body: None,
+            },
+            guidance: None,
+            status: None,
+            hold: Some("TIME-WARP 4\u{d7} \u{2014} guidance held".into()),
+        });
+        let text = render_to_text(&a, 76, 24);
+        assert!(text.contains("TIME-WARP"));
     }
 
     #[test]

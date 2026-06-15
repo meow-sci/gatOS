@@ -170,35 +170,66 @@ fn spawn_worker(
     thread::spawn(move || {
         let mut autopilot = Autopilot::new(Inputs::default());
         let mut spec: Option<VehicleSpec> = None;
+        let mut prev_seq: Option<u64> = None;
+        let mut stale_count = 0u32;
+        let mut last_guidance: Option<GuidanceView> = None;
 
         loop {
             let tick = sim::poll(&*source);
             let mut guidance = None;
             let mut status = None;
+            let mut hold = None;
 
             if let (Some(tel), Some(body)) = (tick.telemetry.as_ref(), tick.body.as_ref()) {
-                if spec.is_none() {
-                    spec = read_spec(&*source, tel);
-                }
-                if let Some(sp) = spec {
-                    let lon = sim::read_longitude(&*source).unwrap_or(0.0);
-                    let state = build_state(tel, body, lon);
-                    let cmd = autopilot.step(&state, &sp);
-                    status = apply_command(&*source, &cmd);
-                    guidance = Some(GuidanceView {
-                        phase: cmd.phase,
-                        throttle: cmd.throttle,
-                        tgo: cmd.tgo,
-                        predicted_mass: cmd.predicted_mass,
-                        peak_g: cmd.peak_g,
-                        upfg: cmd.upfg,
-                    });
+                // Robustness (plan §9.3): never command during pause / time-warp / stale telemetry.
+                let paused = sim::read_scalar(&*source, "time/sim_dt") == Some(0.0);
+                let warping = tel.warp > 1.0;
+                let stalled = prev_seq == Some(tel.seq) && !paused;
+                stale_count = if stalled { stale_count + 1 } else { 0 };
+                prev_seq = Some(tel.seq);
+
+                hold = if paused {
+                    Some("PAUSED \u{2014} guidance held".to_string())
+                } else if warping {
+                    Some(format!("TIME-WARP {:.0}\u{d7} \u{2014} guidance held (press a to abort)", tel.warp))
+                } else if stale_count >= 3 {
+                    Some("STALE telemetry \u{2014} guidance held".to_string())
+                } else {
+                    None
+                };
+
+                if hold.is_none() {
+                    if spec.is_none() {
+                        spec = read_spec(&*source, tel);
+                    }
+                    if let Some(sp) = spec {
+                        let lon = sim::read_longitude(&*source).unwrap_or(0.0);
+                        let state = build_state(tel, body, lon);
+                        let cmd = autopilot.step(&state, &sp);
+                        status = apply_command(&*source, &cmd);
+                        let gv = GuidanceView {
+                            phase: cmd.phase,
+                            throttle: cmd.throttle,
+                            tgo: cmd.tgo,
+                            predicted_mass: cmd.predicted_mass,
+                            peak_g: cmd.peak_g,
+                            upfg: cmd.upfg,
+                        };
+                        last_guidance = Some(gv);
+                        guidance = Some(gv);
+                    }
+                } else {
+                    // Held: keep the last plan visible, write no controls this tick.
+                    guidance = last_guidance;
                 }
             } else {
                 spec = None; // lost the vessel; re-read engines when it returns
+                last_guidance = None;
+                prev_seq = None;
+                stale_count = 0;
             }
 
-            if tx.send(FromWorker::Tick { tick, guidance, status }).is_err() {
+            if tx.send(FromWorker::Tick { tick, guidance, status, hold }).is_err() {
                 return;
             }
 
