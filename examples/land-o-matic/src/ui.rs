@@ -80,6 +80,22 @@ fn state_lines(app: &App, t: &Telemetry) -> Vec<Line<'static>> {
         kv("vel cci", &vec3(t.vel_cci)),
     ];
 
+    if let Some(d) = &app.derived {
+        lines.push(kv2(
+            "v/h spd",
+            &format!("v {:+.1} m/s", d.vertical_speed),
+            "",
+            &format!("h {:.1} m/s   g {:.2} m/s\u{b2}", d.horizontal_speed, d.gravity),
+        ));
+        lines.push(kv(
+            "pointing",
+            &format!(
+                "pitch {:.0}\u{b0} from up   retro err {:.1}\u{b0}",
+                d.pitch_from_up_deg, d.retro_error_deg
+            ),
+        ));
+    }
+
     if let Some(b) = &app.body {
         lines.push(kv(
             "body",

@@ -12,10 +12,6 @@
 //! the active vessel once per `--interval`, while the main thread runs the render + input loop, so the
 //! UI never blocks on I/O. (M0 is read-only; control writes + guidance arrive in M3.)
 
-mod app;
-mod sim;
-mod ui;
-
 use std::io::{self, Stdout};
 use std::path::Path;
 use std::sync::mpsc::{self, Sender};
@@ -30,8 +26,9 @@ use ratatui::crossterm::terminal::{
 };
 use ratatui::Terminal;
 
-use app::App;
-use sim::{FromWorker, FsSource, HttpSource, Source};
+use land_o_matic::app::App;
+use land_o_matic::sim::{self, FromWorker, FsSource, HttpSource, Source};
+use land_o_matic::ui;
 
 type Tui = Terminal<CrosstermBackend<Stdout>>;
 
