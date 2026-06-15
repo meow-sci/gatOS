@@ -1,0 +1,32 @@
+[package]
+name = "land-o-matic"
+version = "0.1.0"
+edition = "2021"
+description = "ratatui powered-descent guidance (UPFG + G-FOLD) over the gatOS /sim filesystem"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "land-o-matic"
+path = "src/main.rs"
+
+[dependencies]
+# ratatui re-exports crossterm, so we use ratatui::crossterm for events + backend — the event and
+# backend crate versions then can never drift (the convention across the sibling Rust examples).
+ratatui = "0.29"
+# Tiny blocking HTTP client for the optional --url (HTTP /v1/fs) source; no TLS feature — the gatOS
+# API is plain http:// over slirp. The default source reads the /sim mount directly with std::fs.
+ureq = { version = "2", default-features = false }
+# Telemetry parsing: /sim/vessels/active/telemetry is one JSON object (Formats.VesselTelemetry).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# nalgebra (added M1): f64 vectors/quaternions for the guidance math.
+nalgebra = "0.34"
+# clarabel (added M2): native-Rust conic solver for the G-FOLD SOCP. DEFAULT FEATURES ONLY — never
+# enable sdp/blas/lapack/mkl/openblas (they pull C/Fortran and break the musl static build).
+clarabel = "0.11"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
