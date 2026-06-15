@@ -16,12 +16,28 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-/// A read interface over the active vessel's `/sim` fields. Implementations run on the worker thread
-/// only. (The control-write half — `write` + the errno vocabulary — lands in M3 with guidance.)
+/// The outcome of a failed control write — an errno-ish tag + message (the frozen control-file errno
+/// vocabulary: `EINVAL`, `EACCES`, `EBUSY`, …), surfaced on the status line.
+#[derive(Debug, Clone)]
+pub struct CmdError {
+    pub errno: String,
+    pub message: String,
+}
+
+/// A read/write interface over the active vessel's `/sim` fields. Implementations run on the worker
+/// thread only.
 pub trait Source: Send {
     /// Reads a field's current value (trailing newline trimmed). `Err` carries a short tag
     /// (e.g. `"ENOENT"`).
     fn read(&self, path: &str) -> Result<String, String>;
+
+    /// Writes `value` as one newline-terminated write (the `echo value > file` shape), so a control
+    /// file actuates and a failure carries the real errno.
+    fn write(&self, path: &str, value: &str) -> Result<(), CmdError>;
+
+    /// Lists the child names of a directory (for enumerating `engines/*`). Empty if unsupported
+    /// (the HTTP backend) or the directory is absent.
+    fn list(&self, path: &str) -> Vec<String>;
 
     /// A short label for the status line (e.g. `fs:/sim` or the HTTP base URL).
     fn label(&self) -> String;
@@ -170,6 +186,51 @@ fn read_scalar(src: &dyn Source, path: &str) -> Option<f64> {
     src.read(path).ok().and_then(|s| parse_scalar(&s))
 }
 
+/// Aggregated propulsion spec from the active vessel's `engines/*` (plan §4.1): summed thrust,
+/// thrust-weighted Isp, and the most-restrictive throttle floor. `None` if no engines are readable.
+#[derive(Debug, Clone, Copy)]
+pub struct EngineAgg {
+    pub thrust_max: f64,
+    pub isp: f64,
+    pub throttle_min: f64,
+}
+
+pub fn read_engines(src: &dyn Source) -> Option<EngineAgg> {
+    let mut total_thrust = 0.0;
+    let mut total_mdot = 0.0; // Σ thrust_i/Isp_i  (the g₀ in mdot cancels in the combined Isp)
+    let mut throttle_min = 0.0f64;
+    let mut count = 0;
+    for name in src.list("vessels/active/engines") {
+        let base = format!("vessels/active/engines/{name}");
+        if let (Some(t), Some(isp)) = (
+            read_scalar(src, &format!("{base}/vac_thrust")),
+            read_scalar(src, &format!("{base}/isp")),
+        ) {
+            if t > 0.0 && isp > 0.0 {
+                total_thrust += t;
+                total_mdot += t / isp;
+                throttle_min =
+                    throttle_min.max(read_scalar(src, &format!("{base}/min_throttle")).unwrap_or(0.0));
+                count += 1;
+            }
+        }
+    }
+    if count == 0 || total_mdot <= 0.0 {
+        return None;
+    }
+    Some(EngineAgg {
+        thrust_max: total_thrust,
+        isp: total_thrust / total_mdot,
+        throttle_min,
+    })
+}
+
+/// The active vessel's body-fixed longitude (deg), read separately (it isn't in the telemetry doc); used
+/// to recover the body's rotation angle so a ground-fixed target stays put.
+pub fn read_longitude(src: &dyn Source) -> Option<f64> {
+    read_scalar(src, "vessels/active/position/lon")
+}
+
 /// Parses the leading float of a `/sim` scalar (`G9` doubles). `"1"`, `"0.42"`, `"-0"` all parse.
 pub fn parse_scalar(value: &str) -> Option<f64> {
     value.split_whitespace().next()?.parse::<f64>().ok()
@@ -194,6 +255,25 @@ impl Source for FsSource {
         fs::read_to_string(self.root.join(path))
             .map(|s| s.trim_end_matches(['\n', '\r']).to_string())
             .map_err(|e| errno_name(e.raw_os_error()))
+    }
+
+    fn write(&self, path: &str, value: &str) -> Result<(), CmdError> {
+        // One newline-terminated write — the control file actuates on the newline and a failed write(2)
+        // surfaces the real errno via the io::Error.
+        let payload = format!("{}\n", value.trim_end_matches(['\n', '\r']));
+        fs::write(self.root.join(path), payload).map_err(|e| CmdError {
+            errno: errno_name(e.raw_os_error()),
+            message: e.to_string(),
+        })
+    }
+
+    fn list(&self, path: &str) -> Vec<String> {
+        fs::read_dir(self.root.join(path))
+            .map(|rd| {
+                rd.filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn label(&self) -> String {
@@ -253,18 +333,31 @@ impl Source for HttpSource {
         }
     }
 
+    fn write(&self, path: &str, value: &str) -> Result<(), CmdError> {
+        match self
+            .agent
+            .post(&format!("{}/fs/{path}", self.base))
+            .send_string(value)
+        {
+            Ok(_) => Ok(()),
+            Err(ureq::Error::Status(code, resp)) => Err(CmdError {
+                errno: format!("HTTP{code}"),
+                message: resp.into_string().unwrap_or_else(|_| "write failed".into()),
+            }),
+            Err(e) => Err(CmdError {
+                errno: "ECONN".into(),
+                message: e.to_string(),
+            }),
+        }
+    }
+
+    fn list(&self, _path: &str) -> Vec<String> {
+        Vec::new() // the HTTP /v1/fs mirror does not enumerate directories
+    }
+
     fn label(&self) -> String {
         self.base.clone()
     }
-}
-
-// ---- worker channel protocol --------------------------------------------------------------------
-
-/// A reply from the worker to the UI thread. (Grows with guidance solution + write-result variants in
-/// M3.)
-pub enum FromWorker {
-    /// The latest poll of the active vessel.
-    Tick(Tick),
 }
 
 #[cfg(test)]

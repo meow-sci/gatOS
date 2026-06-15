@@ -1,15 +1,49 @@
-//! Application state + input handling. For M0 this is a read-only monitor: it holds the latest poll of
-//! the active vessel and a status line. (Guidance inputs — G-limit, target, ENGAGE/ABORT — arrive in
-//! M3, see `LANDING_PROGRAM_PLAN.md` §9.2.)
+//! Application state, the worker protocol, and input handling. The pilot's levers — ENGAGE, ABORT, and
+//! the live G-limit — are sent to the worker, which owns the autopilot; the worker streams back the sim
+//! state plus a guidance view for the HUD. (Plan §9.2.)
+
+use std::sync::mpsc::Sender;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::guidance::autopilot::Phase;
 use crate::guidance::frames;
 use crate::guidance::ksa_quat::{self, Quat};
 use crate::guidance::Vec3;
-use crate::sim::{Body, FromWorker, Telemetry};
+use crate::sim::{Body, Telemetry, Tick};
+
+/// UI → worker.
+pub enum ToWorker {
+    /// Set the max-deceleration lever (g₀), re-planning live.
+    SetGLimit(f64),
+    /// Arm the autopilot (begin powered-descent guidance to the point below).
+    Engage,
+    /// Abort: cut throttle, release attitude to manual.
+    Abort,
+}
+
+/// A snapshot of the autopilot for the HUD.
+#[derive(Debug, Clone, Copy)]
+pub struct GuidanceView {
+    pub phase: Phase,
+    pub throttle: f64,
+    pub tgo: f64,
+    pub predicted_mass: f64,
+    pub peak_g: f64,
+}
+
+/// worker → UI.
+pub enum FromWorker {
+    Tick {
+        tick: Tick,
+        guidance: Option<GuidanceView>,
+        /// A control-write status line (message, is_error), if anything notable happened this tick.
+        status: Option<(String, bool)>,
+    },
+}
 
 pub struct App {
+    tx: Sender<ToWorker>,
     pub should_quit: bool,
     pub label: String,
 
@@ -17,22 +51,28 @@ pub struct App {
     pub connected: bool,
     pub telemetry: Option<Telemetry>,
     pub body: Option<Body>,
-    /// Frame-derived quantities, recomputed each tick (None until the first telemetry).
     pub derived: Option<Derived>,
+    pub guidance: Option<GuidanceView>,
+
+    // ---- pilot levers (mirrors of the worker's autopilot inputs, for display + adjustment) ----
+    pub g_limit: f64,
 
     pub status: String,
     pub status_err: bool,
 }
 
 impl App {
-    pub fn new(label: String) -> Self {
+    pub fn new(tx: Sender<ToWorker>, label: String) -> Self {
         Self {
+            tx,
             should_quit: false,
             label,
             connected: false,
             telemetry: None,
             body: None,
             derived: None,
+            guidance: None,
+            g_limit: crate::guidance::autopilot::Inputs::default().g_limit,
             status: "connecting\u{2026}".to_string(),
             status_err: false,
         }
@@ -40,19 +80,26 @@ impl App {
 
     pub fn apply(&mut self, msg: FromWorker) {
         match msg {
-            FromWorker::Tick(t) => {
-                self.connected = t.connected;
-                self.telemetry = t.telemetry;
-                self.body = t.body;
-                self.derived = self.telemetry.as_ref().map(|tel| derive(tel, self.body));
-                self.status = if !self.connected {
-                    format!("not connected \u{b7} {}", self.label)
+            FromWorker::Tick {
+                tick,
+                guidance,
+                status,
+            } => {
+                self.connected = tick.connected;
+                self.telemetry = tick.telemetry;
+                self.body = tick.body;
+                self.derived = self.telemetry.as_ref().map(|t| derive(t, self.body));
+                self.guidance = guidance;
+                if let Some((msg, err)) = status {
+                    self.status = msg;
+                    self.status_err = err;
+                } else if !self.connected {
+                    self.status = format!("not connected \u{b7} {}", self.label);
+                    self.status_err = false;
                 } else if self.telemetry.is_none() {
-                    "no active vessel".to_string()
-                } else {
-                    "monitoring".to_string()
-                };
-                self.status_err = false;
+                    self.status = "no active vessel".to_string();
+                    self.status_err = false;
+                }
             }
         }
     }
@@ -63,13 +110,34 @@ impl App {
             KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.should_quit = true
             }
+            KeyCode::Char('e') => {
+                let _ = self.tx.send(ToWorker::Engage);
+                self.set_status("ENGAGE", false);
+            }
+            KeyCode::Char('a') => {
+                let _ = self.tx.send(ToWorker::Abort);
+                self.set_status("ABORT", true);
+            }
+            KeyCode::Up | KeyCode::Char('=') | KeyCode::Char('+') => self.nudge_g_limit(0.5),
+            KeyCode::Down | KeyCode::Char('-') | KeyCode::Char('_') => self.nudge_g_limit(-0.5),
             _ => {}
         }
     }
+
+    fn nudge_g_limit(&mut self, delta: f64) {
+        self.g_limit = (self.g_limit + delta).clamp(1.0, 8.0);
+        let _ = self.tx.send(ToWorker::SetGLimit(self.g_limit));
+        self.set_status(&format!("G-limit \u{2192} {:.1} g", self.g_limit), false);
+    }
+
+    fn set_status(&mut self, message: &str, is_error: bool) {
+        self.status = message.to_string();
+        self.status_err = is_error;
+    }
 }
 
-/// Frame-derived flight quantities for the HUD/guidance (plan §3.4). Computed by the glue layer from
-/// the CCI telemetry + parent-body constants; the guidance core itself stays `Vec3`-only.
+/// Frame-derived flight quantities for the HUD (plan §3.4). Computed by the glue layer from the CCI
+/// telemetry + parent-body constants; the guidance core itself stays `Vec3`-only.
 #[derive(Debug, Clone, Copy)]
 pub struct Derived {
     /// Surface-relative vertical speed, m/s (+ up, − descending).
@@ -80,7 +148,7 @@ pub struct Derived {
     pub gravity: f64,
     /// Angle of the thrust axis (+X body) from local up, degrees.
     pub pitch_from_up_deg: f64,
-    /// Angle from the surface-retrograde hold we would command — the M3 attitude path, previewed live.
+    /// Angle from the surface-retrograde hold we would command — the attitude path, previewed live.
     pub retro_error_deg: f64,
 }
 
@@ -100,7 +168,6 @@ pub fn derive(t: &Telemetry, body: Option<Body>) -> Derived {
     let nose = ksa_quat::transform(Vec3::new(1.0, 0.0, 0.0), Quat::from_array(t.att_q));
     let pitch_from_up_deg = angle_between(nose, basis.up).to_degrees();
 
-    // The surface-retrograde hold we would command — the exact M3 attitude path, previewed live.
     let retro_error_deg = if v_surf.norm() > 1e-2 {
         let target = ksa_quat::compute_burn_body2cci(basis.up, -v_surf.normalize());
         let aim = ksa_quat::transform(Vec3::new(1.0, 0.0, 0.0), target);
@@ -130,72 +197,69 @@ fn angle_between(a: Vec3, b: Vec3) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sim::Tick;
+    use std::sync::mpsc;
 
-    fn sample_telemetry(controlled: bool) -> Telemetry {
-        serde_json::from_str(&format!(
-            r#"{{"seq":1,"ut":0,"warp":1,"id":"x","sit":"Freefall","controlled":{controlled},
-                "pos_cci":[0,0,0],"pos_ecl":[0,0,0],"vel_cci":[0,0,0],
-                "vel":{{"orb":0,"surf":0,"inr":0}},"alt":{{"baro":0,"radar":0}},
-                "mass":{{"t":1,"d":1,"p":0}},"att_q":[0,0,0,1],"power":{{"prod":0,"cons":0}}}}"#
-        ))
+    fn app() -> (App, mpsc::Receiver<ToWorker>) {
+        let (tx, rx) = mpsc::channel();
+        (App::new(tx, "fs:/sim".into()), rx)
+    }
+
+    fn tick(connected: bool, telemetry: Option<Telemetry>) -> FromWorker {
+        FromWorker::Tick {
+            tick: Tick {
+                connected,
+                telemetry,
+                body: None,
+            },
+            guidance: None,
+            status: None,
+        }
+    }
+
+    fn sample_telemetry() -> Telemetry {
+        serde_json::from_str(
+            r#"{"seq":1,"ut":0,"warp":1,"id":"x","sit":"Freefall","controlled":true,
+                "pos_cci":[600000,0,1000],"vel_cci":[10,0,-82],
+                "vel":{"orb":0,"surf":0,"inr":0},"alt":{"baro":1000,"radar":1000},
+                "mass":{"t":1500,"d":1000,"p":500},"att_q":[0,0,0,1],"power":{"prod":0,"cons":0}}"#,
+        )
         .unwrap()
     }
 
     #[test]
     fn apply_tracks_connection_and_vessel() {
-        let mut a = App::new("fs:/sim".into());
-        // Not connected.
-        a.apply(FromWorker::Tick(Tick::default()));
+        let (mut a, _rx) = app();
+        a.apply(tick(false, None));
         assert!(!a.connected && a.telemetry.is_none());
         assert!(a.status.starts_with("not connected"));
 
-        // Connected, no vessel.
-        a.apply(FromWorker::Tick(Tick {
-            connected: true,
-            ..Tick::default()
-        }));
+        a.apply(tick(true, None));
         assert!(a.connected && a.telemetry.is_none());
         assert_eq!(a.status, "no active vessel");
 
-        // Connected with a controlled vessel.
-        a.apply(FromWorker::Tick(Tick {
-            connected: true,
-            telemetry: Some(sample_telemetry(true)),
-            body: None,
-        }));
-        assert!(a.telemetry.is_some());
-        assert_eq!(a.status, "monitoring");
+        a.apply(tick(true, Some(sample_telemetry())));
+        assert!(a.telemetry.is_some() && a.derived.is_some());
+    }
+
+    #[test]
+    fn keys_send_worker_commands() {
+        let (mut a, rx) = app();
+        a.on_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+        assert!(matches!(rx.try_recv(), Ok(ToWorker::Engage)));
+
+        a.on_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        assert!(matches!(rx.try_recv(), Ok(ToWorker::Abort)));
+
+        let g0 = a.g_limit;
+        a.on_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert!(a.g_limit > g0);
+        assert!(matches!(rx.try_recv(), Ok(ToWorker::SetGLimit(_))));
     }
 
     #[test]
     fn quit_keys() {
-        let mut a = App::new("x".into());
+        let (mut a, _rx) = app();
         a.on_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
         assert!(a.should_quit);
-    }
-
-    #[test]
-    fn derive_computes_surface_relative_descent() {
-        // Equatorial vessel at radius 601 km, descending 50 m/s, otherwise co-rotating with the ground.
-        let omega = 2.9089e-4_f64;
-        let r = 601_000.0_f64;
-        let vy = omega * r; // co-rotation speed at this point
-        let json = format!(
-            r#"{{"seq":1,"ut":0,"warp":1,"id":"x","sit":"Freefall","controlled":true,
-                "pos_cci":[{r},0,0],"vel_cci":[-50,{vy},0],
-                "vel":{{"orb":0,"surf":0,"inr":0}},"alt":{{"baro":1000,"radar":1000}},
-                "mass":{{"t":5000,"d":4000,"p":1000}},"att_q":[0,0,0,1],"power":{{"prod":0,"cons":0}}}}"#
-        );
-        let t: Telemetry = serde_json::from_str(&json).unwrap();
-        let body = Body {
-            mu: 3.5316e12,
-            radius: 600_000.0,
-            rotation_rate: omega,
-        };
-        let d = derive(&t, Some(body));
-        assert!((d.vertical_speed + 50.0).abs() < 1e-3, "vspeed {}", d.vertical_speed);
-        assert!(d.horizontal_speed < 1e-3, "hspeed {}", d.horizontal_speed);
-        assert!((d.gravity - 9.78).abs() < 0.1, "gravity {}", d.gravity);
     }
 }

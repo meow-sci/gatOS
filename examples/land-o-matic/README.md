@@ -17,11 +17,18 @@ A powered-descent **landing-guidance TUI** for KSA, run **inside the Alpine gues
 
 Built incrementally by milestone (see the plan §12):
 
-- **M0 — read-only HUD** ✅ — polls `/sim` and mirrors the active vessel's state. No control writes.
-- **M1 — frames & quaternion core** — pure, host-tested coordinate transforms.
-- **M2 — G-FOLD solve** — the convex program (Clarabel), validated offline.
-- **M3 — G-FOLD closed-loop MPC** — flies the vessel; live G-limit re-plan; ABORT.
-- M4+ — UPFG terminal guidance, hybrid handoff, polish.
+- **M0 — read-only HUD** ✅ — polls `/sim` and mirrors the active vessel's state.
+- **M1 — frames & quaternion core** ✅ — pure, host-tested CCI↔ENU↔CCF transforms and a verbatim
+  port of KSA's quaternion math (the attitude-output path, proven by the `transform(UnitX, q) == d`
+  invariant).
+- **M2 — G-FOLD solve** ✅ — the fuel-optimal powered-descent SOCP via Clarabel (non-dimensionalized,
+  G-limit enforced), validated offline on a generic lander and the Mars reference case.
+- **M3 — G-FOLD closed-loop MPC** ✅ — flies the vessel: builds the guidance state from telemetry,
+  re-solves each tick, writes `attitude_target`/`throttle`/`ignite`, with live G-limit re-plan and
+  ABORT. Validated by a **host closed-loop point-mass simulation** that lands softly with the guidance
+  in the loop. ⚠️ The in-KSA flight pass is still pending (deferred, like the rest of the repo's
+  in-game validation).
+- M4+ — UPFG terminal guidance, hybrid handoff, trajectory canvas, successive convexification.
 
 ## Build & run (in-guest)
 
@@ -50,7 +57,12 @@ cargo run -- --url $GATOS_HTTP         # …or a live mod via the HTTP /v1/fs mi
 
 ## Keys
 
-`q` / `Esc` quit. (Guidance inputs — G-limit, target, ENGAGE/ABORT — arrive in M3.)
+- `e` — **ENGAGE** (arm guidance; targets the point directly below and starts the powered descent)
+- `a` — **ABORT** (cut throttle, release attitude to manual)
+- `↑`/`↓` (or `-`/`=`) — adjust the **G-limit** live (watch it re-plan)
+- `q` / `Esc` — quit
+
+> ⚠️ ENGAGE fires your engine and steers the vessel. Watch it; `a` aborts to manual.
 
 ## License
 

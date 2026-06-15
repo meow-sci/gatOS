@@ -21,7 +21,13 @@ of PEGAS's "watch as I change the G-Limit and the rocket recalculates."
 
 ## 0. How to read this / status
 
-- **Not built yet.** This is the plan; nothing in `examples/land-o-matic/` exists at time of writing.
+- **M0–M3 built** (`examples/land-o-matic/`, lib + bin, host-tested green): read-only HUD, the
+  reference-frame + KSA-quaternion core, the G-FOLD SOCP (Clarabel), and the closed-loop MPC that
+  flies the vessel (validated by a host point-mass landing sim). The in-KSA flight pass and M4+ (UPFG
+  terminal guidance, hybrid handoff) remain. As-built deviations worth noting: the SOCP is
+  non-dimensionalized for solver conditioning; node 0 is bounded (the reference's unbounded first node
+  injects a nonphysical impulse); the single-shot Taylor bound is valid for G-limits near the
+  fuel-optimal (≈[2.5 g, ∞) on the test lander) — successive convexification would widen that.
 - The program is a **standalone Cargo binary** at `examples/land-o-matic/`. It is **not** part of
   `gatos.slnx`, not in CI, not in `Directory.Build.props`, and needs **no** `THIRD-PARTY-NOTICES.md`
   entry — examples are source-only and user-compiled, exactly like the sibling `gogogo-rs` /

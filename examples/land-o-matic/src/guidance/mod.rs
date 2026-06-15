@@ -11,6 +11,7 @@
 //!
 //! (UPFG terminal guidance arrives in M4.)
 
+pub mod autopilot;
 pub mod frames;
 pub mod gfold;
 pub mod ksa_quat;
