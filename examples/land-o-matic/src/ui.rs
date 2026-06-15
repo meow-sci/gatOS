@@ -20,7 +20,8 @@ const ACCENT: Color = Color::LightCyan;
 fn phase_label(p: Phase) -> (&'static str, Color) {
     match p {
         Phase::Idle => ("IDLE", VAL),
-        Phase::Burn => ("BURN", Color::LightGreen),
+        Phase::Burn => ("BRAKING", Color::LightGreen),
+        Phase::Terminal => ("TERMINAL", Color::LightCyan),
         Phase::Infeasible => ("NO SOLUTION", Color::LightRed),
         Phase::Touchdown => ("TOUCHDOWN", Color::LightCyan),
         Phase::Abort => ("ABORT", Color::LightRed),
@@ -135,13 +136,24 @@ fn state_lines(app: &App, t: &Telemetry) -> Vec<Line<'static>> {
             "",
             &format!("peak {:.2} g", g.peak_g),
         ));
-        if g.phase == Phase::Burn {
-            lines.push(kv2(
+        match g.phase {
+            Phase::Burn => lines.push(kv2(
                 "tgo",
                 &format!("{:.0} s", g.tgo),
                 "",
                 &format!("fuel@td {:.0} kg", g.predicted_mass),
-            ));
+            )),
+            Phase::Terminal => {
+                let conv = g
+                    .upfg
+                    .map(|u| {
+                        let mark = if u.converged { "\u{2713}" } else { "\u{2026}" };
+                        format!("upfg {mark} {} it", u.iters)
+                    })
+                    .unwrap_or_default();
+                lines.push(kv2("tgo", &format!("{:.1} s", g.tgo), "", &conv));
+            }
+            _ => {}
         }
     } else {
         lines.push(kv(

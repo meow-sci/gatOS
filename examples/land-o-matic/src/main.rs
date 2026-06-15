@@ -1,16 +1,18 @@
 //! land-o-matic — a powered-descent landing-guidance TUI over the gatOS `/sim` filesystem, built with
 //! ratatui. It fuses two real flight-guidance algorithms: **G-FOLD** (convex fuel-optimal powered
-//! descent — the planner/replanner) and, from M4, **UPFG** (the Space Shuttle's explicit guidance, via
-//! PEGAS — the closed-loop terminal steering). See `LANDING_PROGRAM_PLAN.md` for the full design and
-//! the reference-frame contract.
+//! descent — the planner/replanner for the high divert) and **UPFG** (the Space Shuttle's explicit
+//! guidance, via PEGAS — the closed-loop terminal steering for the precise touchdown). The autopilot
+//! brakes under G-FOLD, then hands off to UPFG below the handoff altitude. See
+//! `LANDING_PROGRAM_PLAN.md` for the full design and the reference-frame contract.
 //!
 //! Run it **in the guest** (`apk add --no-cache cargo rust && cargo run --release`): it reads the
 //! `/sim` mount and drives the active vessel. For host-side dev, point it at a fixture directory with
 //! `--root <dir>` or the mod's HTTP mirror with `--url <base>`.
 //!
 //! Architecture (mirrors the sibling examples): one worker thread owns the [`sim::Source`] **and the
-//! autopilot** — each tick it polls telemetry, runs the G-FOLD MPC, and writes the control files —
-//! while the main thread runs the render + input loop, so the UI never blocks on I/O or the solver.
+//! autopilot** — each tick it polls telemetry, runs the hybrid G-FOLD/UPFG guidance, and writes the
+//! control files — while the main thread runs the render + input loop, so the UI never blocks on I/O or
+//! the solver.
 
 use std::io::{self, Stdout};
 use std::path::Path;
@@ -189,6 +191,7 @@ fn spawn_worker(
                         tgo: cmd.tgo,
                         predicted_mass: cmd.predicted_mass,
                         peak_g: cmd.peak_g,
+                        upfg: cmd.upfg,
                     });
                 }
             } else {
@@ -257,7 +260,8 @@ fn apply_command(src: &dyn Source, cmd: &Command) -> Option<(String, bool)> {
     };
     match cmd.phase {
         Phase::Idle => None,
-        Phase::Burn => {
+        // Braking (G-FOLD) and terminal (UPFG) both steer + throttle + keep the engine lit.
+        Phase::Burn | Phase::Terminal => {
             let mut err = None;
             if let Some(q) = cmd.attitude_target {
                 if let Err(e) = write_attitude(q) {
@@ -268,7 +272,8 @@ fn apply_command(src: &dyn Source, cmd: &Command) -> Option<(String, bool)> {
             if cmd.ignite {
                 let _ = src.write("vessels/active/ctl/ignite", "1");
             }
-            err.or(Some((format!("BURN \u{b7} tgo {:.0}s", cmd.tgo), false)))
+            let label = if cmd.phase == Phase::Terminal { "TERMINAL" } else { "BURN" };
+            err.or(Some((format!("{label} \u{b7} tgo {:.0}s", cmd.tgo), false)))
         }
         Phase::Infeasible => {
             if let Some(q) = cmd.attitude_target {
@@ -367,6 +372,7 @@ mod tests {
             tgo: 10.0,
             predicted_mass: 1200.0,
             peak_g: 3.0,
+            upfg: None,
         };
         apply_command(&src, &cmd);
         assert_eq!(src.read("vessels/active/ctl/throttle").unwrap(), "0.5000");
@@ -389,6 +395,7 @@ mod tests {
             tgo: 0.0,
             predicted_mass: 0.0,
             peak_g: 0.0,
+            upfg: None,
         };
         apply_command(&src, &cmd);
         // Idle must not touch controls — the pilot keeps manual control.

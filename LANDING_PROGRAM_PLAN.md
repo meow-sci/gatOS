@@ -21,11 +21,13 @@ of PEGAS's "watch as I change the G-Limit and the rocket recalculates."
 
 ## 0. How to read this / status
 
-- **M0–M4 built** (`examples/land-o-matic/`, lib + bin, host-tested green): read-only HUD, the
+- **M0–M5 built** (`examples/land-o-matic/`, lib + bin, host-tested green): read-only HUD, the
   reference-frame + KSA-quaternion core, the G-FOLD SOCP (Clarabel), the closed-loop MPC that flies the
-  vessel (host point-mass landing sim), and the UPFG terminal-guidance port (CSE conic propagator +
-  steering, run directly in CCI). The in-KSA flight pass and M5+ (hybrid G-FOLD→UPFG handoff) remain.
-  As-built deviations worth noting:
+  vessel, the UPFG terminal-guidance port (CSE conic propagator + steering, run directly in CCI), and
+  the **hybrid handoff** — G-FOLD braking for the high divert, UPFG terminal for the precise touchdown,
+  with the G-limit capping deceleration on both legs (host closed-loop braking→terminal→touchdown sim).
+  The in-KSA flight pass and M6+ (trajectory canvas, robustness/UX, successive convexification,
+  atmosphere) remain. As-built deviations worth noting:
   - **G-FOLD:** the SOCP is non-dimensionalized for solver conditioning; node 0 is bounded (the
     reference's unbounded first node injects a nonphysical impulse); the single-shot Taylor bound is
     valid for G-limits near the fuel-optimal (≈[2.5 g, ∞) on the test lander) — successive
@@ -42,6 +44,11 @@ of PEGAS's "watch as I change the G-Limit and the rocket recalculates."
     gate trips. One latent reference bug was fixed in the CSE port: `A,D,E` are captured from the
     pre-`KIL` `KTTI(xguess)` (the MATLAB warm-starts them from the previous solve, which leaves them
     stale and returns `r ≈ r0` when the first guess is exact, e.g. a circular orbit at half-period).
+  - **Hybrid (M5):** the phase handoff is **altitude-latched** — below `handoff_alt` (default 300 m) the
+    autopilot switches from G-FOLD braking to UPFG terminal and never reverts (descent is one-way; this
+    avoids phase chatter at the boundary). The G-limit caps deceleration on both legs (the SOCP `σ`
+    constraint for braking, `terminal_throttle`'s cap for terminal). The braking `Phase` is rendered
+    `BRAKING` (still `Phase::Burn` internally).
 - The program is a **standalone Cargo binary** at `examples/land-o-matic/`. It is **not** part of
   `gatos.slnx`, not in CI, not in `Directory.Build.props`, and needs **no** `THIRD-PARTY-NOTICES.md`
   entry — examples are source-only and user-compiled, exactly like the sibling `gogogo-rs` /

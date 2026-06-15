@@ -1,16 +1,22 @@
-//! The closed-loop powered-descent autopilot (plan §5.6, §7): a stateful MPC controller that, each
-//! tick, transforms the CCI vehicle state into the target-centred ENU guidance frame, solves G-FOLD,
-//! and emits the first-node command (a thrust direction + throttle) as a `Body→CCI` attitude quaternion
-//! ready to write to `ctl/attitude_target`. Pure — no `/sim`, no game, no terminal; the worker feeds it
-//! a [`State`] built from telemetry and applies the returned [`Command`].
+//! The closed-loop powered-descent autopilot (plan §5.6, §7): a stateful **hybrid** controller that,
+//! each tick, transforms the CCI vehicle state and emits a control command (a thrust direction +
+//! throttle) as a `Body→CCI` attitude quaternion ready to write to `ctl/attitude_target`. Two legs:
 //!
-//! Re-solve strategy: a full two-stage solve at ignition (finds the time-of-flight), then a cheaper
-//! shrinking-horizon re-solve each tick (re-plan from scratch on failure). The G-limit lever feeds the
-//! solve directly, so changing it re-plans live.
+//! - **Braking** ([`Phase::Burn`]) — the high divert. Transform into the target-centred ENU frame,
+//!   solve the G-FOLD SOCP, apply the first node (MPC). Re-solve strategy: a full two-stage solve at
+//!   ignition (finds the time-of-flight), then a cheaper shrinking-horizon re-solve each tick (re-plan
+//!   from scratch on failure).
+//! - **Terminal** ([`Phase::Terminal`]) — the precise touchdown. Below `handoff_alt` (latched), UPFG
+//!   terminal guidance steers along its velocity-to-go vector while a G-limit-capped suicide throttle
+//!   sizes the descent braking.
+//!
+//! The G-limit lever feeds **both** legs, so changing it re-plans live. Pure — no `/sim`, no game, no
+//! terminal; the worker feeds it a [`State`] built from telemetry and applies the returned [`Command`].
 
 use super::frames::{self, EnuBasis};
 use super::gfold::{self, Objective, Problem};
 use super::ksa_quat::{self, Quat};
+use super::upfg;
 use super::vehicle::{VehicleModel, G0};
 use super::Vec3;
 
@@ -60,6 +66,8 @@ pub struct Inputs {
     pub v_touchdown: f64,
     /// Altitude at/under which (with low speed) we declare touchdown, m.
     pub touchdown_alt: f64,
+    /// Altitude at/under which G-FOLD braking hands off to UPFG terminal guidance, m (plan §7).
+    pub handoff_alt: f64,
     /// Discretization nodes.
     pub n: usize,
 }
@@ -73,6 +81,7 @@ impl Default for Inputs {
             v_max: 300.0,
             v_touchdown: 3.0,
             touchdown_alt: 8.0,
+            handoff_alt: 300.0,
             n: 20,
         }
     }
@@ -83,14 +92,23 @@ impl Default for Inputs {
 pub enum Phase {
     /// Not armed — the pilot has control.
     Idle,
-    /// Armed and burning under G-FOLD MPC.
+    /// Armed and braking under the G-FOLD MPC (the high divert).
     Burn,
+    /// Low and slow: UPFG terminal guidance flies the precise touchdown (plan §7).
+    Terminal,
     /// No feasible landing solution right now (holding retrograde, throttle cut).
     Infeasible,
     /// Landed (or close enough): engine cut, attitude released.
     Touchdown,
     /// Pilot aborted: engine cut, attitude released.
     Abort,
+}
+
+/// UPFG terminal-phase diagnostics for the HUD.
+#[derive(Debug, Clone, Copy)]
+pub struct UpfgStatus {
+    pub converged: bool,
+    pub iters: u32,
 }
 
 /// One control command for the worker to apply.
@@ -110,6 +128,8 @@ pub struct Command {
     pub predicted_mass: f64,
     /// Peak thrust acceleration of the current plan, in g₀ (0 when not solved).
     pub peak_g: f64,
+    /// UPFG convergence diagnostics (present only in the [`Phase::Terminal`] leg).
+    pub upfg: Option<UpfgStatus>,
 }
 
 /// The stateful MPC autopilot.
@@ -122,6 +142,9 @@ pub struct Autopilot {
     /// Time-of-flight of the active plan and the ignition time, for the shrinking horizon.
     plan_tf: Option<f64>,
     ignition_ut: Option<f64>,
+    /// Latched once the vehicle drops below the handoff altitude — descent is one-way, so terminal
+    /// guidance never reverts to braking (avoids a phase chatter at the boundary).
+    terminal_latched: bool,
     /// The most recent solved trajectory (for the HUD).
     pub last: Option<gfold::Trajectory>,
 }
@@ -135,6 +158,7 @@ impl Autopilot {
             target_ccf: None,
             plan_tf: None,
             ignition_ut: None,
+            terminal_latched: false,
             last: None,
         }
     }
@@ -146,6 +170,7 @@ impl Autopilot {
         self.target_ccf = None;
         self.plan_tf = None;
         self.ignition_ut = None;
+        self.terminal_latched = false;
     }
 
     /// Abort: cut throttle, release attitude.
@@ -181,6 +206,12 @@ impl Autopilot {
         // Touchdown?
         if state.radar_alt <= self.inputs.touchdown_alt && v_surf.norm() <= self.inputs.v_touchdown {
             return release(Phase::Touchdown);
+        }
+
+        // Hand off to UPFG terminal guidance once low (latched — descent is one-way). Plan §7.
+        if self.terminal_latched || state.radar_alt < self.inputs.handoff_alt {
+            self.terminal_latched = true;
+            return self.terminal_step(state, spec, target_cci, v_surf);
         }
 
         // State in the ENU guidance frame (target at origin).
@@ -227,6 +258,62 @@ impl Autopilot {
             tgo,
             predicted_mass,
             peak_g,
+            upfg: None,
+        }
+    }
+
+    /// The UPFG terminal leg (plan §6, §7): re-converge UPFG from a fresh seed each tick (carrying the
+    /// working set across ticks induces a predictor-corrector 2-cycle), steer body +X along its
+    /// velocity-to-go vector `iF`, and throttle with the G-limit-capped required-deceleration suicide law.
+    fn terminal_step(&mut self, state: &State, spec: &VehicleSpec, target_cci: Vec3, v_surf: Vec3) -> Command {
+        let up = state.pos_cci.normalize();
+        let gravity = state.mu / state.pos_cci.norm_squared();
+
+        let stage = upfg::VehicleStage {
+            thrust: spec.thrust_max,
+            exhaust_velocity: spec.isp * G0,
+            max_burn_time: f64::MAX,
+        };
+        // Aim at the site, arriving with the ground's velocity (ω × r_site) so surface-relative
+        // touchdown speed ≈ 0.
+        let site_vel = Vec3::new(0.0, 0.0, state.omega).cross(&target_cci);
+        let target = upfg::descent_target(target_cci, site_vel);
+        let ustate = upfg::State {
+            time: state.ut,
+            mass: state.mass,
+            pos: state.pos_cci,
+            vel: state.vel_cci,
+        };
+        let seed = upfg::UpfgState::seed(&ustate, &target);
+        let (_, g, iters, converged) = upfg::converge(&stage, &target, &ustate, seed, state.mu, 20);
+
+        // Vertical-rate suicide throttle (iF steers; this sizes the descent braking). Aim below the cut
+        // speed so the touchdown gate trips instead of holding the rate at the boundary.
+        let v_vert_down = (-v_surf.dot(&up)).max(0.0);
+        let dist = state.radar_alt - self.inputs.touchdown_alt;
+        let throttle = upfg::terminal_throttle(
+            state.mass,
+            spec.thrust_max,
+            v_vert_down,
+            self.inputs.v_touchdown * 0.5,
+            dist,
+            gravity,
+            self.inputs.g_limit,
+            spec.throttle_min,
+            spec.throttle_max,
+        );
+        let att = ksa_quat::compute_burn_body2cci(up, g.i_f);
+        let peak_g = throttle * spec.thrust_max / state.mass / G0;
+
+        Command {
+            phase: Phase::Terminal,
+            attitude_target: Some(att),
+            throttle,
+            ignite: true,
+            tgo: g.tgo,
+            predicted_mass: state.mass,
+            peak_g,
+            upfg: Some(UpfgStatus { converged, iters: iters as u32 }),
         }
     }
 
@@ -281,6 +368,7 @@ fn release(phase: Phase) -> Command {
         tgo: 0.0,
         predicted_mass: 0.0,
         peak_g: 0.0,
+        upfg: None,
     }
 }
 
@@ -296,6 +384,7 @@ fn hold_retro(state: &State, v_surf: Vec3) -> Command {
         tgo: 0.0,
         predicted_mass: 0.0,
         peak_g: 0.0,
+        upfg: None,
     }
 }
 
@@ -417,6 +506,88 @@ mod tests {
         let downrange = (pos - pos.normalize() * pos.norm()).norm(); // ~0 by construction; check horiz miss below
         let _ = downrange;
         assert!(final_alt.abs() < 30.0, "final altitude {final_alt:.1} m");
+        assert!(vel.norm() < 6.0, "final speed {:.2} m/s", vel.norm());
+        assert!(mass > spec.m_dry, "ran out of fuel: mass {mass:.0}");
+    }
+
+    /// The M5 hybrid acceptance test: a point-mass descent flown by the full autopilot exercises the
+    /// **G-FOLD braking → UPFG terminal → touchdown** sequence, never exceeds the G-limit, and lands
+    /// softly with fuel to spare. Applies exactly the thrust the autopilot commands (recovered through the
+    /// attitude quaternion), so it validates both legs plus the control-conversion path end to end.
+    #[test]
+    fn hybrid_braking_then_terminal_lands() {
+        let mu = 3.5316e12;
+        let r_body = 600_000.0;
+        let spec = VehicleSpec {
+            m_dry: 1200.0,
+            isp: 300.0,
+            thrust_max: 130_000.0, // ~6.6 g at wet mass → the 4 g cap genuinely binds
+            throttle_min: 0.1,
+            throttle_max: 1.0,
+        };
+        let g_limit = 4.0;
+        let mut ap = Autopilot::new(Inputs {
+            g_limit,
+            handoff_alt: 250.0,
+            ..Inputs::default()
+        });
+        ap.engage();
+
+        // 2500 m up, 600 m downrange + 200 m cross, descending 110 m/s with horizontal motion: a real
+        // divert that the braking phase must work before the terminal phase finishes it.
+        let mut pos = Vec3::new(r_body + 2500.0, 600.0, 200.0);
+        let mut vel = Vec3::new(-110.0, 30.0, -10.0);
+        let mut mass = 2000.0;
+        let mut ut = 0.0;
+        let dt = 0.25;
+        let g_cap = g_limit * G0;
+
+        let (mut saw_burn, mut saw_terminal, mut landed) = (false, false, false);
+        for _ in 0..2000 {
+            let radar_alt = pos.norm() - r_body;
+            let state = State {
+                ut,
+                pos_cci: pos,
+                vel_cci: vel,
+                mass,
+                radar_alt,
+                lon_deg: pos.y.atan2(pos.x).to_degrees(),
+                mu,
+                omega: 0.0,
+            };
+            let cmd = ap.step(&state, &spec);
+            match cmd.phase {
+                Phase::Burn => saw_burn = true,
+                Phase::Terminal => {
+                    saw_terminal = true;
+                    // Once terminal latches it must never revert to braking.
+                    assert!(radar_alt < 260.0, "terminal engaged too high: {radar_alt:.0} m");
+                }
+                Phase::Touchdown => {
+                    landed = true;
+                    break;
+                }
+                Phase::Infeasible => panic!("went infeasible at alt {radar_alt:.0} m"),
+                other => panic!("unexpected phase {other:?}"),
+            }
+
+            let thrust_dir = match cmd.attitude_target {
+                Some(q) => ksa_quat::transform(Vec3::new(1.0, 0.0, 0.0), q),
+                None => break,
+            };
+            let thrust_force = cmd.throttle * spec.thrust_max;
+            assert!(thrust_force / mass <= g_cap + 0.1, "peak-g exceeded at alt {radar_alt:.0} m");
+            let accel = thrust_dir * (thrust_force / mass) - pos.normalize() * (mu / pos.norm_squared());
+            vel += accel * dt;
+            pos += vel * dt;
+            mass -= thrust_force / (spec.isp * G0) * dt;
+            ut += dt;
+            assert!(pos.norm() - r_body > -20.0, "crashed through the ground");
+        }
+
+        assert!(saw_burn, "never braked under G-FOLD");
+        assert!(saw_terminal, "never handed off to UPFG terminal");
+        assert!(landed, "never reached touchdown");
         assert!(vel.norm() < 6.0, "final speed {:.2} m/s", vel.norm());
         assert!(mass > spec.m_dry, "ran out of fuel: mass {mass:.0}");
     }

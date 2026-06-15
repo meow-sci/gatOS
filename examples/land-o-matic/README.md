@@ -34,7 +34,12 @@ Built incrementally by milestone (see the plan §12):
   orbital `λ̇` corrector omitted for the near-vertical regime (it destabilizes there; G-FOLD owns
   position/divert). Validated by CSE-vs-Kepler parity (analytic circular orbit + RK4 ellipse), the
   thrust-integral closed forms, and a **UPFG-only closed-loop landing sim**.
-- M5+ — hybrid G-FOLD braking → UPFG terminal handoff, trajectory canvas, successive convexification.
+- **M5 — hybrid braking → terminal handoff** ✅ — the G-FOLD MPC flies the high divert, then hands off
+  (latched, below the handoff altitude) to UPFG terminal guidance for the precise touchdown; the
+  G-limit caps the deceleration on **both** legs. Validated by a host closed-loop sim that exercises the
+  full **braking → terminal → touchdown** sequence (soft landing, peak-g ≤ G-limit, fuel to spare).
+  ⚠️ the in-KSA flight pass is still pending.
+- M6+ — trajectory canvas, infeasible/abort/warp/stale UX, successive convexification, atmosphere.
 
 ## Build & run (in-guest)
 

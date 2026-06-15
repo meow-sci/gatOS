@@ -6,7 +6,7 @@ use std::sync::mpsc::Sender;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::guidance::autopilot::Phase;
+use crate::guidance::autopilot::{Phase, UpfgStatus};
 use crate::guidance::frames;
 use crate::guidance::ksa_quat::{self, Quat};
 use crate::guidance::Vec3;
@@ -30,6 +30,8 @@ pub struct GuidanceView {
     pub tgo: f64,
     pub predicted_mass: f64,
     pub peak_g: f64,
+    /// UPFG diagnostics (present only in the terminal leg).
+    pub upfg: Option<UpfgStatus>,
 }
 
 /// worker → UI.
