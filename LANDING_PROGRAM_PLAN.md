@@ -21,13 +21,27 @@ of PEGAS's "watch as I change the G-Limit and the rocket recalculates."
 
 ## 0. How to read this / status
 
-- **M0–M3 built** (`examples/land-o-matic/`, lib + bin, host-tested green): read-only HUD, the
-  reference-frame + KSA-quaternion core, the G-FOLD SOCP (Clarabel), and the closed-loop MPC that
-  flies the vessel (validated by a host point-mass landing sim). The in-KSA flight pass and M4+ (UPFG
-  terminal guidance, hybrid handoff) remain. As-built deviations worth noting: the SOCP is
-  non-dimensionalized for solver conditioning; node 0 is bounded (the reference's unbounded first node
-  injects a nonphysical impulse); the single-shot Taylor bound is valid for G-limits near the
-  fuel-optimal (≈[2.5 g, ∞) on the test lander) — successive convexification would widen that.
+- **M0–M4 built** (`examples/land-o-matic/`, lib + bin, host-tested green): read-only HUD, the
+  reference-frame + KSA-quaternion core, the G-FOLD SOCP (Clarabel), the closed-loop MPC that flies the
+  vessel (host point-mass landing sim), and the UPFG terminal-guidance port (CSE conic propagator +
+  steering, run directly in CCI). The in-KSA flight pass and M5+ (hybrid G-FOLD→UPFG handoff) remain.
+  As-built deviations worth noting:
+  - **G-FOLD:** the SOCP is non-dimensionalized for solver conditioning; node 0 is bounded (the
+    reference's unbounded first node injects a nonphysical impulse); the single-shot Taylor bound is
+    valid for G-limits near the fuel-optimal (≈[2.5 g, ∞) on the test lander) — successive
+    convexification would widen that.
+  - **UPFG:** single-stage, constant-thrust path only (a lander is one stage; the reference's
+    multi-stage recursion / coast / constant-acceleration virtual stage are not ported — the G-limit is
+    a throttle law, §6.4, not a virtual stage). The steering uses the **velocity-to-go direction**
+    `λ = unit(vgo)` with conic-propagated gravity; the orbital `λ̇` corrector (`iF = unit(λ − λ̇·J/L)`) is
+    **omitted** for descent because its `lambdade = Q − S·J/L` goes negative in the near-vertical regime,
+    swinging `iF` off the braking direction and destabilizing the iteration (and G-FOLD already owns
+    position/divert). The closed loop **re-converges from a fresh seed each tick** (carrying the working
+    set across ticks induces a predictor-corrector 2-cycle). The terminal throttle is a required-decel
+    suicide law capped by the G-limit (`terminal_throttle`), aiming below the cut speed so the touchdown
+    gate trips. One latent reference bug was fixed in the CSE port: `A,D,E` are captured from the
+    pre-`KIL` `KTTI(xguess)` (the MATLAB warm-starts them from the previous solve, which leaves them
+    stale and returns `r ≈ r0` when the first guess is exact, e.g. a circular orbit at half-period).
 - The program is a **standalone Cargo binary** at `examples/land-o-matic/`. It is **not** part of
   `gatos.slnx`, not in CI, not in `Directory.Build.props`, and needs **no** `THIRD-PARTY-NOTICES.md`
   entry — examples are source-only and user-compiled, exactly like the sibling `gogogo-rs` /

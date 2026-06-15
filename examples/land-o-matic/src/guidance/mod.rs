@@ -7,15 +7,17 @@
 //! - [`ksa_quat`] — the KSA quaternion port + the attitude-output recipe.
 //! - [`vehicle`] — the propulsion model (thrust bounds, α, ρ₁/ρ₂).
 //! - [`gfold`] — the G-FOLD fuel-optimal powered-descent SOCP (via clarabel).
+//! - [`cse`] — the conic state-extrapolation propagator (UPFG's gravity model).
+//! - [`upfg`] — the UPFG closed-loop terminal steering law (CCI).
 //! - [`types`] — shared math types.
-//!
-//! (UPFG terminal guidance arrives in M4.)
 
 pub mod autopilot;
+pub mod cse;
 pub mod frames;
 pub mod gfold;
 pub mod ksa_quat;
 pub mod types;
+pub mod upfg;
 pub mod vehicle;
 
 pub use types::Vec3;

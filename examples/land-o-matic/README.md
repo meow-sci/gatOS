@@ -28,7 +28,13 @@ Built incrementally by milestone (see the plan §12):
   ABORT. Validated by a **host closed-loop point-mass simulation** that lands softly with the guidance
   in the loop. ⚠️ The in-KSA flight pass is still pending (deferred, like the rest of the repo's
   in-game validation).
-- M4+ — UPFG terminal guidance, hybrid handoff, trajectory canvas, successive convexification.
+- **M4 — UPFG port** ✅ — a faithful port of the conic state-extrapolation propagator (`CSEroutine`,
+  Shepperd/Robertson universal-variable two-body) and the UPFG steering law, run **directly in CCI**
+  (no `vecYZ` swap), adapted for descent: velocity-to-go steering with conic-propagated gravity, the
+  orbital `λ̇` corrector omitted for the near-vertical regime (it destabilizes there; G-FOLD owns
+  position/divert). Validated by CSE-vs-Kepler parity (analytic circular orbit + RK4 ellipse), the
+  thrust-integral closed forms, and a **UPFG-only closed-loop landing sim**.
+- M5+ — hybrid G-FOLD braking → UPFG terminal handoff, trajectory canvas, successive convexification.
 
 ## Build & run (in-guest)
 
