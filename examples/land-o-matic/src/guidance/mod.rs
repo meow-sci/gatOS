@@ -5,12 +5,16 @@
 //!
 //! - [`frames`] — CCI ↔ ENU ↔ CCF transforms, surface-relative velocity.
 //! - [`ksa_quat`] — the KSA quaternion port + the attitude-output recipe.
+//! - [`vehicle`] — the propulsion model (thrust bounds, α, ρ₁/ρ₂).
+//! - [`gfold`] — the G-FOLD fuel-optimal powered-descent SOCP (via clarabel).
 //! - [`types`] — shared math types.
 //!
-//! (G-FOLD `gfold` and the vehicle model `vehicle` arrive in M2; UPFG in M4.)
+//! (UPFG terminal guidance arrives in M4.)
 
 pub mod frames;
+pub mod gfold;
 pub mod ksa_quat;
 pub mod types;
+pub mod vehicle;
 
 pub use types::Vec3;
