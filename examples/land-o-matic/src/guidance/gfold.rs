@@ -25,6 +25,11 @@ pub struct Problem {
     pub v0: Vec3,
     /// Gravity magnitude g (> 0); the gravity vector is `(0, 0, −g)`.
     pub gravity: f64,
+    /// Body spin vector ω expressed in the **ENU (G) frame**, rad/s. When non-zero the trapezoidal
+    /// dynamics gain the exact (linear, convex-preserving) Coriolis `−2ω×v` and centrifugal
+    /// `−ω×(ω×r)` terms (plan §5.7); `Vec3::zeros()` recovers the flat-planet dynamics (the MVP — the
+    /// closed-loop re-solve absorbs the omitted rotation for slow bodies).
+    pub omega_g: Vec3,
     /// Max thrust acceleration as a multiple of g₀ (the pilot's lever): `‖u‖ ≤ g_limit·g₀`.
     pub g_limit: f64,
     /// Glide-slope: `cot(γ_gs)` — the vehicle stays within `‖horiz‖ ≤ cot(γ_gs)·height` of the pad.
@@ -290,20 +295,38 @@ pub fn solve_fixed_tf(prob: &Problem, obj: &Objective, tf: f64) -> Option<Trajec
         }
     }
 
+    // Rotating-frame coupling (plan §5.7): the scaled spin ω' = ω_G·ts, its skew [ω']× (Coriolis) and
+    // [ω']×² (centrifugal). Both are linear in the decision variables, so they fold into the equality
+    // rows with no new cones. Zero ω_G ⇒ zero matrices ⇒ the flat-planet dynamics below.
+    let omega_nd = prob.omega_g * ts;
+    let sk = skew(omega_nd);
+    let sk2 = matmul3(&sk, &sk);
+
     // --- dynamics (equalities), trapezoidal collocation, all scaled (g' = 1) ---
     for nn in 0..n - 1 {
-        // velocity: v'_{n+1} − v'_n − (dt_nd/2)(u'_n + u'_{n+1}) = dt_nd·g'  (g' = (0,0,−1))
+        // velocity: v'_{n+1} − v'_n − (dt_nd/2)(u'_n + u'_{n+1})
+        //           + dt_nd·[ω']×(v'_n+v'_{n+1}) + (dt_nd/2)·[ω']×²(r'_n+r'_{n+1}) = dt_nd·g'
         for k in 0..3 {
             let rhs = if k == 2 { -dt_nd } else { 0.0 };
-            bld.eq(
-                vec![
-                    (vi(nn + 1) + k, 1.0),
-                    (vi(nn) + k, -1.0),
-                    (ui(nn) + k, -0.5 * dt_nd),
-                    (ui(nn + 1) + k, -0.5 * dt_nd),
-                ],
-                rhs,
-            );
+            let mut terms = vec![
+                (vi(nn + 1) + k, 1.0),
+                (vi(nn) + k, -1.0),
+                (ui(nn) + k, -0.5 * dt_nd),
+                (ui(nn + 1) + k, -0.5 * dt_nd),
+            ];
+            for j in 0..3 {
+                let cor = dt_nd * sk[k][j]; // Coriolis (skew diagonal is 0 → no self-coupling)
+                if cor != 0.0 {
+                    terms.push((vi(nn) + j, cor));
+                    terms.push((vi(nn + 1) + j, cor));
+                }
+                let cen = 0.5 * dt_nd * sk2[k][j]; // centrifugal
+                if cen != 0.0 {
+                    terms.push((ri(nn) + j, cen));
+                    terms.push((ri(nn + 1) + j, cen));
+                }
+            }
+            bld.eq(terms, rhs);
         }
         // position: r'_{n+1} − r'_n − (dt_nd/2)(v'_{n+1} + v'_n) = 0
         for k in 0..3 {
@@ -482,6 +505,28 @@ pub fn estimate_tof(prob: &Problem, obj: &Objective) -> Option<f64> {
     Some((a + b) * 0.5)
 }
 
+/// The cross-product matrix `[w]×` such that `[w]×·a = w × a`.
+fn skew(w: Vec3) -> [[f64; 3]; 3] {
+    [
+        [0.0, -w.z, w.y],
+        [w.z, 0.0, -w.x],
+        [-w.y, w.x, 0.0],
+    ]
+}
+
+/// 3×3 matrix product.
+fn matmul3(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    let mut m = [[0.0; 3]; 3];
+    for (i, mi) in m.iter_mut().enumerate() {
+        for (j, mij) in mi.iter_mut().enumerate() {
+            for (k, aik) in a[i].iter().enumerate() {
+                *mij += aik * b[k][j];
+            }
+        }
+    }
+    m
+}
+
 /// The full two-stage solve (plan §5.1): Problem 3 finds the closest reachable aim point, then Problem 4
 /// minimizes fuel to it. Each stage searches its own time-of-flight.
 pub fn solve(prob: &Problem, desired_target: Vec3) -> Option<Trajectory> {
@@ -517,6 +562,7 @@ mod tests {
             r0: Vec3::new(300.0, 100.0, 1500.0), // 1500 m up, 300 m downrange
             v0: Vec3::new(20.0, -10.0, -60.0),   // descending 60 m/s
             gravity: 9.81,
+            omega_g: Vec3::zeros(),
             g_limit,
             glide_slope_cot: 1.0 / 30f64.to_radians().tan(),
             pointing_cos: 45f64.to_radians().cos(),
@@ -543,6 +589,7 @@ mod tests {
             r0: Vec3::new(360.0, -560.0, 1000.0),
             v0: Vec3::new(-5.0, -5.0, -10.0),
             gravity: 3.71,
+            omega_g: Vec3::zeros(),
             g_limit,
             glide_slope_cot: 1.0 / 30f64.to_radians().tan(),
             pointing_cos: 45f64.to_radians().cos(),
@@ -630,6 +677,32 @@ mod tests {
         assert!(td.v.norm() < 1e-2, "mars touchdown speed {}", td.v.norm());
         assert!(td.r.z.abs() < 1.0);
         assert!(td.mass > mars_problem(5.0).vehicle.m_dry);
+    }
+
+    /// The rotating-frame terms (§5.7) stay convex and feasible, still land at the target with zero
+    /// velocity, and measurably change the trajectory versus the flat-planet dynamics. A fast spin
+    /// exaggerates the effect so it's unambiguous.
+    #[test]
+    fn rotating_frame_terms_are_feasible_and_change_the_path() {
+        let base = lander_problem(5.0);
+        let flat = solve(&base, Vec3::zeros()).expect("flat solved");
+
+        // A deliberately fast spin (well above any real body) so the Coriolis/centrifugal effect is large.
+        let spinning = Problem {
+            omega_g: Vec3::new(0.0, 0.02, 0.03),
+            ..base
+        };
+        let rot = solve(&spinning, Vec3::zeros()).expect("rotating solved");
+
+        // Still a valid landing: at the target with ~zero velocity.
+        let td = rot.touchdown();
+        assert!(td.v.norm() < 1e-2, "rotating touchdown speed {}", td.v.norm());
+        assert!(td.r.norm() < 1.0, "rotating touchdown miss {}", td.r.norm());
+
+        // The dynamics actually changed the trajectory (compare the mid-trajectory positions).
+        let mid = flat.nodes.len() / 2;
+        let drift = (flat.nodes[mid].r - rot.nodes[mid].r).norm();
+        assert!(drift > 1.0, "rotating terms had no effect (drift {drift} m)");
     }
 
     #[test]

@@ -68,6 +68,9 @@ pub struct Inputs {
     pub touchdown_alt: f64,
     /// Altitude at/under which G-FOLD braking hands off to UPFG terminal guidance, m (plan §7).
     pub handoff_alt: f64,
+    /// Include the exact Coriolis/centrifugal terms in the G-FOLD braking dynamics (plan §5.7). Off by
+    /// default — for slow bodies the closed-loop re-solve absorbs the rotation; enable for fast spinners.
+    pub rotating_dynamics: bool,
     /// Discretization nodes.
     pub n: usize,
 }
@@ -82,6 +85,7 @@ impl Default for Inputs {
             v_touchdown: 3.0,
             touchdown_alt: 8.0,
             handoff_alt: 300.0,
+            rotating_dynamics: false,
             n: 20,
         }
     }
@@ -218,8 +222,14 @@ impl Autopilot {
         let r0 = frames::to_enu(state.pos_cci - target_cci, &basis);
         let v0 = frames::to_enu(v_surf, &basis);
         let gravity = state.mu / state.pos_cci.norm_squared();
+        // Body spin in the ENU guidance frame, for the optional rotating-frame dynamics (plan §5.7).
+        let omega_g = if self.inputs.rotating_dynamics {
+            frames::to_enu(Vec3::new(0.0, 0.0, state.omega), &basis)
+        } else {
+            Vec3::zeros()
+        };
 
-        let prob = self.problem(state, spec, r0, v0, gravity);
+        let prob = self.problem(state, spec, r0, v0, gravity, omega_g);
         let traj = match self.solve(&prob, state.ut) {
             Some(t) => t,
             None => return hold_retro(state, v_surf), // Infeasible: hold retrograde, throttle cut
@@ -317,7 +327,8 @@ impl Autopilot {
         }
     }
 
-    fn problem(&self, state: &State, spec: &VehicleSpec, r0: Vec3, v0: Vec3, gravity: f64) -> Problem {
+    #[allow(clippy::too_many_arguments)]
+    fn problem(&self, state: &State, spec: &VehicleSpec, r0: Vec3, v0: Vec3, gravity: f64, omega_g: Vec3) -> Problem {
         Problem {
             vehicle: VehicleModel {
                 m_dry: spec.m_dry,
@@ -330,6 +341,7 @@ impl Autopilot {
             r0,
             v0,
             gravity,
+            omega_g,
             g_limit: self.inputs.g_limit,
             glide_slope_cot: 1.0 / self.inputs.glide_slope_deg.to_radians().tan(),
             pointing_cos: self.inputs.pointing_deg.to_radians().cos(),
