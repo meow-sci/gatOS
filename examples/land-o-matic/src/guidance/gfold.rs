@@ -25,6 +25,11 @@ pub struct Problem {
     pub v0: Vec3,
     /// Gravity magnitude g (> 0); the gravity vector is `(0, 0, −g)`.
     pub gravity: f64,
+    /// A constant **drag acceleration** bias in the ENU frame, m/s² (plan §5.7/M7). Evaluated once per
+    /// solve at the current state (drag is ∝ v², not convex, so it can't be a true decision-variable
+    /// term); the closed-loop re-solve refreshes it. Added to the gravity vector in the dynamics.
+    /// `Vec3::zeros()` = vacuum.
+    pub drag_accel: Vec3,
     /// Body spin vector ω expressed in the **ENU (G) frame**, rad/s. When non-zero the trapezoidal
     /// dynamics gain the exact (linear, convex-preserving) Coriolis `−2ω×v` and centrifugal
     /// `−ω×(ω×r)` terms (plan §5.7); `Vec3::zeros()` recovers the flat-planet dynamics (the MVP — the
@@ -302,12 +307,19 @@ pub fn solve_fixed_tf(prob: &Problem, obj: &Objective, tf: f64) -> Option<Trajec
     let sk = skew(omega_nd);
     let sk2 = matmul3(&sk, &sk);
 
-    // --- dynamics (equalities), trapezoidal collocation, all scaled (g' = 1) ---
+    // Effective gravity (scaled by g): (0,0,−1) plus the constant drag-acceleration bias (plan M7).
+    let gprime = [
+        prob.drag_accel.x / g,
+        prob.drag_accel.y / g,
+        prob.drag_accel.z / g - 1.0,
+    ];
+
+    // --- dynamics (equalities), trapezoidal collocation, all scaled (gravity → 1) ---
     for nn in 0..n - 1 {
         // velocity: v'_{n+1} − v'_n − (dt_nd/2)(u'_n + u'_{n+1})
         //           + dt_nd·[ω']×(v'_n+v'_{n+1}) + (dt_nd/2)·[ω']×²(r'_n+r'_{n+1}) = dt_nd·g'
         for k in 0..3 {
-            let rhs = if k == 2 { -dt_nd } else { 0.0 };
+            let rhs = dt_nd * gprime[k];
             let mut terms = vec![
                 (vi(nn + 1) + k, 1.0),
                 (vi(nn) + k, -1.0),
@@ -562,6 +574,7 @@ mod tests {
             r0: Vec3::new(300.0, 100.0, 1500.0), // 1500 m up, 300 m downrange
             v0: Vec3::new(20.0, -10.0, -60.0),   // descending 60 m/s
             gravity: 9.81,
+            drag_accel: Vec3::zeros(),
             omega_g: Vec3::zeros(),
             g_limit,
             glide_slope_cot: 1.0 / 30f64.to_radians().tan(),
@@ -589,6 +602,7 @@ mod tests {
             r0: Vec3::new(360.0, -560.0, 1000.0),
             v0: Vec3::new(-5.0, -5.0, -10.0),
             gravity: 3.71,
+            drag_accel: Vec3::zeros(),
             omega_g: Vec3::zeros(),
             g_limit,
             glide_slope_cot: 1.0 / 30f64.to_radians().tan(),
@@ -603,7 +617,7 @@ mod tests {
     /// satisfies them — proves the discretization is encoded correctly.
     fn check_dynamics(prob: &Problem, traj: &Trajectory) {
         let dt = traj.dt;
-        let g = Vec3::new(0.0, 0.0, -prob.gravity);
+        let g = Vec3::new(0.0, 0.0, -prob.gravity) + prob.drag_accel;
         for w in traj.nodes.windows(2) {
             let (a, b) = (&w[0], &w[1]);
             let v_pred = a.v + (dt * 0.5) * ((a.thrust_accel + g) + (b.thrust_accel + g));
@@ -682,6 +696,25 @@ mod tests {
     /// The rotating-frame terms (§5.7) stay convex and feasible, still land at the target with zero
     /// velocity, and measurably change the trajectory versus the flat-planet dynamics. A fast spin
     /// exaggerates the effect so it's unambiguous.
+    /// A drag-acceleration bias opposing the descent (upward) reduces the fuel needed (drag does some of
+    /// the braking) and the solution still satisfies the drag-augmented dynamics.
+    #[test]
+    fn drag_bias_saves_fuel() {
+        let vacuum = solve(&lander_problem(5.0), Vec3::zeros()).expect("vacuum solved");
+        let drag = Problem {
+            drag_accel: Vec3::new(0.0, 0.0, 2.0), // 2 m/s² upward (opposing descent)
+            ..lander_problem(5.0)
+        };
+        let with_drag = solve(&drag, Vec3::zeros()).expect("drag solved");
+        assert!(
+            with_drag.final_mass() > vacuum.final_mass(),
+            "drag should save fuel: {} vs {}",
+            with_drag.final_mass(),
+            vacuum.final_mass()
+        );
+        check_dynamics(&drag, &with_drag);
+    }
+
     #[test]
     fn rotating_frame_terms_are_feasible_and_change_the_path() {
         let base = lander_problem(5.0);

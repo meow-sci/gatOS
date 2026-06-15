@@ -62,6 +62,10 @@ enum SourceKind {
 struct Config {
     source: SourceKind,
     interval: Duration,
+    /// Drag area Cd·A, m² (0 = no atmospheric drag model).
+    drag_area: f64,
+    /// Include the exact rotating-frame (Coriolis/centrifugal) G-FOLD dynamics.
+    rotating: bool,
     help: bool,
 }
 
@@ -70,6 +74,8 @@ impl Config {
         let mut url: Option<String> = None;
         let mut root: Option<String> = None;
         let mut interval_ms: Option<u64> = None;
+        let mut drag_area = 0.0;
+        let mut rotating = false;
         let mut help = false;
 
         let mut args = std::env::args().skip(1);
@@ -78,6 +84,13 @@ impl Config {
                 "--url" => url = args.next(),
                 "--root" => root = args.next(),
                 "--interval" => interval_ms = args.next().and_then(|s| s.parse().ok()),
+                "--drag-area" => {
+                    drag_area = args
+                        .next()
+                        .and_then(|s| s.parse().ok())
+                        .ok_or("--drag-area needs a number (Cd·A in m²)")?;
+                }
+                "--rotating" => rotating = true,
                 "-h" | "--help" => help = true,
                 other => return Err(format!("unknown argument '{other}' (try --help)")),
             }
@@ -88,6 +101,8 @@ impl Config {
         Ok(Self {
             source: resolve_source(url, root),
             interval,
+            drag_area,
+            rotating,
             help,
         })
     }
@@ -120,10 +135,13 @@ fn print_help() {
     println!("land-o-matic \u{2014} powered-descent landing guidance over gatOS /sim");
     println!();
     println!("USAGE: land-o-matic [--root <dir> | --url <base>] [--interval <ms>]");
+    println!("                    [--drag-area <m2>] [--rotating]");
     println!();
     println!("  --root <dir>     read the /sim mount at <dir> (default: /sim when present)");
     println!("  --url <base>     read via HTTP /v1/fs instead (e.g. $GATOS_HTTP)");
     println!("  --interval <ms>  poll + guidance cadence, min 20 (default 200)");
+    println!("  --drag-area <m2> vehicle Cd\u{b7}A for the atmospheric drag model (default 0 = vacuum)");
+    println!("  --rotating       include the exact Coriolis/centrifugal G-FOLD dynamics (fast bodies)");
     println!();
     println!("In the guest, no flags are needed: it reads /sim and guides the active vessel.");
     println!("Keys: e ENGAGE \u{b7} a ABORT \u{b7} \u{2191}/\u{2193} (or -/=) G-limit \u{b7} q quit.");
@@ -137,7 +155,12 @@ fn run(terminal: &mut Tui, config: Config) -> io::Result<()> {
 
     let source = build_source(config.source);
     let label = source.label();
-    spawn_worker(source, config.interval, cmd_rx, update_tx);
+    let inputs = Inputs {
+        drag_area: config.drag_area,
+        rotating_dynamics: config.rotating,
+        ..Inputs::default()
+    };
+    spawn_worker(source, config.interval, inputs, cmd_rx, update_tx);
 
     let mut app = App::new(cmd_tx, label);
 
@@ -164,11 +187,12 @@ fn run(terminal: &mut Tui, config: Config) -> io::Result<()> {
 fn spawn_worker(
     source: Box<dyn Source>,
     interval: Duration,
+    inputs: Inputs,
     rx: Receiver<ToWorker>,
     tx: Sender<FromWorker>,
 ) {
     thread::spawn(move || {
-        let mut autopilot = Autopilot::new(Inputs::default());
+        let mut autopilot = Autopilot::new(inputs);
         let mut spec: Option<VehicleSpec> = None;
         let mut prev_seq: Option<u64> = None;
         let mut stale_count = 0u32;
@@ -205,7 +229,10 @@ fn spawn_worker(
                     }
                     if let Some(sp) = spec {
                         let lon = sim::read_longitude(&*source).unwrap_or(0.0);
-                        let state = build_state(tel, body, lon);
+                        // Atmospheric density (detail-gated; 0 = vacuum/unavailable) for the drag model.
+                        let density = sim::read_scalar(&*source, "vessels/active/environment/density")
+                            .unwrap_or(0.0);
+                        let state = build_state(tel, body, lon, density);
                         let cmd = autopilot.step(&state, &sp);
                         status = apply_command(&*source, &cmd);
                         let gv = GuidanceView {
@@ -269,7 +296,7 @@ fn read_spec(src: &dyn Source, tel: &Telemetry) -> Option<VehicleSpec> {
     })
 }
 
-fn build_state(tel: &Telemetry, body: &Body, lon_deg: f64) -> State {
+fn build_state(tel: &Telemetry, body: &Body, lon_deg: f64, density: f64) -> State {
     State {
         ut: tel.ut,
         pos_cci: Vec3::new(tel.pos_cci[0], tel.pos_cci[1], tel.pos_cci[2]),
@@ -279,6 +306,7 @@ fn build_state(tel: &Telemetry, body: &Body, lon_deg: f64) -> State {
         lon_deg,
         mu: body.mu,
         omega: body.rotation_rate,
+        density,
     }
 }
 

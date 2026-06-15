@@ -39,6 +39,8 @@ pub struct State {
     pub mu: f64,
     /// Parent spin rate ω, rad/s (about CCI +Z).
     pub omega: f64,
+    /// Atmospheric density at the vehicle, kg/m³ (0 in vacuum / when the detail stream is gated).
+    pub density: f64,
 }
 
 /// The propulsion spec (from `/sim` engine fields), rebuilt on staging.
@@ -71,6 +73,9 @@ pub struct Inputs {
     /// Include the exact Coriolis/centrifugal terms in the G-FOLD braking dynamics (plan §5.7). Off by
     /// default — for slow bodies the closed-loop re-solve absorbs the rotation; enable for fast spinners.
     pub rotating_dynamics: bool,
+    /// Drag area `Cd·A`, m² (plan M7). 0 disables the drag model (vacuum). With density from `/sim`, the
+    /// drag deceleration is folded into the G-FOLD gravity bias and the terminal throttle.
+    pub drag_area: f64,
     /// Discretization nodes.
     pub n: usize,
 }
@@ -86,6 +91,7 @@ impl Default for Inputs {
             touchdown_alt: 8.0,
             handoff_alt: 300.0,
             rotating_dynamics: false,
+            drag_area: 0.0,
             n: 20,
         }
     }
@@ -246,8 +252,9 @@ impl Autopilot {
         } else {
             Vec3::zeros()
         };
+        let drag_accel = self.drag_accel_enu(state, v_surf, &basis);
 
-        let prob = self.problem(state, spec, r0, v0, gravity, omega_g);
+        let prob = self.problem(state, spec, r0, v0, gravity, omega_g, drag_accel);
         let traj = match self.solve(&prob, state.ut) {
             Some(t) => t,
             None => return hold_retro(state, v_surf), // Infeasible: hold retrograde, throttle cut
@@ -295,6 +302,17 @@ impl Autopilot {
         }
     }
 
+    /// The drag acceleration in the ENU guidance frame (plan M7): `−½·ρ·|v|·v·(Cd·A)/m`, opposing the
+    /// surface-relative velocity. `Vec3::zeros()` when the drag model is off (`drag_area = 0`) or in
+    /// vacuum (`density = 0`). The ENU z-component is the vertical (braking) contribution.
+    fn drag_accel_enu(&self, state: &State, v_surf: Vec3, basis: &EnuBasis) -> Vec3 {
+        if self.inputs.drag_area <= 0.0 || state.density <= 0.0 {
+            return Vec3::zeros();
+        }
+        let coef = 0.5 * state.density * v_surf.norm() * self.inputs.drag_area / state.mass;
+        frames::to_enu(-coef * v_surf, basis)
+    }
+
     /// The UPFG terminal leg (plan §6, §7): re-converge UPFG from a fresh seed each tick (carrying the
     /// working set across ticks induces a predictor-corrector 2-cycle), steer body +X along its
     /// velocity-to-go vector `iF`, and throttle with the G-limit-capped required-deceleration suicide law.
@@ -331,7 +349,10 @@ impl Autopilot {
         let (_, g, iters, converged) = upfg::converge(&stage, &target, &ustate, seed, state.mu, 20);
 
         // Vertical-rate suicide throttle (iF steers; this sizes the descent braking). Aim below the cut
-        // speed so the touchdown gate trips instead of holding the rate at the boundary.
+        // speed so the touchdown gate trips instead of holding the rate at the boundary. Drag opposing the
+        // descent (its ENU up-component) does some of the braking, so it reduces the gravity the thrust
+        // must overcome (plan M7).
+        let drag_decel = self.drag_accel_enu(state, v_surf, &basis).z.max(0.0);
         let v_vert_down = (-v_surf.dot(&up)).max(0.0);
         let dist = state.radar_alt - self.inputs.touchdown_alt;
         let throttle = upfg::terminal_throttle(
@@ -340,7 +361,7 @@ impl Autopilot {
             v_vert_down,
             self.inputs.v_touchdown * 0.5,
             dist,
-            gravity,
+            gravity - drag_decel,
             self.inputs.g_limit,
             spec.throttle_min,
             spec.throttle_max,
@@ -361,7 +382,7 @@ impl Autopilot {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn problem(&self, state: &State, spec: &VehicleSpec, r0: Vec3, v0: Vec3, gravity: f64, omega_g: Vec3) -> Problem {
+    fn problem(&self, state: &State, spec: &VehicleSpec, r0: Vec3, v0: Vec3, gravity: f64, omega_g: Vec3, drag_accel: Vec3) -> Problem {
         Problem {
             vehicle: VehicleModel {
                 m_dry: spec.m_dry,
@@ -374,6 +395,7 @@ impl Autopilot {
             r0,
             v0,
             gravity,
+            drag_accel,
             omega_g,
             g_limit: self.inputs.g_limit,
             glide_slope_cot: 1.0 / self.inputs.glide_slope_deg.to_radians().tan(),
@@ -464,6 +486,7 @@ mod tests {
             lon_deg: 0.0,
             mu: 3.5316e12,
             omega: 0.0,
+            density: 0.0,
         };
         let cmd = ap.step(&state, &spec());
         assert_eq!(cmd.phase, Phase::Idle);
@@ -484,6 +507,7 @@ mod tests {
             lon_deg: 0.0,
             mu: 3.5316e12,
             omega: 0.0,
+            density: 0.0,
         };
         let cmd = ap.step(&state, &spec());
         assert_eq!(cmd.phase, Phase::Abort);
@@ -523,6 +547,7 @@ mod tests {
                 lon_deg: pos.y.atan2(pos.x).to_degrees(),
                 mu,
                 omega: 0.0, // non-rotating: isolates the MPC + control conversion
+                density: 0.0,
             };
             let cmd = ap.step(&state, &spec);
             if cmd.phase == Phase::Touchdown {
@@ -599,6 +624,7 @@ mod tests {
                 lon_deg: pos.y.atan2(pos.x).to_degrees(),
                 mu,
                 omega: 0.0,
+                density: 0.0,
             };
             let cmd = ap.step(&state, &spec);
             match cmd.phase {
@@ -632,6 +658,81 @@ mod tests {
 
         assert!(saw_burn, "never braked under G-FOLD");
         assert!(saw_terminal, "never handed off to UPFG terminal");
+        assert!(landed, "never reached touchdown");
+        assert!(vel.norm() < 6.0, "final speed {:.2} m/s", vel.norm());
+        assert!(mass > spec.m_dry, "ran out of fuel: mass {mass:.0}");
+    }
+
+    /// M7: a descent through an atmosphere — drag is applied in the sim **and** modeled by the autopilot
+    /// (G-FOLD gravity bias + terminal throttle). Confirms the drag path is consistent end-to-end and
+    /// still lands softly.
+    #[test]
+    fn atmospheric_landing_with_drag() {
+        let mu = 3.5316e12;
+        let r_body = 600_000.0;
+        let drag_area = 20.0; // Cd·A, m²
+        let density = 0.1; // kg/m³ (a thin but non-trivial atmosphere)
+        let spec = VehicleSpec {
+            m_dry: 1200.0,
+            isp: 300.0,
+            thrust_max: 130_000.0,
+            throttle_min: 0.1,
+            throttle_max: 1.0,
+        };
+        let mut ap = Autopilot::new(Inputs {
+            g_limit: 4.0,
+            handoff_alt: 250.0,
+            drag_area,
+            ..Inputs::default()
+        });
+        ap.engage();
+
+        let mut pos = Vec3::new(r_body + 2000.0, 400.0, 0.0);
+        let mut vel = Vec3::new(-100.0, 25.0, 0.0);
+        let mut mass = 2000.0;
+        let mut ut = 0.0;
+        let dt = 0.25;
+        let mut landed = false;
+
+        for _ in 0..2000 {
+            let radar_alt = pos.norm() - r_body;
+            let state = State {
+                ut,
+                pos_cci: pos,
+                vel_cci: vel,
+                mass,
+                radar_alt,
+                lon_deg: pos.y.atan2(pos.x).to_degrees(),
+                mu,
+                omega: 0.0,
+                density,
+            };
+            let cmd = ap.step(&state, &spec);
+            if cmd.phase == Phase::Touchdown {
+                landed = true;
+                break;
+            }
+            assert_ne!(cmd.phase, Phase::Infeasible, "infeasible at alt {radar_alt:.0} m");
+            let thrust_dir = match cmd.attitude_target {
+                Some(q) => ksa_quat::transform(Vec3::new(1.0, 0.0, 0.0), q),
+                None => break,
+            };
+            let thrust_force = cmd.throttle * spec.thrust_max;
+            let grav = pos.normalize() * (mu / pos.norm_squared());
+            // The same drag the autopilot models: −½·ρ·|v|·v·(Cd·A)/m.
+            let drag = if vel.norm() > 1e-6 {
+                -0.5 * density * vel.norm() * drag_area / mass * vel
+            } else {
+                Vec3::zeros()
+            };
+            let accel = thrust_dir * (thrust_force / mass) - grav + drag;
+            vel += accel * dt;
+            pos += vel * dt;
+            mass -= thrust_force / (spec.isp * G0) * dt;
+            ut += dt;
+            assert!(pos.norm() - r_body > -20.0, "crashed through the ground");
+        }
+
         assert!(landed, "never reached touchdown");
         assert!(vel.norm() < 6.0, "final speed {:.2} m/s", vel.norm());
         assert!(mass > spec.m_dry, "ran out of fuel: mass {mass:.0}");

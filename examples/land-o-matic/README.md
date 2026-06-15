@@ -44,7 +44,14 @@ Built incrementally by milestone (see the plan §12):
   suspended with no control writes + a prominent banner), and the optional **exact rotating-frame**
   (Coriolis/centrifugal) G-FOLD dynamics. ⚠️ the in-game validation pass (vacuum + atmospheric body) is
   deferred, like the rest of the repo's in-game checks.
-- M7 — atmosphere/drag term (descent model), aero-entry hooks.
+- **M7 — atmosphere/drag** ✅ — a drag term (from `/sim` `environment/density` + a `--drag-area` Cd·A
+  input) folded into the G-FOLD gravity bias (a per-solve constant, refreshed each re-solve) and the
+  terminal throttle. Validated by a closed-loop atmospheric landing (drag applied in the sim **and**
+  modeled by the guidance). ⚠️ in-game accuracy validation deferred.
+
+**All milestones M0–M7 are code-complete and host-tested.** The only remaining work is the in-KSA flight
+validation pass (deferred — no live KSA flight in this environment, as with the rest of the repo's
+in-game checks).
 
 ## Build & run (in-guest)
 
@@ -69,7 +76,11 @@ host:
 cargo test                             # unit + frame/solver tests
 cargo run -- --root ./fixture          # run the TUI against a fixture /sim tree
 cargo run -- --url $GATOS_HTTP         # …or a live mod via the HTTP /v1/fs mirror
+cargo run -- --drag-area 12 --rotating # enable the atmospheric drag model + rotating-frame dynamics
 ```
+
+Tuning flags: `--drag-area <Cd·A m²>` turns on the atmospheric drag model (default 0 = vacuum);
+`--rotating` includes the exact Coriolis/centrifugal G-FOLD dynamics (worth it on fast-spinning bodies).
 
 ## Keys
 

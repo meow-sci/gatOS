@@ -21,12 +21,13 @@ of PEGAS's "watch as I change the G-Limit and the rocket recalculates."
 
 ## 0. How to read this / status
 
-- **M0–M6 built** (`examples/land-o-matic/`, lib + bin, host-tested green): read-only HUD, the
-  reference-frame + KSA-quaternion core, the G-FOLD SOCP (Clarabel), the closed-loop MPC that flies the
-  vessel, the UPFG terminal-guidance port (CSE conic propagator + steering, run directly in CCI), the
-  **hybrid handoff** (G-FOLD braking + UPFG terminal, G-limit capping both legs), and **M6 polish**: the
-  trajectory canvas, pause/warp/stale guidance holds, and the optional exact rotating-frame dynamics.
-  The in-KSA flight pass and M7 (atmosphere/drag) remain. As-built deviations worth noting:
+- **All milestones M0–M7 built** (`examples/land-o-matic/`, lib + bin, host-tested green): read-only
+  HUD, the reference-frame + KSA-quaternion core, the G-FOLD SOCP (Clarabel), the closed-loop MPC that
+  flies the vessel, the UPFG terminal-guidance port (CSE conic propagator + steering, run directly in
+  CCI), the **hybrid handoff** (G-FOLD braking + UPFG terminal, G-limit capping both legs), **M6 polish**
+  (trajectory canvas, pause/warp/stale guidance holds, optional exact rotating-frame dynamics), and **M7
+  atmospheric drag**. The **only remaining work is the in-KSA flight validation pass** (deferred — no
+  live KSA flight here, as with the rest of the repo's in-game checks). As-built deviations worth noting:
   - **G-FOLD:** the SOCP is non-dimensionalized for solver conditioning; node 0 is bounded (the
     reference's unbounded first node injects a nonphysical impulse); the single-shot Taylor bound is
     valid for G-limits near the fuel-optimal (≈[2.5 g, ∞) on the test lander) — successive
@@ -48,6 +49,14 @@ of PEGAS's "watch as I change the G-Limit and the rocket recalculates."
     avoids phase chatter at the boundary). The G-limit caps deceleration on both legs (the SOCP `σ`
     constraint for braking, `terminal_throttle`'s cap for terminal). The braking `Phase` is rendered
     `BRAKING` (still `Phase::Burn` internally).
+  - **Atmosphere (M7):** drag is a velocity-quadratic, so it can't be a true G-FOLD decision-variable
+    term without breaking convexity. It is instead a **constant acceleration bias** (`Problem.drag_accel`,
+    ENU) evaluated once per solve at the current state and added to the gravity vector — crude over the
+    horizon (it over-counts drag for the slower late trajectory) but convex, and the ~1 Hz re-solve plus
+    the terminal phase refresh it. In the terminal leg the vertical drag deceleration is subtracted from
+    the gravity the throttle must overcome. `Cd·A` is a `--drag-area` input (KSA's drag coefficient isn't
+    read); density comes from `/sim` `environment/density` (detail-gated → 0/off when absent). Off by
+    default (`drag_area = 0`). Aero-entry (bank-angle/lift) guidance remains out of scope (plan §1, §13).
 - The program is a **standalone Cargo binary** at `examples/land-o-matic/`. It is **not** part of
   `gatos.slnx`, not in CI, not in `Directory.Build.props`, and needs **no** `THIRD-PARTY-NOTICES.md`
   entry — examples are source-only and user-compiled, exactly like the sibling `gogogo-rs` /
