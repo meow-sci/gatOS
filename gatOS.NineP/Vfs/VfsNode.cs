@@ -23,6 +23,14 @@ public abstract class VfsNode
 
     /// <summary>Whether this node is a directory.</summary>
     public abstract bool IsDirectory { get; }
+
+    /// <summary>
+    ///     The node's modification time in Unix seconds for <c>Tgetattr</c>, or <c>-1</c> to let
+    ///     the server fall back to its fixed <c>AttrTime</c>. Synthetic telemetry nodes have no real
+    ///     mtime (they return -1); host-filesystem passthrough nodes report the on-disk time so
+    ///     <c>ls -l</c>, <c>make</c> and <c>rsync</c> behave.
+    /// </summary>
+    public virtual long ModifiedUnixSeconds => -1;
 }
 
 /// <summary>A directory node: a listable, walkable set of children.</summary>
@@ -46,6 +54,42 @@ public abstract class VfsDirectory : VfsNode
 
     /// <summary>Resolves one child by name (may build nodes dynamically); null = ENOENT.</summary>
     public abstract VfsNode? Lookup(string name);
+
+    /// <summary>
+    ///     Whether entries can be created/removed/renamed in this directory (host read-write
+    ///     mounts). The default synthetic tree is read-only; the write/create handlers
+    ///     (<c>Tlcreate</c>/<c>Tmkdir</c>/<c>Tunlinkat</c>/<c>Trenameat</c>) reject mutations on
+    ///     a directory that is not writable with <c>EROFS</c>.
+    /// </summary>
+    public virtual bool IsWritable => false;
+
+    /// <summary>
+    ///     Creates a child file (<c>Tlcreate</c>) and hands back an open write handle to it — the
+    ///     two happen together so the just-created file is the one the fid is bound to. Throws
+    ///     <see cref="VfsErrorException"/>: the default read-only tree → <c>EROFS</c>; a host mount
+    ///     → <c>EEXIST</c> when the name is taken, <c>EACCES</c>/<c>ENOSPC</c>/etc. from the host FS.
+    /// </summary>
+    public virtual VfsCreatedFile CreateFile(string name, uint mode)
+        => throw new VfsErrorException(Protocol.LinuxErrno.EROFS, $"'{Name}' is read-only");
+
+    /// <summary>Creates a child directory (<c>Tmkdir</c>); read-only tree → <c>EROFS</c>.</summary>
+    public virtual VfsDirectory CreateDirectory(string name, uint mode)
+        => throw new VfsErrorException(Protocol.LinuxErrno.EROFS, $"'{Name}' is read-only");
+
+    /// <summary>
+    ///     Removes a child (<c>Tunlinkat</c>). <paramref name="removeDir"/> is the kernel's
+    ///     <c>AT_REMOVEDIR</c> flag (rmdir vs unlink). Read-only tree → <c>EROFS</c>.
+    /// </summary>
+    public virtual void Unlink(string name, bool removeDir)
+        => throw new VfsErrorException(Protocol.LinuxErrno.EROFS, $"'{Name}' is read-only");
+
+    /// <summary>
+    ///     Moves <paramref name="oldName"/> in this directory to <paramref name="newName"/> in
+    ///     <paramref name="newParent"/> (<c>Trenameat</c>). Read-only tree → <c>EROFS</c>; across
+    ///     two unrelated mounts → <c>EXDEV</c>.
+    /// </summary>
+    public virtual void Rename(string oldName, VfsDirectory newParent, string newName)
+        => throw new VfsErrorException(Protocol.LinuxErrno.EROFS, $"'{Name}' is read-only");
 }
 
 /// <summary>
@@ -101,4 +145,24 @@ public abstract class VfsFile : VfsNode
     /// </summary>
     public virtual IVfsWritableFileHandle OpenWrite()
         => throw new VfsErrorException(Protocol.LinuxErrno.EACCES, $"'{Name}' is not writable");
+
+    /// <summary>
+    ///     Truncates (or extends) the file to <paramref name="length"/> bytes for a
+    ///     <c>Tsetattr</c> size change on a fid that has no open write handle (a bare
+    ///     <c>truncate(2)</c>). The default is a no-op so control files (length-free) accept the
+    ///     request silently; host files override it. Size changes on an open write fid are routed
+    ///     through <see cref="IVfsWritableFileHandle.SetLength"/> instead.
+    /// </summary>
+    public virtual void SetLength(long length)
+    {
+    }
 }
+
+/// <summary>
+///     The result of <see cref="VfsDirectory.CreateFile"/>: the new file node and an already-open
+///     write handle to it, returned together so the <c>Tlcreate</c> handler binds the fid to the
+///     exact file it just created.
+/// </summary>
+/// <param name="Node">The created file node (its qid is the <c>Rlcreate</c> qid).</param>
+/// <param name="WriteHandle">An open write handle to the new file.</param>
+public readonly record struct VfsCreatedFile(VfsFile Node, IVfsWritableFileHandle WriteHandle);

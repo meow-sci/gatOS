@@ -209,6 +209,16 @@ public sealed class GatOsConfig
     /// <summary>Expose a MIL-STD-1553 BC/RT framing feed (G7; reserved — not yet served).</summary>
     public bool Bus1553 { get; set; }
 
+    // ---- MOUNTS: host folders shared into the guest under /mnt/<name>. ----
+
+    /// <summary>
+    ///     Host folders to share into the guest, each appearing at <c>/mnt/&lt;name&gt;</c>
+    ///     (TOML <c>[[mounts]]</c> array). Empty by default — no host folder is exposed unless the
+    ///     player adds an entry. Each mount is read-only unless <see cref="MountSpec.ReadOnly"/> is
+    ///     set to <c>false</c>. Served over the same 9p-over-slirp channel as <c>/sim</c>.
+    /// </summary>
+    public List<MountSpec> Mounts { get; set; } = [];
+
     /// <summary>
     ///     Loads the config from <paramref name="path"/>. On first run (the file is missing) it is
     ///     seeded from <paramref name="bundledDefaultPath"/> when that copy exists — so settings a
@@ -283,15 +293,34 @@ public sealed class GatOsConfig
     /// <summary>Writes the config atomically (temp + rename) in the sectioned, commented layout.</summary>
     public void Save(string path) => AtomicFile.WriteAllText(path, Serialize());
 
+    private const string MountsSectionTitle = "MOUNTS — host folders shared into the guest under /mnt/<name>";
+
+    private const string MountsHelp =
+        """
+        # Off by default. Each [[mounts]] entry shares a host folder into the guest at /mnt/<name>,
+        # over the same channel as /sim. read_only = true (the default) lets the guest read but not
+        # change your files; read_only = false grants full read-write passthrough to the real folder
+        # — the guest can create, edit, delete and rename host files, so enable it deliberately.
+        # Hand-edit these before launch (no in-game UI); changes take effect on the next launch.
+        #
+        # [[mounts]]
+        # name = "scripts"             # shows up as /mnt/scripts in the guest
+        # path = "C:/Users/you/ksa"    # the host folder (forward slashes are fine on Windows)
+        # read_only = true
+        """;
+
     /// <summary>
     ///     Renders the config to the on-disk TOML: the <see cref="FileHeader"/> preamble, then the
-    ///     <c>schema</c> line, then every value grouped under its <see cref="Sections"/> header with
-    ///     an inline comment. Tomlyn formats each <c>key = value</c>; this only regroups the lines.
+    ///     <c>schema</c> line, then every scalar grouped under its <see cref="Sections"/> header with
+    ///     an inline comment, then the host folder mounts as readable <c>[[mounts]]</c> blocks.
+    ///     Tomlyn formats the scalar values; this regroups them and hand-renders the mounts (Tomlyn
+    ///     would inline the whole list onto one unreadable line, so we emit the block form ourselves
+    ///     — both forms deserialize identically).
     /// </summary>
     public string Serialize()
     {
-        // Index the rendered lines by key so we can re-emit them in section order. Tomlyn owns the
-        // value formatting; we never reformat a value ourselves.
+        // Index the rendered scalar lines by key so we can re-emit them in section order. Tomlyn owns
+        // the value formatting; we never reformat a scalar ourselves.
         var byKey = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var line in TomlSerializer.Serialize(this, TomlOptions)
                      .Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries))
@@ -300,6 +329,10 @@ public sealed class GatOsConfig
             if (eq > 0)
                 byKey[line[..eq].Trim()] = line;
         }
+
+        // Tomlyn renders the list as an inline `mounts = [...]` scalar; the MOUNTS section renders it
+        // in block form below, so drop the inline line here.
+        byKey.Remove("mounts");
 
         var sb = new StringBuilder();
         sb.Append(FileHeader);
@@ -323,6 +356,17 @@ public sealed class GatOsConfig
             }
         }
 
+        // Host folder mounts: always the help block, then one [[mounts]] table per entry.
+        sb.Append("\n# ===== ").Append(MountsSectionTitle).Append(" =====\n\n");
+        sb.Append(MountsHelp).Append('\n');
+        foreach (var mount in Mounts)
+        {
+            sb.Append("\n[[mounts]]\n");
+            sb.Append("name = ").Append(RenderTomlString(mount.Name)).Append('\n');
+            sb.Append("path = ").Append(RenderTomlString(mount.Path)).Append('\n');
+            sb.Append("read_only = ").Append(mount.ReadOnly ? "true" : "false").Append('\n');
+        }
+
         // Catch-all: any key the section table did not place (e.g. a freshly added property) still
         // ships, so the generated file is always complete even if this table lags the class.
         if (byKey.Count > 0)
@@ -333,6 +377,18 @@ public sealed class GatOsConfig
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    ///     Renders a string as a TOML value: a literal <c>'…'</c> string when it has no quote or
+    ///     newline (so a Windows path's backslashes need no escaping), else a basic escaped string.
+    /// </summary>
+    private static string RenderTomlString(string value)
+    {
+        if (!value.Contains('\'') && !value.Contains('\n') && !value.Contains('\r'))
+            return $"'{value}'";
+        var escaped = value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
+        return $"\"{escaped}\"";
     }
 
     /// <summary>Clamps out-of-range values into something bootable, logging each correction.</summary>
@@ -373,6 +429,58 @@ public sealed class GatOsConfig
 
         // CPU model names are QEMU-defined (e.g. "Haswell"); pass through verbatim, just trimmed.
         CpuModel = CpuModel.Trim();
+
+        NormalizeMounts();
+    }
+
+    /// <summary>
+    ///     Sanitizes the host-folder mounts: each name is reduced to a safe single path component,
+    ///     blank/invalid names and blank paths are dropped, and duplicate names are removed (the
+    ///     name is the guest directory under <c>/mnt</c>, so it must be unique). Logged, not rejected.
+    /// </summary>
+    private void NormalizeMounts()
+    {
+        if (Mounts.Count == 0)
+            return;
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var cleaned = new List<MountSpec>(Mounts.Count);
+        foreach (var mount in Mounts)
+        {
+            var name = SanitizeMountName(mount.Name ?? "");
+            if (name.Length == 0)
+            {
+                ModLog.Log.Warn($"Config: mount with name '{mount.Name}' is not a usable folder name; skipping.");
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(mount.Path))
+            {
+                ModLog.Log.Warn($"Config: mount '{name}' has no path; skipping.");
+                continue;
+            }
+
+            if (!seen.Add(name))
+            {
+                ModLog.Log.Warn($"Config: duplicate mount name '{name}'; keeping the first only.");
+                continue;
+            }
+
+            cleaned.Add(new MountSpec { Name = name, Path = mount.Path.Trim(), ReadOnly = mount.ReadOnly });
+        }
+
+        Mounts = cleaned;
+    }
+
+    /// <summary>Reduces a mount name to <c>[A-Za-z0-9._-]</c> and rejects <c>.</c>/<c>..</c>.</summary>
+    private static string SanitizeMountName(string raw)
+    {
+        var sb = new StringBuilder(raw.Length);
+        foreach (var c in raw.Trim())
+            if (char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-')
+                sb.Append(c);
+        var name = sb.ToString();
+        return name is "." or ".." ? "" : name;
     }
 
     private static int Clamp(string name, int value, int min, int max)
@@ -382,4 +490,26 @@ public sealed class GatOsConfig
             ModLog.Log.Warn($"Config: {name} {value} is outside [{min}, {max}]; using {clamped}.");
         return clamped;
     }
+}
+
+/// <summary>
+///     One <c>[[mounts]]</c> entry: a host folder shared into the guest at <c>/mnt/&lt;name&gt;</c>.
+///     Public, mutable, parameterless — the shape Tomlyn deserializes an array-of-tables into.
+/// </summary>
+public sealed class MountSpec
+{
+    /// <summary>
+    ///     The mount name — the guest directory under <c>/mnt</c>. Sanitized at load to a single safe
+    ///     path component (<c>[A-Za-z0-9._-]</c>); entries that sanitize to empty are dropped.
+    /// </summary>
+    public string Name { get; set; } = "";
+
+    /// <summary>The absolute host folder to expose (e.g. <c>C:/Users/me/ksa-scripts</c>).</summary>
+    public string Path { get; set; } = "";
+
+    /// <summary>
+    ///     When <c>true</c> (the default) the guest can read but not modify the folder; <c>false</c>
+    ///     gives the guest full read-write passthrough (create/edit/delete/rename real host files).
+    /// </summary>
+    public bool ReadOnly { get; set; } = true;
 }

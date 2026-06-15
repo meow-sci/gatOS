@@ -38,6 +38,12 @@ namespace gatOS.Vm;
 ///     The host MQTT broker port baked into the kernel cmdline (<c>gatos.mqttport</c>);
 ///     <c>null</c> (emitted as 0) leaves the guest's MQTT env unset.
 /// </param>
+/// <param name="MntPort">
+///     The host folder-mounts 9p server port baked into the kernel cmdline (<c>gatos.mntport</c>);
+///     <c>null</c> (emitted as 0) keeps the guest's <c>mnt-mount</c> supervisor idle so nothing is
+///     mounted under <c>/mnt</c>. Like the sim/http/mqtt ports the guest dials it at
+///     <c>10.0.2.2:&lt;port&gt;</c> over slirp.
+/// </param>
 /// <param name="SerialPort">
 ///     Loopback port for the G7 <c>gatos.serial</c> virtio-serial chardev socket (QEMU listens,
 ///     the host bridge connects — like QGA). <c>null</c> omits the port entirely, so the guest's
@@ -61,6 +67,7 @@ public sealed record VmLaunchSpec(
     string CpuModel = "",
     int? HttpPort = null,
     int? MqttPort = null,
+    int? MntPort = null,
     int? SerialPort = null)
 {
     /// <summary>Default guest RAM (OS_ANALYSIS.md §3.8: Alpine comfy at 192–256 MB).</summary>

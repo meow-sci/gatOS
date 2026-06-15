@@ -23,10 +23,12 @@ Architecture/background: `OS_ANALYSIS.md` §3.8; task specs: `OS_PLAN.md` M2; ha
 > safe (loopback-only access; key carries no real authority) and deliberate — see `guest/keys/README.md`.
 
 The guest is deliberately tiny: **no openrc** — busybox init runs `rootfs-overlay/etc/inittab`,
-which supervises exactly four things: `init-gatos` (sysinit: mounts, static slirp network
+which supervises exactly five things: `init-gatos` (sysinit: mounts, static slirp network
 10.0.2.15/gw 10.0.2.2, device nodes), dropbear (`-s`, key-only), `qga-gatos` (qemu-guest-agent once
-its virtio-serial port appears), and `sim-mount` (the 9p `/sim` remount supervisor — reads
-`gatos.simport=<port>` from the kernel cmdline; absent or `0` means no 9p server, it idles).
+its virtio-serial port appears), `sim-mount` (the 9p `/sim` remount supervisor — reads
+`gatos.simport=<port>` from the kernel cmdline; absent or `0` means no 9p server, it idles), and
+`mnt-mount` (the parallel supervisor for host folder mounts — reads `gatos.mntport=<port>` and mounts
+the host-folders 9p server once at `/mnt`; absent or `0` means no folders are shared, it idles).
 `init-gatos` also runs `resize2fs /dev/vda` (best-effort) so the root ext4 grows online to fill a
 host-resized overlay — `resize2fs` comes from `e2fsprogs-extra` (busybox has none).
 

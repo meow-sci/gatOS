@@ -33,7 +33,10 @@ internal sealed class Session
     private const uint OAccmode = 3;
     private const uint OWronly = 1;
     private const uint ORdwr = 2;
+    private const uint OTrunc = 0x200;                  // O_TRUNC — truncate on open
     private const ulong GetattrBasic = 0x7FF;          // P9_GETATTR_BASIC
+    private const uint SetattrSize = 0x8;              // P9_SETATTR_SIZE — the ftruncate path
+    private const uint AtRemovedir = 0x200;           // AT_REMOVEDIR — Tunlinkat targets a directory
     private const byte DtDir = 4;
     private const byte DtReg = 8;
 
@@ -161,6 +164,10 @@ internal sealed class Session
                 MessageType.Treaddir => HandleReaddir(body, tag),
                 MessageType.Tread => await HandleReadAsync(body, tag, ct).ConfigureAwait(false),
                 MessageType.Twrite => await HandleWriteAsync(body, tag, ct).ConfigureAwait(false),
+                MessageType.Tlcreate => HandleLcreate(body, tag),
+                MessageType.Tmkdir => HandleMkdir(body, tag),
+                MessageType.Tunlinkat => HandleUnlinkat(body, tag),
+                MessageType.Trenameat => HandleRenameat(body, tag),
                 MessageType.Tsetattr => HandleSetattr(body, tag),
                 MessageType.Tfsync => HandleFsync(body, tag),
                 MessageType.Tclunk => HandleClunk(body, tag),
@@ -366,7 +373,13 @@ internal sealed class Session
                 if (wantsRead)
                     entry.Handle = file.Open();
                 if (wantsWrite)
-                    entry.WriteHandle = file.OpenWrite(); // O_TRUNC (0x200) is ignored: control files are length-free
+                {
+                    entry.WriteHandle = file.OpenWrite();
+                    // O_TRUNC zeroes the file on open (host mounts); control files are length-free
+                    // and their handle's SetLength is a no-op, so this is harmless for them.
+                    if ((flags & OTrunc) != 0)
+                        entry.WriteHandle.SetLength(0);
+                }
             }
 
             entry.Opened = true;
@@ -396,7 +409,11 @@ internal sealed class Session
             mode = file.IsWritable ? ModeFileWritable : ModeFile;
         }
 
-        var seconds = (ulong)_attrTime.ToUnixTimeSeconds();
+        // Host-passthrough nodes report their real on-disk mtime; synthetic nodes return -1 and
+        // fall back to the server's fixed AttrTime (keeps the golden frames deterministic).
+        var seconds = node.ModifiedUnixSeconds is >= 0 and var nodeTime
+            ? (ulong)nodeTime
+            : (ulong)_attrTime.ToUnixTimeSeconds();
         return new NinePWriter().Begin(MessageType.Rgetattr, tag)
             .WriteUInt64(GetattrBasic)                                   // valid
             .WriteQid(Qid.ForNode(node))                                 // qid
@@ -516,18 +533,124 @@ internal sealed class Session
     }
 
     /// <summary>
-    ///     Accepts the kernel's <c>O_TRUNC</c> truncate on a writable control file (size-only,
-    ///     no-op — control files are length-free) and rejects everything else; read-only files
-    ///     get EOPNOTSUPP. Only the fid is needed to find the node (T7.4-style minimal handler).
+    ///     Applies a <c>Tsetattr</c> on a writable node. Only the size change (<c>ftruncate</c>,
+    ///     and the host-mount <c>O_TRUNC</c>/<c>truncate(2)</c>) is acted on — through the open
+    ///     write handle when there is one, else through the node; mode/uid/gid/time changes are
+    ///     accepted as best-effort no-ops so <c>cp -p</c>/<c>chmod</c> don't fail on a host mount.
+    ///     Read-only nodes get EOPNOTSUPP (control-file truncate stays a no-op success).
     /// </summary>
     private NinePWriter HandleSetattr(byte[] body, ushort tag)
     {
         var reader = new NinePReader(body);
         var fid = reader.ReadUInt32();
+        var valid = reader.ReadUInt32();
+        _ = reader.ReadUInt32(); // mode
+        _ = reader.ReadUInt32(); // uid
+        _ = reader.ReadUInt32(); // gid
+        var size = reader.ReadUInt64();
+
         var entry = RequireFid(fid);
-        if (entry.Node is VfsFile { IsWritable: true })
-            return new NinePWriter().Begin(MessageType.Rsetattr, tag);
-        throw new VfsErrorException(LinuxErrno.EOPNOTSUPP, $"setattr: '{entry.Node.Name}' is read-only");
+        var writableFile = entry.Node is VfsFile { IsWritable: true };
+        if (!writableFile && entry.Node is not VfsDirectory { IsWritable: true })
+            throw new VfsErrorException(LinuxErrno.EOPNOTSUPP, $"setattr: '{entry.Node.Name}' is read-only");
+
+        if (writableFile && (valid & SetattrSize) != 0)
+        {
+            if (entry.WriteHandle is { } handle)
+                handle.SetLength((long)size);
+            else
+                ((VfsFile)entry.Node).SetLength((long)size);
+        }
+
+        return new NinePWriter().Begin(MessageType.Rsetattr, tag);
+    }
+
+    /// <summary>
+    ///     Creates a file in a directory fid and rebinds that fid to the new, write-open file
+    ///     (<c>Tlcreate</c> — host read-write mounts). The synthetic tree's directories are not
+    ///     writable, so this surfaces EROFS there.
+    /// </summary>
+    private NinePWriter HandleLcreate(byte[] body, ushort tag)
+    {
+        var reader = new NinePReader(body);
+        var fid = reader.ReadUInt32();
+        var name = reader.ReadString();
+        var flags = reader.ReadUInt32();
+        var mode = reader.ReadUInt32();
+        _ = reader.ReadUInt32(); // gid
+
+        var entry = RequireFid(fid);
+        lock (entry)
+        {
+            if (entry.Opened)
+                throw new VfsErrorException(LinuxErrno.EINVAL, $"lcreate: fid {fid} is already open");
+            if (entry.Node is not VfsDirectory dir)
+                throw new VfsErrorException(LinuxErrno.ENOTDIR, $"lcreate: fid {fid} is not a directory");
+
+            var created = dir.CreateFile(name, mode);
+            var newEntry = new FidEntry([.. entry.Path, created.Node])
+            {
+                Opened = true,
+                WriteHandle = created.WriteHandle,
+            };
+            if ((flags & OAccmode) == ORdwr)
+                newEntry.Handle = created.Node.Open();
+            _fids[fid] = newEntry;
+
+            return new NinePWriter().Begin(MessageType.Rlcreate, tag)
+                .WriteQid(Qid.ForNode(created.Node))
+                .WriteUInt32(0); // iounit
+        }
+    }
+
+    /// <summary>Creates a directory in a directory fid (<c>Tmkdir</c>); read-only tree → EROFS.</summary>
+    private NinePWriter HandleMkdir(byte[] body, ushort tag)
+    {
+        var reader = new NinePReader(body);
+        var fid = reader.ReadUInt32();
+        var name = reader.ReadString();
+        var mode = reader.ReadUInt32();
+        _ = reader.ReadUInt32(); // gid
+
+        var entry = RequireFid(fid);
+        if (entry.Node is not VfsDirectory dir)
+            throw new VfsErrorException(LinuxErrno.ENOTDIR, $"mkdir: fid {fid} is not a directory");
+        var created = dir.CreateDirectory(name, mode);
+        return new NinePWriter().Begin(MessageType.Rmkdir, tag).WriteQid(Qid.ForNode(created));
+    }
+
+    /// <summary>Removes a child of a directory fid (<c>Tunlinkat</c>); read-only tree → EROFS.</summary>
+    private NinePWriter HandleUnlinkat(byte[] body, ushort tag)
+    {
+        var reader = new NinePReader(body);
+        var fid = reader.ReadUInt32();
+        var name = reader.ReadString();
+        var flags = reader.ReadUInt32();
+
+        var entry = RequireFid(fid);
+        if (entry.Node is not VfsDirectory dir)
+            throw new VfsErrorException(LinuxErrno.ENOTDIR, $"unlinkat: fid {fid} is not a directory");
+        dir.Unlink(name, (flags & AtRemovedir) != 0);
+        return new NinePWriter().Begin(MessageType.Runlinkat, tag);
+    }
+
+    /// <summary>Moves a child between two directory fids (<c>Trenameat</c>); read-only tree → EROFS.</summary>
+    private NinePWriter HandleRenameat(byte[] body, ushort tag)
+    {
+        var reader = new NinePReader(body);
+        var oldFid = reader.ReadUInt32();
+        var oldName = reader.ReadString();
+        var newFid = reader.ReadUInt32();
+        var newName = reader.ReadString();
+
+        var oldEntry = RequireFid(oldFid);
+        var newEntry = RequireFid(newFid);
+        if (oldEntry.Node is not VfsDirectory oldDir)
+            throw new VfsErrorException(LinuxErrno.ENOTDIR, $"renameat: fid {oldFid} is not a directory");
+        if (newEntry.Node is not VfsDirectory newDir)
+            throw new VfsErrorException(LinuxErrno.ENOTDIR, $"renameat: fid {newFid} is not a directory");
+        oldDir.Rename(oldName, newDir, newName);
+        return new NinePWriter().Begin(MessageType.Rrenameat, tag);
     }
 
     /// <summary>Trivially succeeds for any fid: synthetic files have nothing to flush to disk.</summary>

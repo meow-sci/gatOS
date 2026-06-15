@@ -186,6 +186,7 @@ public sealed class VmHost : IAsyncDisposable
             var simPort = _options.SimPortProvider?.Invoke();
             var httpPort = _options.HttpPortProvider?.Invoke();
             var mqttPort = _options.MqttPortProvider?.Invoke();
+            var mntPort = _options.MntPortProvider?.Invoke();
             var serialEnabled = _options.SerialEnabled;
 
             // The port-reuse race window is real but tiny (T3.1): one retry with fresh ports.
@@ -209,6 +210,7 @@ public sealed class VmHost : IAsyncDisposable
                     CpuModel: _options.CpuModel,
                     HttpPort: httpPort,
                     MqttPort: mqttPort,
+                    MntPort: mntPort,
                     SerialPort: serialPort);
 
                 process = _processFactory();

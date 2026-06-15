@@ -428,8 +428,8 @@ public sealed class ServerConformanceTests
     {
         var root = await AttachedFidAsync();
         await _client.WalkAsync(root, 1, "ctl");
-        // O_TRUNC drives a size-only Tsetattr; the handler only needs the fid.
-        var response = await _client.SendRawAsync(MessageType.Tsetattr, w => w.WriteUInt32(1));
+        // The kernel always sends the full Tsetattr body; a control file's truncate is a no-op success.
+        var response = await _client.SendRawAsync(MessageType.Tsetattr, WriteSetattrBody);
         Assert.That(response.Type, Is.EqualTo(MessageType.Rsetattr));
     }
 
@@ -438,10 +438,19 @@ public sealed class ServerConformanceTests
     {
         var root = await AttachedFidAsync();
         await _client.WalkAsync(root, 1, "hello");
-        var response = await _client.SendRawAsync(MessageType.Tsetattr, w => w.WriteUInt32(1));
+        var response = await _client.SendRawAsync(MessageType.Tsetattr, WriteSetattrBody);
         Assert.That(response.Type, Is.EqualTo(MessageType.Rlerror));
         Assert.That(new NinePReader(response.Body).ReadUInt32(), Is.EqualTo(LinuxErrno.EOPNOTSUPP));
     }
+
+    /// <summary>The full Tsetattr body (fid 1, no valid bits set) — the shape the kernel sends.</summary>
+    private static void WriteSetattrBody(NinePWriter w) => w
+        .WriteUInt32(1)                                   // fid
+        .WriteUInt32(0)                                   // valid (no changes)
+        .WriteUInt32(0).WriteUInt32(0).WriteUInt32(0)     // mode, uid, gid
+        .WriteUInt64(0)                                   // size
+        .WriteUInt64(0).WriteUInt64(0)                    // atime sec/nsec
+        .WriteUInt64(0).WriteUInt64(0);                   // mtime sec/nsec
 
     [Test]
     public async Task WritableFile_Fsync_Succeeds()

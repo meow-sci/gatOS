@@ -1,0 +1,23 @@
+#!/bin/sh
+# 9p /mnt host-folder mount supervisor (respawned by busybox init).
+# The host shares HOST OS folders into the guest via a second 9p server and passes its port as
+# gatos.mntport=<port> on the kernel cmdline; absent or 0 means no folders are shared (the gatOS
+# [[mounts]] config is empty) — idle forever. The server's root lists each configured mount as a
+# subdirectory, so a single mount of the root at /mnt exposes /mnt/<name> for every mount. Mount
+# options mirror sim-mount (validated against the M1 spike); msize is raised for file throughput.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+PORT="$(sed -n 's/.*gatos\.mntport=\([0-9][0-9]*\).*/\1/p' /proc/cmdline)"
+if [ -z "$PORT" ] || [ "$PORT" = 0 ]; then
+    # No host folders shared: idle forever (a fast exit would make init throttle the respawn).
+    exec sleep 2147483647
+fi
+
+modprobe 9p 2>/dev/null
+mkdir -p /mnt
+while :; do
+    if ! mountpoint -q /mnt; then
+        mount -t 9p -o "trans=tcp,port=$PORT,version=9p2000.L,msize=131072,cache=none" 10.0.2.2 /mnt 2>/dev/null
+    fi
+    sleep 2
+done

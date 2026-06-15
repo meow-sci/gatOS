@@ -45,7 +45,8 @@ the M7 VFS must support.
 pinned Alpine 3.24 mirrors — no setup-alpine, no openrc; busybox init runs the hand-written
 `guest/rootfs-overlay/` (static slirp net 10.0.2.15, dropbear key-only, qemu-ga via wrapper,
 `sim-mount` 9p supervisor driven by the `gatos.simport=<port>` kernel cmdline, 0/absent = idle;
-`init-gatos` also runs best-effort `resize2fs /dev/vda` so the root ext4 grows online to fill a
+`mnt-mount` is the parallel supervisor for host folder mounts — `gatos.mntport=<port>` mounts `/mnt`
+once (guest **v10+**); `init-gatos` also runs best-effort `resize2fs /dev/vda` so the root ext4 grows online to fill a
 host-resized overlay — `resize2fs` ships via `e2fsprogs-extra`, guest **v9+**). The base stays small
 (`DISK_SIZE_MB`, 1.5 GiB); the host grows the per-save overlay to `[disk_size_gb]` (default 8 GiB).
 Artifacts in `guest/out/` (never committed): partitionless-ext4 `base.qcow2` (zstd qcow2),
@@ -401,6 +402,45 @@ field-level `gatos/sim/<path>` read sweep + `/set` actuation across every write 
 error paths, enriched time/status, retained delivery to a late subscriber, command routing + errno,
 debug gating, and that consumed commands are not rebroadcast). Full `GATOS_IT=1` suite green on guest
 v3, zero warnings.
+
+**Host folder mounts (`/mnt/<name>`): BUILT.** A user-requested feature distinct from the `/sim`
+telemetry surface: share real **HOST OS folders** into the guest, mounted at `/mnt/<name>`, off by
+default. It reuses the existing 9p-over-slirp mechanism — a **second `NinePServer`** (separate from
+the `/sim` server) whose root is a `HostMountTree` (`gatOS.NineP/Vfs/`): one directory listing each
+configured mount as a host-backed `HostDirectory`, so the guest mounts the root **once** at `/mnt`
+and `/mnt/<name>/…` is the live host folder. This is **not** a `/sim` transport and is exempt from
+the transport-parity rule — it is a plain filesystem passthrough, not a projection of `SimSnapshot`.
+The passthrough VFS (`gatOS.NineP/Vfs/HostDirectory.cs`, `HostFile.cs`, `HostMount.cs`) is game-free:
+`HostFile`/`HostDirectory` stat the live file (truthful `Size`/real mtime), do **positional** I/O via
+`System.IO.RandomAccess` (thread-safe under pipelined reads, no shared seek state), and confine every
+resolved path to the mount subtree (single-component names, `GetFullPath` + within-root check — no
+`..`/absolute escape). To serve this the **9p server gained a write/create surface**
+(`Server/Session.cs`): `Tlcreate`/`Tmkdir`/`Tunlinkat`/`Trenameat`, real `Tsetattr` size-truncate +
+`O_TRUNC`-on-open, and `Tgetattr` now reports a node's real mtime (`VfsNode.ModifiedUnixSeconds`,
+default -1 = the old fixed `AttrTime` for synthetic nodes). The mutation surface is virtual on
+`VfsDirectory` (`CreateFile`/`CreateDirectory`/`Unlink`/`Rename` + `IsWritable`), defaulting to
+`EROFS` so the synthetic `/sim` tree stays byte-for-byte read-only; only `HostDirectory` overrides
+them. New errnos: `EEXIST`/`EXDEV`/`ENOSPC`/`EROFS`/`ENOTEMPTY`. **Per-mount read-only/read-write**:
+each mount is read-only by default; `read_only = false` grants full read-write passthrough (create/
+edit/delete/rename real host files). A read-only mount rejects opens-for-write with `EACCES` and
+create/mkdir/etc. with `EROFS`. Config: a TOML `[[mounts]]` array (`GatOsConfig.MountSpec` —
+`name`/`path`/`read_only`); names are sanitized to a safe single path component and de-duped at load,
+and `Serialize()` hand-renders the `[[mounts]]` blocks (Tomlyn would inline the whole list onto one
+unreadable line — both forms deserialize identically; Windows paths render as literal `'…'` strings so
+backslashes need no escaping). `Mod` starts the mounts server (`StartMountsServer`, after the MQTT
+broker) only when `[[mounts]]` is non-empty, feeds `VmHostOptions.MntPortProvider`, and disposes it at
+unload; the status window gains a **Mounts** row. `VmHost`/`QemuCommandBuilder` inject a fourth slirp
+port as `gatos.mntport=<port>` (0/absent = nothing under `/mnt`); the guest's **`mnt-mount`**
+supervisor (`guest/rootfs-overlay/sbin/mnt-mount`, respawned by inittab, mirrors `sim-mount` with a
+raised `msize`) mounts `/mnt` once it sees a non-zero port. **Requires guest image v10** (the version
+that ships `mnt-mount`); `GUEST_VERSION` is bumped to 10, so the guest must be rebuilt/released (CI on
+a `guest/**` push) before `GATOS_IT` can fetch it. Tests: `gatOS.NineP.Tests/HostMountTests` (18
+fixtures over the managed client against temp dirs — read/stat/mode/mtime, write/create/mkdir/unlink/
+rename/truncate, read-only rejection, name-traversal `EINVAL`) plus the `GATOS_IT` guest fixture
+`gatOS.SimFs.Tests/Integration/HostMountIntegrationTests` (real guest mounts a ro + a rw host folder
+and read-writes it end to end — runnable once guest v10 is published). Full non-IT suite green, zero
+warnings.
+
 **Still pending: the in-game pass** (purrTTY tip release is now cut — the T6.6/T9.3/G1–G4 checklists
 in `docs/VALIDATION.md` are runnable but need a live KSA flight). The headless host↔guest stack
 (VM, shells, `/sim`, HTTP/MQTT/serial transports, control surface) is otherwise fully built and
@@ -493,7 +533,10 @@ gatOS.Logging                    (no deps)            game-free logging shim + P
                                                       (alloc-free single-writer timing accumulator)
 gatOS.NineP    → Logging                              9P2000.L codec + server + VFS (M7, built);
                                                       VfsScan (walk/read/write) + VfsFile.IsStreaming
-                                                      back the field-level transport mirrors
+                                                      back the field-level transport mirrors; a
+                                                      write/create surface (Tlcreate/Tmkdir/Tunlinkat/
+                                                      Trenameat) + HostDirectory/HostFile/HostMountTree
+                                                      back the /mnt host-folder passthrough (built)
 gatOS.SimFs    → NineP, Logging                       /sim tree, snapshots, stream/events, AlarmFile,
                                                       EventDiffer/SampleClock/Sanitize (M8+M9+G3, built);
                                                       TelemetrySettings (runtime-mutable sample rate +

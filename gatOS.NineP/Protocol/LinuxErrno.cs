@@ -15,6 +15,9 @@ public static class LinuxErrno
     /// <summary>Bad file descriptor (fid unknown or not open as required).</summary>
     public const uint EBADF = 9;
 
+    /// <summary>Permission denied (write attempts on the read-only tree).</summary>
+    public const uint EACCES = 13;
+
     /// <summary>
     ///     Resource busy: a control action cannot fire right now (e.g. a one-shot trigger that
     ///     has already fired). Part of the control-file errno vocabulary (KSA_GAME_INTEGRATION_PLAN
@@ -22,8 +25,11 @@ public static class LinuxErrno
     /// </summary>
     public const uint EBUSY = 16;
 
-    /// <summary>Permission denied (write attempts on the read-only tree).</summary>
-    public const uint EACCES = 13;
+    /// <summary>File exists (creating an entry whose name is already taken — host mounts).</summary>
+    public const uint EEXIST = 17;
+
+    /// <summary>Cross-device link (renaming across two different host mounts).</summary>
+    public const uint EXDEV = 18;
 
     /// <summary>Not a directory (walking through a file).</summary>
     public const uint ENOTDIR = 20;
@@ -33,6 +39,15 @@ public static class LinuxErrno
 
     /// <summary>Invalid argument (malformed but parseable requests).</summary>
     public const uint EINVAL = 22;
+
+    /// <summary>No space left on the host device (a write to a full host mount).</summary>
+    public const uint ENOSPC = 28;
+
+    /// <summary>Read-only file system (a write to a read-only host mount).</summary>
+    public const uint EROFS = 30;
+
+    /// <summary>Directory not empty (removing a non-empty directory on a host mount).</summary>
+    public const uint ENOTEMPTY = 39;
 
     /// <summary>Operation not supported (unimplemented message types, xattrs, auth).</summary>
     public const uint EOPNOTSUPP = 95;
@@ -49,11 +64,16 @@ public static class LinuxErrno
         ENOENT => nameof(ENOENT),
         EIO => nameof(EIO),
         EBADF => nameof(EBADF),
-        EBUSY => nameof(EBUSY),
         EACCES => nameof(EACCES),
+        EBUSY => nameof(EBUSY),
+        EEXIST => nameof(EEXIST),
+        EXDEV => nameof(EXDEV),
         ENOTDIR => nameof(ENOTDIR),
         EISDIR => nameof(EISDIR),
         EINVAL => nameof(EINVAL),
+        ENOSPC => nameof(ENOSPC),
+        EROFS => nameof(EROFS),
+        ENOTEMPTY => nameof(ENOTEMPTY),
         EOPNOTSUPP => nameof(EOPNOTSUPP),
         ETIMEDOUT => nameof(ETIMEDOUT),
         _ => nameof(EIO),

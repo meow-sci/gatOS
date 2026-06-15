@@ -193,6 +193,42 @@ public sealed class NinePTestClient : IAsyncDisposable
         return new NinePReader(body).ReadUInt32();
     }
 
+    /// <summary>Creates a file in a directory fid and rebinds that fid to the new open file (Tlcreate).</summary>
+    public async Task<Qid> LcreateAsync(uint fid, string name, uint flags = 1, uint mode = 0x1A4, uint gid = 0)
+    {
+        var body = await RequestAsync(MessageType.Tlcreate, MessageType.Rlcreate,
+            w => w.WriteUInt32(fid).WriteString(name).WriteUInt32(flags).WriteUInt32(mode).WriteUInt32(gid));
+        return new NinePReader(body).ReadQid();
+    }
+
+    /// <summary>Creates a directory in a directory fid (Tmkdir).</summary>
+    public async Task<Qid> MkdirAsync(uint dfid, string name, uint mode = 0x1ED, uint gid = 0)
+    {
+        var body = await RequestAsync(MessageType.Tmkdir, MessageType.Rmkdir,
+            w => w.WriteUInt32(dfid).WriteString(name).WriteUInt32(mode).WriteUInt32(gid));
+        return new NinePReader(body).ReadQid();
+    }
+
+    /// <summary>Removes a child of a directory fid (Tunlinkat); flags carries AT_REMOVEDIR (0x200).</summary>
+    public Task UnlinkatAsync(uint dfid, string name, uint flags = 0)
+        => RequestAsync(MessageType.Tunlinkat, MessageType.Runlinkat,
+            w => w.WriteUInt32(dfid).WriteString(name).WriteUInt32(flags));
+
+    /// <summary>Moves a child between two directory fids (Trenameat).</summary>
+    public Task RenameatAsync(uint oldDirFid, string oldName, uint newDirFid, string newName)
+        => RequestAsync(MessageType.Trenameat, MessageType.Rrenameat,
+            w => w.WriteUInt32(oldDirFid).WriteString(oldName).WriteUInt32(newDirFid).WriteString(newName));
+
+    /// <summary>Truncates/extends an open fid to <paramref name="size"/> bytes (Tsetattr ATTR_SIZE).</summary>
+    public Task SetattrSizeAsync(uint fid, ulong size)
+        => RequestAsync(MessageType.Tsetattr, MessageType.Rsetattr, w => w
+            .WriteUInt32(fid)
+            .WriteUInt32(0x8)            // valid = P9_SETATTR_SIZE
+            .WriteUInt32(0).WriteUInt32(0).WriteUInt32(0) // mode, uid, gid
+            .WriteUInt64(size)          // size
+            .WriteUInt64(0).WriteUInt64(0) // atime sec/nsec
+            .WriteUInt64(0).WriteUInt64(0)); // mtime sec/nsec
+
     /// <summary>Releases a fid.</summary>
     public Task ClunkAsync(uint fid)
         => RequestAsync(MessageType.Tclunk, MessageType.Rclunk, w => w.WriteUInt32(fid));

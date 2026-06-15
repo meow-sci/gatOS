@@ -53,6 +53,13 @@ public sealed record VmHostOptions
     public Func<int?>? MqttPortProvider { get; init; }
 
     /// <summary>
+    ///     Supplies the host folder-mounts 9p server port at boot time; <c>null</c> result or
+    ///     provider emits <c>gatos.mntport=0</c> so the guest's <c>mnt-mount</c> supervisor idles
+    ///     and nothing appears under <c>/mnt</c>. Guest dials <c>10.0.2.2:&lt;port&gt;</c> (slirp).
+    /// </summary>
+    public Func<int?>? MntPortProvider { get; init; }
+
+    /// <summary>
     ///     When true (G7) the boot allocates a loopback port and wires the <c>gatos.serial</c>
     ///     virtio-serial chardev; the port is published as <see cref="VmStatus.SerialPort"/> for
     ///     the host-side <c>SerialBridge</c> to connect to. The guest exposes

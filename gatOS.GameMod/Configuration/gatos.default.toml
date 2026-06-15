@@ -108,3 +108,16 @@ bus_ccsds = false
 
 # Expose a MIL-STD-1553 BC/RT framing feed (reserved — not yet served).
 bus_1553 = false
+
+# ===== MOUNTS — host folders shared into the guest under /mnt/<name> =====
+
+# Off by default. Each [[mounts]] entry shares a host folder into the guest at /mnt/<name>,
+# over the same channel as /sim. read_only = true (the default) lets the guest read but not
+# change your files; read_only = false grants full read-write passthrough to the real folder
+# — the guest can create, edit, delete and rename host files, so enable it deliberately.
+# Hand-edit these before launch (no in-game UI); changes take effect on the next launch.
+#
+# [[mounts]]
+# name = "scripts"             # shows up as /mnt/scripts in the guest
+# path = "C:/Users/you/ksa"    # the host folder (forward slashes are fine on Windows)
+# read_only = true

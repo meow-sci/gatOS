@@ -55,4 +55,14 @@ public interface IVfsWritableFileHandle : IDisposable
     ///     errno. The token fires on <c>Tflush</c>/<c>Tclunk</c>/teardown.
     /// </summary>
     ValueTask<uint> WriteAsync(ulong offset, ReadOnlyMemory<byte> data, CancellationToken ct);
+
+    /// <summary>
+    ///     Truncates (or extends) the open file to <paramref name="length"/> bytes — the
+    ///     <c>O_TRUNC</c> on open and the <c>ftruncate(2)</c> (<c>Tsetattr</c> size on this fid).
+    ///     The default is a no-op so control files (length-free) ignore it; the host-file write
+    ///     handle overrides it with a real truncate.
+    /// </summary>
+    void SetLength(long length)
+    {
+    }
 }

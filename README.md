@@ -417,6 +417,43 @@ across every transport.
 
 ---
 
+## Sharing host folders into the guest (`/mnt`)
+
+Want to move files between your real PC and the Linux box — drop in a script, keep your work on a
+real disk, pull out a log? gatOS can mount **folders from your host OS** into the guest at
+`/mnt/<name>`. This is **off by default**; you opt in per folder in `gatos.toml`:
+
+```toml
+[[mounts]]
+name = "scripts"            # appears in the guest at /mnt/scripts
+path = "C:/Users/you/ksa"   # the real host folder (forward slashes are fine on Windows)
+read_only = true            # the default — the guest can read but not change your files
+
+[[mounts]]
+name = "out"
+path = "C:/Users/you/ksa-out"
+read_only = false           # full read-write: the guest can create/edit/delete/rename real files
+```
+
+Then in a gatOS terminal:
+
+```sh
+ls /mnt/scripts             # your host folder, live
+cp /mnt/scripts/run.sh /root/   # copy a host file into the guest
+echo "hi" > /mnt/out/note.txt   # (read_only = false) writes straight back to the host folder
+```
+
+It rides the same channel as `/sim` (loopback only — nothing is exposed to your network). A
+**read-only** mount is the safe default; flip `read_only = false` only when you actually want the
+guest to write to your real files, since it then has full create/edit/delete/rename access to that
+folder. Edit `[[mounts]]` before launching (there's no in-game UI for it); changes take effect on the
+next launch, and the gatOS status window shows a **Mounts** row with the active shares.
+
+> Requires the guest image that ships the mount supervisor (v10+). A fresh install fetches it
+> automatically.
+
+---
+
 ## Where your stuff lives
 
 Two folders matter:
@@ -537,6 +574,18 @@ already set to the right addresses.
 | --- | --- | --- |
 | `sample_rate_hz` | `10` | How often telemetry is sampled into `/sim` (1–120 Hz). |
 | `boot_timeout_seconds` | `0` | `0` = automatic (60 s accelerated, 300 s under software emulation). |
+
+### Host folder mounts (`[[mounts]]`)
+
+Share host folders into the guest at `/mnt/<name>` (off by default — see [Sharing host folders into
+the guest](#sharing-host-folders-into-the-guest-mnt) above for the full rundown). Each `[[mounts]]`
+block is one shared folder:
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `name` | — | The folder's name inside the guest (`/mnt/<name>`). Sanitized to a safe single name. |
+| `path` | — | The absolute host folder to share (forward slashes work on Windows). |
+| `read_only` | `true` | `true` = the guest can read but not change your files; `false` = full read-write passthrough. |
 
 ## What's in the mod folder
 

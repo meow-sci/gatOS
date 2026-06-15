@@ -4,5 +4,6 @@
 ::respawn:/usr/sbin/dropbear -F -E -s
 ::respawn:/sbin/qga-gatos
 ::respawn:/sbin/sim-mount
+::respawn:/sbin/mnt-mount
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/sbin/shutdown-gatos

@@ -82,6 +82,11 @@ public sealed partial class Mod
     // guest reaches it at 10.0.2.2. Volatile for the same reasons as the HTTP server.
     private volatile SimMqttBroker? _mqttBroker;
 
+    // The host-folder mounts 9p server: a second NinePServer whose root lists the configured
+    // [[mounts]] as host-backed directories; the guest mounts it once at /mnt. Null when no mount
+    // is configured. Volatile — read by the render thread (status) and the VM boot's MntPortProvider.
+    private volatile NinePServer? _mountsServer;
+
     // The G7 serial bridge connector: unlike the slirp servers above this is tied to the VM
     // lifecycle (it connects to QEMU's gatos.serial chardev, which only exists while QEMU runs),
     // so it is started/stopped by OnVmStatusChanged under _serialLock. Volatile for status reads.
@@ -171,6 +176,7 @@ public sealed partial class Mod
             StartSimServer(port: 0);
             StartHttpServer();
             StartMqttBroker();
+            StartMountsServer();
 
             _disks = new DiskManager();
             var vmHost = new VmHost(new VmHostOptions
@@ -192,6 +198,9 @@ public sealed partial class Mod
                 // gatos.httpport on the cmdline lets the guest discover it. Null = guest HTTP env unset.
                 HttpPortProvider = () => _httpServer is { Port: > 0 } http ? http.Port : null,
                 MqttPortProvider = () => _mqttBroker is { Port: > 0 } mqtt ? mqtt.Port : null,
+                // Host folder mounts: the guest's mnt-mount supervisor mounts /mnt from this port.
+                // Null (no mounts configured / bind failed) → gatos.mntport=0 → nothing under /mnt.
+                MntPortProvider = () => _mountsServer is { Port: > 0 } mounts ? mounts.Port : null,
                 // G7: allocate the gatos.serial chardev port when a serial direction is enabled.
                 // The host bridge (OnVmStatusChanged) connects to it once the VM is Running.
                 SerialEnabled = SerialEnabled(),
@@ -237,9 +246,10 @@ public sealed partial class Mod
         var ninep = server is { Port: > 0 } ? server.Port.ToString() : "unbound";
         var http = _httpServer is { Port: > 0 } h ? h.Port.ToString() : "off";
         var mqtt = _mqttBroker is { Port: > 0 } m ? m.Port.ToString() : "off";
+        var mnt = _mountsServer is { Port: > 0 } mt ? mt.Port.ToString() : "off";
         var serial = SerialStatusText();
         var control = _commandQueue is { ControlEnabled: true } ? "on" : "off";
-        return $"9p {ninep}\nhttp {http}\nmqtt {mqtt}\nserial {serial}\ncontrol {control}";
+        return $"9p {ninep}\nhttp {http}\nmqtt {mqtt}\nmnt {mnt}\nserial {serial}\ncontrol {control}";
     }
 
     /// <summary>Draws the diagnostics UI (T6.4); a no-op when built without the KSA assemblies.</summary>
@@ -306,6 +316,11 @@ public sealed partial class Mod
             _mqttBroker = null;
             if (mqttBroker is not null && !mqttBroker.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)))
                 ModLog.Log.Warn("The MQTT broker did not stop within 5 s at unload.");
+
+            var mountsServer = _mountsServer;
+            _mountsServer = null;
+            if (mountsServer is not null && !mountsServer.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)))
+                ModLog.Log.Warn("The host-mounts server did not stop within 5 s at unload.");
         }
         catch (Exception ex)
         {
@@ -498,6 +513,49 @@ public sealed partial class Mod
         return broker is null
             ? (_config.MqttEnabled ? "not running" : "disabled")
             : $"port {broker.Port}";
+    }
+
+    /// <summary>
+    ///     Starts the host-folder mounts 9p server when <c>[[mounts]]</c> entries are configured: a
+    ///     second <see cref="NinePServer"/> whose root lists each mount as a host-backed directory,
+    ///     so the guest mounts it once at <c>/mnt</c> and finds <c>/mnt/&lt;name&gt;</c> for each.
+    ///     A no-op when no mount is configured; failures are logged (mounts are optional like /sim).
+    /// </summary>
+    private void StartMountsServer()
+    {
+        if (_config.Mounts.Count == 0)
+            return;
+        try
+        {
+            var specs = new List<HostMountSpec>(_config.Mounts.Count);
+            foreach (var mount in _config.Mounts)
+            {
+                if (!Directory.Exists(mount.Path))
+                    ModLog.Log.Warn($"gatOS mount '{mount.Name}' path does not exist yet: '{mount.Path}' "
+                                    + "(it will appear empty until the folder is created).");
+                specs.Add(new HostMountSpec(mount.Name, mount.Path, Writable: !mount.ReadOnly));
+            }
+
+            var server = new NinePServer(HostMountTree.Build(specs));
+            server.StartAsync(0).GetAwaiter().GetResult();
+            _mountsServer = server;
+            var names = string.Join(", ", specs.Select(s => $"/mnt/{s.Name}{(s.Writable ? " (rw)" : " (ro)")}"));
+            ModLog.Log.Info($"gatOS host mounts on 127.0.0.1:{server.Port}: {names}.");
+        }
+        catch (Exception ex)
+        {
+            _mountsServer = null;
+            ModLog.Log.Error($"The host-folder mounts server failed to start: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>One status-window line for the host-folder mounts server (read on the render thread).</summary>
+    internal string MountsStatusText()
+    {
+        var server = _mountsServer;
+        if (server is null)
+            return _config.Mounts.Count == 0 ? "none configured" : "not running";
+        return $"port {server.Port}, {_config.Mounts.Count} folder(s), {server.ActiveSessions} connection(s)";
     }
 
     /// <summary>True when any serial direction is configured (G7).</summary>
