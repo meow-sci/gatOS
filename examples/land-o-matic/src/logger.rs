@@ -168,6 +168,15 @@ fn format_record(
                     ""
                 }
             ));
+        // Near-zero descent at high altitude with ~orbital horizontal speed = still in orbit, not on a
+        // powered-descent trajectory. G-FOLD stays infeasible (you'd orbit away / exceed v_max long
+        // before reaching the pad) until periapsis is dropped below the surface.
+        if (-v_vert).abs() < 0.05 * v_horiz && state.radar_alt > brake_dist.max(1.0) * 5.0 {
+            out.push_str(
+                "       ⚠ near-circular orbit (≈0 descent at high altitude) — not a descent state; \
+                 deorbit (lower periapsis below the surface) before engaging\n",
+            );
+        }
     }
 
     out

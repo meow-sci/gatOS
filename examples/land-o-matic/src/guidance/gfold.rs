@@ -650,10 +650,17 @@ fn estimate_tof_inner(
 ) -> Option<f64> {
     let veh = &prob.vehicle;
     // Upper bound: the smaller of fuel-burn time and the Taylor-anchor validity limit (z0_term > 0).
-    let t_hi = (veh.m_fuel / (veh.alpha() * veh.rho1()))
+    let t_fuel = (veh.m_fuel / (veh.alpha() * veh.rho1()))
         .min(veh.m_wet() / (veh.alpha() * veh.rho2()) * 0.97);
     // Lower bound: well under the time to null the speed at the G-limit, so the feasible band is inside.
     let t_lo = (prob.v0.norm() / (prob.g_limit * G0)).max(1.0) * 0.5;
+    // Kinematic ceiling on a *useful* landing tf: a very high-Isp engine (e.g. KSA's dev/test engine)
+    // makes both fuel bounds thousands of seconds, so a fixed-count linear scan over [t_lo, t_fuel]
+    // steps right over the short feasible band and reports a false "infeasible". A landing tf can't be
+    // many multiples of the free-fall time over the initial range plus the time to null the speed at
+    // the G-limit, so cap the scan there (the fuel bound stays a hard ceiling we never exceed).
+    let t_kin = 6.0 * ((2.0 * prob.r0.norm() / prob.gravity).sqrt() + prob.v0.norm() / (prob.g_limit * G0));
+    let t_hi = t_fuel.min(t_kin.max(t_lo * 2.0 + 1.0));
     if let Some(t) = trace.as_mut() {
         t.objective = obj.label();
         t.t_lo = t_lo;
@@ -999,6 +1006,39 @@ mod tests {
             drift > 1.0,
             "rotating terms had no effect (drift {drift} m)"
         );
+    }
+
+    /// KSA's dev/test engine has an absurd Isp (~27 000 s), which inflates the fuel-time bounds to
+    /// thousands of seconds. Without the kinematic cap on the scan window, the fixed-count linear tf
+    /// scan steps right over the short feasible band and falsely reports infeasible. A gentle,
+    /// clearly-feasible descent on such an engine must still solve. (Regression for the in-game log
+    /// where a feasible state showed `feasible 0/33` with `t_hi≈15000 s`.)
+    #[test]
+    fn high_isp_dev_engine_still_finds_feasible_tf() {
+        let prob = Problem {
+            vehicle: VehicleModel {
+                m_dry: 4344.0,
+                m_fuel: 187_011.0,
+                isp: 27_638.0,
+                thrust_max: 3.35e6,
+                throttle_min: 0.01,
+                throttle_max: 1.0,
+            },
+            r0: Vec3::new(300.0, 100.0, 1500.0),
+            v0: Vec3::new(20.0, -10.0, -60.0),
+            gravity: 1.62,
+            drag_accel: Vec3::zeros(),
+            omega_g: Vec3::zeros(),
+            g_limit: 4.0,
+            glide_slope_cot: 1.0 / 30f64.to_radians().tan(),
+            pointing_cos: 45f64.to_radians().cos(),
+            v_max: 200.0,
+            n: 25,
+            lock_initial_thrust_up: false,
+        };
+        let traj = solve(&prob, Vec3::zeros()).expect("dev-engine descent should be feasible");
+        assert!(traj.touchdown().v.norm() < 1e-2, "touchdown speed {}", traj.touchdown().v.norm());
+        assert!(traj.touchdown().r.z.abs() < 1.0, "touchdown altitude {}", traj.touchdown().r.z);
     }
 
     #[test]
