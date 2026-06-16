@@ -107,6 +107,7 @@ docs/MILESTONES.md              full per-milestone build detail (class names, as
 docs/ARCHITECTURE.md            runtime architecture, port allocation, telemetry pipeline/tuning
 docs/KSA_INTEGRATION_MATRIX.md per-point KSA API reference (G1–G4 + documented deferrals)
 docs/VALIDATION.md              in-game validation record (T6.6/T6.7 checklists + results)
+docs/KSA_CELESTIAL_COORDINATE_FRAMES.md details on the KSA games coordinate frame systems for frames of reference 
 LICENSE                         MIT (the mod's own code)
 THIRD-PARTY-NOTICES.md          QEMU GPLv2, Alpine, SSH.NET, Tomlyn, …
 vendor/purrTTY/                 pinned contract DLLs (committed) — see its README for the pin
