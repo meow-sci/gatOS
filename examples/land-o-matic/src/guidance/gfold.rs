@@ -527,13 +527,17 @@ pub fn solve_fixed_tf_status(
         // thrust pointing: u'_z ≥ cos(θ_pt)·σ'  ⇔  −u'_z + cos(θ_pt)·σ' ≤ 0
         bld.le(vec![(ui(nn) + 2, -1.0), (si(nn), prob.pointing_cos)], 0.0);
 
-        // velocity cap: ‖v'_n‖ ≤ V_max/Vs
-        bld.soc(vec![
-            (vec![], vmax_nd),
-            (vec![(vi(nn), 1.0)], 0.0),
-            (vec![(vi(nn) + 1, 1.0)], 0.0),
-            (vec![(vi(nn) + 2, 1.0)], 0.0),
-        ]);
+        // velocity cap: ‖v'_n‖ ≤ V_max/Vs. Skip node 0 — its velocity is pinned to the measured state
+        // (boundary equality above), so capping it can't shape the plan; it can only reject a fast
+        // initial approach (a deorbit freefall, an orbital state) as false-infeasible.
+        if nn >= 1 {
+            bld.soc(vec![
+                (vec![], vmax_nd),
+                (vec![(vi(nn), 1.0)], 0.0),
+                (vec![(vi(nn) + 1, 1.0)], 0.0),
+                (vec![(vi(nn) + 2, 1.0)], 0.0),
+            ]);
+        }
 
         // glide-slope: ‖(r_n − r_term)_horiz‖ ≤ cot(γ)·(r_n − r_term)_up
         let gc = prob.glide_slope_cot;
@@ -1039,6 +1043,34 @@ mod tests {
         let traj = solve(&prob, Vec3::zeros()).expect("dev-engine descent should be feasible");
         assert!(traj.touchdown().v.norm() < 1e-2, "touchdown speed {}", traj.touchdown().v.norm());
         assert!(traj.touchdown().r.z.abs() < 1.0, "touchdown altitude {}", traj.touchdown().r.z);
+    }
+
+    /// A near-straight-down deorbit freefall: `|v0|` (600 m/s) far exceeds the old default `v_max`
+    /// (300), which — applied to the *pinned* initial node — made every solve falsely infeasible (the
+    /// in-game "it never offered a solution" on a vertical freefall). With the node-0 skip and the
+    /// autopilot's approach-speed-tracking cap, the braking solve is feasible.
+    #[test]
+    fn fast_vertical_descent_is_feasible() {
+        let mut prob = lander_problem(5.0);
+        prob.r0 = Vec3::new(200.0, 0.0, 6000.0);
+        prob.v0 = Vec3::new(20.0, 0.0, -600.0); // 600 m/s down — twice the old v_max cap
+        prob.gravity = 1.62;
+        prob.v_max = prob.v0.norm() * 2.0; // what Autopilot::problem now sets
+        let traj = solve(&prob, Vec3::zeros()).expect("fast vertical descent should be feasible");
+        assert!(traj.touchdown().v.norm() < 1e-2, "touchdown speed {}", traj.touchdown().v.norm());
+        assert!(traj.touchdown().r.z.abs() < 1.0, "touchdown altitude {}", traj.touchdown().r.z);
+    }
+
+    /// The pinned initial node must not be rejected by the velocity cap even when the cap is below the
+    /// initial speed (the node-0 skip): a solve with `v_max < |v0|` is still feasible if the *plan* can
+    /// decelerate under the cap by node 1 onward.
+    #[test]
+    fn velocity_cap_does_not_reject_initial_node() {
+        let mut prob = lander_problem(5.0);
+        prob.r0 = Vec3::new(50.0, 0.0, 4000.0);
+        prob.v0 = Vec3::new(10.0, 0.0, -250.0);
+        prob.v_max = 200.0; // below |v0| (~250) — must not, by itself, make node 0 infeasible
+        assert!(solve(&prob, Vec3::zeros()).is_some(), "node-0 velocity cap rejected a valid initial state");
     }
 
     #[test]

@@ -429,7 +429,11 @@ impl Autopilot {
             g_limit: self.inputs.g_limit,
             glide_slope_cot: 1.0 / self.inputs.glide_slope_deg.to_radians().tan(),
             pointing_cos: self.inputs.pointing_deg.to_radians().cos(),
-            v_max: self.inputs.v_max,
+            // The velocity cap is a safety rail, not a binding target — it must accommodate the actual
+            // approach speed (a deorbit freefall or orbital state can be far above the configured
+            // v_max), otherwise the early high-speed nodes make every solve infeasible. Track v0 with
+            // margin; `inputs.v_max` is the floor.
+            v_max: self.inputs.v_max.max(v0.norm() * 2.0),
             n: self.inputs.n,
             lock_initial_thrust_up: false,
         }
