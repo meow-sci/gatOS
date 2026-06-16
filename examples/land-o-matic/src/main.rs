@@ -33,6 +33,9 @@ use land_o_matic::guidance::autopilot::{Autopilot, Command, Inputs, Phase, State
 use land_o_matic::guidance::Vec3;
 use land_o_matic::sim::{self, Body, FsSource, HttpSource, Source, Telemetry};
 
+mod logger;
+use logger::Logger;
+
 type Tui = Terminal<CrosstermBackend<Stdout>>;
 
 fn main() -> io::Result<()> {
@@ -66,6 +69,9 @@ struct Config {
     drag_area: f64,
     /// Include the exact rotating-frame (Coriolis/centrifugal) G-FOLD dynamics.
     rotating: bool,
+    /// When set, append a detailed guidance/solver diagnostic log to this file (`--log [path]` or
+    /// `$LAND_O_MATIC_LOG`). Enabling it also turns on the autopilot's traced solve path.
+    log_path: Option<String>,
     help: bool,
 }
 
@@ -76,9 +82,10 @@ impl Config {
         let mut interval_ms: Option<u64> = None;
         let mut drag_area = 0.0;
         let mut rotating = false;
+        let mut log_path: Option<String> = None;
         let mut help = false;
 
-        let mut args = std::env::args().skip(1);
+        let mut args = std::env::args().skip(1).peekable();
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--url" => url = args.next(),
@@ -91,8 +98,24 @@ impl Config {
                         .ok_or("--drag-area needs a number (Cd·A in m²)")?;
                 }
                 "--rotating" => rotating = true,
+                // --log takes an optional path; a bare --log uses the default file name.
+                "--log" => {
+                    log_path = match args.peek() {
+                        Some(v) if !v.starts_with('-') => args.next(),
+                        _ => Some("land-o-matic.log".to_string()),
+                    };
+                }
                 "-h" | "--help" => help = true,
                 other => return Err(format!("unknown argument '{other}' (try --help)")),
+            }
+        }
+
+        // Env fallback so logging can be turned on without editing the launch command.
+        if log_path.is_none() {
+            if let Ok(p) = std::env::var("LAND_O_MATIC_LOG") {
+                if !p.is_empty() {
+                    log_path = Some(p);
+                }
             }
         }
 
@@ -103,6 +126,7 @@ impl Config {
             interval,
             drag_area,
             rotating,
+            log_path,
             help,
         })
     }
@@ -135,16 +159,25 @@ fn print_help() {
     println!("land-o-matic \u{2014} powered-descent landing guidance over gatOS /sim");
     println!();
     println!("USAGE: land-o-matic [--root <dir> | --url <base>] [--interval <ms>]");
-    println!("                    [--drag-area <m2>] [--rotating]");
+    println!("                    [--drag-area <m2>] [--rotating] [--log [path]]");
     println!();
     println!("  --root <dir>     read the /sim mount at <dir> (default: /sim when present)");
     println!("  --url <base>     read via HTTP /v1/fs instead (e.g. $GATOS_HTTP)");
     println!("  --interval <ms>  poll + guidance cadence, min 20 (default 200)");
-    println!("  --drag-area <m2> vehicle Cd\u{b7}A for the atmospheric drag model (default 0 = vacuum)");
-    println!("  --rotating       include the exact Coriolis/centrifugal G-FOLD dynamics (fast bodies)");
+    println!(
+        "  --drag-area <m2> vehicle Cd\u{b7}A for the atmospheric drag model (default 0 = vacuum)"
+    );
+    println!(
+        "  --rotating       include the exact Coriolis/centrifugal G-FOLD dynamics (fast bodies)"
+    );
+    println!("  --log [path]     append detailed guidance/solver diagnostics to <path>");
+    println!("                   (default land-o-matic.log; also $LAND_O_MATIC_LOG).");
+    println!("                   Tail it from another tab: tail -f land-o-matic.log");
     println!();
     println!("In the guest, no flags are needed: it reads /sim and guides the active vessel.");
-    println!("Keys: e ENGAGE \u{b7} a ABORT \u{b7} \u{2191}/\u{2193} (or -/=) G-limit \u{b7} q quit.");
+    println!(
+        "Keys: e ENGAGE \u{b7} a ABORT \u{b7} \u{2191}/\u{2193} (or -/=) G-limit \u{b7} q quit."
+    );
     println!();
     println!("SAFETY: this fires your engine and steers the vessel. Watch it; press a to abort.");
 }
@@ -160,7 +193,14 @@ fn run(terminal: &mut Tui, config: Config) -> io::Result<()> {
         rotating_dynamics: config.rotating,
         ..Inputs::default()
     };
-    spawn_worker(source, config.interval, inputs, cmd_rx, update_tx);
+    spawn_worker(
+        source,
+        config.interval,
+        inputs,
+        config.log_path,
+        cmd_rx,
+        update_tx,
+    );
 
     let mut app = App::new(cmd_tx, label);
 
@@ -188,15 +228,26 @@ fn spawn_worker(
     source: Box<dyn Source>,
     interval: Duration,
     inputs: Inputs,
+    log_path: Option<String>,
     rx: Receiver<ToWorker>,
     tx: Sender<FromWorker>,
 ) {
     thread::spawn(move || {
         let mut autopilot = Autopilot::new(inputs);
+        // Open the diagnostic log if requested; failure (e.g. read-only dir) silently disables it —
+        // the TUI owns the screen, so we can't print an error here.
+        let mut log = log_path.as_deref().and_then(|p| Logger::open(p).ok());
+        autopilot.trace_enabled = log.is_some();
+
         let mut spec: Option<VehicleSpec> = None;
         let mut prev_seq: Option<u64> = None;
         let mut stale_count = 0u32;
         let mut last_guidance: Option<GuidanceView> = None;
+        // Log throttling: a full record on every phase change, else every 10th tick (~2 s at 200 ms);
+        // a held tick logs only when its reason changes.
+        let mut tick_no: u64 = 0;
+        let mut last_logged_phase: Option<Phase> = None;
+        let mut last_hold_logged: Option<String> = None;
 
         loop {
             let tick = sim::poll(&*source);
@@ -216,7 +267,10 @@ fn spawn_worker(
                 hold = if paused {
                     Some("PAUSED \u{2014} guidance held".to_string())
                 } else if warping {
-                    Some(format!("TIME-WARP {:.0}\u{d7} \u{2014} guidance held (press a to abort)", tel.warp))
+                    Some(format!(
+                        "TIME-WARP {:.0}\u{d7} \u{2014} guidance held (press a to abort)",
+                        tel.warp
+                    ))
                 } else if stale_count >= 3 {
                     Some("STALE telemetry \u{2014} guidance held".to_string())
                 } else {
@@ -230,11 +284,31 @@ fn spawn_worker(
                     if let Some(sp) = spec {
                         let lon = sim::read_longitude(&*source).unwrap_or(0.0);
                         // Atmospheric density (detail-gated; 0 = vacuum/unavailable) for the drag model.
-                        let density = sim::read_scalar(&*source, "vessels/active/environment/density")
-                            .unwrap_or(0.0);
+                        let density =
+                            sim::read_scalar(&*source, "vessels/active/environment/density")
+                                .unwrap_or(0.0);
                         let state = build_state(tel, body, lon, density);
                         let cmd = autopilot.step(&state, &sp);
                         status = apply_command(&*source, &cmd);
+
+                        // Diagnostic log (full record on phase change, else every ~2 s).
+                        tick_no += 1;
+                        let phase_changed = last_logged_phase != Some(cmd.phase);
+                        last_logged_phase = Some(cmd.phase);
+                        last_hold_logged = None;
+                        if let Some(lg) = log.as_mut() {
+                            if phase_changed || tick_no.is_multiple_of(10) {
+                                lg.record(
+                                    tel.seq,
+                                    &state,
+                                    &sp,
+                                    &autopilot.inputs,
+                                    &cmd,
+                                    autopilot.last_trace.as_ref(),
+                                );
+                            }
+                        }
+
                         let gv = GuidanceView {
                             phase: cmd.phase,
                             throttle: cmd.throttle,
@@ -251,6 +325,16 @@ fn spawn_worker(
                     // Held: keep the last plan visible, write no controls this tick.
                     guidance = last_guidance;
                     plan = autopilot.last_plan.clone();
+                    // Log the hold once (until its reason changes), and re-arm guidance logging.
+                    if let Some(lg) = log.as_mut() {
+                        if last_hold_logged.as_deref() != hold.as_deref() {
+                            if let Some(reason) = hold.as_deref() {
+                                lg.record_hold(tel.ut, tel.seq, reason);
+                            }
+                            last_hold_logged = hold.clone();
+                        }
+                    }
+                    last_logged_phase = None;
                 }
             } else {
                 spec = None; // lost the vessel; re-read engines when it returns
@@ -259,7 +343,16 @@ fn spawn_worker(
                 stale_count = 0;
             }
 
-            if tx.send(FromWorker::Tick { tick, guidance, status, hold, plan }).is_err() {
+            if tx
+                .send(FromWorker::Tick {
+                    tick,
+                    guidance,
+                    status,
+                    hold,
+                    plan,
+                })
+                .is_err()
+            {
                 return;
             }
 
@@ -330,11 +423,18 @@ fn apply_command(src: &dyn Source, cmd: &Command) -> Option<(String, bool)> {
                     err = Some((format!("attitude: {}: {}", e.errno, e.message), true));
                 }
             }
-            let _ = src.write("vessels/active/ctl/throttle", &format!("{:.4}", cmd.throttle));
+            let _ = src.write(
+                "vessels/active/ctl/throttle",
+                &format!("{:.4}", cmd.throttle),
+            );
             if cmd.ignite {
                 let _ = src.write("vessels/active/ctl/ignite", "1");
             }
-            let label = if cmd.phase == Phase::Terminal { "TERMINAL" } else { "BURN" };
+            let label = if cmd.phase == Phase::Terminal {
+                "TERMINAL"
+            } else {
+                "BURN"
+            };
             err.or(Some((format!("{label} \u{b7} tgo {:.0}s", cmd.tgo), false)))
         }
         Phase::Infeasible => {
@@ -399,9 +499,21 @@ mod tests {
         let root = fixture("spec");
         for n in ["0", "1"] {
             fs::create_dir_all(root.join(format!("vessels/active/engines/{n}"))).unwrap();
-            fs::write(root.join(format!("vessels/active/engines/{n}/vac_thrust")), "40000\n").unwrap();
-            fs::write(root.join(format!("vessels/active/engines/{n}/isp")), "300\n").unwrap();
-            fs::write(root.join(format!("vessels/active/engines/{n}/min_throttle")), "0.1\n").unwrap();
+            fs::write(
+                root.join(format!("vessels/active/engines/{n}/vac_thrust")),
+                "40000\n",
+            )
+            .unwrap();
+            fs::write(
+                root.join(format!("vessels/active/engines/{n}/isp")),
+                "300\n",
+            )
+            .unwrap();
+            fs::write(
+                root.join(format!("vessels/active/engines/{n}/min_throttle")),
+                "0.1\n",
+            )
+            .unwrap();
         }
         let src = FsSource::new(&root);
         let tel: Telemetry = serde_json::from_str(
@@ -438,7 +550,10 @@ mod tests {
         };
         apply_command(&src, &cmd);
         assert_eq!(src.read("vessels/active/ctl/throttle").unwrap(), "0.5000");
-        assert_eq!(src.read("vessels/active/ctl/attitude_target").unwrap(), "0 0 0 1");
+        assert_eq!(
+            src.read("vessels/active/ctl/attitude_target").unwrap(),
+            "0 0 0 1"
+        );
         assert_eq!(src.read("vessels/active/ctl/ignite").unwrap(), "1");
         fs::remove_dir_all(&root).ok();
     }

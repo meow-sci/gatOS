@@ -158,6 +158,11 @@ pub struct Command {
 /// The stateful MPC autopilot.
 pub struct Autopilot {
     pub inputs: Inputs,
+    /// When set, the G-FOLD (re)plan runs through [`gfold::solve_traced`] and stashes the result in
+    /// [`Self::last_trace`] for the `--log` diagnostic path. Off by default (the hot path skips it).
+    pub trace_enabled: bool,
+    /// The most recent solver diagnostics (only populated while [`Self::trace_enabled`]).
+    pub last_trace: Option<gfold::SolveTrace>,
     armed: bool,
     aborted: bool,
     /// Landing target, frozen at engage in the body-fixed (CCF) frame so it stays put on the ground.
@@ -178,6 +183,8 @@ impl Autopilot {
     pub fn new(inputs: Inputs) -> Self {
         Self {
             inputs,
+            trace_enabled: false,
+            last_trace: None,
             armed: false,
             aborted: false,
             target_ccf: None,
@@ -232,7 +239,8 @@ impl Autopilot {
         let v_surf = frames::surface_velocity(state.vel_cci, state.pos_cci, state.omega);
 
         // Touchdown?
-        if state.radar_alt <= self.inputs.touchdown_alt && v_surf.norm() <= self.inputs.v_touchdown {
+        if state.radar_alt <= self.inputs.touchdown_alt && v_surf.norm() <= self.inputs.v_touchdown
+        {
             return release(Phase::Touchdown);
         }
 
@@ -268,8 +276,7 @@ impl Autopilot {
             Vec3::new(0.0, 0.0, 1.0) // degenerate: point up
         };
         let thrust_dir_cci = frames::from_enu(thrust_dir_g, &basis);
-        let throttle =
-            (node.thrust_accel.norm() * state.mass / spec.thrust_max).clamp(0.0, 1.0);
+        let throttle = (node.thrust_accel.norm() * state.mass / spec.thrust_max).clamp(0.0, 1.0);
         let att = ksa_quat::compute_burn_body2cci(state.pos_cci.normalize(), thrust_dir_cci);
 
         let tgo = self
@@ -284,7 +291,11 @@ impl Autopilot {
             .fold(0.0, f64::max);
         let predicted_mass = traj.final_mass();
         self.last_plan = Some(PlanView {
-            path: traj.nodes.iter().map(|n| (n.r.x.hypot(n.r.y), n.r.z)).collect(),
+            path: traj
+                .nodes
+                .iter()
+                .map(|n| (n.r.x.hypot(n.r.y), n.r.z))
+                .collect(),
             current: (r0.x.hypot(r0.y), r0.z),
             glide_slope_cot: 1.0 / self.inputs.glide_slope_deg.to_radians().tan(),
         });
@@ -316,7 +327,13 @@ impl Autopilot {
     /// The UPFG terminal leg (plan §6, §7): re-converge UPFG from a fresh seed each tick (carrying the
     /// working set across ticks induces a predictor-corrector 2-cycle), steer body +X along its
     /// velocity-to-go vector `iF`, and throttle with the G-limit-capped required-deceleration suicide law.
-    fn terminal_step(&mut self, state: &State, spec: &VehicleSpec, target_cci: Vec3, v_surf: Vec3) -> Command {
+    fn terminal_step(
+        &mut self,
+        state: &State,
+        spec: &VehicleSpec,
+        target_cci: Vec3,
+        v_surf: Vec3,
+    ) -> Command {
         let up = state.pos_cci.normalize();
         let gravity = state.mu / state.pos_cci.norm_squared();
 
@@ -377,12 +394,24 @@ impl Autopilot {
             tgo: g.tgo,
             predicted_mass: state.mass,
             peak_g,
-            upfg: Some(UpfgStatus { converged, iters: iters as u32 }),
+            upfg: Some(UpfgStatus {
+                converged,
+                iters: iters as u32,
+            }),
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn problem(&self, state: &State, spec: &VehicleSpec, r0: Vec3, v0: Vec3, gravity: f64, omega_g: Vec3, drag_accel: Vec3) -> Problem {
+    fn problem(
+        &self,
+        state: &State,
+        spec: &VehicleSpec,
+        r0: Vec3,
+        v0: Vec3,
+        gravity: f64,
+        omega_g: Vec3,
+        drag_accel: Vec3,
+    ) -> Problem {
         Problem {
             vehicle: VehicleModel {
                 m_dry: spec.m_dry,
@@ -411,14 +440,32 @@ impl Autopilot {
     fn solve(&mut self, prob: &Problem, ut: f64) -> Option<gfold::Trajectory> {
         if let (Some(tf0), Some(t0)) = (self.plan_tf, self.ignition_ut) {
             let horizon = (tf0 - (ut - t0)).max(2.0);
-            if let Some(t) =
-                gfold::solve_fixed_tf(prob, &Objective::MinFuel { target: Vec3::zeros() }, horizon)
-            {
+            if let Some(t) = gfold::solve_fixed_tf(
+                prob,
+                &Objective::MinFuel {
+                    target: Vec3::zeros(),
+                },
+                horizon,
+            ) {
+                if self.trace_enabled {
+                    self.last_trace = Some(gfold::SolveTrace {
+                        summary: gfold::ProblemSummary::of(prob),
+                        outcome: format!("ok — shrinking-horizon fast solve (tf={horizon:.1}s)"),
+                        ..Default::default()
+                    });
+                }
                 return Some(t);
             }
         }
-        // (re)plan from scratch
-        let traj = gfold::solve(prob, Vec3::zeros())?;
+        // (re)plan from scratch — traced when --log is on (records why it's infeasible).
+        let traj = if self.trace_enabled {
+            let mut tr = gfold::SolveTrace::default();
+            let r = gfold::solve_traced(prob, Vec3::zeros(), &mut tr);
+            self.last_trace = Some(tr);
+            r?
+        } else {
+            gfold::solve(prob, Vec3::zeros())?
+        };
         self.plan_tf = Some(traj.tf);
         self.ignition_ut = Some(ut);
         Some(traj)
@@ -442,7 +489,11 @@ fn release(phase: Phase) -> Command {
 /// Hold a surface-retrograde attitude with the throttle cut (no feasible plan).
 fn hold_retro(state: &State, v_surf: Vec3) -> Command {
     let up = state.pos_cci.normalize();
-    let dir = if v_surf.norm() > 1.0 { -v_surf.normalize() } else { up };
+    let dir = if v_surf.norm() > 1.0 {
+        -v_surf.normalize()
+    } else {
+        up
+    };
     Command {
         phase: Phase::Infeasible,
         attitude_target: Some(ksa_quat::compute_burn_body2cci(up, dir)),
@@ -554,7 +605,11 @@ mod tests {
                 landed = true;
                 break;
             }
-            assert_ne!(cmd.phase, Phase::Infeasible, "went infeasible at alt {radar_alt:.0}");
+            assert_ne!(
+                cmd.phase,
+                Phase::Infeasible,
+                "went infeasible at alt {radar_alt:.0}"
+            );
 
             // Apply exactly what the autopilot commanded: thrust along the attitude's +X axis.
             let thrust_dir = match cmd.attitude_target {
@@ -562,7 +617,8 @@ mod tests {
                 None => break,
             };
             let thrust_force = cmd.throttle * spec.thrust_max;
-            let accel = thrust_dir * (thrust_force / mass) - pos.normalize() * (mu / pos.norm_squared());
+            let accel =
+                thrust_dir * (thrust_force / mass) - pos.normalize() * (mu / pos.norm_squared());
             vel += accel * dt;
             pos += vel * dt;
             mass -= thrust_force / (spec.isp * G0) * dt;
@@ -632,7 +688,10 @@ mod tests {
                 Phase::Terminal => {
                     saw_terminal = true;
                     // Once terminal latches it must never revert to braking.
-                    assert!(radar_alt < 260.0, "terminal engaged too high: {radar_alt:.0} m");
+                    assert!(
+                        radar_alt < 260.0,
+                        "terminal engaged too high: {radar_alt:.0} m"
+                    );
                 }
                 Phase::Touchdown => {
                     landed = true;
@@ -647,8 +706,12 @@ mod tests {
                 None => break,
             };
             let thrust_force = cmd.throttle * spec.thrust_max;
-            assert!(thrust_force / mass <= g_cap + 0.1, "peak-g exceeded at alt {radar_alt:.0} m");
-            let accel = thrust_dir * (thrust_force / mass) - pos.normalize() * (mu / pos.norm_squared());
+            assert!(
+                thrust_force / mass <= g_cap + 0.1,
+                "peak-g exceeded at alt {radar_alt:.0} m"
+            );
+            let accel =
+                thrust_dir * (thrust_force / mass) - pos.normalize() * (mu / pos.norm_squared());
             vel += accel * dt;
             pos += vel * dt;
             mass -= thrust_force / (spec.isp * G0) * dt;
@@ -712,7 +775,11 @@ mod tests {
                 landed = true;
                 break;
             }
-            assert_ne!(cmd.phase, Phase::Infeasible, "infeasible at alt {radar_alt:.0} m");
+            assert_ne!(
+                cmd.phase,
+                Phase::Infeasible,
+                "infeasible at alt {radar_alt:.0} m"
+            );
             let thrust_dir = match cmd.attitude_target {
                 Some(q) => ksa_quat::transform(Vec3::new(1.0, 0.0, 0.0), q),
                 None => break,

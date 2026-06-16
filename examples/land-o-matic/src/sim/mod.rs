@@ -210,8 +210,8 @@ pub fn read_engines(src: &dyn Source) -> Option<EngineAgg> {
             if t > 0.0 && isp > 0.0 {
                 total_thrust += t;
                 total_mdot += t / isp;
-                throttle_min =
-                    throttle_min.max(read_scalar(src, &format!("{base}/min_throttle")).unwrap_or(0.0));
+                throttle_min = throttle_min
+                    .max(read_scalar(src, &format!("{base}/min_throttle")).unwrap_or(0.0));
                 count += 1;
             }
         }

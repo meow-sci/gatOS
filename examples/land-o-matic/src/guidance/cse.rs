@@ -27,7 +27,13 @@ pub struct CserState {
 
 /// Extrapolate `(r0, v0)` forward by `dt` under central gravity `mu`. Returns the future `(r, v)` and the
 /// updated [`CserState`] (feed it back as `last` next call to warm-start). Port of `CSEroutine`.
-pub fn cse_routine(r0: Vec3, v0: Vec3, dt: f64, last: CserState, mu: f64) -> (Vec3, Vec3, CserState) {
+pub fn cse_routine(
+    r0: Vec3,
+    v0: Vec3,
+    dt: f64,
+    last: CserState,
+    mu: f64,
+) -> (Vec3, Vec3, CserState) {
     let dtcp = if last.dtcp == 0.0 { dt } else { last.dtcp };
     let xcp = last.xcp;
     let x = xcp;
@@ -117,7 +123,8 @@ pub fn cse_routine(r0: Vec3, v0: Vec3, dt: f64, last: CserState, mu: f64) -> (Ve
     }
 
     let kil_out = kil(
-        imax, dts, xguess, dtguess, xmin, dtmin, xmax, dtmax, sigma0s, alphas, kmax, un_a, un_d, un_e,
+        imax, dts, xguess, dtguess, xmin, dtmin, xmax, dtmax, sigma0s, alphas, kmax, un_a, un_d,
+        un_e,
     );
     xguess = kil_out.0;
     dtguess = kil_out.1;
@@ -130,7 +137,10 @@ pub fn cse_routine(r0: Vec3, v0: Vec3, dt: f64, last: CserState, mu: f64) -> (Ve
     let b4 = 1.0 / rs;
 
     let (xc, dtc) = if n > 0 {
-        (f6 * (xguess + n as f64 * xp), f4 * (dtguess + n as f64 * ps))
+        (
+            f6 * (xguess + n as f64 * xp),
+            f4 * (dtguess + n as f64 * ps),
+        )
     } else {
         (f6 * xguess, f4 * dtguess)
     };
@@ -333,15 +343,33 @@ mod tests {
 
         // Quarter, half, three-quarter, full period → exact rotations.
         for (frac, exp_r, exp_v) in [
-            (0.25, Vec3::new(0.0, radius, 0.0), Vec3::new(-v_circ, 0.0, 0.0)),
-            (0.5, Vec3::new(-radius, 0.0, 0.0), Vec3::new(0.0, -v_circ, 0.0)),
-            (0.75, Vec3::new(0.0, -radius, 0.0), Vec3::new(v_circ, 0.0, 0.0)),
+            (
+                0.25,
+                Vec3::new(0.0, radius, 0.0),
+                Vec3::new(-v_circ, 0.0, 0.0),
+            ),
+            (
+                0.5,
+                Vec3::new(-radius, 0.0, 0.0),
+                Vec3::new(0.0, -v_circ, 0.0),
+            ),
+            (
+                0.75,
+                Vec3::new(0.0, -radius, 0.0),
+                Vec3::new(v_circ, 0.0, 0.0),
+            ),
             (1.0, r0, v0),
         ] {
             let (r, v, _) = cse_routine(r0, v0, frac * period, CserState::default(), mu);
             // ~10 m / 0.05 m/s: the Kepler loop converges to 1e-6 in scaled time, ≈1 ms ≈ v·1 ms here.
-            assert!((r - exp_r).norm() < 10.0, "frac {frac}: pos {r:?} != {exp_r:?}");
-            assert!((v - exp_v).norm() < 0.05, "frac {frac}: vel {v:?} != {exp_v:?}");
+            assert!(
+                (r - exp_r).norm() < 10.0,
+                "frac {frac}: pos {r:?} != {exp_r:?}"
+            );
+            assert!(
+                (v - exp_v).norm() < 0.05,
+                "frac {frac}: vel {v:?} != {exp_v:?}"
+            );
         }
     }
 
@@ -354,8 +382,16 @@ mod tests {
         for &dt in &[120.0, 600.0, 1500.0] {
             let (r, v, _) = cse_routine(r0, v0, dt, CserState::default(), mu);
             let (rr, vr) = rk4_two_body(r0, v0, dt, 20_000, mu);
-            assert!((r - rr).norm() < 5.0, "dt {dt}: pos err {}", (r - rr).norm());
-            assert!((v - vr).norm() < 1e-2, "dt {dt}: vel err {}", (v - vr).norm());
+            assert!(
+                (r - rr).norm() < 5.0,
+                "dt {dt}: pos err {}",
+                (r - rr).norm()
+            );
+            assert!(
+                (v - vr).norm() < 1e-2,
+                "dt {dt}: vel err {}",
+                (v - vr).norm()
+            );
         }
     }
 
@@ -368,8 +404,16 @@ mod tests {
         let dt = 800.0;
         let (r1, v1, _) = cse_routine(r0, v0, dt, CserState::default(), mu);
         let (r2, v2, _) = cse_routine(r1, v1, -dt, CserState::default(), mu);
-        assert!((r2 - r0).norm() < 12.0, "round-trip pos err {}", (r2 - r0).norm());
-        assert!((v2 - v0).norm() < 0.05, "round-trip vel err {}", (v2 - v0).norm());
+        assert!(
+            (r2 - r0).norm() < 12.0,
+            "round-trip pos err {}",
+            (r2 - r0).norm()
+        );
+        assert!(
+            (v2 - v0).norm() < 0.05,
+            "round-trip vel err {}",
+            (v2 - v0).norm()
+        );
     }
 
     /// Warm-starting from the previous `cser` gives the same answer as a cold start (the warm start is a
@@ -383,7 +427,11 @@ mod tests {
         // Prime a cser with a nearby call, then re-propagate the same step.
         let (_, _, primed) = cse_routine(r0, v0, 290.0, CserState::default(), mu);
         let (rw, vw, _) = cse_routine(r0, v0, 300.0, primed, mu);
-        assert!((rc - rw).norm() < 1e-2, "warm vs cold pos {}", (rc - rw).norm());
+        assert!(
+            (rc - rw).norm() < 1e-2,
+            "warm vs cold pos {}",
+            (rc - rw).norm()
+        );
         assert!((vc - vw).norm() < 1e-4);
     }
 }

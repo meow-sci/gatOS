@@ -42,9 +42,15 @@ pub fn render(f: &mut Frame, app: &App) {
         .map(|g| phase_label(g.phase))
         .unwrap_or(("MONITOR", VAL));
     let title = Line::from(vec![
-        Span::styled("land-o-matic", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "land-o-matic",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" \u{b7} "),
-        Span::styled(phase_txt, Style::default().fg(phase_col).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            phase_txt,
+            Style::default().fg(phase_col).add_modifier(Modifier::BOLD),
+        ),
     ]);
     let block = Block::default().borders(Borders::ALL).title(title);
     let inner = block.inner(area);
@@ -68,7 +74,10 @@ pub fn render(f: &mut Frame, app: &App) {
             0,
             Line::from(Span::styled(
                 format!(" \u{29c8} {h} "),
-                Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             )),
         );
         lines.insert(1, Line::from(""));
@@ -115,11 +124,10 @@ fn render_trajectory(f: &mut Frame, area: Rect, plan: &PlanView) {
     let gs_cot = plan.glide_slope_cot;
 
     let canvas = Canvas::default()
-        .block(
-            Block::default()
-                .borders(Borders::LEFT)
-                .title(Span::styled(" trajectory \u{2193}", Style::default().fg(KEY))),
-        )
+        .block(Block::default().borders(Borders::LEFT).title(Span::styled(
+            " trajectory \u{2193}",
+            Style::default().fg(KEY),
+        )))
         .marker(Marker::Braille)
         .x_bounds(xb)
         .y_bounds(yb)
@@ -163,7 +171,11 @@ fn state_lines(app: &App, t: &Telemetry) -> Vec<Line<'static>> {
             "vessel",
             &t.id,
             "state",
-            &format!("{}{}", t.sit, if t.controlled { "" } else { " (uncontrolled)" }),
+            &format!(
+                "{}{}",
+                t.sit,
+                if t.controlled { "" } else { " (uncontrolled)" }
+            ),
         ),
         kv(
             "parent",
@@ -203,7 +215,10 @@ fn state_lines(app: &App, t: &Telemetry) -> Vec<Line<'static>> {
             "v/h spd",
             &format!("v {:+.1} m/s", d.vertical_speed),
             "",
-            &format!("h {:.1} m/s   g {:.2} m/s\u{b2}", d.horizontal_speed, d.gravity),
+            &format!(
+                "h {:.1} m/s   g {:.2} m/s\u{b2}",
+                d.horizontal_speed, d.gravity
+            ),
         ));
         lines.push(kv(
             "pointing",
@@ -254,7 +269,10 @@ fn state_lines(app: &App, t: &Telemetry) -> Vec<Line<'static>> {
     } else {
         lines.push(kv(
             "guidance",
-            &format!("disarmed   G-limit {:.1} g   press [e] to engage", app.g_limit),
+            &format!(
+                "disarmed   G-limit {:.1} g   press [e] to engage",
+                app.g_limit
+            ),
         ));
     }
 
@@ -298,7 +316,11 @@ fn state_lines(app: &App, t: &Telemetry) -> Vec<Line<'static>> {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         app.status.clone(),
-        Style::default().fg(if app.status_err { Color::LightRed } else { ACCENT }),
+        Style::default().fg(if app.status_err {
+            Color::LightRed
+        } else {
+            ACCENT
+        }),
     )));
     lines.push(keys_line());
     lines.push(Line::from(Span::styled(

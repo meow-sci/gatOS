@@ -90,15 +90,30 @@ pub fn from_rows(r0: Vec3, r1: Vec3, r2: Vec3) -> Quat {
     } else if m11 >= m22 && m11 >= m33 {
         let s = (1.0 + m11 - m22 - m33).sqrt();
         let inv = 0.5 / s;
-        Quat::new(0.5 * s, (m12 + m21) * inv, (m13 + m31) * inv, (m23 - m32) * inv)
+        Quat::new(
+            0.5 * s,
+            (m12 + m21) * inv,
+            (m13 + m31) * inv,
+            (m23 - m32) * inv,
+        )
     } else if m22 > m33 {
         let s = (1.0 + m22 - m11 - m33).sqrt();
         let inv = 0.5 / s;
-        Quat::new((m21 + m12) * inv, 0.5 * s, (m32 + m23) * inv, (m31 - m13) * inv)
+        Quat::new(
+            (m21 + m12) * inv,
+            0.5 * s,
+            (m32 + m23) * inv,
+            (m31 - m13) * inv,
+        )
     } else {
         let s = (1.0 + m33 - m11 - m22).sqrt();
         let inv = 0.5 / s;
-        Quat::new((m31 + m13) * inv, (m32 + m23) * inv, 0.5 * s, (m12 - m21) * inv)
+        Quat::new(
+            (m31 + m13) * inv,
+            (m32 + m23) * inv,
+            0.5 * s,
+            (m12 - m21) * inv,
+        )
     }
 }
 
@@ -182,7 +197,10 @@ mod tests {
     /// The burn quaternion's three body axes map to an orthonormal CCI triad (a valid rotation).
     #[test]
     fn burn_quat_is_orthonormal_rotation() {
-        let q = compute_burn_body2cci(Vec3::new(0.0, 0.0, 1.0), Vec3::new(0.3, -0.7, 0.4).normalize());
+        let q = compute_burn_body2cci(
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.3, -0.7, 0.4).normalize(),
+        );
         let bx = transform(Vec3::x(), q);
         let by = transform(Vec3::y(), q);
         let bz = transform(Vec3::z(), q);

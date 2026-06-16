@@ -255,7 +255,13 @@ pub fn descent_target(site_cci: Vec3, site_vel_cci: Vec3) -> Target {
 /// acceleration at exactly `g_limit·g₀` for the current mass, clamped to `[throttle_min, throttle_max]`.
 /// This is the deceleration *cap*; the terminal controller takes the min of this and the
 /// required-to-land throttle.
-pub fn g_limit_throttle(mass: f64, thrust_max: f64, g_limit: f64, throttle_min: f64, throttle_max: f64) -> f64 {
+pub fn g_limit_throttle(
+    mass: f64,
+    thrust_max: f64,
+    g_limit: f64,
+    throttle_min: f64,
+    throttle_max: f64,
+) -> f64 {
     (mass * g_limit * G0 / thrust_max).clamp(throttle_min, throttle_max)
 }
 
@@ -302,7 +308,12 @@ fn is_finite(v: Vec3) -> bool {
 
 /// Terminal/degenerate fallback: steer surface-retrograde (or up if nearly stopped), carrying the
 /// previous working set forward with a small/zero tgo.
-fn fallback(state: &State, previous: &UpfgState, target: &Target, tgo: f64) -> (UpfgState, Guidance) {
+fn fallback(
+    state: &State,
+    previous: &UpfgState,
+    target: &Target,
+    tgo: f64,
+) -> (UpfgState, Guidance) {
     let rel_v = state.vel - target.vd;
     let dir = if rel_v.norm() > 1.0 {
         -rel_v.normalize()
@@ -397,9 +408,17 @@ mod tests {
         assert!((g.i_f.norm() - 1.0).abs() < 1e-9, "iF not unit");
         assert!(g.tgo > 0.0 && g.tgo < 200.0, "tgo {}", g.tgo);
         // Upward component: thrust opposes gravity/descent.
-        assert!(g.i_f.dot(&pos.normalize()) > 0.2, "iF not upward: {:?}", g.i_f);
+        assert!(
+            g.i_f.dot(&pos.normalize()) > 0.2,
+            "iF not upward: {:?}",
+            g.i_f
+        );
         // Generally retrograde: positive dot with −v̂.
-        assert!(g.i_f.dot(&(-vel.normalize())) > 0.3, "iF not retrograde: {:?}", g.i_f);
+        assert!(
+            g.i_f.dot(&(-vel.normalize())) > 0.3,
+            "iF not retrograde: {:?}",
+            g.i_f
+        );
     }
 
     /// Near the terminal point (|vgo|→0) the step takes the guarded fallback instead of dividing by zero.
@@ -415,10 +434,18 @@ mod tests {
             exhaust_velocity: 300.0 * G0,
             max_burn_time: 200.0,
         };
-        let state = State { time: 10.0, mass: 3500.0, pos, vel };
+        let state = State {
+            time: 10.0,
+            mass: 3500.0,
+            pos,
+            vel,
+        };
         let seed = UpfgState::seed(&state, &target);
         let (_, g, _, _) = converge(&stage, &target, &state, seed, mu, 20);
-        assert!(is_finite(g.i_f) && g.tgo.is_finite(), "fallback produced non-finite output");
+        assert!(
+            is_finite(g.i_f) && g.tgo.is_finite(),
+            "fallback produced non-finite output"
+        );
     }
 
     /// The definitive M4 "descent case sane" proof: a point-mass sim flown by UPFG terminal guidance
@@ -459,14 +486,19 @@ mod tests {
             let up = pos.normalize();
             let alt = pos.norm() - r_body;
             let v_vert = -vel.dot(&up); // + = descending
-            // Touchdown: low and descending slowly. (Horizontal is nulled by iF; the final-speed
-            // assertion below confirms it.)
+                                        // Touchdown: low and descending slowly. (Horizontal is nulled by iF; the final-speed
+                                        // assertion below confirms it.)
             if alt <= td_alt && v_vert.abs() <= v_td {
                 landed = true;
                 break;
             }
             let target = descent_target(site, Vec3::zeros());
-            let state = State { time: ut, mass, pos, vel };
+            let state = State {
+                time: ut,
+                mass,
+                pos,
+                vel,
+            };
             // Re-converge from a fresh seed each tick (each tick settles to its own state's fixed point —
             // carrying the working set across ticks induces a predictor-corrector 2-cycle here).
             let seed = UpfgState::seed(&state, &target);
@@ -477,12 +509,23 @@ mod tests {
             // Aim for half the cut speed so the vehicle actually reaches the touchdown gate (a target of
             // exactly v_td would hold the descent rate at the gate boundary and never trip it).
             let throttle = terminal_throttle(
-                mass, thrust_max, v_vert.max(0.0), v_td * 0.5, alt - td_alt, grav, g_limit, throttle_min, throttle_max,
+                mass,
+                thrust_max,
+                v_vert.max(0.0),
+                v_td * 0.5,
+                alt - td_alt,
+                grav,
+                g_limit,
+                throttle_min,
+                throttle_max,
             );
             let thrust_force = throttle * thrust_max;
             let g_load = thrust_force / mass;
             // Peak-g never exceeds the limit (the cap is the headline guarantee).
-            assert!(g_load <= g_limit * G0 + 1e-6, "exceeded G-limit: {g_load} m/s²");
+            assert!(
+                g_load <= g_limit * G0 + 1e-6,
+                "exceeded G-limit: {g_load} m/s²"
+            );
             let accel = g.i_f * g_load - up * grav;
             vel += accel * dt;
             pos += vel * dt;

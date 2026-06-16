@@ -99,6 +99,143 @@ impl Trajectory {
     }
 }
 
+impl Objective {
+    /// A human label for diagnostics/logging.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Objective::MinLandingError { .. } => "P3 (min landing error)",
+            Objective::MinFuel { .. } => "P4 (min fuel)",
+        }
+    }
+}
+
+// ---- diagnostics (pure data; no I/O — the app layer turns these into log records) ----------------
+
+/// One time-of-flight the search evaluated, with the solver's verdict.
+#[derive(Debug, Clone)]
+pub struct TfSample {
+    /// Trial time-of-flight, s.
+    pub tf: f64,
+    /// Outcome: `"solved"`, `"almost_solved"`, `"anchor_nonphysical"`, `"setup_error"`, `"bad_tf"`,
+    /// or the Clarabel `SolverStatus` (`"PrimalInfeasible"`, `"InsufficientProgress"`, …).
+    pub status: String,
+    /// The search cost at this `tf` (landing error for P3, `−ln m_f` for P4), or `1e10` if infeasible.
+    pub cost: f64,
+}
+
+impl TfSample {
+    /// Whether the solver returned a usable trajectory at this `tf`.
+    pub fn feasible(&self) -> bool {
+        self.status == "solved" || self.status == "almost_solved"
+    }
+}
+
+/// The time-of-flight search for one objective stage (P3 or P4).
+#[derive(Debug, Clone, Default)]
+pub struct StageTrace {
+    pub objective: &'static str,
+    /// Search bounds (plan §5.5): `t_lo` ≈ ½·(time to null v0 at the G-limit), `t_hi` = min(fuel-burn
+    /// time, Taylor-anchor validity limit).
+    pub t_lo: f64,
+    pub t_hi: f64,
+    /// `t_hi > t_lo` — if false the window is empty and no trajectory is even attempted.
+    pub bounds_ok: bool,
+    /// Every coarse-scan `tf` and its verdict.
+    pub samples: Vec<TfSample>,
+    /// The `tf` the golden-section refine settled on (`None` if no sample was feasible).
+    pub chosen_tf: Option<f64>,
+}
+
+impl StageTrace {
+    /// `(feasible, total)` sample counts.
+    pub fn feasible_count(&self) -> (usize, usize) {
+        (
+            self.samples.iter().filter(|s| s.feasible()).count(),
+            self.samples.len(),
+        )
+    }
+    /// The distinct infeasibility reasons seen, with counts (most common first).
+    pub fn status_histogram(&self) -> Vec<(String, usize)> {
+        let mut counts: Vec<(String, usize)> = Vec::new();
+        for s in &self.samples {
+            if let Some(e) = counts.iter_mut().find(|(k, _)| *k == s.status) {
+                e.1 += 1;
+            } else {
+                counts.push((s.status.clone(), 1));
+            }
+        }
+        counts.sort_by_key(|b| std::cmp::Reverse(b.1));
+        counts
+    }
+}
+
+/// A self-contained snapshot of the [`Problem`] the solver was handed — enough to reproduce the solve
+/// off-line and to see the guidance-frame inputs the transforms produced.
+#[derive(Debug, Clone, Default)]
+pub struct ProblemSummary {
+    /// Initial position in the ENU guidance frame (target at origin), m.
+    pub r0: Vec3,
+    /// Initial surface-relative velocity in ENU, m/s.
+    pub v0: Vec3,
+    pub gravity: f64,
+    pub drag_accel: Vec3,
+    pub omega_g: Vec3,
+    pub g_limit: f64,
+    pub glide_slope_cot: f64,
+    pub pointing_cos: f64,
+    pub v_max: f64,
+    pub n: usize,
+    pub m_wet: f64,
+    pub m_dry: f64,
+    pub m_fuel: f64,
+    pub thrust_max: f64,
+    pub isp: f64,
+}
+
+impl ProblemSummary {
+    pub fn of(p: &Problem) -> Self {
+        Self {
+            r0: p.r0,
+            v0: p.v0,
+            gravity: p.gravity,
+            drag_accel: p.drag_accel,
+            omega_g: p.omega_g,
+            g_limit: p.g_limit,
+            glide_slope_cot: p.glide_slope_cot,
+            pointing_cos: p.pointing_cos,
+            v_max: p.v_max,
+            n: p.n,
+            m_wet: p.vehicle.m_wet(),
+            m_dry: p.vehicle.m_dry,
+            m_fuel: p.vehicle.m_fuel,
+            thrust_max: p.vehicle.thrust_max,
+            isp: p.vehicle.isp,
+        }
+    }
+    /// Max thrust acceleration at wet mass, m/s² (the ceiling the G-limit may or may not bind below).
+    pub fn max_accel_wet(&self) -> f64 {
+        if self.m_wet > 0.0 {
+            self.thrust_max / self.m_wet
+        } else {
+            0.0
+        }
+    }
+}
+
+/// The full two-stage solve, instrumented (plan §5.1): the P3 aim-point search, the chosen aim, the P4
+/// fuel-optimal search, and where it bailed. Filled only on the traced path ([`solve_traced`]); the
+/// hot path ([`solve`]) skips all of it.
+#[derive(Debug, Clone, Default)]
+pub struct SolveTrace {
+    pub summary: ProblemSummary,
+    /// P3 first, then P4 (present only if P3 produced an aim point).
+    pub stages: Vec<StageTrace>,
+    /// The closest reachable aim point P3 found (ENU), if any.
+    pub aim: Option<Vec3>,
+    /// `"ok"` when a trajectory came back, else the stage/reason it stopped at.
+    pub outcome: String,
+}
+
 // ---- conic problem assembly ---------------------------------------------------------------------
 
 /// A sparse linear form `Σ coeff·x[col]`.
@@ -216,9 +353,20 @@ fn solver_settings() -> DefaultSettings<f64> {
 /// the reference mass trajectory would go non-physical at this `tf` (which the time search treats as
 /// infeasible).
 pub fn solve_fixed_tf(prob: &Problem, obj: &Objective, tf: f64) -> Option<Trajectory> {
+    solve_fixed_tf_status(prob, obj, tf).0
+}
+
+/// As [`solve_fixed_tf`], but also returns the solver's verdict as a short string for diagnostics
+/// (`"solved"`, `"almost_solved"`, `"anchor_nonphysical"`, `"setup_error"`, `"bad_tf"`, or the Clarabel
+/// `SolverStatus`). The hot path goes through [`solve_fixed_tf`] and discards it.
+pub fn solve_fixed_tf_status(
+    prob: &Problem,
+    obj: &Objective,
+    tf: f64,
+) -> (Option<Trajectory>, String) {
     let n = prob.n;
     if n < 4 || tf <= 0.0 {
-        return None;
+        return (None, "bad_tf".to_string());
     }
     let dt = tf / n as f64;
     let veh = &prob.vehicle;
@@ -256,11 +404,17 @@ pub fn solve_fixed_tf(prob: &Problem, obj: &Objective, tf: f64) -> Option<Trajec
     let mut z0s = vec![0.0; n]; // shifted reference log-mass
     let mut mu1 = vec![0.0; n]; // ρ1/(z0_term·g)
     let mut mu2 = vec![0.0; n]; // ρ2/(z0_term·g)
-    for (k, ((zl, m1), m2)) in z0s.iter_mut().zip(mu1.iter_mut()).zip(mu2.iter_mut()).enumerate() {
+    for (k, ((zl, m1), m2)) in z0s
+        .iter_mut()
+        .zip(mu1.iter_mut())
+        .zip(mu2.iter_mut())
+        .enumerate()
+    {
         let t = k as f64 * dt;
         let z0_term = veh.m_wet() - veh.alpha() * veh.rho2() * t;
         if z0_term <= 1.0 {
-            return None; // non-physical linearization anchor at this tf → treat as infeasible
+            // non-physical linearization anchor at this tf → treat as infeasible
+            return (None, "anchor_nonphysical".to_string());
         }
         *zl = z0_term.ln() - mwlog;
         *m1 = veh.rho1() / z0_term / g;
@@ -411,9 +565,9 @@ pub fn solve_fixed_tf(prob: &Problem, obj: &Objective, tf: f64) -> Option<Trajec
         let a_terms = vec![(si(nn), 1.0), (zi(nn), m1)];
         let a_const = -m1 * (1.0 + zl);
         bld.soc(vec![
-            (a_terms.clone(), a_const + 1.0),                 // s0 = a + 1
-            (vec![(zi(nn), k)], -k * zl),                     // s1 = √(2μ1)·(z_n − z0)
-            (a_terms, a_const - 1.0),                         // s2 = a − 1
+            (a_terms.clone(), a_const + 1.0), // s0 = a + 1
+            (vec![(zi(nn), k)], -k * zl),     // s1 = √(2μ1)·(z_n − z0)
+            (a_terms, a_const - 1.0),         // s2 = a − 1
         ]);
     }
 
@@ -438,12 +592,16 @@ pub fn solve_fixed_tf(prob: &Problem, obj: &Objective, tf: f64) -> Option<Trajec
     let (a, b, cones) = bld.build();
     let p = CscMatrix::new(nvars, nvars, vec![0usize; nvars + 1], vec![], vec![]); // P = 0
 
-    let mut solver = DefaultSolver::new(&p, &q, &a, &b, &cones, solver_settings()).ok()?;
+    let mut solver = match DefaultSolver::new(&p, &q, &a, &b, &cones, solver_settings()) {
+        Ok(s) => s,
+        Err(_) => return (None, "setup_error".to_string()),
+    };
     solver.solve();
-    match solver.solution.status {
-        SolverStatus::Solved | SolverStatus::AlmostSolved => {}
-        _ => return None,
-    }
+    let status_str = match solver.solution.status {
+        SolverStatus::Solved => "solved",
+        SolverStatus::AlmostSolved => "almost_solved",
+        other => return (None, format!("{other:?}")),
+    };
 
     // --- unscale back to SI ---
     let x = &solver.solution.x;
@@ -456,19 +614,23 @@ pub fn solve_fixed_tf(prob: &Problem, obj: &Objective, tf: f64) -> Option<Trajec
             sigma: x[si(i)] * g,
         })
         .collect();
-    Some(Trajectory { tf, dt, nodes })
+    (Some(Trajectory { tf, dt, nodes }), status_str.to_string())
 }
 
-/// The cost a time-of-flight `tf` yields for the golden-section search: landing error (P3) or fuel
-/// (P4, as −ln m_f). Infeasible `tf` → a large sentinel so the search avoids it.
-fn cost(prob: &Problem, obj: &Objective, tf: f64) -> f64 {
-    match solve_fixed_tf(prob, obj, tf) {
-        Some(traj) => match obj {
-            Objective::MinLandingError { target } => (traj.touchdown().r - *target).norm(),
-            Objective::MinFuel { .. } => -traj.final_mass().ln(),
-        },
-        None => 1e10,
+/// The search cost of a solved trajectory: landing error (P3) or fuel (P4, as −ln m_f).
+fn traj_cost(obj: &Objective, traj: &Trajectory) -> f64 {
+    match obj {
+        Objective::MinLandingError { target } => (traj.touchdown().r - *target).norm(),
+        Objective::MinFuel { .. } => -traj.final_mass().ln(),
     }
+}
+
+/// The cost a time-of-flight `tf` yields for the golden-section search. Infeasible `tf` → a large
+/// sentinel so the search avoids it.
+fn cost(prob: &Problem, obj: &Objective, tf: f64) -> f64 {
+    solve_fixed_tf(prob, obj, tf)
+        .map(|t| traj_cost(obj, &t))
+        .unwrap_or(1e10)
 }
 
 /// Estimate the time-of-flight with the lowest cost. A coarse scan first **brackets the feasible
@@ -476,12 +638,28 @@ fn cost(prob: &Problem, obj: &Objective, tf: f64) -> f64 {
 /// when most of the range is infeasible), then a golden-section refines around the best sample. Returns
 /// `None` if no `tf` is feasible.
 pub fn estimate_tof(prob: &Problem, obj: &Objective) -> Option<f64> {
+    estimate_tof_inner(prob, obj, None)
+}
+
+/// [`estimate_tof`] with optional instrumentation: when `trace` is `Some`, records the bounds, every
+/// coarse-scan sample + its solver verdict, and the chosen `tf` (plan §5.5).
+fn estimate_tof_inner(
+    prob: &Problem,
+    obj: &Objective,
+    mut trace: Option<&mut StageTrace>,
+) -> Option<f64> {
     let veh = &prob.vehicle;
     // Upper bound: the smaller of fuel-burn time and the Taylor-anchor validity limit (z0_term > 0).
     let t_hi = (veh.m_fuel / (veh.alpha() * veh.rho1()))
         .min(veh.m_wet() / (veh.alpha() * veh.rho2()) * 0.97);
     // Lower bound: well under the time to null the speed at the G-limit, so the feasible band is inside.
     let t_lo = (prob.v0.norm() / (prob.g_limit * G0)).max(1.0) * 0.5;
+    if let Some(t) = trace.as_mut() {
+        t.objective = obj.label();
+        t.t_lo = t_lo;
+        t.t_hi = t_hi;
+        t.bounds_ok = t_hi > t_lo;
+    }
     if t_hi <= t_lo {
         return None;
     }
@@ -491,7 +669,15 @@ pub fn estimate_tof(prob: &Problem, obj: &Objective) -> Option<f64> {
     let mut best: Option<(f64, f64)> = None; // (cost, tf)
     for i in 0..=SAMPLES {
         let tf = t_lo + step * i as f64;
-        let c = cost(prob, obj, tf);
+        let (traj, status) = solve_fixed_tf_status(prob, obj, tf);
+        let c = traj.as_ref().map(|t| traj_cost(obj, t)).unwrap_or(1e10);
+        if let Some(t) = trace.as_mut() {
+            t.samples.push(TfSample {
+                tf,
+                status,
+                cost: c,
+            });
+        }
         if c < 1e9 && best.is_none_or(|(bc, _)| c < bc) {
             best = Some((c, tf));
         }
@@ -514,16 +700,16 @@ pub fn estimate_tof(prob: &Problem, obj: &Objective) -> Option<f64> {
             a = t2;
         }
     }
-    Some((a + b) * 0.5)
+    let chosen = (a + b) * 0.5;
+    if let Some(t) = trace.as_mut() {
+        t.chosen_tf = Some(chosen);
+    }
+    Some(chosen)
 }
 
 /// The cross-product matrix `[w]×` such that `[w]×·a = w × a`.
 fn skew(w: Vec3) -> [[f64; 3]; 3] {
-    [
-        [0.0, -w.z, w.y],
-        [w.z, 0.0, -w.x],
-        [-w.y, w.x, 0.0],
-    ]
+    [[0.0, -w.z, w.y], [w.z, 0.0, -w.x], [-w.y, w.x, 0.0]]
 }
 
 /// 3×3 matrix product.
@@ -551,6 +737,61 @@ pub fn solve(prob: &Problem, desired_target: Vec3) -> Option<Trajectory> {
     let p4 = Objective::MinFuel { target: aim };
     let tf4 = estimate_tof(prob, &p4)?;
     solve_fixed_tf(prob, &p4, tf4)
+}
+
+/// [`solve`], instrumented: fills `trace` with the P3/P4 time-of-flight searches, the chosen aim, and
+/// the precise stage/reason it stopped at. Used by the autopilot's `--log` diagnostic path; functionally
+/// identical to [`solve`] otherwise.
+pub fn solve_traced(
+    prob: &Problem,
+    desired_target: Vec3,
+    trace: &mut SolveTrace,
+) -> Option<Trajectory> {
+    trace.summary = ProblemSummary::of(prob);
+
+    let p3 = Objective::MinLandingError {
+        target: desired_target,
+    };
+    let mut s3 = StageTrace::default();
+    let tf3 = estimate_tof_inner(prob, &p3, Some(&mut s3));
+    trace.stages.push(s3);
+    let tf3 = match tf3 {
+        Some(t) => t,
+        None => {
+            trace.outcome = "P3: no feasible time-of-flight in [t_lo, t_hi]".to_string();
+            return None;
+        }
+    };
+    let aim = match solve_fixed_tf(prob, &p3, tf3) {
+        Some(t) => t.touchdown().r,
+        None => {
+            trace.outcome = format!("P3: solve failed at chosen tf={tf3:.1}s");
+            return None;
+        }
+    };
+    trace.aim = Some(aim);
+
+    let p4 = Objective::MinFuel { target: aim };
+    let mut s4 = StageTrace::default();
+    let tf4 = estimate_tof_inner(prob, &p4, Some(&mut s4));
+    trace.stages.push(s4);
+    let tf4 = match tf4 {
+        Some(t) => t,
+        None => {
+            trace.outcome = "P4: no feasible time-of-flight to the P3 aim point".to_string();
+            return None;
+        }
+    };
+    match solve_fixed_tf(prob, &p4, tf4) {
+        Some(t) => {
+            trace.outcome = "ok".to_string();
+            Some(t)
+        }
+        None => {
+            trace.outcome = format!("P4: solve failed at chosen tf={tf4:.1}s");
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -622,8 +863,16 @@ mod tests {
             let (a, b) = (&w[0], &w[1]);
             let v_pred = a.v + (dt * 0.5) * ((a.thrust_accel + g) + (b.thrust_accel + g));
             let r_pred = a.r + (dt * 0.5) * (b.v + a.v);
-            assert!((v_pred - b.v).norm() < 1e-3, "velocity defect {}", (v_pred - b.v).norm());
-            assert!((r_pred - b.r).norm() < 1e-2, "position defect {}", (r_pred - b.r).norm());
+            assert!(
+                (v_pred - b.v).norm() < 1e-3,
+                "velocity defect {}",
+                (v_pred - b.v).norm()
+            );
+            assert!(
+                (r_pred - b.r).norm() < 1e-2,
+                "position defect {}",
+                (r_pred - b.r).norm()
+            );
         }
     }
 
@@ -649,7 +898,11 @@ mod tests {
         let cap = prob.g_limit * G0;
         for (i, node) in traj.nodes.iter().enumerate() {
             // G-limit / slack.
-            assert!(node.sigma <= cap + 1e-6, "node {i} sigma {} > cap {cap}", node.sigma);
+            assert!(
+                node.sigma <= cap + 1e-6,
+                "node {i} sigma {} > cap {cap}",
+                node.sigma
+            );
             // glide-slope: stay within the cone above the pad.
             let horiz = (node.r.x.powi(2) + node.r.y.powi(2)).sqrt();
             assert!(
@@ -664,7 +917,10 @@ mod tests {
         let (r1, r2) = (prob.vehicle.rho1(), prob.vehicle.rho2());
         for node in &traj.nodes[1..traj.nodes.len() - 1] {
             let thrust = node.thrust();
-            assert!(thrust >= r1 * 0.8 && thrust <= r2 * 1.05, "thrust {thrust} out of [{r1},{r2}]");
+            assert!(
+                thrust >= r1 * 0.8 && thrust <= r2 * 1.05,
+                "thrust {thrust} out of [{r1},{r2}]"
+            );
         }
     }
 
@@ -729,13 +985,20 @@ mod tests {
 
         // Still a valid landing: at the target with ~zero velocity.
         let td = rot.touchdown();
-        assert!(td.v.norm() < 1e-2, "rotating touchdown speed {}", td.v.norm());
+        assert!(
+            td.v.norm() < 1e-2,
+            "rotating touchdown speed {}",
+            td.v.norm()
+        );
         assert!(td.r.norm() < 1.0, "rotating touchdown miss {}", td.r.norm());
 
         // The dynamics actually changed the trajectory (compare the mid-trajectory positions).
         let mid = flat.nodes.len() / 2;
         let drift = (flat.nodes[mid].r - rot.nodes[mid].r).norm();
-        assert!(drift > 1.0, "rotating terms had no effect (drift {drift} m)");
+        assert!(
+            drift > 1.0,
+            "rotating terms had no effect (drift {drift} m)"
+        );
     }
 
     #[test]
