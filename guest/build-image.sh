@@ -26,7 +26,7 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------- pinned inputs
-ALPINE_VERSION=3.24            # branch; spike-validated (Alpine 3.24.0, kernel 6.18 ≥ 6.11 v9fs fix)
+ALPINE_VERSION=3.24            # branch; (Alpine 3.24.0, kernel 6.18 ≥ 6.11 v9fs fix)
 ALPINE_MIRROR="${ALPINE_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}"
 
 # Bootstrap artifacts are pinned exactly (version + sha256). Alpine keeps only the
@@ -50,7 +50,7 @@ GUEST_PACKAGES="alpine-baselayout alpine-release busybox busybox-suid musl musl-
                 alpine-keys apk-tools linux-virt dropbear dropbear-scp dropbear-convert
                 openssh-sftp-server qemu-guest-agent ca-certificates
                 e2fsprogs e2fsprogs-extra
-                bash zsh shadow vim neovim less curl wget git coreutils"
+                mandoc man-pages bash zsh shadow vim neovim less curl wget git coreutils"
 
 DISK_SIZE_MB=1536
 # Spike-validated cmdline (spike/NOTES.md T1.1), adjusted for the partitionless
