@@ -1,0 +1,12 @@
+{
+  "name": "decomp",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "1.3.13"
+  },
+  "peerDependencies": {
+    "typescript": "6.0.3"
+  }
+}
