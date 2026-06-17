@@ -275,8 +275,8 @@ public sealed class ControlFileTests
     public async Task Token_AcceptsNonEmpty_RejectsEmpty()
     {
         var sink = new FakeCommandSink();
-        var file = TokenControlFile.Create("switch_vessel", 1, sink, () => "",
-            t => new SimCommand(t, "debug.switch_vessel", SimCommand.NoOrdinal, 0) { Token = t });
+        var file = TokenControlFile.Create("control_vessel", 1, sink, () => "",
+            t => new SimCommand(t, "debug.control_vessel", SimCommand.NoOrdinal, 0) { Token = t });
         await WriteLineAsync(file, "vessel-7\n");
         Assert.That(sink.Last!.Token, Is.EqualTo("vessel-7"));
 

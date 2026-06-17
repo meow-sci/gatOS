@@ -33,7 +33,8 @@ public sealed class ControlSurfaceTests
             solar: [new SolarSnapshot(0, 0, false, 0, 1, false, 0, AnimationIndex: 0)],
             decouplers: [new DecouplerSnapshot(0, false)],
             rcs: [new RcsSnapshot(0, false, true, "None")],
-            lights: [new LightSnapshot(0, false, 1, new double3Snap(1, 1, 1))])));
+            lights: [new LightSnapshot(0, false, 1, new double3Snap(1, 1, 1))],
+            docking: [new DockingSnapshot(0, true, "part-2") { PushoffForceN = 7000 }])));
         _server = new NinePServer(root);
         await _server.StartAsync();
         _client = await NinePTestClient.ConnectAsync(_server.Port);
@@ -204,7 +205,45 @@ public sealed class ControlSurfaceTests
     }
 
     [Test]
-    public async Task DebugNamespace_WarpRefillAndSwitch()
+    public async Task DockingUndock_FiresTrigger()
+    {
+        // Read the docked + pushoff_force telemetry, then undock with the one-shot trigger.
+        Assert.That(await ReadAsync("vessels", "by-id", "test-1", "docking", "0", "docked"), Is.EqualTo("1\n"));
+        Assert.That(await ReadAsync("vessels", "by-id", "test-1", "docking", "0", "pushoff_force"),
+            Is.EqualTo("7000\n"));
+        await WriteAsync("1\n", "vessels", "by-id", "test-1", "docking", "0", "undock");
+        Assert.That(_sink.Last, Is.EqualTo(new SimCommand("test-1", "docking.undock", 0, 1)));
+        Assert.That(_sink.Last!.Phase, Is.EqualTo(CommandPhase.Frame));
+    }
+
+    [Test]
+    public async Task DebugDockingPushoff_ReadsLiveValue_AndWritesNewtons()
+    {
+        // The debug knob reads back the live PushoffForce and writes a new Newton value.
+        Assert.That(await ReadAsync("debug", "vessels", "test-1", "docking", "0", "pushoff_force"),
+            Is.EqualTo("7000\n"));
+        await WriteAsync("12000\n", "debug", "vessels", "test-1", "docking", "0", "pushoff_force");
+        Assert.That(_sink.Last, Is.EqualTo(new SimCommand("test-1", "debug.docking_pushoff", 0, 12000)));
+    }
+
+    [Test]
+    public async Task CtlFocus_FiresCameraTrigger()
+    {
+        await WriteAsync("1\n", "vessels", "by-id", "test-1", "ctl", "focus");
+        Assert.That(_sink.Last, Is.EqualTo(new SimCommand("test-1", "camera.focus", SimCommand.NoOrdinal, 1)));
+    }
+
+    [Test]
+    public async Task BodyFocus_FiresCameraTrigger_TargetingTheBodyId()
+    {
+        // A celestial gets the same camera.focus action, with the body id as the target.
+        _store.Publish(TestData.Snapshot(2, TestData.Vessel()).WithCelestials());
+        await WriteAsync("1\n", "bodies", "Kerth", "focus");
+        Assert.That(_sink.Last, Is.EqualTo(new SimCommand("Kerth", "camera.focus", SimCommand.NoOrdinal, 1)));
+    }
+
+    [Test]
+    public async Task DebugNamespace_WarpRefillFocusControlAndTeleport()
     {
         await WriteAsync("50\n", "debug", "time", "warp");
         Assert.That(_sink.Last, Is.EqualTo(new SimCommand("", "debug.warp", SimCommand.NoOrdinal, 50)));
@@ -214,8 +253,14 @@ public sealed class ControlSurfaceTests
             new SimCommand("test-1", "debug.refill_battery", SimCommand.NoOrdinal, 1)));
         Assert.That(_sink.Last!.Phase, Is.EqualTo(CommandPhase.Solver), "refills drain in the solver phase");
 
-        await WriteAsync("other\n", "debug", "switch_vessel");
-        Assert.That(_sink.Last!.Action, Is.EqualTo("debug.switch_vessel"));
+        // debug/focus is the by-id, view-only camera move (any vehicle OR body) — the camera.focus action.
+        await WriteAsync("Kerth\n", "debug", "focus");
+        Assert.That(_sink.Last!.Action, Is.EqualTo("camera.focus"));
+        Assert.That(_sink.Last!.Token, Is.EqualTo("Kerth"));
+
+        // debug/control_vessel focuses AND takes control of a vehicle by id.
+        await WriteAsync("other\n", "debug", "control_vessel");
+        Assert.That(_sink.Last!.Action, Is.EqualTo("debug.control_vessel"));
         Assert.That(_sink.Last!.Token, Is.EqualTo("other"));
 
         await WriteAsync("1 2 3 4 5 6\n", "debug", "vessels", "test-1", "teleport");

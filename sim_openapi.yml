@@ -480,7 +480,7 @@ components:
           description: Vector argument (e.g. `attitude_target` quaternion `[x,y,z,w]`, `color` `[r,g,b]`, `teleport` `[x,y,z,vx,vy,vz]`).
         token:
           type: string
-          description: Symbolic-token argument (e.g. an `attitude_mode`/`attitude_frame` name, or `switch_vessel` target id).
+          description: Symbolic-token argument (e.g. an `attitude_mode`/`attitude_frame` name, or a `camera.focus`/`control_vessel` target id).
       required: [vessel_id, action]
 
     ActionKey:
@@ -506,12 +506,15 @@ components:
         - light.brightness
         - light.color
         - decoupler.fire
+        - docking.undock
+        - camera.focus
         - animation.goal
         - debug.warp
-        - debug.switch_vessel
+        - debug.control_vessel
         - debug.teleport
         - debug.refill_fuel
         - debug.refill_battery
+        - debug.docking_pushoff
 
     AttitudeMode:
       type: string
@@ -870,6 +873,10 @@ components:
         docked: { type: boolean }
         docked_to_part:
           oneOf: [{ type: string }, { type: "null" }]
+        pushoff_force_n:
+          type: number
+          format: double
+          description: Separation impulse the port applies on undock, Newtons (stock 7000; live-settable via the debug knob).
       required: [index, docked]
 
     DecouplerSnapshot:

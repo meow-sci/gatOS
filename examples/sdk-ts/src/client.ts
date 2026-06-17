@@ -219,7 +219,13 @@ export class DebugHandle {
     return this.t.command({ vessel_id: this.id, action: "debug.teleport", values: stateCci });
   }
 
-  switchControlHere() {
-    return this.t.command({ vessel_id: this.id, action: "debug.switch_vessel", token: this.id });
+  /** Move the camera to this vessel (view only — does not change control). */
+  focus() {
+    return this.t.command({ vessel_id: this.id, action: "camera.focus", token: this.id });
+  }
+
+  /** Focus the camera on this vessel AND take control of it (cheat-tier). */
+  controlHere() {
+    return this.t.command({ vessel_id: this.id, action: "debug.control_vessel", token: this.id });
   }
 }

@@ -212,8 +212,12 @@ function fileCommand(c: Command): { path: string; payload: string } {
       return { path: `${v}/decouplers/${ord}/fire`, payload: "1" };
     case "debug.warp":
       return { path: `debug/time/warp`, payload: num };
-    case "debug.switch_vessel":
-      return { path: `debug/switch_vessel`, payload: c.token ?? c.vessel_id };
+    case "camera.focus":
+      // View-only camera move to any vehicle/body id (the per-node ctl/focus + bodies/<id>/focus
+      // triggers map to the same action; debug/focus is the by-id form).
+      return { path: `debug/focus`, payload: c.token ?? c.vessel_id };
+    case "debug.control_vessel":
+      return { path: `debug/control_vessel`, payload: c.token ?? c.vessel_id };
     case "debug.teleport":
       return { path: `debug/vessels/${c.vessel_id}/teleport`, payload: vec };
     case "debug.refill_fuel":

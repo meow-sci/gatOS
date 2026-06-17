@@ -394,17 +394,24 @@ errnos `EBUSY`/`ETIMEDOUT` added.
 
 **Writes:** `ctl/{throttle,stage,rcs,attitude_mode,attitude_frame,attitude_target,burn}`,
 `engines/<n>/min_throttle`, `rcs/<n>/active`, `lights/<n>/{on,brightness,color}`,
-`decouplers/<n>/fire`, and the **`/sim/debug/`** cheat namespace (gated by
-`[control] debug_namespace`: `vessels/<id>/{teleport,refill_fuel,refill_battery}`, `time/warp`,
-`switch_vessel`).
+`decouplers/<n>/fire`, `docking/<n>/undock`, `ctl/focus` (+ `bodies/<id>/focus`), and the
+**`/sim/debug/`** cheat namespace (gated by
+`[control] debug_namespace`: `vessels/<id>/{teleport,refill_fuel,refill_battery}`,
+`vessels/<id>/docking/<n>/pushoff_force`, `time/warp`, `focus` (camera-by-id, vehicle/body),
+`control_vessel` (focus + control)).
 
 **New command archetypes:** `ControlFile.Number`, `VectorControlFile`, `EnumControlFile`,
 `TokenControlFile`; `SimCommand` gained `Values` (vectors) + `Token` (enum/free tokens).
 
 **Integration layer:**
 `Actuators/{Engine,Light(+per-instance clone),Animation,Staging,Throttle(reflection),Rcs,
-Decoupler,FlightComputer,Debug}Actuator`; `KsaCatalog` dispatches all actions (debug-namespace
-exempt from the authority gate).
+Decoupler,Docking,Camera,FlightComputer,Debug}Actuator`; `KsaCatalog` dispatches all actions
+(debug-namespace exempt from the authority gate). `DockingActuator.Undock` enqueues the game's own
+`InputEvents.VehicleDockingInputData{Undock=true}` (→ `Vehicle.Split` using the port's `PushoffForce`);
+`SetPushoffForce` overwrites that live separation impulse (the debug knob). `CameraActuator.Focus`
+moves the main-viewport camera to any `Astronomical` (vessel **or** celestial — the `camera.focus`
+action resolves the target via `CurrentSystem.Get(id)`, bypassing the vehicle-only path/authority gate
+since it only moves the view).
 
 **Solver phase:** a Harmony `Priority.First` prefix on `Universe.ExecuteNextVehicleSolvers`
 (`Mod.DrainSolverCommands` via `InstallSolverHook`/`RemoveSolverHook` partial seams) drains

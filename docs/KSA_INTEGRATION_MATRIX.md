@@ -132,7 +132,7 @@ core telemetry and the extension dirs vanish (logged once) rather than the sampl
 | `…/solar/<n>/{produced,occluded,sun_aoa,efficiency,tracker_angle,state,current,goal}` | S/St | `SolarPanelState.*`; `SolarTrackerState.CurrentAngle` (1:1 by index); deploy via linked `KeyframeAnimationModule` | M |
 | `…/generators/<n>/{active,produced}` | S | `GeneratorState.{Active,Produced}` | M |
 | `…/lights/<n>/{on,brightness,color}` | S/St | `PowerConsumer.LightIsActive`; `LightModule.Template.{Intensity,ColorRgb}` | M (template H) |
-| `…/docking/<n>/{docked,docked_to}` | S | `DockingPort.Docked`/`DockedToPart.Id` | M |
+| `…/docking/<n>/{docked,docked_to,pushoff_force}` | S | `DockingPort.Docked`/`DockedToPart.Id`/`PushoffForce` (N) | M |
 | `…/decouplers/<n>/{fired,fire}` | S/T | `Decoupler.IsActive` | M |
 
 New `/sim/events` types (snapshot diff in `EventDiffer`): `engine-state`, `flameout`, `docked`,
@@ -157,6 +157,9 @@ Anchors in `Game/Ksa/Actuators/**`; routed by `KsaCatalog`. Frame phase unless n
 | `…/lights/<n>/brightness` | St | number | `Template.Intensity.Value` (per-instance clone) | H | Frame |
 | `…/lights/<n>/color` | St | `r g b` | `Template.ColorRgb.{R,G,B}`+`OnDataLoad` (per-instance clone) | H | Frame |
 | `…/decouplers/<n>/fire` | T | `1` | `Decoupler.SetIsActive` (re-fire → EBUSY) | M | Frame |
+| `…/docking/<n>/undock` | T | `1` | `InputEvents.VehicleDockingInputData{Undock=true}` → `DockingPort.Undock` → `Vehicle.Split(Connector, PushoffForce)` (not docked → EBUSY) | M | Frame |
+| `…/ctl/focus` | T | `1` | `Program.GetMainCamera().SetFollow(vehicle, tidalLocking:true, changeControl:false)` — moves the view only | M | Frame |
+| `bodies/<id>/focus` | T | `1` | same `camera.focus` action on a celestial (`CurrentSystem.Get(id)` → `Astronomical`); view-only, exempt from the authority gate | M | Frame |
 
 A STATE control file's **read** returns the current setpoint, so the vessel-level ones need a reader
 that samples it back. These are populated in `VesselReader.Enrich` (anchor `SampleFlightComputer` +
@@ -179,8 +182,10 @@ the game's ignite button reads). This is distinct from the per-engine `engines/<
 | `debug/vessels/<id>/teleport` | T | `px py pz vx vy vz` | `Orbit.CreateFromStateCci`+`Vehicle.Teleport`+`UpdatePerFrameData` | H | Frame |
 | `debug/vessels/<id>/refill_fuel` | T | `1` | `Vehicle.RefillConsumables()` | M | **Solver** |
 | `debug/vessels/<id>/refill_battery` | T | `1` | `Battery.Refill(ref state)` via `GetModuleAndAllMutableStatesForInitialization` | M | **Solver** |
+| `debug/vessels/<id>/docking/<n>/pushoff_force` | St | N (≥0) | `DockingPort.PushoffForce` (live float; stock 7000 N from XML) | M | Frame |
 | `debug/time/warp` | St | factor | `Universe.SetSimulationSpeed(double, alert:false)` (public) | M | Frame |
-| `debug/switch_vessel` | St | vessel id | `Program.ControlledVehicle` (public static field) | M | Frame |
+| `debug/focus` | St | vehicle/body id | `camera.focus` by id (view-only; same action as `ctl/focus`) | M | Frame |
+| `debug/control_vessel` | St | vehicle id | `Program.GetMainCamera().SetFollow(vehicle)` + `Program.ControlledVehicle = vehicle` (focus **and** control) | M | Frame |
 
 Solver-phase commands drain in a Harmony `Priority.First` prefix on
 `Universe.ExecuteNextVehicleSolvers` (`Mod.DrainSolverCommands`), which runs **immediately before** the

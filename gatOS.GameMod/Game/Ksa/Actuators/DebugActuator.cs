@@ -23,10 +23,13 @@ internal static class DebugActuator
         return CommandResult.Ok;
     }
 
-    [KsaAnchor("Program.ControlledVehicle (public static field)", SourceFile = "KSA/Program.cs",
-        Verified = "2026-06-12", Risk = ChurnRisk.Medium, Notes = "Direct assignment; no reflection needed.")]
-    internal static CommandResult SwitchVessel(Vehicle target)
+    [KsaAnchor("Program.GetMainCamera().SetFollow(vehicle, changeControl:false); Program.ControlledVehicle = vehicle",
+        SourceFile = "KSA/Program.cs / KSA/Camera.cs", Verified = "2026-06-16", Risk = ChurnRisk.Medium,
+        Notes = "Focuses the main camera on the vehicle AND takes control of it. Camera move is best-effort "
+            + "(skipped if no camera); the control grant is unconditional. Cheat-tier (grants authority).")]
+    internal static CommandResult ControlVessel(Vehicle target)
     {
+        Program.GetMainCamera()?.SetFollow(target, tidalLocking: true, changeControl: false);
         Program.ControlledVehicle = target;
         return CommandResult.Ok;
     }

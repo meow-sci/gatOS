@@ -503,8 +503,10 @@ internal static class VesselReader
         return result;
     }
 
-    [KsaAnchor("vehicle.Parts.Modules.Get<DockingPort>(); .Docked, .DockedToPart.Id",
-        SourceFile = "KSA/DockingPort.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium)]
+    [KsaAnchor("vehicle.Parts.Modules.Get<DockingPort>(); .Docked, .DockedToPart.Id, .PushoffForce",
+        SourceFile = "KSA/DockingPort.cs", Verified = "2026-06-16", Risk = ChurnRisk.Medium,
+        Notes = "PushoffForce is a public mutable float (Newtons) seeded from the part XML; the undock "
+            + "separation impulse Vehicle.Split uses. Read here so the debug control reads it back.")]
     private static IReadOnlyList<DockingSnapshot> SampleDocking(Vehicle vehicle)
     {
         var modules = vehicle.Parts.Modules.Get<DockingPort>();
@@ -514,7 +516,10 @@ internal static class VesselReader
         for (var i = 0; i < modules.Length; i++)
         {
             var port = modules[i];
-            result.Add(new DockingSnapshot(i, port.Docked, port.DockedToPart?.Id));
+            result.Add(new DockingSnapshot(i, port.Docked, port.DockedToPart?.Id)
+            {
+                PushoffForceN = Sanitize.Finite(port.PushoffForce),
+            });
         }
 
         return result;

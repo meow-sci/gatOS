@@ -169,6 +169,7 @@ public sealed class SimFsTreeTests
             "vessels/by-id/test-1/ctl/lights", "vessels/by-id/test-1/ctl/rcs",
             "vessels/by-id/test-1/ctl/attitude_mode", "vessels/by-id/test-1/ctl/attitude_frame",
             "vessels/by-id/test-1/ctl/attitude_target", "vessels/by-id/test-1/ctl/burn",
+            "vessels/by-id/test-1/ctl/focus",
             // per-module reads + controls
             "vessels/by-id/test-1/rcs/0/active", "vessels/by-id/test-1/rcs/0/map",
             "vessels/by-id/test-1/solar/0/produced", "vessels/by-id/test-1/solar/0/goal",
@@ -177,6 +178,7 @@ public sealed class SimFsTreeTests
             "vessels/by-id/test-1/lights/0/color",
             "vessels/by-id/test-1/generators/0/active", "vessels/by-id/test-1/generators/0/produced",
             "vessels/by-id/test-1/docking/0/docked", "vessels/by-id/test-1/docking/0/docked_to",
+            "vessels/by-id/test-1/docking/0/pushoff_force", "vessels/by-id/test-1/docking/0/undock",
             "vessels/by-id/test-1/decouplers/0/fired", "vessels/by-id/test-1/decouplers/0/fire",
             "vessels/by-id/test-1/animations/1/goal", "vessels/by-id/test-1/animations/1/state",
             "vessels/by-id/test-1/navball/twr", "vessels/by-id/test-1/navball/frame",
@@ -184,10 +186,11 @@ public sealed class SimFsTreeTests
             "vessels/by-id/test-1/encounters",
             // celestial catalog
             "system/name", "bodies/Kerth/mass", "bodies/Kerth/orbit/sma",
-            "bodies/Kerth/atmosphere/height", "bodies/Kerth/ocean/density",
+            "bodies/Kerth/atmosphere/height", "bodies/Kerth/ocean/density", "bodies/Kerth/focus",
             // debug namespace
             "debug/vessels/test-1/teleport", "debug/vessels/test-1/refill_fuel",
-            "debug/vessels/test-1/refill_battery", "debug/time/warp", "debug/switch_vessel",
+            "debug/vessels/test-1/refill_battery", "debug/vessels/test-1/docking/0/pushoff_force",
+            "debug/time/warp", "debug/focus", "debug/control_vessel",
         ];
 
         Assert.That(files.Keys, Is.SupersetOf(expectedPresent));
@@ -198,6 +201,8 @@ public sealed class SimFsTreeTests
             Assert.That(files["vessels/by-id/test-1/solar/0/tracker_angle"], Is.EqualTo("30\n"));
             Assert.That(files["vessels/by-id/test-1/lights/0/on"], Is.EqualTo("1\n"));
             Assert.That(files["vessels/by-id/test-1/docking/0/docked_to"], Is.EqualTo("part-7\n"));
+            Assert.That(files["vessels/by-id/test-1/docking/0/pushoff_force"], Is.EqualTo("7000\n"));
+            Assert.That(files["debug/vessels/test-1/docking/0/pushoff_force"], Is.EqualTo("7000\n"));
             Assert.That(files["bodies/Kerth/atmosphere/height"], Is.EqualTo("70000\n"));
             // The active alias mirrors the control surface too.
             Assert.That(files.Keys, Does.Contain("vessels/active/ctl/ignite"));

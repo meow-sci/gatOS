@@ -176,6 +176,10 @@ public static class SimFsTree
                         Line($"{p}/ocean/present", "present", () => "1"),
                         Line($"{p}/ocean/density", "density",
                             () => Formats.Scalar(Body(bodyId).Ocean!.DensityKgM3))));
+                // Move the main camera to this celestial (write 1), same action vessels' ctl/focus uses.
+                if (_commands is { } sink)
+                    children.Add(new TriggerFile("focus", Qid($"{p}/focus"), sink,
+                        new SimCommand(bodyId, "camera.focus", SimCommand.NoOrdinal, 1)));
 
                 return children;
             });
@@ -490,7 +494,10 @@ public static class SimFsTree
                 VectorControl($"{q}/attitude_target", "attitude_target", vesselId, "vessel.attitude_target",
                     SimCommand.NoOrdinal, 4, () => Formats.Quat(Vessel(vesselId).AttitudeBody2Cci)),
                 VectorControl($"{q}/burn", "burn", vesselId, "vessel.burn", SimCommand.NoOrdinal, 4,
-                    () => "0 0 0 0"));
+                    () => "0 0 0 0"),
+                // Move the main camera to this vessel (write 1). Pure view op — does not switch control.
+                new TriggerFile("focus", Qid($"{q}/focus"), sink,
+                    new SimCommand(vesselId, "camera.focus", SimCommand.NoOrdinal, 1)));
         }
 
         // ---- /sim/debug cheat namespace (G-D2; gated by [control] debug_namespace) ----------
@@ -510,23 +517,51 @@ public static class SimFsTree
                 DelegateDirectory.Fixed("time", Qid("debug/time"),
                     NumberControl("debug/time/warp", "warp", "", "debug.warp", SimCommand.NoOrdinal,
                         () => Formats.Scalar(_store.Current.WarpFactor))),
-                TokenControlFile.Create("switch_vessel", Qid("debug/switch_vessel"), sink,
+                // Move the camera to any astronomical by id — vehicle OR body — view-only (the same
+                // camera.focus action the per-vessel ctl/focus and bodies/<id>/focus triggers use).
+                TokenControlFile.Create("focus", Qid("debug/focus"), sink,
                     () => _store.Current.ActiveVesselId ?? "",
-                    t => new SimCommand(t, "debug.switch_vessel", SimCommand.NoOrdinal, 0) { Token = t }));
+                    t => new SimCommand(t, "camera.focus", SimCommand.NoOrdinal, 0) { Token = t }),
+                // Focus AND take control of a vehicle by id (cheat-tier — grants control authority).
+                TokenControlFile.Create("control_vessel", Qid("debug/control_vessel"), sink,
+                    () => _store.Current.ActiveVesselId ?? "",
+                    t => new SimCommand(t, "debug.control_vessel", SimCommand.NoOrdinal, 0) { Token = t }));
         }
 
         private VfsDirectory DebugVesselDir(string sanitized, string vesselId)
         {
             var sink = _commands!;
             var q = $"debug/vessels/{sanitized}";
-            return DelegateDirectory.Fixed(sanitized, Qid(q),
+            var children = new List<VfsNode>
+            {
                 VectorControl($"{q}/teleport", "teleport", vesselId, "debug.teleport", SimCommand.NoOrdinal, 6,
                     () => "0 0 0 0 0 0"),
                 new TriggerFile("refill_fuel", Qid($"{q}/refill_fuel"), sink,
                     new SimCommand(vesselId, "debug.refill_fuel", SimCommand.NoOrdinal, 1)),
                 new TriggerFile("refill_battery", Qid($"{q}/refill_battery"), sink,
-                    new SimCommand(vesselId, "debug.refill_battery", SimCommand.NoOrdinal, 1)));
+                    new SimCommand(vesselId, "debug.refill_battery", SimCommand.NoOrdinal, 1)),
+            };
+            // Per-docking-port cheat knobs (only when the vessel carries docking ports). Non-throwing
+            // presence check — Vessel() would throw if the snapshot lost the vessel mid-walk.
+            if (_store.Current.Vessels.FirstOrDefault(v => v.Id == vesselId)?.Docking.Count > 0)
+                children.Add(DebugDockingDir(q, vesselId));
+            return DelegateDirectory.Fixed(sanitized, Qid(q), children.ToArray());
         }
+
+        private VfsDirectory DebugDockingDir(string q, string vesselId)
+            => new DelegateDirectory("docking", Qid($"{q}/docking"),
+                () => Vessel(vesselId).Docking
+                    .Select(d => (VfsNode)DebugDockingPortDir(q, vesselId, d.Index)).ToArray(),
+                name => int.TryParse(name, out var idx) && Vessel(vesselId).Docking.Any(d => d.Index == idx)
+                    ? DebugDockingPortDir(q, vesselId, idx)
+                    : null);
+
+        private VfsDirectory DebugDockingPortDir(string q, string vesselId, int index)
+            => DelegateDirectory.Fixed($"{index}", Qid($"{q}/docking/{index}"),
+                // Read shows the live Newton value (stock 7000); write overwrites DockingPort.PushoffForce,
+                // the separation impulse the regular docking/<n>/undock trigger then applies.
+                NumberControl($"{q}/docking/{index}/pushoff_force", "pushoff_force", vesselId,
+                    "debug.docking_pushoff", index, () => Formats.Scalar(Docking(vesselId, index).PushoffForceN)));
 
         private VfsDirectory AnimationsDir(string p, string vesselId)
         {
@@ -635,10 +670,22 @@ public static class SimFsTree
                     : null);
 
         private VfsDirectory DockingPortDir(string p, string vesselId, int index)
-            => DelegateDirectory.Fixed($"{index}", Qid($"{p}/docking/{index}"),
-                Line($"{p}/docking/{index}/docked", "docked", () => Formats.Flag(Docking(vesselId, index).Docked)),
-                Line($"{p}/docking/{index}/docked_to", "docked_to",
-                    () => Docking(vesselId, index).DockedToPart ?? ""));
+        {
+            var q = $"{p}/docking/{index}";
+            var children = new List<VfsNode>
+            {
+                Line($"{q}/docked", "docked", () => Formats.Flag(Docking(vesselId, index).Docked)),
+                Line($"{q}/docked_to", "docked_to", () => Docking(vesselId, index).DockedToPart ?? ""),
+                Line($"{q}/pushoff_force", "pushoff_force",
+                    () => Formats.Scalar(Docking(vesselId, index).PushoffForceN)),
+            };
+            // Undock (G4): a one-shot TRIGGER mirroring decoupler fire — write 1 to separate this
+            // docked port. Only present when a command sink is wired.
+            if (_commands is { } sink)
+                children.Add(new TriggerFile("undock", Qid($"{q}/undock"), sink,
+                    new SimCommand(vesselId, "docking.undock", index, 1)));
+            return DelegateDirectory.Fixed($"{index}", Qid(q), children.ToArray());
+        }
 
         private VfsDirectory DecouplersDir(string p, string vesselId)
             => new DelegateDirectory("decouplers", Qid($"{p}/decouplers"),

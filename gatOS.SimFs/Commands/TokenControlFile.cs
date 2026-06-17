@@ -2,8 +2,9 @@ namespace gatOS.SimFs.Commands;
 
 /// <summary>
 ///     A <b>STATE</b> control whose value is a free-form, non-empty token (no fixed allowed set):
-///     <c>debug/switch_vessel</c> writes a target vessel id. Any non-empty trimmed token is
-///     accepted and carried in <see cref="SimCommand.Token"/>; an empty write fails with EINVAL.
+///     <c>debug/focus</c> / <c>debug/control_vessel</c> write a target astronomical/vehicle id. Any
+///     non-empty trimmed token is accepted and carried in <see cref="SimCommand.Token"/>; an empty
+///     write fails with EINVAL.
 /// </summary>
 public sealed class TokenControlFile : CommandFile
 {

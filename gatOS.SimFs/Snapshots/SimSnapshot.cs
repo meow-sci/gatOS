@@ -284,7 +284,15 @@ public sealed record LightSnapshot(int Index, bool On, double Intensity, double3
 /// <param name="Index">Stable per-vessel docking-port index.</param>
 /// <param name="Docked">Whether it is docked.</param>
 /// <param name="DockedToPart">The part id it is docked to, or null.</param>
-public sealed record DockingSnapshot(int Index, bool Docked, string? DockedToPart);
+public sealed record DockingSnapshot(int Index, bool Docked, string? DockedToPart)
+{
+    /// <summary>
+    ///     The separation impulse this port applies when it undocks, in Newtons (the value
+    ///     <c>DockingPort.Undock</c> hands to <c>Vehicle.Split</c>). Seeded from the part's XML
+    ///     (<c>PushoffForce</c>, stock 7000 N) and overwritable live via the debug control.
+    /// </summary>
+    public double PushoffForceN { get; init; }
+}
 
 /// <summary>One decoupler's state.</summary>
 /// <param name="Index">Stable per-vessel decoupler index.</param>

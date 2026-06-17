@@ -10,7 +10,8 @@ internal static class TestData
         double? battery = 0.87, bool lightsOn = false, bool engineOn = false,
         IReadOnlyList<AnimationSnapshot>? animations = null,
         IReadOnlyList<SolarSnapshot>? solar = null, IReadOnlyList<DecouplerSnapshot>? decouplers = null,
-        IReadOnlyList<RcsSnapshot>? rcs = null, IReadOnlyList<LightSnapshot>? lights = null)
+        IReadOnlyList<RcsSnapshot>? rcs = null, IReadOnlyList<LightSnapshot>? lights = null,
+        IReadOnlyList<DockingSnapshot>? docking = null)
         => new VesselSnapshot(
             Id: id,
             Name: $"Vessel {id}",
@@ -40,6 +41,7 @@ internal static class TestData
             Decouplers = decouplers ?? [],
             Rcs = rcs ?? [],
             Lights = lights ?? [],
+            Docking = docking ?? [],
             EngineOn = engineOn,
         };
 
@@ -66,7 +68,7 @@ internal static class TestData
                 Environment = new EnvironmentSnapshot(101325, 1.2, 500, 0, 6_371_000,
                     new double3Snap(0, 0, 9.8), new double3Snap(0, 0, 0), 1.0),
                 Generators = [new GeneratorSnapshot(0, true, 50)],
-                Docking = [new DockingSnapshot(0, true, "part-7")],
+                Docking = [new DockingSnapshot(0, true, "part-7") { PushoffForceN = 7000 }],
                 Encounters = [new EncounterSnapshot("Mun", 5000, 120000)],
                 BatteryCapacityJoules = 9000,
             };

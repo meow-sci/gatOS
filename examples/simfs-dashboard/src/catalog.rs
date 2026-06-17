@@ -129,7 +129,8 @@ pub fn classify(path: &str) -> Spec {
                 },
             )
         }
-        ["debug", "switch_vessel"] => return spec("Switch vessel", Kind::Text),
+        ["debug", "focus"] => return spec("Focus camera (vehicle/body id)", Kind::Text),
+        ["debug", "control_vessel"] => return spec("Control vessel (id)", Kind::Text),
         _ => {}
     }
 

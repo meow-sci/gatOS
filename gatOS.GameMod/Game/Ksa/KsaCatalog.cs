@@ -29,8 +29,21 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels) : ICommandEx
             if (command.Action == "debug.warp")
                 return Finish(accessor, DebugActuator.SetWarp(command.Value));
 
-            // switch_vessel targets the vessel named by the token, not the (sender) VesselId.
-            var targetId = command.Action == "debug.switch_vessel" ? command.Token ?? command.VesselId : command.VesselId;
+            // camera.focus targets ANY astronomical (vessel or celestial) named by id and only moves
+            // the view — no vessel mutation, so it bypasses the vehicle-only resolution and the
+            // authority gate. The id rides in Token (debug/focus) or VesselId (the per-node triggers).
+            if (command.Action == "camera.focus")
+            {
+                var focusId = command.Token ?? command.VesselId;
+                var followable = ResolveAstronomical(focusId);
+                return followable is null
+                    ? new CommandResult(CommandOutcome.NotFound, $"'{focusId}' is gone")
+                    : Finish(accessor, CameraActuator.Focus(followable));
+            }
+
+            // control_vessel targets the vehicle named by the token (the one to take control of),
+            // not the (sender) VesselId.
+            var targetId = command.Action == "debug.control_vessel" ? command.Token ?? command.VesselId : command.VesselId;
             var vehicle = ResolveVehicle(targetId);
             if (vehicle is null)
                 return new CommandResult(CommandOutcome.NotFound, $"vessel '{targetId}' is gone");
@@ -82,12 +95,14 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels) : ICommandEx
         "light.brightness" => LightActuator.SetBrightness(vehicle, c.Ordinal, c.Value),
         "light.color" => LightActuator.SetColor(vehicle, c.Ordinal, c.Values ?? []),
         "decoupler.fire" => DecouplerActuator.Fire(vehicle, c.Ordinal),
+        "docking.undock" => DockingActuator.Undock(vehicle, c.Ordinal),
 
         // Cheat namespace (G4 / G-D2)
-        "debug.switch_vessel" => DebugActuator.SwitchVessel(vehicle),
+        "debug.control_vessel" => DebugActuator.ControlVessel(vehicle),
         "debug.teleport" => DebugActuator.Teleport(vehicle, c.Values ?? []),
         "debug.refill_fuel" => DebugActuator.RefillFuel(vehicle),
         "debug.refill_battery" => DebugActuator.RefillBattery(vehicle),
+        "debug.docking_pushoff" => DockingActuator.SetPushoffForce(vehicle, c.Ordinal, c.Value),
 
         _ => new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'"),
     };
@@ -104,6 +119,12 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels) : ICommandEx
                 return vehicle;
         return null;
     }
+
+    [KsaAnchor("Universe.CurrentSystem.Get(id) → Astronomical (vehicle or celestial)",
+        SourceFile = "KSA/Universe.cs", Verified = "2026-06-16", Risk = ChurnRisk.Low,
+        Notes = "Same id lookup the game's follow/control terminal actions use; returns null when absent.")]
+    private static Astronomical? ResolveAstronomical(string id)
+        => Universe.CurrentSystem?.Get(id);
 
     private static double SafeUt()
     {
