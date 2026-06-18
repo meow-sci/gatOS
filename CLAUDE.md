@@ -17,6 +17,12 @@ Live KSA vehicle telemetry is exposed to the guest **as a filesystem**: a C#-imp
 `tail -f`, `jq`, awk pipelines) becomes the game API surface. Persistence is qcow2 overlays, one
 per save profile, on top of a pristine shipped base image.
 
+> **`/sim` is a published API. Its complete catalog is [`SPEC_9P_FILESYSTEM.md`](SPEC_9P_FILESYSTEM.md)**
+> — every path, value format, unit, read/write semantic, command action key, errno, and HTTP `/v1` /
+> MQTT mirror. It is the reference for anyone (player, modder, or the `gatos` skill) writing programs
+> against the sim. **See the binding constitution in "The `/sim` API contract" below: the SPEC must be
+> updated in lockstep with any change to the `/sim` surface.**
+
 The architecture and the research behind it are fixed in **`OS_ANALYSIS.md`** (options considered,
 why QEMU won); **`OS_PLAN.md`** is the execution plan (milestones M0–M12, fine-grained tasks). Read
 `OS_PLAN.md` Part 0 before starting any task — it defines the execution model, repo conventions,
@@ -103,6 +109,11 @@ CLAUDE.md / README.md           this file; user-facing readme
 OS_IDEA.md / OS_ANALYSIS.md / OS_PLAN.md   goals / research / execution plan
 KSA_GAME_INTEGRATION_PLAN.md    proposed plan: /sim read/write expansion, control files, HTTP +
                                 bus transports, KSA-churn integration layer (G-series phases)
+SPEC_9P_FILESYSTEM.md           THE catalog of the /sim 9p API surface: every path, format, unit,
+                                read/write semantic, command action key, errno, HTTP /v1 + MQTT
+                                mirror. The reference for writing programs against /sim; kept in
+                                lockstep with the code (its own constitution). The gatos skill
+                                (.claude/skills/gatos/) references it.
 docs/MILESTONES.md              full per-milestone build detail (class names, as-built notes)
 docs/ARCHITECTURE.md            runtime architecture, port allocation, telemetry pipeline/tuning
 docs/KSA_INTEGRATION_MATRIX.md per-point KSA API reference (G1–G4 + documented deferrals)
@@ -295,11 +306,37 @@ avg/max) recorded allocation-free.
   consumes — when purrTTY is absent.
 - Commits: small, per-task, message starts with the task id (e.g. `T3.4: qemu readiness probe`).
 
+## The `/sim` API contract (binding constitution)
+
+`SPEC_9P_FILESYSTEM.md` (repo root) is the **single, authoritative catalog of the `/sim` API**: every
+9p path, value format and unit, read/write archetype, command action key (`ordinal`/`value`/`values`/
+`token` + Frame/Solver phase), errno mapping, and the HTTP `/v1` + MQTT mirrors. It is a **published,
+user-facing API surface** — guests, modders and the `gatos` skill script against it.
+
+**MUST — keep the SPEC in lockstep with the code.** In the *same change* that you add, remove, rename,
+or alter the format/units/phase/semantics of any of the following, you MUST update
+`SPEC_9P_FILESYSTEM.md` (and `docs/KSA_INTEGRATION_MATRIX.md` when the KSA binding moves):
+
+- a `/sim` node or directory (`SimFsTree.cs`), including per-module files;
+- a value **format** or **unit** (`Formats.cs`, `SimSnapshot` field semantics);
+- a `ctl/…` control, a `debug/…` action, or a command **action key** / its argument shape / its
+  **phase** (`KsaCatalog.cs`, `SimCommand.SolverActions`, the actuators);
+- an HTTP `/v1` route or MQTT topic, or a config gate that changes availability;
+- the errno mapping (`CommandResult.cs`) or a file's archetype.
+
+The code wins; the SPEC mirrors it — they must never disagree. This is structural, not optional: the
+transport-parity rule already keeps one read surface (`SimJson`/`Formats`) and one write surface
+(`SimCommand`/`CommandQueue`), so a `/sim` change is a single place in code **and** a single place in
+the SPEC. The `gatos` skill (`.claude/skills/gatos/`) and its sidecars (`coordinate-frames.md`,
+`flight-programs.md`, `recipes.md`) point at the SPEC; refresh them when a change affects how programs
+are written.
+
 ## Instruction Maintenance Mandate (MUST)
 
 Whenever you make meaningful repository changes, you MUST evaluate and update **this file and the
 relevant `docs/` page** in the same work item if it affects: project structure/dependencies, the
-host↔guest seam, build/test/deploy commands, the threading rules, or **milestone/feature status**.
+host↔guest seam, build/test/deploy commands, the threading rules, **the `/sim` API surface (update
+`SPEC_9P_FILESYSTEM.md` — see the constitution above)**, or **milestone/feature status**.
 As each milestone lands, update the status table above and add full detail to
 [`docs/MILESTONES.md`](docs/MILESTONES.md) — prefer verified code paths over the plan when
 documenting behavior. Update [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) when the runtime
