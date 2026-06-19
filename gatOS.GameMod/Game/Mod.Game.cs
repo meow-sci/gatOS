@@ -229,7 +229,10 @@ public sealed partial class Mod
         catch (Exception ex)
         {
             _captureDead = true;
-            ModLog.Log.Error($"gatOS screen stream disabled after a capture error: {ex.Message}");
+            // Full exception (type + stack), not just the message — and note the crash-trace file,
+            // which also catches native/GPU faults that never surface as a managed exception.
+            ModLog.Log.Error("gatOS screen stream disabled after a capture error "
+                             + "(see <LogsDir>/display-capture.log for the per-step trace)", ex);
         }
     }
 
