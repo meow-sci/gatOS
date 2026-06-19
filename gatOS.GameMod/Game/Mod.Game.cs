@@ -4,6 +4,7 @@ using gatOS.GameMod.Game.Ksa;
 using gatOS.Logging;
 using gatOS.SimFs;
 using gatOS.SimFs.Commands;
+using gatOS.SimFs.Display;
 using gatOS.Vm;
 using HarmonyLib;
 using KSA;
@@ -60,6 +61,12 @@ public sealed partial class Mod
     private KsaHealth? _health;
     private KsaCatalog? _catalog;
     private bool _commandsDead;
+
+    // Game-thread-only screen-stream capture (STREAM_PLAN.md). FrameCapture owns the reusable Vulkan
+    // scratch image + staging buffer; it reads the live DisplaySettings off _displaySurface and submits
+    // BGRA frames to it. A capture fault disables capture for the session (one error log, no per-frame spam).
+    private FrameCapture? _frameCapture;
+    private bool _captureDead;
 
     // The Harmony patch draining solver-phase commands (G4). Installed in OnFullyLoaded, removed at
     // Unload; null when the solver hook could not be installed (solver commands then never drain).
@@ -200,6 +207,37 @@ public sealed partial class Mod
     {
         _health ??= new KsaHealth();
         _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels);
+    }
+
+    /// <summary>
+    ///     STREAM_PLAN.md §4.1: captures one screen-stream frame on the game/render thread (rule 1).
+    ///     Default-off and throttled — does nothing unless a client enabled <c>/sim/display</c> and is
+    ///     reading the stream. A capture fault disables the feature for the session (one error log);
+    ///     telemetry, control and the VM keep working.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void CaptureDisplayFrame(double dt)
+    {
+        if (_captureDead || _displaySurface is not { } surface)
+            return;
+
+        try
+        {
+            _frameCapture ??= new FrameCapture();
+            _frameCapture.TryCapture(dt, surface);
+        }
+        catch (Exception ex)
+        {
+            _captureDead = true;
+            ModLog.Log.Error($"gatOS screen stream disabled after a capture error: {ex.Message}");
+        }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void DisposeDisplayCapture()
+    {
+        _frameCapture?.Dispose();
+        _frameCapture = null;
     }
 
     /// <summary>
@@ -602,11 +640,29 @@ public sealed partial class Mod
                                  + "background pump (never blocks the game; only while an MQTT client is connected).");
         }
 
+        if (_displaySurface is { } disp)
+        {
+            var ds = disp.Settings;
+            var state = !ds.Enabled ? "off"
+                : disp.ReaderCount > 0 ? $"on, {disp.ReaderCount} reader(s)"
+                : "on, idle (no reader)";
+            ImGui.Text($"Display: {state} — {ds.Width}x{ds.Height}@{ds.Fps} {ds.Encoding.Token()}");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("The /sim/display screen stream. Control it from any SSH client: "
+                                 + "echo 1 > /sim/display/enabled, then cat /sim/display/stream in a kitty terminal.");
+            var cap = disp.CaptureStat;
+            if (cap.Count > 0)
+                ImGui.Text($"  capture avg {cap.AvgMicros / 1000:F3} ms, max {cap.MaxMicros / 1000:F3} ms; "
+                           + $"encode avg {disp.EncodeStat.AvgMicros / 1000:F3} ms");
+        }
+
         if (ImGui.SmallButton("Reset perf##gatos_reset_perf"))
         {
             _sampleStats.Reset();
             _drainStats.Reset();
             _mqttBroker?.PublishStats.Reset();
+            _displaySurface?.CaptureStat.Reset();
+            _displaySurface?.EncodeStat.Reset();
         }
     }
 

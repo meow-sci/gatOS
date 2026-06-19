@@ -91,6 +91,15 @@ public sealed class GatOsConfig
             ("bus_ccsds", "Expose a CCSDS space-packet TM/TC feed (reserved — not yet served)."),
             ("bus_1553", "Expose a MIL-STD-1553 BC/RT framing feed (reserved — not yet served)."),
         }),
+        ("DISPLAY — the screen stream (/sim/display; all tunable live over /sim)", new[]
+        {
+            ("display_enabled", "Boot seed for /sim/display/enabled. OFF by default; turn it on live with\n"
+                + "`echo 1 > /sim/display/enabled` (and `echo 0 >` to stop). Capture costs nothing while off."),
+            ("display_fps", "Stream cadence in Hz (clamped 1..60), decoupled from the game frame rate."),
+            ("display_width", "Downscale target width in pixels (clamped 16..1920)."),
+            ("display_height", "Downscale target height in pixels (clamped 16..1920)."),
+            ("display_encoding", "Frame wire encoding: rgba-zlib (default) | rgba."),
+        }),
     };
 
     /// <summary>Schema version of the file (readers reject anything but <see cref="CurrentSchema"/>).</summary>
@@ -208,6 +217,23 @@ public sealed class GatOsConfig
 
     /// <summary>Expose a MIL-STD-1553 BC/RT framing feed (G7; reserved — not yet served).</summary>
     public bool Bus1553 { get; set; }
+
+    // ---- DISPLAY: the screen stream (/sim/display; STREAM_PLAN.md). Runtime control is the /sim files. ----
+
+    /// <summary>Boot seed for <c>/sim/display/enabled</c>; <c>false</c> (off) by default.</summary>
+    public bool DisplayEnabled { get; set; }
+
+    /// <summary>Boot seed for the stream cadence in Hz (clamped 1..60), decoupled from the game frame rate.</summary>
+    public int DisplayFps { get; set; } = 15;
+
+    /// <summary>Boot seed for the downscale target width in pixels (clamped 16..1920).</summary>
+    public int DisplayWidth { get; set; } = 320;
+
+    /// <summary>Boot seed for the downscale target height in pixels (clamped 16..1920).</summary>
+    public int DisplayHeight { get; set; } = 180;
+
+    /// <summary>Boot seed for the frame wire encoding: <c>rgba-zlib</c> (default) | <c>rgba</c>.</summary>
+    public string DisplayEncoding { get; set; } = "rgba-zlib";
 
     // ---- MOUNTS: host folders shared into the guest under /mnt/<name>. ----
 
@@ -407,6 +433,18 @@ public sealed class GatOsConfig
             MqttPreferredPort = Clamp(nameof(MqttPreferredPort), MqttPreferredPort, 1024, 65535);
         SerialIntervalMs = Clamp(nameof(SerialIntervalMs), SerialIntervalMs, 50, 60000);
         FieldFeedHz = Clamp(nameof(FieldFeedHz), FieldFeedHz, 1, 30);
+        DisplayFps = Clamp(nameof(DisplayFps), DisplayFps, 1, 60);
+        DisplayWidth = Clamp(nameof(DisplayWidth), DisplayWidth, 16, 1920);
+        DisplayHeight = Clamp(nameof(DisplayHeight), DisplayHeight, 16, 1920);
+
+        var displayEncoding = DisplayEncoding.Trim().ToLowerInvariant();
+        if (displayEncoding is not ("rgba-zlib" or "rgba"))
+        {
+            ModLog.Log.Warn($"Config: display_encoding '{DisplayEncoding}' is not rgba-zlib/rgba; using rgba-zlib.");
+            displayEncoding = "rgba-zlib";
+        }
+
+        DisplayEncoding = displayEncoding;
 
         var serialMode = SerialMode.Trim().ToLowerInvariant();
         if (serialMode is not ("ndjson" or "nmea" or "ccsds"))

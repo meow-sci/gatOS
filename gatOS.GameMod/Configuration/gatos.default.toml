@@ -109,6 +109,24 @@ bus_ccsds = false
 # Expose a MIL-STD-1553 BC/RT framing feed (reserved — not yet served).
 bus_1553 = false
 
+# ===== DISPLAY — the screen stream (/sim/display; all tunable live over /sim) =====
+
+# Boot seed for /sim/display/enabled. OFF by default; turn it on live with
+# `echo 1 > /sim/display/enabled` (and `echo 0 >` to stop). Capture costs nothing while off.
+display_enabled = false
+
+# Stream cadence in Hz (clamped 1..60), decoupled from the game frame rate.
+display_fps = 15
+
+# Downscale target width in pixels (clamped 16..1920).
+display_width = 320
+
+# Downscale target height in pixels (clamped 16..1920).
+display_height = 180
+
+# Frame wire encoding: rgba-zlib (default) | rgba.
+display_encoding = "rgba-zlib"
+
 # ===== MOUNTS — host folders shared into the guest under /mnt/<name> =====
 
 # Off by default. Each [[mounts]] entry shares a host folder into the guest at /mnt/<name>,

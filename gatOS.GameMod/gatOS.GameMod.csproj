@@ -165,6 +165,29 @@
             <HintPath>$(KSAFolder)/Brutal.ImGui.Abstractions.dll</HintPath>
             <Private>false</Private>
         </Reference>
+        <!-- Vulkan: the screen-stream capture (Game/Ksa/FrameCapture) reads back the offscreen
+             viewport via the Brutal Vulkan wrappers (CommandBuffer, BufferEx/ImageEx, StagingPool). -->
+        <Reference Include="Brutal.Vulkan" Condition="Exists('$(KSAFolder)/Brutal.Vulkan.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Vulkan.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Brutal.Vulkan.Abstractions" Condition="Exists('$(KSAFolder)/Brutal.Vulkan.Abstractions.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Vulkan.Abstractions.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Brutal.Vulkan.Vma" Condition="Exists('$(KSAFolder)/Brutal.Vulkan.Vma.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Vulkan.Vma.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Brutal.Core.Memory" Condition="Exists('$(KSAFolder)/Brutal.Core.Memory.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Core.Memory.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <!-- Core.Renderer (the device context the capture submits through) lives here. -->
+        <Reference Include="Planet.Render.Core" Condition="Exists('$(KSAFolder)/Planet.Render.Core.dll')">
+            <HintPath>$(KSAFolder)/Planet.Render.Core.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
         <Reference Include="KSA" Condition="Exists('$(KSAFolder)/KSA.dll')">
             <HintPath>$(KSAFolder)/KSA.dll</HintPath>
             <Private>false</Private>

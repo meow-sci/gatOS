@@ -8,6 +8,7 @@ using gatOS.NineP.Server;
 using gatOS.NineP.Vfs;
 using gatOS.SimFs;
 using gatOS.SimFs.Commands;
+using gatOS.SimFs.Display;
 using gatOS.SimFs.Snapshots;
 using gatOS.Ssh;
 using gatOS.Vm;
@@ -62,6 +63,11 @@ public sealed partial class Mod
     // (game thread) reads it every tick and the gatOS menu / status window mutate it live. Its fields
     // are volatile, so this needs no lock (threading rule 5).
     private TelemetrySettings _telemetrySettings = new();
+
+    // The screen-stream hub (STREAM_PLAN.md): owns the runtime-mutable DisplaySettings + the encode
+    // worker + the /sim/display/stream feed. Game-free (from gatOS.SimFs); the render-thread capture
+    // (Game/Ksa/FrameCapture) feeds it. Null until init; default-off so it idles until a client enables it.
+    private DisplaySurface? _displaySurface;
 
     // Timing of one telemetry sample (game thread, written by the sampler; read by the status
     // window). Allocation-free; owned here so the status window can read it before the sampler
@@ -172,7 +178,11 @@ public sealed partial class Mod
                 _config.TelemetryBodies, _config.TelemetryEvents);
             _commandQueue = new CommandQueue(_config.ControlEnabled, _config.DebugNamespace,
                 TimeSpan.FromMilliseconds(_config.CommandTimeoutMs));
-            _simRoot = SimFsTree.Build(_simStore, _commandQueue, SimTransportsStatus);
+            _displaySurface = new DisplaySurface(new DisplaySettings(
+                _config.DisplayEnabled, _config.DisplayFps, _config.DisplayWidth, _config.DisplayHeight,
+                DisplayEncodings.Parse(_config.DisplayEncoding) ?? DisplayEncoding.RgbaZlib));
+            _displaySurface.Start();
+            _simRoot = SimFsTree.Build(_simStore, _commandQueue, SimTransportsStatus, _displaySurface);
             StartSimServer(port: 0);
             StartHttpServer();
             StartMqttBroker();
@@ -234,6 +244,7 @@ public sealed partial class Mod
     {
         SampleTelemetry(dt);
         DrainCommands();
+        CaptureDisplayFrame(dt); // partial: GPU frame capture for /sim/display (drops out without KSA)
     }
 
     /// <summary>
@@ -285,6 +296,9 @@ public sealed partial class Mod
             IsInitialized = false;
             RemoveSolverHook();   // partial: drops out without the KSA assemblies
             RemoveMenuFallback(); // partial: drops out without the KSA assemblies
+            DisposeDisplayCapture(); // partial: frees the capture's Vulkan resources (drops out without KSA)
+            _displaySurface?.Dispose();
+            _displaySurface = null;
 
             // Stop the serial bridge first (it follows the VM); then drop our status subscription.
             StopSerialConnector();
@@ -781,6 +795,8 @@ public sealed partial class Mod
     partial void DrawGameUi();
     partial void SampleTelemetry(double dt);
     partial void DrainCommands();
+    partial void CaptureDisplayFrame(double dt);
+    partial void DisposeDisplayCapture();
     partial void InstallSolverHook();
     partial void RemoveSolverHook();
     partial void InstallMenuFallback();
