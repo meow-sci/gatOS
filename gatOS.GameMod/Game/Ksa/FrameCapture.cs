@@ -44,6 +44,11 @@ internal sealed class FrameCapture : IDisposable
     private bool[] _hasScratch = [];
     private BufferEx[] _staging = [];
     private bool[] _hasStaging = [];
+    // Each staging buffer is mapped ONCE at creation and kept mapped for its lifetime (the engine's own
+    // pattern for host-visible buffers, e.g. PlanetMapExporter._phase0UboMap). Mapping/unmapping every
+    // frame can unmap a VMA memory block the engine keeps persistently mapped — corrupting co-located
+    // engine buffers and crashing a few frames later. Valid whenever _hasStaging[idx] is set.
+    private MappedMemory[] _mapped = [];
     private int[] _allocW = [];
     private int[] _allocH = [];
     private bool[] _pending = []; // a copy was recorded into this slot and not yet read back
@@ -158,6 +163,7 @@ internal sealed class FrameCapture : IDisposable
         _hasScratch = new bool[_slots];
         _staging = new BufferEx[_slots];
         _hasStaging = new bool[_slots];
+        _mapped = new MappedMemory[_slots];
         _allocW = new int[_slots];
         _allocH = new int[_slots];
         _pending = new bool[_slots];
@@ -191,7 +197,11 @@ internal sealed class FrameCapture : IDisposable
 
         var needed = (long)targetW * targetH * 8L; // R16G16B16A16_SFLOAT = 8 bytes/pixel
         if (_hasStaging[idx])
+        {
+            _mapped[idx].Unmap();
             _staging[idx].Dispose();
+        }
+
         _staging[idx] = allocator.CreateBuffer(new BufferEx.CreateInfo
         {
             Name = "gatOS Display Staging",
@@ -199,6 +209,9 @@ internal sealed class FrameCapture : IDisposable
             BufferUsage = VkBufferUsageFlags.TransferDstBit,
             AllocRequiredProperties = VkMemoryPropertyFlags.HostVisibleBit | VkMemoryPropertyFlags.HostCoherentBit,
         });
+        // Map once and keep it (host-coherent, so GPU writes are visible without invalidate). Never
+        // unmapped per frame — see the _mapped field note.
+        _mapped[idx] = _staging[idx].Map();
         _hasStaging[idx] = true;
 
         _allocW[idx] = targetW;
@@ -276,26 +289,19 @@ internal sealed class FrameCapture : IDisposable
         if (_convert.Length != pixels * 4)
             _convert = new byte[pixels * 4];
 
-        var mapped = _staging[idx].Map();
-        try
+        // Read the persistent mapping (host-coherent: the completed GPU copy is already visible).
+        var halves = MemoryMarshal.Cast<byte, Half>(_mapped[idx].AsSpan<byte>());
+        for (var px = 0; px < pixels; px++)
         {
-            var halves = MemoryMarshal.Cast<byte, Half>(mapped.AsSpan<byte>());
-            for (var px = 0; px < pixels; px++)
-            {
-                var h4 = px * 4;
-                var o = px * 4;
-                _convert[o] = ToByte((float)halves[h4 + 2]);     // B
-                _convert[o + 1] = ToByte((float)halves[h4 + 1]); // G
-                _convert[o + 2] = ToByte((float)halves[h4]);     // R
-                _convert[o + 3] = 255;                           // A
-            }
+            var h4 = px * 4;
+            var o = px * 4;
+            _convert[o] = ToByte((float)halves[h4 + 2]);     // B
+            _convert[o + 1] = ToByte((float)halves[h4 + 1]); // G
+            _convert[o + 2] = ToByte((float)halves[h4]);     // R
+            _convert[o + 3] = 255;                           // A
+        }
 
-            surface.SubmitFrame(w, h, _convert);
-        }
-        finally
-        {
-            mapped.Unmap();
-        }
+        surface.SubmitFrame(w, h, _convert);
 
         if (!_loggedReadback)
         {
@@ -348,7 +354,10 @@ internal sealed class FrameCapture : IDisposable
                 if (_hasScratch[i])
                     _scratch[i].Dispose();
                 if (_hasStaging[i])
+                {
+                    _mapped[i].Unmap();
                     _staging[i].Dispose();
+                }
             }
 
             _trace?.Dispose();
