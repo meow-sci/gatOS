@@ -133,6 +133,36 @@ button clears all accumulators.
 
 ---
 
+## Screen stream (`/sim/display`)
+
+A downscaled, frame-rate-limited render of the KSA viewport exposed as the Kitty terminal graphics
+protocol, so any SSH client whose terminal supports Kitty (an in-game purrTTY tab or an external
+emulator) can display it. Full design + milestones in [`STREAM_PLAN.md`](../STREAM_PLAN.md).
+
+```
+render thread (GameMod/Game/Ksa)                          background (gatOS.SimFs/Display)
+  FrameCapture.TryCapture (OnBeforeUi, throttled to fps, only if enabled & a reader is open)
+    Program.MainViewport.OffscreenTarget.ColorImage   (public, post-resolve, no UI)
+    vkCmdBlitImage  → small B8G8R8A8 image (linear; GPU downscale + HDR→BGRA8)
+    CopyImageToBuffer → host-visible buffer → Map → DisplaySurface.SubmitFrame(BGRA)
+                                                  │
+                                  DisplaySurface encode worker: swizzle + zlib + Kitty APC framing
+                                                  │ latest-frame feed (drop-old, mirrors SnapshotStore)
+  /sim/display/stream  (DisplayStreamFile, IsStreaming, multi-reader fan-out)
+    guest:  echo 1 > /sim/display/enabled ; cat /sim/display/stream   → SSH PTY → terminal renders
+```
+
+- **Capture** is on the render thread (Vulkan; rule 1), synchronous (a brief GPU stall), throttled to
+  `display_fps`, and gated so it idles for free unless enabled **and** a reader has the stream open. A
+  fault disables the feature for the session (one log).
+- **Encode** (BGRA→RGBA swizzle, zlib, base64, Kitty framing) runs on a worker, never the render thread.
+- **Controls** are `/sim/display/{enabled,fps,width,height,encoding}` — ordinary writable scalar files,
+  so they mirror to HTTP `/v1/fs/display/*` and MQTT `gatos/sim/display/*` by construction. The binary
+  `stream` is `IsStreaming` and excluded from the field mirror (consume it over 9p).
+- The status window's **Display** line shows the live state + capture/encode `PerfStat`.
+
+---
+
 ## Config sections reference
 
 | Section | Key knobs |
@@ -143,6 +173,7 @@ button clears all accumulators.
 | `[http]` | `enabled`, `preferred_port` (4242), `http_field_endpoints` |
 | `[mqtt]` | `enabled`, `preferred_port` (1883), `mqtt_field_topics`, `field_feed_hz` |
 | `[serial]` | `serial_telemetry_port`, `serial_command_port`, `serial_mode`, `serial_interval_ms` |
+| `[display]` | `display_enabled` (off), `display_fps`, `display_width`, `display_height`, `display_encoding` (boot seeds for `/sim/display`) |
 | `[[mounts]]` | `name`, `path`, `read_only` (array, off by default) |
 
 Config is read from `<GatOsPaths.DataDir>/gatos.toml` (seeded on first run from

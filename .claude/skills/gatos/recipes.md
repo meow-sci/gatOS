@@ -203,5 +203,27 @@ await command({ vessel_id: "Polaris", action: "debug.control_vessel", token: "Po
 
 ---
 
+## 8. Watch the game in the terminal (Kitty graphics)
+
+The mod can render the KSA viewport as a live video stream over the Kitty terminal graphics
+protocol, exposed at `/sim/display` (off by default). Any Kitty-capable terminal — an in-game
+purrTTY tab or an external emulator SSH'd into the guest — renders it. Consuming it is basically
+`cat`, because the host bakes complete, in-place Kitty frames:
+
+```sh
+echo 1 > /sim/display/enabled     # turn it on (idles for free while off)
+echo 24 > /sim/display/fps         # optional: retune live (1..60, clamped)
+echo 480 > /sim/display/width      # optional: bigger image (16..1920 px)
+cat /sim/display/stream            # render; Ctrl-C to stop
+echo 0 > /sim/display/enabled      # stop the capture
+```
+
+Controls (`enabled`/`fps`/`width`/`height`/`encoding`) are plain files, so they also work over HTTP
+(`POST /v1/fs/display/enabled`) and MQTT (`gatos/sim/display/*`). The image is the scene without the
+UI (pre-tonemap). Full example with alt-screen + clean teardown: `examples/simscreen/`; design in
+`STREAM_PLAN.md`; the `/sim/display` catalog is in `SPEC_9P_FILESYSTEM.md` §3.8.
+
+---
+
 See also the in-repo Rust references: `examples/gogogo-rs` (minimal control panel) and
 `examples/land-o-matic` (full G-FOLD/UPFG autopilot).

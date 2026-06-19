@@ -1,10 +1,18 @@
 # STREAM_PLAN.md — Live game video as a `/sim` stream, rendered via Kitty graphics
 
-**Status:** Feasibility analysis + implementation plan (not yet built). Proposed milestone series
-**S0–S9** (the "screen-stream" series). This document is the research record and execution plan for
-exposing a downscaled, frame-rate-limited render of the KSA viewport **as a `/sim` file**, encoded as
-the **Kitty terminal graphics protocol**, so any SSH client whose terminal supports Kitty — purrTTY
-in-game tabs *and* external emulators alike — can display it by consuming the stream from guest userland.
+**Status:** **Code-complete (S0–S5); in-game validation pending (S6/S9); S7/S8 deferred.** This
+document is the research record and execution plan for exposing a downscaled, frame-rate-limited
+render of the KSA viewport **as a `/sim` file**, encoded as the **Kitty terminal graphics protocol**,
+so any SSH client whose terminal supports Kitty — purrTTY in-game tabs *and* external emulators alike —
+can display it by consuming the stream from guest userland.
+
+> **As-built (2026-06-18).** The game-free surface (`gatOS.SimFs/Display/`: `DisplaySettings`,
+> `KittyEncoder`, `DisplaySurface`, `DisplayStreamFile`, the `/sim/display/*` control files) and the
+> render-thread capture (`gatOS.GameMod/Game/Ksa/FrameCapture.cs`) are built and wired; `[display]`
+> config + the status-window readout landed; the SPEC (§3.8) and `examples/simscreen/` ship. The whole
+> solution builds zero-warning against the live KSA assemblies and all unit tests are green (28 new
+> Display tests). **Pending:** the in-game validation pass (`docs/VALIDATION.md` — capture can't run
+> headlessly) and the deferred no-stall readback (S7) + HTTP/MJPEG mirror (S8).
 
 > **Design locked by the user (2026-06-18):**
 > 1. Capture the **public offscreen scene target** (no reflection, no UI). Source (A) below.

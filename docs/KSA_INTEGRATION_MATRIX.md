@@ -216,6 +216,16 @@ this matrix and the code are the truth):
 - **`solar/<n>/tracker/{angle,active}` shape** (plan §4.6) — surfaced as a flat `tracker_angle` file
   (no `active`, no subdir) when `HasTracker`; the subdir/`active` split is deferred.
 
+## Screen stream (STREAM_PLAN.md)
+
+The one KSA binding for the `/sim/display` screen stream — a render-thread GPU readback, not a
+`SnapshotStore` read or a `SimCommand`, so it sits outside the transport-parity machinery (the stream
+is media, the controls are plain `DisplaySettings` mutators). Confined to a single `[KsaAnchor]`.
+
+| Anchor (`Game/Ksa/`) | KSA members | Risk | Notes |
+|---|---|---|---|
+| `FrameCapture.Capture` | `Program.GetRenderer()`, `Program.MainViewport.OffscreenTarget.ColorImage`/`.Extent`, `Renderer.Allocator`/`.GraphicsAndCompute`, `Allocator.CreateImage`/`CreateBuffer`/`CreateStagingPool`, `CommandBuffer.Begin`/`PipelineBarrier`/`BlitImage`/`CopyImageToBuffer`/`End`, `BufferEx.Map` | M | Mirrors `KSA/PlanetMapExporter.cs` readback. Source layout is the offscreen pass `FinalLayout = ShaderReadOnlyOptimal` (`RenderTarget.cs:75`) and is restored. Engine types reached by inference + interface constraints (assemblies only transitively visible). |
+
 ## The churn playbook (when a decomp drop lands)
 
 1. Update `thirdparty/ksa`, rebuild with the KSA assemblies present. **Build errors in

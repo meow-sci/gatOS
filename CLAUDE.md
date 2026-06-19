@@ -59,6 +59,7 @@ a set of in-game passes (T6.6/T9.3/G1–G4) that require a live KSA flight; chec
 | G7 — serial/bus | DONE | `gatOS.Bus/` |
 | MQTT transport | DONE | `gatOS.Mqtt/` |
 | Host folder mounts | DONE (needs guest v10 published) | `NineP/Vfs/HostDirectory.cs`, `HostFile.cs` |
+| Screen stream (`/sim/display`) | Code DONE; in-game pending | `SimFs/Display/`, `Game/Ksa/FrameCapture.cs`, `STREAM_PLAN.md` |
 | T11.1 — QEMU win-x64 | DONE | `tools/fetch-qemu.*`, `vendor/qemu/win-x64/` |
 | M10+ | **Not yet implemented** | — |
 
@@ -158,7 +159,10 @@ gatOS.SimFs    → NineP, Logging                       /sim tree, snapshots, st
                                                       HTTP/MQTT both serve — transport parity; UTF-8
                                                       byte variants for the MQTT push path);
                                                       Commands/ (SimCommand, CommandQueue, Control/Trigger/
-                                                      Vector/Enum/Number/Token control files — G1+G4, built)
+                                                      Vector/Enum/Number/Token control files — G1+G4, built);
+                                                      Display/ (the /sim/display screen stream: DisplaySettings,
+                                                      KittyEncoder, DisplaySurface, DisplayStreamFile +
+                                                      control files — STREAM_PLAN.md, built; capture in GameMod)
 gatOS.Http     → SimFs, Logging                       magic HTTP /v1 server (raw TcpListener; G5, built)
 gatOS.Bus      → SimFs, Logging                       serial/bus framing CCSDS/NMEA/SCPI + the gatos.serial
                                                       SerialBridge/Connector over QEMU virtio-serial (G7, built)
@@ -166,7 +170,8 @@ gatOS.Mqtt     → SimFs, Logging, MQTTnet              embedded MQTT broker ove
 gatOS.Vm       → Logging, Tomlyn                      QEMU lifecycle, disks, ports, GatOsPaths (M3, built)
 gatOS.Ssh      → Vm, Logging, vendor/purrTTY, SSH.NET SshShellSession : ICustomShell (M4, built)
 gatOS.GameMod  → Ssh, SimFs, Http, Mqtt, Bus, Vm, Logging, vendor/purrTTY,
-                  KSA DLLs, StarMap.API, Lib.Harmony, ModMenu.Attributes, Tomlyn   the KSA mod (M6, built)
+                  KSA DLLs (incl. Brutal.Vulkan* for Game/Ksa/FrameCapture — the screen-stream readback),
+                  StarMap.API, Lib.Harmony, ModMenu.Attributes, Tomlyn   the KSA mod (M6, built)
 ```
 `examples/sdk-ts/` is a standalone TypeScript/Bun example SDK (G6, built — not part of the .NET
 solution); it talks to either transport behind one typed API.
