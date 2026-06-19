@@ -62,11 +62,14 @@ public sealed partial class Mod
     private KsaCatalog? _catalog;
     private bool _commandsDead;
 
-    // Game-thread-only screen-stream capture (STREAM_PLAN.md). FrameCapture owns the reusable Vulkan
-    // scratch image + staging buffer; it reads the live DisplaySettings off _displaySurface and submits
-    // BGRA frames to it. A capture fault disables capture for the session (one error log, no per-frame spam).
+    // Game-thread-only screen-stream capture (STREAM_PLAN.md). FrameCapture owns the reusable per-slot
+    // Vulkan scratch images + host staging buffers; the Harmony render hook (DisplayRenderPatch) drives
+    // it, recording the capture into the engine's frame command buffer. Disposed at unload.
     private FrameCapture? _frameCapture;
-    private bool _captureDead;
+
+    // The Harmony patch injecting the screen-stream capture into Program.RenderGame (STREAM_PLAN.md).
+    // Installed in OnFullyLoaded, removed at unload; null when the render hook could not be installed.
+    private Harmony? _displayHarmony;
 
     // The Harmony patch draining solver-phase commands (G4). Installed in OnFullyLoaded, removed at
     // Unload; null when the solver hook could not be installed (solver commands then never drain).
@@ -210,35 +213,63 @@ public sealed partial class Mod
     }
 
     /// <summary>
-    ///     STREAM_PLAN.md §4.1: captures one screen-stream frame on the game/render thread (rule 1).
-    ///     Default-off and throttled — does nothing unless a client enabled <c>/sim/display</c> and is
-    ///     reading the stream. A capture fault disables the feature for the session (one error log);
-    ///     telemetry, control and the VM keep working.
+    ///     STREAM_PLAN.md §4.1: installs the screen-stream render hook — a Harmony transpiler on
+    ///     <c>Program.RenderGame</c> that records the capture into the engine's own frame command
+    ///     buffer (<see cref="DisplayRenderPatch"/>). Default-off and throttled at the hook, so the
+    ///     always-installed patch costs only a branch per frame while the stream is off. A failed
+    ///     install leaves the feature dark; telemetry, control and the VM keep working.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    partial void CaptureDisplayFrame(double dt)
+    partial void InstallDisplayHook()
     {
-        if (_captureDead || _displaySurface is not { } surface)
+        if (_displaySurface is not { } surface)
             return;
 
         try
         {
-            _frameCapture ??= new FrameCapture(Config.DisplayProbe);
-            _frameCapture.TryCapture(dt, surface);
+            _frameCapture = new FrameCapture();
+            DisplayRenderPatch.Bind(_frameCapture, surface);
+            _displayHarmony = new Harmony("gatos.display");
+            if (DisplayRenderPatch.Install(_displayHarmony))
+                ModLog.Log.Info("gatOS screen-stream render hook installed.");
+            else
+                DisplayRenderPatch.Unbind(); // injection site not found; keep the hook dark
         }
         catch (Exception ex)
         {
-            _captureDead = true;
-            // Full exception (type + stack), not just the message — and note the crash-trace file,
-            // which also catches native/GPU faults that never surface as a managed exception.
-            ModLog.Log.Error("gatOS screen stream disabled after a capture error "
-                             + "(see <LogsDir>/display-capture.log for the per-step trace)", ex);
+            DisplayRenderPatch.Unbind();
+            ModLog.Log.Error($"gatOS screen-stream hook failed to install (display disabled): {ex.Message}");
         }
     }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     partial void DisposeDisplayCapture()
     {
+        // Detach the hook first (stops new recordings), then remove the patch.
+        try
+        {
+            DisplayRenderPatch.Unbind();
+            _displayHarmony?.UnpatchAll("gatos.display");
+            _displayHarmony = null;
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS display hook unpatch error: {ex.Message}");
+        }
+
+        // Drain the submit queue before freeing the capture's buffers: a copy from the last frame(s)
+        // may still be in flight. Queue.WaitIdle takes the queue's own lock, so it is safe even if the
+        // render thread is mid-submit; a full wait is fine at unload (the game is going away).
+        try
+        {
+            if (Program.GetRenderer()?.GraphicsAndCompute is { } queue)
+                queue.WaitIdle();
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS display queue drain at unload skipped: {ex.Message}");
+        }
+
         _frameCapture?.Dispose();
         _frameCapture = null;
     }

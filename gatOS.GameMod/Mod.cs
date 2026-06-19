@@ -225,6 +225,10 @@ public sealed partial class Mod
             // A no-op build without the KSA assemblies drops this call (partial seam).
             InstallSolverHook();
 
+            // STREAM_PLAN.md: inject the screen-stream capture into KSA's render loop (records into
+            // the engine's own frame command buffer). Default-off; drops out without the KSA assemblies.
+            InstallDisplayHook();
+
             IsInitialized = true;
             ModLog.Log.Info("gatOS initialized (VM boots lazily on the first session).");
         }
@@ -244,7 +248,6 @@ public sealed partial class Mod
     {
         SampleTelemetry(dt);
         DrainCommands();
-        CaptureDisplayFrame(dt); // partial: GPU frame capture for /sim/display (drops out without KSA)
     }
 
     /// <summary>
@@ -795,7 +798,7 @@ public sealed partial class Mod
     partial void DrawGameUi();
     partial void SampleTelemetry(double dt);
     partial void DrainCommands();
-    partial void CaptureDisplayFrame(double dt);
+    partial void InstallDisplayHook();
     partial void DisposeDisplayCapture();
     partial void InstallSolverHook();
     partial void RemoveSolverHook();

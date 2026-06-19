@@ -59,7 +59,7 @@ a set of in-game passes (T6.6/T9.3/G1–G4) that require a live KSA flight; chec
 | G7 — serial/bus | DONE | `gatOS.Bus/` |
 | MQTT transport | DONE | `gatOS.Mqtt/` |
 | Host folder mounts | DONE (needs guest v10 published) | `NineP/Vfs/HostDirectory.cs`, `HostFile.cs` |
-| Screen stream (`/sim/display`) | Code DONE; in-game pending | `SimFs/Display/`, `Game/Ksa/FrameCapture.cs`, `STREAM_PLAN.md` |
+| Screen stream (`/sim/display`) | Code DONE; in-game pending | `SimFs/Display/`, `Game/Ksa/FrameCapture.cs` + `DisplayRenderPatch.cs` (in-band render-hook capture), `STREAM_PLAN.md` |
 | T11.1 — QEMU win-x64 | DONE | `tools/fetch-qemu.*`, `vendor/qemu/win-x64/` |
 | M10+ | **Not yet implemented** | — |
 

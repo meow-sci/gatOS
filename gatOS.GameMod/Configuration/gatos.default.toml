@@ -127,9 +127,6 @@ display_height = 180
 # Frame wire encoding: rgba-zlib (default) | rgba.
 display_encoding = "rgba-zlib"
 
-# Capture diagnostic (0 = normal; 1 = bare GPU submit; 2 = synthetic, no GPU).
-display_probe = 0
-
 # ===== MOUNTS — host folders shared into the guest under /mnt/<name> =====
 
 # Off by default. Each [[mounts]] entry shares a host folder into the guest at /mnt/<name>,

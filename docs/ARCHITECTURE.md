@@ -141,10 +141,16 @@ emulator) can display it. Full design + milestones in [`STREAM_PLAN.md`](../STRE
 
 ```
 render thread (GameMod/Game/Ksa)                          background (gatOS.SimFs/Display)
-  FrameCapture.TryCapture (OnBeforeUi, throttled to fps, only if enabled & a reader is open)
+  DisplayRenderPatch: Harmony transpiler on Program.RenderGame injects a call just before the
+    frame's commandBuffer.End() (offscreen ColorImage is ShaderReadOnlyOptimal, outside a render pass)
+  FrameCapture.MaybeRecord(program, cb, surface)  (throttled to fps; only if enabled & a reader open)
     Program.MainViewport.OffscreenTarget.ColorImage   (public, post-resolve, no UI)
-    vkCmdBlitImage  → small B8G8R8A8 image (linear; GPU downscale + HDR→BGRA8)
-    CopyImageToBuffer → host-visible buffer → Map → DisplaySurface.SubmitFrame(BGRA)
+    records into the engine's OWN command buffer (no out-of-band submit, no WaitIdle):
+      vkCmdBlitImage  → small R16G16B16A16_SFLOAT scratch (linear, same-format GPU downscale)
+      CopyImageToBuffer → host-visible staging buffer in a ResourceFrameIndex ring slot
+      barrier the offscreen back to ShaderReadOnlyOptimal (restore)
+    deferred readback: next visit to a slot maps it (its copy is complete by the frames-in-flight
+      contract — no fence wait), converts HDR half-float → BGRA8 on the CPU, SubmitFrame(BGRA)
                                                   │
                                   DisplaySurface encode worker: swizzle + zlib + Kitty APC framing
                                                   │ latest-frame feed (drop-old, mirrors SnapshotStore)
@@ -152,9 +158,12 @@ render thread (GameMod/Game/Ksa)                          background (gatOS.SimF
     guest:  echo 1 > /sim/display/enabled ; cat /sim/display/stream   → SSH PTY → terminal renders
 ```
 
-- **Capture** is on the render thread (Vulkan; rule 1), synchronous (a brief GPU stall), throttled to
-  `display_fps`, and gated so it idles for free unless enabled **and** a reader has the stream open. A
-  fault disables the feature for the session (one log).
+- **Capture** rides the engine's own per-frame command buffer (Vulkan; rule 1) — no private queue submit
+  and no `Device.WaitIdle` (doing GPU work out-of-band alongside the in-flight frames crashed the game; this
+  is the engine authors' prescribed approach, mirroring KSA's PlanetMapExporter/OceanFFT readbacks). It is
+  throttled to `display_fps` and gated so it idles for free unless enabled **and** a reader has the stream
+  open. The copy-to-host result is read back a few frames later, when the frames-in-flight slot is reused and
+  its fence has already been waited by the engine — so there is no stall. A fault disables it for the session.
 - **Encode** (BGRA→RGBA swizzle, zlib, base64, Kitty framing) runs on a worker, never the render thread.
 - **Controls** are `/sim/display/{enabled,fps,width,height,encoding}` — ordinary writable scalar files,
   so they mirror to HTTP `/v1/fs/display/*` and MQTT `gatos/sim/display/*` by construction. The binary

@@ -1,18 +1,23 @@
 # STREAM_PLAN.md — Live game video as a `/sim` stream, rendered via Kitty graphics
 
-**Status:** **Code-complete (S0–S5); in-game validation pending (S6/S9); S7/S8 deferred.** This
-document is the research record and execution plan for exposing a downscaled, frame-rate-limited
-render of the KSA viewport **as a `/sim` file**, encoded as the **Kitty terminal graphics protocol**,
-so any SSH client whose terminal supports Kitty — purrTTY in-game tabs *and* external emulators alike —
-can display it by consuming the stream from guest userland.
+**Status:** **Code-complete (S0–S5 + the S7 no-stall readback); in-game validation pending (S6/S9);
+S8 deferred.** This document is the research record and execution plan for exposing a downscaled,
+frame-rate-limited render of the KSA viewport **as a `/sim` file**, encoded as the **Kitty terminal
+graphics protocol**, so any SSH client whose terminal supports Kitty — purrTTY in-game tabs *and*
+external emulators alike — can display it by consuming the stream from guest userland.
 
-> **As-built (2026-06-18).** The game-free surface (`gatOS.SimFs/Display/`: `DisplaySettings`,
-> `KittyEncoder`, `DisplaySurface`, `DisplayStreamFile`, the `/sim/display/*` control files) and the
-> render-thread capture (`gatOS.GameMod/Game/Ksa/FrameCapture.cs`) are built and wired; `[display]`
-> config + the status-window readout landed; the SPEC (§3.8) and `examples/simscreen/` ship. The whole
-> solution builds zero-warning against the live KSA assemblies and all unit tests are green (28 new
-> Display tests). **Pending:** the in-game validation pass (`docs/VALIDATION.md` — capture can't run
-> headlessly) and the deferred no-stall readback (S7) + HTTP/MJPEG mirror (S8).
+> **As-built (2026-06-19).** The game-free surface (`gatOS.SimFs/Display/`: `DisplaySettings`,
+> `KittyEncoder`, `DisplaySurface`, `DisplayStreamFile`, the `/sim/display/*` control files) plus the
+> render capture (`gatOS.GameMod/Game/Ksa/FrameCapture.cs` + `DisplayRenderPatch.cs`) are built and
+> wired; `[display]` config + the status-window readout landed; the SPEC (§3.8) and `examples/simscreen/`
+> ship. The whole solution builds zero-warning against the live KSA assemblies and all unit tests are
+> green (Display tests). **Capture is in-band:** a Harmony transpiler on `Program.RenderGame` injects the
+> downscale-blit + copy-to-host into the engine's **own** frame command buffer just before
+> `commandBuffer.End()`, and the result is read back a few frames later via the frames-in-flight slot
+> ring (no private queue submit, no `WaitIdle` — the earlier out-of-band capture corrupted the device and
+> crashed the game; the engine authors prescribed the in-band path). This folds in the S7 no-stall
+> readback. **Pending:** the in-game validation pass (`docs/VALIDATION.md` — capture can't run headlessly)
+> and the HTTP/MJPEG mirror (S8).
 
 > **Design locked by the user (2026-06-18):**
 > 1. Capture the **public offscreen scene target** (no reflection, no UI). Source (A) below.
@@ -66,8 +71,10 @@ PostRender → Renderer.TrySubmitFrame() → PresentKHR
 ```
 
 We capture **`Program.MainViewport.OffscreenTarget.ColorImage`** (`KSA/Viewport.cs:54`): a **public**
-field, post-resolve single-sample, `B8G8R8A8UNorm`, created with `TransferSrcBit | TransferDstBit`
-(`KSA/OffscreenTarget.cs:57`) — copyable with **no reflection**. It is captured *before* tonemap and
+field, post-resolve single-sample, **`R16G16B16A16_SFLOAT`** HDR (`ColorFormat`, `Program.cs:189`),
+created with `TransferSrcBit | TransferDstBit` (`KSA/OffscreenTarget.cs`) — copyable with **no
+reflection**. The downscale blit keeps that format (a pure same-format resample); the half-float → BGRA8
+conversion (clamp HDR to [0,1]) happens on the CPU at readback. It is captured *before* tonemap and
 *before* the ImGui UI, giving a clean 3D scene view without menu clutter — the desired "watch the
 flight" monitor. (Colors may differ slightly from the tonemapped presented frame; this is an in-game
 validation item, §8 S9. The composited+UI swapchain path is documented as a deferred option but is **not**
@@ -83,15 +90,18 @@ gatOS threading rule 1.
 ```
 KSA render thread (GameMod/Game/Ksa/, [KsaAnchor])       background worker (gatOS.SimFs/Display, game-free)
 ┌──────────────────────────────────────────────┐        ┌────────────────────────────────────────────┐
-│ Harmony postfix on RenderGame                 │        │ KittyEncoder                                 │
-│   if !DisplaySettings.Enabled → return        │        │   BGRA→RGBA swizzle                           │
+│ Harmony transpiler in RenderGame (before End) │        │ KittyEncoder                                 │
+│   if !Enabled || !HasReaders → return         │        │   BGRA→RGBA swizzle                           │
 │   throttle to DisplaySettings.Fps             │        │   zlib compress (System.IO.Compression)      │
-│   src = OffscreenTarget.ColorImage  (A)       │  ring  │   Kitty APC frame (fixed id, chunked base64, │
-│   vkCmdBlitImage  src → small image (linear)  │ (drop- │     ESC7/ESC[H … ESC8 wrap, LF-free)         │
-│   CopyImageToBuffer small → host-visible buf  │  old)  │   → DisplayStreamFile.Publish(frameBytes)    │
-│   Map() → memcpy NxM BGRA → CapturedFrame ────┼────────┼──────────────────────┬───────────────────────┘
-└──────────────────────────────────────────────┘        reads DisplaySettings  │ fan-out to all open fids
-        (deferred read: map frame N-2, no stall)         (Enabled/Fps/W/H)      ▼
+│   src = OffscreenTarget.ColorImage  (A)       │  ring  │   Kitty APC frame (fresh id/frame, chunked   │
+│   record into the engine's OWN command buffer:│ (drop- │     base64, ESC7/ESC[H … ESC8 wrap, LF-free) │
+│     BlitImage src → scratch[idx] (linear,R16F)│  old)  │   → DisplayStreamFile.Publish(frameBytes)    │
+│     CopyImageToBuffer scratch → staging[idx]  │        │                                              │
+│     restore src → ShaderReadOnly              │        │                                              │
+│   deferred: map staging[idx] on its NEXT      │        │                                              │
+│     visit (fence already waited), HDR→BGRA8 ──┼────────┼──────────────────────┬───────────────────────┘
+│     → DisplaySurface.SubmitFrame(w,h,bgra)    │        reads DisplaySettings  │ fan-out to all open fids
+└──────────────────────────────────────────────┘        (Enabled/Fps/W/H)      ▼
                                                           ┌────────────────────────────────────────────┐
    /sim/display/  (gatOS.SimFs)                           │ /sim/display/stream  (binary, IsStreaming)   │
    ├─ enabled   RW 0|1   ──► DisplaySettings.Enabled      └───────────────┬──────────────────────────────┘
@@ -123,29 +133,43 @@ reusable image (e.g. 320×180), and we read back **only the small image** — ~2
 
 ## 4. Component design
 
-### 4.1 Capture — `gatOS.GameMod/Game/Ksa/FrameCapture.cs` `[KsaAnchor]`
+### 4.1 Capture — `gatOS.GameMod/Game/Ksa/{FrameCapture,DisplayRenderPatch}.cs` `[KsaAnchor]`
 Lives under `Game/Ksa/` — **the only place the dependency rule (G2) permits KSA/Brutal Vulkan type
 names.** A breaking decomp drop confines the diff here + `docs/KSA_INTEGRATION_MATRIX.md`.
 
-- **Init** (after `[StarMapAllModsLoaded]`; renderer not live earlier): grab `Program.Instance` /
-  `Program.GetRenderer()`; create the reusable small target image (`TransferDst | TransferSrc`, at
-  `DisplaySettings.Width × Height`) and a pool of host-visible `TransferDst` staging buffers
-  (`HostVisibleBit | HostCoherentBit`, mirroring `PlanetMapExporter.cs:1662`) + a `StagingPool`
-  (`PlanetMapExporter.cs:1664`).
-- **Hook:** Harmony **postfix on `Program.RenderGame`** (render thread, valid painted offscreen target).
-  - `if (!DisplaySettings.Enabled) return;` — **zero cost when off** (the default).
-  - Throttle: game-time accumulator; capture only when `now - last ≥ 1/DisplaySettings.Fps`. Game at 60,
-    stream at 10–15 (or whatever the client set).
-  - If `Width/Height` changed since last frame, rebuild the small image (render thread, between frames).
-- **Per captured frame:** barrier source `→ TransferSrcOptimal`; `vkCmdBlitImage(source → smallImage,
-  VK_FILTER_LINEAR)`; barrier `smallImage → TransferSrcOptimal`; `CopyImageToBuffer(smallImage →
-  staging)`; submit (own one-time buffer). v1: fence-wait then `Map()`. **v2 (S7): defer** — map the
-  buffer from 1–2 frames ago (the `OceanFFT.cs:607` no-stall pattern). `MappedMemory.AsSpan<byte>()`
-  (`PlanetMapExporter.cs:1759`) → memcpy the small **BGRA** into a pooled `CapturedFrame`; hand to the
-  ring. **No swizzle/compress on the render thread.**
+> **In-band, not out-of-band.** The capture commands are recorded into KSA's **own** per-frame command
+> buffer and submitted by the engine — there is no private queue submit and no `Device.WaitIdle`. An
+> earlier out-of-band version (a private command buffer + `WaitIdle`, run from `OnBeforeUi`) corrupted
+> the device and crashed the game; the KSA engine authors prescribed the in-band path, which is how the
+> engine's own readbacks work (`PlanetMapExporter.cs`, `OceanFFT.cs`).
 
-`CapturedFrame` (game-free: `int Width, Height; PixelFormat; byte[] Pixels`) is the seam across the
-dependency boundary — nothing downstream sees a Vulkan/KSA type.
+- **Install** (`Mod.Game.cs` `InstallDisplayHook`, after `[StarMapAllModsLoaded]`): construct a
+  `FrameCapture`, `DisplayRenderPatch.Bind(capture, surface)`, then `DisplayRenderPatch.Install(harmony)`
+  — a Harmony **transpiler on `Program.RenderGame`** that inserts a call to `OnRenderGameRecorded(this,
+  commandBuffer)` **immediately before the frame's final `commandBuffer.End()`** (`Program.cs:4130`). At
+  that point the main viewport's offscreen `ColorImage` is in `ShaderReadOnlyOptimal` (the composite has
+  already sampled it, `Program.cs:4125`) and recording is **outside any render pass**, so transfer
+  commands are legal. The transpiler matches the single 1-arg `End` extension and degrades to **no
+  injection** (feature dark) if the site moves — it never corrupts the method.
+- **Hook** (`FrameCapture.MaybeRecord`, render thread): `if (!Enabled || !HasReaders) return;` — **near-
+  zero cost when off** (the always-installed patch is one branch). Throttle with a `Stopwatch`: record
+  only when `now - last ≥ 1/Fps`. Game at 60, stream at 10–15 (or whatever the client set).
+- **Per captured frame (recorded into the engine's command buffer):** pick the ring slot
+  `idx = Program.ResourceFrameIndex` (0..`MaxFramesInFlight`-1); read back that slot's **previous** copy
+  first (see below); (re)allocate the slot's scratch image + host staging buffer if the target size
+  changed; then barrier offscreen `ShaderReadOnly → TransferSrc`; `BlitImage(offscreen → scratch,
+  LINEAR)` (same-format `R16G16B16A16_SFLOAT` downscale); barrier `scratch → TransferSrc`;
+  `CopyImageToBuffer(scratch → staging[idx])`; **barrier offscreen back to `ShaderReadOnly`** so the
+  engine finds it as it left it.
+- **Deferred readback (no stall, folds in S7).** The staging buffers form a ring indexed by
+  `ResourceFrameIndex`. A slot is read at the **start of its next visit**, by which time the engine has
+  already waited that slot's fence (frames-in-flight reuse) — so the copy is complete with **no fence
+  wait of our own**. `MappedMemory.AsSpan<byte>()` → clamp the half-float HDR to [0,1] and pack **BGRA8**
+  on the CPU → `DisplaySurface.SubmitFrame(w, h, bgra)`. The swizzle/zlib/Kitty framing stays on the
+  encode worker.
+
+`DisplaySurface.SubmitFrame(int width, int height, ReadOnlySpan<byte> bgra)` is the seam across the
+dependency boundary — it copies under a short lock and nothing downstream sees a Vulkan/KSA type.
 
 ### 4.2 Encode + stream — `gatOS.SimFs/Display/` (game-free, in SimFs alongside `StreamFile`/`EventsFile`)
 No new project: SimFs already owns the `/sim` tree, the streaming-file models, the control-file family,
@@ -263,14 +287,14 @@ in-game one and equally binary-clean.
 
 | Risk | Mitigation |
 |---|---|
-| Decomp churn breaking capture | Confine KSA/Vulkan code to `Game/Ksa/FrameCapture.cs` `[KsaAnchor]`; downstream speaks `CapturedFrame`. Row in `docs/KSA_INTEGRATION_MATRIX.md`. |
+| Decomp churn breaking capture | Confine KSA/Vulkan code to `Game/Ksa/{FrameCapture,DisplayRenderPatch}.cs` `[KsaAnchor]`; downstream speaks `DisplaySurface.SubmitFrame`. The transpiler degrades to no-injection (feature dark, no corruption) if the `End()` site moves. Rows in `docs/KSA_INTEGRATION_MATRIX.md`. |
 | Offscreen target is pre-tonemap / no UI | Accepted per user (clean scene view). Color fidelity is an in-game validation item (S9). Composited+UI swapchain path stays out of scope. |
 | Unbounded binary 9p stream vs netfslib read rules | Model on `EventsFile` (blocking-event), adapted to latest-frame/drop-old/multi-reader; validate with the managed 9p test client headless before in-VM (the primary build risk). |
 | Multiple concurrent readers (purrTTY + external) | Per-fid fan-out subscribers; drop-old per slow reader; producer never blocks. Controls are global (all readers share fps/size) — documented; per-client sizing out of scope. |
 | GPU image rebuild on live dims change | Rebuild the small target image on the render thread between frames when `Width/Height` changes; guard against rebuild storms (debounce). |
 | Cooked-PTY mangling | Encoder emits LF-free frames; document optional raw mode in the example consumer. |
-| GPU stall from synchronous readback | v1 fence-wait (fine at 15 fps); v2 deferred double-buffer (`OceanFFT.cs:607`). |
-| `MaxFramesInFlight=2` torn reads | Wait on the frame fence (or own fence) before `Map()`. |
+| GPU stall / out-of-band crash | **Solved by recording in-band** into the engine's frame command buffer (no private submit, no `WaitIdle`). Readback is deferred to the slot's next visit, so there is no stall and no fence wait. |
+| `MaxFramesInFlight=2` torn reads | A ring slot indexed by `ResourceFrameIndex` is read only on its **next** visit, when the engine has already waited that slot's fence — the prior copy is complete by construction, so no torn read and no explicit fence wait. |
 | Renderer not live early | Gate init on `[StarMapAllModsLoaded]` / non-null `Program.GetRenderer()`. |
 | Breaking present timing | Render-thread work = blit+copy only; everything else off-thread (rule 5). |
 | SPEC drift | `/sim/display/*` changes update `SPEC_9P_FILESYSTEM.md` in the same commit (constitution). |
