@@ -222,8 +222,16 @@ install_keys() {
     install -d -m 0755 -o root -g root "$ROOTFS/var/empty"
     grep -q '^sshd:' "$ROOTFS/etc/passwd" \
         || die "openssh-server did not create the 'sshd' privsep user"
+    # sshd opens /dev/null (and seeds from /dev/urandom) at startup; the build rootfs has an
+    # empty /dev (devtmpfs is a runtime mount via init-gatos), so provide throwaway nodes
+    # just for the check and remove them before the image is packed — the shipped /dev stays
+    # empty (mkfs.ext4 -d would otherwise bake these nodes into the base image).
+    mkdir -p "$ROOTFS/dev"
+    mknod -m 0666 "$ROOTFS/dev/null"    c 1 3 2>/dev/null || true
+    mknod -m 0666 "$ROOTFS/dev/urandom" c 1 9 2>/dev/null || true
     chroot "$ROOTFS" /usr/sbin/sshd -t -f /etc/ssh/sshd_config \
-        || die "sshd -t rejected the baked /etc/ssh/sshd_config"
+        || { rm -f "$ROOTFS/dev/null" "$ROOTFS/dev/urandom"; die "sshd -t rejected the baked /etc/ssh/sshd_config"; }
+    rm -f "$ROOTFS/dev/null" "$ROOTFS/dev/urandom"
 }
 
 # ------------------------------------------------------------------ T2.3 stage
