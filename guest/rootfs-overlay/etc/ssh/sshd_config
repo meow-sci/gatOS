@@ -20,6 +20,11 @@ KbdInteractiveAuthentication no
 AuthenticationMethods publickey
 UsePAM no
 
+# VERBOSE logs the accepted/refused reason + the key fingerprint on each auth attempt
+# (no secrets) — surfaced via `sshd -e` into the QEMU serial log; invaluable for the
+# build smoke test and for players debugging their own key setups.
+LogLevel VERBOSE
+
 # The gatOS login banner is printed by /etc/profile.d/zz-gatos-banner.sh for
 # interactive logins; keep sshd quiet (no pre-auth Banner, no motd) so non-interactive
 # `ssh host cmd` health probes stay clean — matching the previous dropbear behavior.

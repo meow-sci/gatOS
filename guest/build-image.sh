@@ -355,9 +355,17 @@ smoke_test() {
     local sshopts=(-i "$OUT/id_ed25519" -p "$port" -o StrictHostKeyChecking=no
                    -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes
                    -o BatchMode=yes -o ConnectTimeout=10 -o LogLevel=ERROR)
-    local got
-    got="$(ssh "${sshopts[@]}" root@127.0.0.1 'echo ok')"
-    [ "$got" = ok ] || { tail -40 "$SMOKE_TMP/serial.log" >&2 || true; die "ssh 'echo ok' failed (got: '$got')"; }
+    # Capture rc explicitly: a bare `got="$(ssh …)"` under `set -e` aborts the whole
+    # script the instant ssh exits non-zero (e.g. auth failure), so the diagnostics below
+    # would never run — the EXIT trap would just kill QEMU with no clue why.
+    local got rc=0
+    got="$(ssh "${sshopts[@]}" root@127.0.0.1 'echo ok' 2>"$SMOKE_TMP/ssh.err")" || rc=$?
+    if [ "$rc" != 0 ] || [ "$got" != ok ]; then
+        echo "--- ssh client stderr ---" >&2; cat "$SMOKE_TMP/ssh.err" >&2 || true
+        echo "--- serial.log tail (guest sshd -e log has the auth reason) ---" >&2
+        tail -60 "$SMOKE_TMP/serial.log" >&2 || true
+        die "ssh 'echo ok' failed (rc=$rc, got: '$got')"
+    fi
 
     # apk fetches <repo-line>/<arch>/APKINDEX.tar.gz — a baked arch suffix doubles the
     # path segment and every in-guest `apk update` 404s. Hermetic check (no network).
