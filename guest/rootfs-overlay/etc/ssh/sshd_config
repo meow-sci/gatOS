@@ -18,12 +18,22 @@ PubkeyAuthentication yes
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 AuthenticationMethods publickey
-UsePAM no
+# NB: no `UsePAM` directive — Alpine's openssh-server is built without PAM and rejects it as
+# an unsupported option. Account/auth checks are native; root must NOT be a locked ('!')
+# account or this build denies it for every method, pubkey included (see build-image.sh).
 
 # VERBOSE logs the accepted/refused reason + the key fingerprint on each auth attempt
 # (no secrets) — surfaced via `sshd -e` into the QEMU serial log; invaluable for the
 # build smoke test and for players debugging their own key setups.
 LogLevel VERBOSE
+
+# Every host connection reaches the guest from the slirp gateway 10.0.2.2, so OpenSSH sees a
+# SINGLE source for the host's readiness probe (connect, read banner, disconnect — i.e. "no
+# auth"), the host-key scan, and every purrTTY tab. Its per-source abuse controls would then
+# penalise/cap all of them together — disable them for this loopback-only VM.
+PerSourcePenalties no
+PerSourceMaxStartups none
+MaxStartups 100
 
 # The gatOS login banner is printed by /etc/profile.d/zz-gatos-banner.sh for
 # interactive logins; keep sshd quiet (no pre-auth Banner, no motd) so non-interactive

@@ -129,7 +129,16 @@ configure_rootfs() {
     echo "nameserver 10.0.2.3" > "$ROOTFS/etc/resolv.conf"        # slirp DNS
     printf '%s\n%s\n' "$MIRROR_MAIN" "$MIRROR_COMMUNITY" \
         > "$ROOTFS/etc/apk/repositories"   # in-guest `apk add`; apk appends <arch>/ itself
-    sed -i -E 's/^root:[^:]*:/root:!:/' "$ROOTFS/etc/shadow"      # lock root password (key-only)
+    # Root account: set a known password ("gatos") rather than locking it. Alpine's no-PAM
+    # OpenSSH does native account checks and refuses a locked ('!') account for ALL methods —
+    # pubkey included — so a locked root could not open the SSH session purrTTY relies on. A
+    # well-known password keeps the account active (key auth works) and is itself a convenience
+    # for console/su in this general-purpose game VM; the SSH entry stays key-only via
+    # sshd_config (PasswordAuthentication no). Security is a non-goal: loopback-only VM with
+    # well-known committed keys (guest/keys/README.md). The hash is a fixed sha512-crypt of
+    # "gatos" (salt gatosgatos) so the build is deterministic and needs no /dev in the chroot.
+    local root_pw_hash='$6$gatosgatos$Yd7U9woWbKJJCXgEfbuOM/TQZm2thW39SbH4T54hdOnWEFfjc9huZX3wOuo7EZctp48yL0d.M/C3imVrRBv9G0'
+    sed -i "s|^root:[^:]*:|root:${root_pw_hash}:|" "$ROOTFS/etc/shadow"  # known pw "gatos"; key-only over SSH
     mkdir -p "$ROOTFS/sim"
 
     apply_branding

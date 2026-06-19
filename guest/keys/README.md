@@ -25,8 +25,11 @@ so even a per-build key could not drift — static keys are the belt to that sus
 ## Is this safe?
 
 Yes, for this design. The guest is reachable **only** over a loopback-only QEMU `hostfwd`
-(`127.0.0.1:<random port>-:22`) — it is never exposed off the machine, and `root` login is key-only
-with the password locked. Whoever has the repo can SSH into **their own** local throwaway VM, which
+(`127.0.0.1:<random port>-:22`) — it is never exposed off the machine, and SSH `root` login is
+key-only (`PasswordAuthentication no`). Root also has a **well-known password (`gatos`)** for
+console/`su` convenience — deliberate, like the keys, since Alpine's no-PAM OpenSSH refuses a
+locked account for every auth method (pubkey included). Whoever has the repo can SSH into **their
+own** local throwaway VM, which
 they already fully control. The keys carry **no real-world authority**.
 
 **Do not reuse these keys for anything else** — not a real host, not a CI secret, nothing that

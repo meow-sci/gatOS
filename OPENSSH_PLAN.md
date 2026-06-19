@@ -1,6 +1,21 @@
 # OPENSSH_PLAN.md — replace dropbear with OpenSSH for the gatOS guest SSH server
 
-**Status:** proposed (not yet executed).
+**Status:** implemented (guest v12). Three things the build surfaced that the original plan missed —
+all fixed in the guest image, none touching the host:
+
+1. **Alpine's `openssh-server` is built without PAM**, so `UsePAM` is an *unsupported* directive
+   (logged as a warning; `sshd -t` still exits 0). Removed it from `sshd_config`.
+2. **A locked (`!`) root account is rejected by this no-PAM OpenSSH for *every* method, pubkey
+   included** ("User root not allowed because account is locked") — unlike dropbear, which allowed
+   key login with a locked password. So root now gets a **well-known password (`gatos`)** instead of
+   being locked; SSH stays key-only (`PasswordAuthentication no`). This matches the project's
+   "well-known credentials are convenient" stance and makes console/`su` usable.
+3. **slirp NATs every host connection to `10.0.2.2`**, so OpenSSH 9.8's per-source abuse controls
+   (`PerSourcePenalties`, default on) treated the readiness probe + host-key scan + all purrTTY tabs
+   as one abusive source. Disabled `PerSourcePenalties` / `PerSourceMaxStartups` and raised
+   `MaxStartups` for this loopback VM. (Also fixed a latent `set -e` bug in `build-image.sh`'s smoke
+   test that was swallowing the guest sshd auth-failure reason, and added `LogLevel VERBOSE`.)
+
 **Goal:** swap the guest's built-in SSH **server** from **dropbear** to **OpenSSH `sshd`**, so gatOS
 behaves like a normal Linux box (the full OpenSSH client/server toolchain works inside the guest and
 for anyone connecting to it), while keeping everything purrTTY/host-side works exactly as it does
