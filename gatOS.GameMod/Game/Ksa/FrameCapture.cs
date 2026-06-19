@@ -124,6 +124,15 @@ internal sealed class FrameCapture : IDisposable
                 LayerCount = 1,
             };
 
+            // Drain the engine's in-flight GPU work before we touch its live offscreen image and
+            // submit out-of-band — exactly what KSA's own PlanetMapExporter readback does
+            // (PlanetMapExporter.cs:1618). Without this, the separate submit destabilizes the engine's
+            // next frame. WaitIdle throws a managed VkResultError (e.g. DEVICE_LOST) on failure, so a
+            // fault here is caught and logged rather than crashing silently.
+            Trace($"frame {frame}: device wait idle (drain engine work)");
+            renderer.Device.WaitIdle();
+            Trace($"frame {frame}: device idle");
+
             Trace($"frame {frame}: creating staging pool");
             using (var pool = allocator.CreateStagingPool(renderer.GraphicsAndCompute, 1))
             {
