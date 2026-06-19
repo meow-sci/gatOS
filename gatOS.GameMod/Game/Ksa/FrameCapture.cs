@@ -244,15 +244,15 @@ internal sealed class FrameCapture : IDisposable
         var need = w * h * 4;
         if (_synthetic.Length != need)
             _synthetic = new byte[need];
-        var t = (byte)(frame * 4);
+        var phase = (int)(frame * 6); // scrolls the pattern frame to frame (obvious motion)
         for (var y = 0; y < h; y++)
         for (var x = 0; x < w; x++)
         {
             var i = (y * w + x) * 4;
-            _synthetic[i] = (byte)(x * 255 / w);     // B
-            _synthetic[i + 1] = (byte)(y * 255 / h); // G
-            _synthetic[i + 2] = t;                   // R (animates frame to frame)
-            _synthetic[i + 3] = 255;                 // A
+            _synthetic[i] = (byte)(x * 255 / w + phase);     // B (scrolls)
+            _synthetic[i + 1] = (byte)(y * 255 / h + phase); // G (scrolls)
+            _synthetic[i + 2] = (byte)(x + y + phase);       // R (moving diagonal bands)
+            _synthetic[i + 3] = 255;                         // A
         }
 
         surface.SubmitFrame(w, h, _synthetic);

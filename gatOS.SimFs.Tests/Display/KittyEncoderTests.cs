@@ -113,6 +113,22 @@ public sealed class KittyEncoderTests
         => Assert.Throws<ArgumentException>(() =>
             KittyEncoder.EncodeFrame(4, 4, new byte[10], DisplayEncoding.Rgba, 1));
 
+    [Test]
+    public void EncodeFrame_WithPreviousId_DeletesItSoFramesDoNotAccumulate()
+    {
+        var frame = KittyEncoder.EncodeFrame(2, 2, SolidBgra(2, 2, 1, 1, 1),
+            DisplayEncoding.Rgba, imageId: 7, previousImageId: 6);
+        // base64 has no comma, so this control string cannot collide with the payload.
+        Assert.That(Encoding.ASCII.GetString(frame), Does.Contain("d=I,i=6"));
+    }
+
+    [Test]
+    public void EncodeFrame_FirstFrame_HasNoDelete()
+    {
+        var frame = KittyEncoder.EncodeFrame(2, 2, SolidBgra(2, 2, 1, 1, 1), DisplayEncoding.Rgba, imageId: 1);
+        Assert.That(Encoding.ASCII.GetString(frame), Does.Not.Contain("a=d"));
+    }
+
     // ---- helpers ----
 
     private static byte[] SolidBgra(int w, int h, byte b, byte g, byte r)

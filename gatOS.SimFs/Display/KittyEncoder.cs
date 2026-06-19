@@ -40,10 +40,19 @@ public static class KittyEncoder
     /// <param name="height">Frame height in pixels.</param>
     /// <param name="bgra">The pixel block: <paramref name="width"/>×<paramref name="height"/>×4 bytes, BGRA.</param>
     /// <param name="encoding">Whether to zlib-deflate the RGBA block.</param>
-    /// <param name="imageId">The Kitty image (and placement) id to (re)use — a fixed value streams a video.</param>
+    /// <param name="imageId">
+    ///     The Kitty image (and placement) id for this frame. Pass a <b>fresh, increasing</b> id each
+    ///     frame: terminals (purrTTY included) re-decode a re-transmitted image only when its data
+    ///     length changes, so a fixed id would freeze on a constant-length frame (a static scene, or
+    ///     any raw-RGBA frame). A new id is always decoded; <paramref name="previousImageId"/> is
+    ///     deleted so the terminal's image storage stays bounded.
+    /// </param>
+    /// <param name="previousImageId">
+    ///     The id used for the prior frame, deleted after this one is shown (0 = none, e.g. first frame).
+    /// </param>
     /// <returns>The complete, self-contained frame bytes ready to write to a terminal.</returns>
     public static byte[] EncodeFrame(int width, int height, ReadOnlySpan<byte> bgra,
-        DisplayEncoding encoding, int imageId)
+        DisplayEncoding encoding, int imageId, int previousImageId = 0)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
@@ -62,6 +71,10 @@ public static class KittyEncoder
         output.Write(HomeCursor);
         WriteKittyImage(output, width, height, imageId, encoding == DisplayEncoding.RgbaZlib, base64);
         output.Write(RestoreCursor);
+        // Free the previous frame's image + placement (uppercase d=I deletes the stored data too), so a
+        // fresh-id-per-frame video does not accumulate images in the terminal.
+        if (previousImageId != 0 && previousImageId != imageId)
+            WriteKittyDelete(output, previousImageId);
         return output.ToArray();
     }
 
@@ -112,6 +125,14 @@ public static class KittyEncoder
             first = false;
         }
         while (offset < base64.Length);
+    }
+
+    /// <summary>Writes a Kitty delete command for one image id (frees placements + stored data).</summary>
+    private static void WriteKittyDelete(Stream output, int imageId)
+    {
+        output.Write(ApcStart);
+        output.Write(Encoding.ASCII.GetBytes($"a=d,d=I,i={imageId}"));
+        output.Write(ApcEnd);
     }
 
     private static string BuildFirstHeader(int width, int height, int imageId, bool zlib, bool more)
