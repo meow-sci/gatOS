@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Brutal;
 using Brutal.VulkanApi;
 using Brutal.VulkanApi.Abstractions;
@@ -44,6 +45,7 @@ internal sealed class FrameCapture : IDisposable
 
     private readonly int _probe;
     private byte[] _synthetic = [];
+    private byte[] _convert = [];
     private long _frame;
     private TextWriter? _trace;
     private bool _traceFailed;
@@ -214,12 +216,29 @@ internal sealed class FrameCapture : IDisposable
 
             Trace($"frame {frame}: submit+wait returned");
 
-            var bytes = (int)(targetW * targetH * 4L);
+            var pixels = targetW * targetH;
+            if (_convert.Length != pixels * 4)
+                _convert = new byte[pixels * 4];
             var mapped = _staging.Map();
             Trace($"frame {frame}: mapped");
             try
             {
-                surface.SubmitFrame(targetW, targetH, mapped.AsSpan<byte>()[..bytes]);
+                // The staging buffer holds R16G16B16A16_SFLOAT (4 half-floats/pixel). Convert to the
+                // BGRA8 the encoder expects: clamp to [0,1] (HDR bright areas clip — the pre-tonemap
+                // caveat) and pack B,G,R,A. Done on the CPU so the blit stays same-format (no
+                // driver-fragile cross-format blit).
+                var halves = MemoryMarshal.Cast<byte, Half>(mapped.AsSpan<byte>());
+                for (var px = 0; px < pixels; px++)
+                {
+                    var h = px * 4;
+                    var o = px * 4;
+                    _convert[o] = ToByte((float)halves[h + 2]);     // B
+                    _convert[o + 1] = ToByte((float)halves[h + 1]); // G
+                    _convert[o + 2] = ToByte((float)halves[h]);     // R
+                    _convert[o + 3] = 255;                          // A
+                }
+
+                surface.SubmitFrame(targetW, targetH, _convert);
             }
             finally
             {
@@ -272,7 +291,9 @@ internal sealed class FrameCapture : IDisposable
             {
                 Name = "gatOS Display Capture",
                 ImageType = VkImageType._2D,
-                ImageFormat = VkFormat.B8G8R8A8UNorm, // blit converts the HDR scene format down to BGRA8
+                // Same format as the offscreen scene image so the downscale blit is a pure resample
+                // (no driver-fragile cross-format conversion); the HDR→BGRA8 step happens on the CPU.
+                ImageFormat = VkFormat.R16G16B16A16SFloat,
                 ImageExtent = new VkExtent3D(targetW, targetH, 1),
                 ImageMipLevels = 1,
                 ImageArrayLayers = 1,
@@ -287,7 +308,7 @@ internal sealed class FrameCapture : IDisposable
             _scratchH = targetH;
         }
 
-        var needed = targetW * targetH * 4L;
+        var needed = targetW * targetH * 8L; // R16G16B16A16_SFLOAT = 8 bytes/pixel
         if (!_hasStaging || _stagingBytes != needed)
         {
             if (_hasStaging)
@@ -303,6 +324,9 @@ internal sealed class FrameCapture : IDisposable
             _stagingBytes = needed;
         }
     }
+
+    /// <summary>Clamps an HDR channel to [0,1] and quantizes to a byte.</summary>
+    private static byte ToByte(float v) => (byte)(Math.Clamp(v, 0f, 1f) * 255f + 0.5f);
 
     private static void Barrier(CommandBuffer cb, VkImage image, VkImageSubresourceRange range,
         VkImageLayout oldLayout, VkImageLayout newLayout, VkAccessFlags srcAccess, VkAccessFlags dstAccess,
