@@ -66,7 +66,7 @@ public sealed class QemuCommandBuilder(OperatingSystemFacts facts)
         args.AddRange(["-drive", $"file={spec.OverlayPath},if=virtio,format=qcow2"]);
 
         var restrict = spec.RestrictNetwork ? ",restrict=on" : "";
-        args.AddRange(["-netdev", $"user,id=n0,hostfwd=tcp:127.0.0.1:{spec.SshHostPort}-:22{restrict}"]);
+        args.AddRange(["-netdev", $"user,id=n0,hostfwd=tcp:0.0.0.0:{spec.SshHostPort}-:22{restrict}"]);
         args.AddRange(["-device", "virtio-net-pci,netdev=n0"]);
 
         args.AddRange(["-device", "virtio-serial-pci"]);
