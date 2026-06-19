@@ -215,10 +215,12 @@ internal sealed class FrameCapture : IDisposable
             LayerCount = 1,
         };
 
-        // offscreen scene: ShaderReadOnly -> TransferSrc (it was last sampled by the composite's frag shader).
+        // offscreen scene: ShaderReadOnly -> TransferSrc. Src stage is AllCommands (not just the
+        // composite's fragment-shader read): the offscreen was produced by the whole frame, so this
+        // also guarantees the transfer sees a fully-rendered image and never under-synchronizes.
         Barrier(cb, srcImage, range, VkImageLayout.ShaderReadOnlyOptimal, VkImageLayout.TransferSrcOptimal,
             VkAccessFlags.ShaderReadBit, VkAccessFlags.TransferReadBit,
-            VkPipelineStageFlags.FragmentShaderBit, VkPipelineStageFlags.TransferBit);
+            VkPipelineStageFlags.AllCommandsBit, VkPipelineStageFlags.TransferBit);
         // scratch: Undefined -> TransferDst.
         Barrier(cb, dstImage, range, VkImageLayout.Undefined, VkImageLayout.TransferDstOptimal,
             VkAccessFlags.None, VkAccessFlags.TransferWriteBit,
@@ -255,10 +257,11 @@ internal sealed class FrameCapture : IDisposable
         };
         cb.CopyImageToBuffer(dstImage, VkImageLayout.TransferSrcOptimal, _staging[idx].VkBuffer, new[] { region });
 
-        // offscreen scene: TransferSrc -> ShaderReadOnly (restore the engine's expected end-of-frame layout).
+        // offscreen scene: TransferSrc -> ShaderReadOnly (restore the engine's expected end-of-frame
+        // layout). Dst stage is AllCommands so the restore is ordered before any later use of the image.
         Barrier(cb, srcImage, range, VkImageLayout.TransferSrcOptimal, VkImageLayout.ShaderReadOnlyOptimal,
             VkAccessFlags.TransferReadBit, VkAccessFlags.ShaderReadBit,
-            VkPipelineStageFlags.TransferBit, VkPipelineStageFlags.FragmentShaderBit);
+            VkPipelineStageFlags.TransferBit, VkPipelineStageFlags.AllCommandsBit);
     }
 
     /// <summary>
