@@ -50,7 +50,8 @@ GUEST_PACKAGES="alpine-baselayout alpine-release busybox busybox-suid musl musl-
                 alpine-keys apk-tools linux-virt dropbear dropbear-scp dropbear-convert
                 openssh-sftp-server qemu-guest-agent ca-certificates
                 e2fsprogs e2fsprogs-extra
-                mandoc man-pages bash zsh shadow vim neovim less curl wget git coreutils"
+                mandoc man-pages bash zsh shadow vim neovim less curl wget git coreutils
+                libstdc++"
 
 DISK_SIZE_MB=1536
 # Spike-validated cmdline (spike/NOTES.md T1.1), adjusted for the partitionless
