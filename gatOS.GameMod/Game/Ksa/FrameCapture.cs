@@ -13,44 +13,47 @@ namespace gatOS.GameMod.Game.Ksa;
 
 /// <summary>
 ///     The screen-stream frame capture (STREAM_PLAN.md §4.1). Each enabled, throttled frame it
-///     <b>records</b> a GPU downscale-blit of the main viewport's offscreen scene image plus a
-///     copy-to-host into the engine's <i>own</i> per-frame command buffer (injected right before
-///     <c>commandBuffer.End()</c> by <see cref="DisplayRenderPatch"/>), then reads the small result
-///     back a few frames later and hands the BGRA bytes to the game-free <see cref="DisplaySurface"/>.
+///     <b>records</b> a copy of the main viewport's offscreen scene image into a host-visible buffer,
+///     in the engine's <i>own</i> per-frame command buffer (injected right before
+///     <c>commandBuffer.End()</c> by <see cref="DisplayRenderPatch"/>), then reads it back a few frames
+///     later, downscales it to the stream size and hands the BGRA bytes to the game-free
+///     <see cref="DisplaySurface"/>.
 /// </summary>
 /// <remarks>
 ///     <para><b>Why in-band.</b> The capture commands ride the frame's command buffer and are
 ///     submitted by the engine on the render thread — there is no separate queue submit and no
-///     <c>Device.WaitIdle</c>. This is exactly how KSA's own readbacks work (PlanetMapExporter,
-///     OceanFFT) and what the engine authors prescribed: doing GPU work out-of-band (a private
-///     command buffer submitted alongside the engine's in-flight frames) corrupts the device and
-///     crashes the game.</para>
-///     <para><b>Deferred readback (no stall).</b> The copy targets a host-visible staging buffer in
-///     a ring slot indexed by <c>ResourceFrameIndex</c> (0..<c>MaxFramesInFlight</c>-1). The next time
-///     a slot is revisited the engine has already waited on that slot's fence (frames-in-flight reuse),
-///     so the prior copy is guaranteed complete and the buffer is safe to map — no fence wait of our
-///     own. We read a slot back at the start of its next visit, then overwrite it.</para>
-///     <para><b>Threading.</b> Everything here runs on the render thread inside <c>RenderGame</c>'s
-///     recording (threading rule 1): resource creation, command recording and the (cheap) map +
-///     HDR→BGRA8 conversion. The conversion clamps the half-float HDR scene to [0,1] (bright areas
-///     clip — the pre-tonemap caveat).</para>
+///     <c>Device.WaitIdle</c>. Doing GPU work out-of-band (a private command buffer submitted alongside
+///     the engine's in-flight frames) corrupts the device and crashes the game; the engine authors
+///     prescribed the in-band path.</para>
+///     <para><b>Full-frame copy (engine-author pattern).</b> Exactly as developer one described: a
+///     single image barrier to <c>TransferSrc</c>, one <c>CopyImageToBuffer</c> of the whole offscreen
+///     image, and a barrier back to the previous layout — no blit, no scratch image touching the live
+///     offscreen. The downscale to the stream size happens on the CPU at readback.</para>
+///     <para><b>Deferred readback (no stall).</b> The copy targets a host-visible staging buffer in a
+///     ring slot indexed by <c>ResourceFrameIndex</c> (0..<c>MaxFramesInFlight</c>-1). The next time a
+///     slot is revisited the engine has already waited on that slot's fence (frames-in-flight reuse), so
+///     the prior copy is complete — no fence wait of our own. Each buffer is mapped once and kept mapped
+///     (the engine's pattern; re-mapping per frame can unmap a shared VMA block).</para>
+///     <para><b>Threading.</b> Everything runs on the render thread inside <c>RenderGame</c>'s recording
+///     (threading rule 1). The HDR half-float scene is clamped to [0,1] on the CPU (bright areas clip —
+///     the pre-tonemap caveat).</para>
 ///     <para>Engine types (the renderer + allocator) are reached by inference + interface constraints,
 ///     never named — their assemblies are only transitively visible to gatOS.</para>
 /// </remarks>
 internal sealed class FrameCapture : IDisposable
 {
-    // Per-slot ring resources (ImageEx/BufferEx are value types; validity tracked with the bool flags).
-    private ImageEx[] _scratch = [];
-    private bool[] _hasScratch = [];
+    // Per-slot ring resources (BufferEx is a value type; validity tracked with the bool flag). The
+    // staging buffer holds the FULL offscreen image (sized to _srcW x _srcH x 8 bytes); the downscale
+    // to the stream size (_dstW x _dstH) is done on the CPU at readback.
     private BufferEx[] _staging = [];
     private bool[] _hasStaging = [];
     // Each staging buffer is mapped ONCE at creation and kept mapped for its lifetime (the engine's own
-    // pattern for host-visible buffers, e.g. PlanetMapExporter._phase0UboMap). Mapping/unmapping every
-    // frame can unmap a VMA memory block the engine keeps persistently mapped — corrupting co-located
-    // engine buffers and crashing a few frames later. Valid whenever _hasStaging[idx] is set.
+    // pattern for host-visible buffers, e.g. PlanetMapExporter._phase0UboMap). Valid when _hasStaging[idx].
     private MappedMemory[] _mapped = [];
-    private int[] _allocW = [];
-    private int[] _allocH = [];
+    private int[] _srcW = []; // full offscreen size the slot's staging buffer is sized to / holds
+    private int[] _srcH = [];
+    private int[] _dstW = []; // downscale target recorded for this slot's pending copy
+    private int[] _dstH = [];
     private bool[] _pending = []; // a copy was recorded into this slot and not yet read back
     private int _slots;           // == MaxFramesInFlight once initialized (0 before)
 
@@ -58,8 +61,8 @@ internal sealed class FrameCapture : IDisposable
     private long _lastCaptureTs; // Stopwatch ticks of the last recorded capture (FPS throttle)
     private bool _disposed;
 
-    // One-shot trace breadcrumbs (the GPU work runs in native code; a fault there is a process crash,
-    // not a managed exception, so the last line written localizes the faulting step).
+    // Trace breadcrumbs (the GPU work runs in native code; a fault there is a process crash, not a
+    // managed exception, so the last line written localizes the faulting step).
     private TextWriter? _trace;
     private bool _traceFailed;
     private bool _loggedRecord;
@@ -68,20 +71,19 @@ internal sealed class FrameCapture : IDisposable
 
     /// <summary>
     ///     Entry point from the render hook (<see cref="DisplayRenderPatch"/>): if the per-FPS throttle
-    ///     has elapsed, records this frame's capture into <paramref name="cb"/> (the engine's frame
-    ///     command buffer, with the offscreen color image in <c>ShaderReadOnlyOptimal</c> and outside
-    ///     any render pass) and reads back the slot's previous frame. Never the caller's hot path when
-    ///     throttled — a couple of field reads and a return.
+    ///     has elapsed, records this frame's full-offscreen copy into <paramref name="cb"/> (the engine's
+    ///     frame command buffer, with the offscreen color image in <c>ShaderReadOnlyOptimal</c> and
+    ///     outside any render pass) and reads back the slot's previous frame.
     /// </summary>
     [KsaAnchor("Program.GetRenderer(), Program.MainViewport.OffscreenTarget.ColorImage/.Extent, "
-               + "Renderer.Allocator/.MaxFramesInFlight, Program.ResourceFrameIndex; Allocator.CreateImage/"
-               + "CreateBuffer, CommandBufferEx.TransitionImages2 + ImageBarrierInfo.Presets + ImageTransition, "
-               + "CommandBuffer.BlitImage/CopyImageToBuffer, BufferEx.Map",
+               + "Renderer.Allocator/.MaxFramesInFlight, Program.ResourceFrameIndex; Allocator.CreateBuffer, "
+               + "CommandBufferEx.TransitionImages2 + ImageBarrierInfo.Presets + ImageTransition, "
+               + "CommandBuffer.CopyImageToBuffer, BufferEx.Map",
         SourceFile = "KSA/Program.cs", Verified = "2026-06-19", Risk = ChurnRisk.Medium,
-        Notes = "In-band capture recorded into the engine's frame command buffer. The offscreen is moved with the "
-                + "engine's OWN sync2 TransitionImages2 + ImageBarrierInfo.Presets (SampledReadVfc<->TransferSrc) so "
-                + "there is no sync1/sync2 mixing on the shared image; restored to SampledReadVfc as the engine left "
-                + "it (Program.cs:4125). Deferred readback via frames-in-flight slot reuse (no fence wait).")]
+        Notes = "In-band full-frame capture (developer-one pattern): barrier offscreen->TransferSrc, "
+                + "CopyImageToBuffer(whole offscreen->host), barrier back to SampledReadVfc. The offscreen is "
+                + "moved with the engine's OWN sync2 TransitionImages2 + ImageBarrierInfo.Presets (no sync1/sync2 "
+                + "mixing). Downscale to the stream size is on the CPU. Deferred readback via frames-in-flight reuse.")]
     public void MaybeRecord(Program program, CommandBuffer cb, DisplaySurface surface)
     {
         var settings = surface.Settings;
@@ -101,53 +103,52 @@ internal sealed class FrameCapture : IDisposable
         if (srcExtent.Width <= 0 || srcExtent.Height <= 0)
             return;
 
-        // Clamp the downscale target to the source so the blit only ever shrinks (an upscale would
-        // just waste bandwidth re-magnifying the scene).
-        var targetW = Math.Min(settings.Width, srcExtent.Width);
-        var targetH = Math.Min(settings.Height, srcExtent.Height);
-        if (targetW <= 0 || targetH <= 0)
-            return;
+        // Clamp the downscale target to the source so we only ever shrink.
+        var dstW = Math.Clamp(settings.Width, 1, srcExtent.Width);
+        var dstH = Math.Clamp(settings.Height, 1, srcExtent.Height);
 
-        using (surface.CaptureStat.Measure()) // render-thread cost: record + the deferred map/convert
+        using (surface.CaptureStat.Measure()) // render-thread cost: record + the deferred copy/convert
             RecordInto(renderer.Allocator, cb, program.ResourceFrameIndex, renderer.MaxFramesInFlight,
-                offscreen.ColorImage.Image, srcExtent.Width, srcExtent.Height, targetW, targetH, surface);
+                offscreen.ColorImage.Image, srcExtent.Width, srcExtent.Height, dstW, dstH, surface);
         _lastCaptureTs = now;
     }
 
     // Generic on the allocator: the concrete KSA allocator type lives in an assembly gatOS does not
     // reference directly (only its Brutal.VulkanApi.Abstractions interfaces are nameable here), so the
-    // type is reached by inference + these interface constraints rather than by name.
+    // type is reached by inference + this interface constraint rather than by name.
     private void RecordInto<TAllocator>(TAllocator allocator, CommandBuffer cb, int idx, int framesInFlight,
-        VkImage srcImage, int srcW, int srcH, int targetW, int targetH, DisplaySurface surface)
-        where TAllocator : IImageAllocator, IBufferAllocator
+        VkImage srcImage, int srcW, int srcH, int dstW, int dstH, DisplaySurface surface)
+        where TAllocator : IBufferAllocator
     {
         EnsureArrays(framesInFlight);
         if (idx < 0 || idx >= _slots)
             return; // defensive: ResourceFrameIndex out of the expected range
 
-        // 1) Read back this slot's previous copy. The engine waited on this slot's fence when it
-        //    reacquired the slot for the current frame, so that copy is complete — no fence wait here.
-        //    Doing this before EnsureSlot also makes a resize safe (the buffer is free to reallocate).
+        // 1) Read back this slot's previous copy (complete by the frames-in-flight contract — the engine
+        //    waited this slot's fence when it reacquired the slot for the current frame). Before EnsureSlot
+        //    so a resize can free the buffer safely.
         if (_pending[idx])
         {
             Readback(idx, surface);
             _pending[idx] = false;
         }
 
-        // 2) (Re)allocate the slot's scratch image + host staging buffer for the current target size.
-        EnsureSlot(allocator, idx, targetW, targetH);
+        // 2) (Re)allocate the slot's host buffer for the full offscreen size if it changed.
+        EnsureSlot(allocator, idx, srcW, srcH);
+        _dstW[idx] = dstW;
+        _dstH[idx] = dstH;
 
-        // 3) Record the downscale-blit + copy-to-host into the engine's command buffer.
-        RecordCopy(cb, idx, srcImage, srcW, srcH, targetW, targetH);
+        // 3) Record the full-offscreen copy-to-host into the engine's command buffer.
+        RecordCopy(cb, idx, srcImage, srcW, srcH);
         _pending[idx] = true;
         _captureCount++;
 
         if (!_loggedRecord)
         {
             _loggedRecord = true;
-            Trace($"first capture recorded (slot {idx}/{_slots}, src {srcW}x{srcH} -> {targetW}x{targetH})");
+            Trace($"first capture recorded (slot {idx}/{_slots}, full {srcW}x{srcH} -> stream {dstW}x{dstH})");
         }
-        else if (_captureCount % 30 == 0)
+        else if (_captureCount % 10 == 0)
         {
             Trace($"heartbeat: {_captureCount} captures recorded (slot {idx})");
         }
@@ -159,49 +160,29 @@ internal sealed class FrameCapture : IDisposable
             return;
         // First init (frames-in-flight is fixed for the renderer's life, so this runs once).
         _slots = Math.Max(1, framesInFlight);
-        _scratch = new ImageEx[_slots];
-        _hasScratch = new bool[_slots];
         _staging = new BufferEx[_slots];
         _hasStaging = new bool[_slots];
         _mapped = new MappedMemory[_slots];
-        _allocW = new int[_slots];
-        _allocH = new int[_slots];
+        _srcW = new int[_slots];
+        _srcH = new int[_slots];
+        _dstW = new int[_slots];
+        _dstH = new int[_slots];
         _pending = new bool[_slots];
     }
 
-    private void EnsureSlot<TAllocator>(TAllocator allocator, int idx, int targetW, int targetH)
-        where TAllocator : IImageAllocator, IBufferAllocator
+    private void EnsureSlot<TAllocator>(TAllocator allocator, int idx, int srcW, int srcH)
+        where TAllocator : IBufferAllocator
     {
-        if (_hasScratch[idx] && _allocW[idx] == targetW && _allocH[idx] == targetH)
-            return; // already sized for this slot
+        if (_hasStaging[idx] && _srcW[idx] == srcW && _srcH[idx] == srcH)
+            return; // already sized for this offscreen resolution
 
-        if (_hasScratch[idx])
-            _scratch[idx].Dispose();
-        _scratch[idx] = allocator.CreateImage(new ImageEx.CreateInfo
-        {
-            Name = "gatOS Display Capture",
-            ImageType = VkImageType._2D,
-            // Same format as the offscreen scene image so the downscale blit is a pure resample (no
-            // driver-fragile cross-format conversion); the HDR→BGRA8 step happens on the CPU.
-            ImageFormat = VkFormat.R16G16B16A16SFloat,
-            ImageExtent = new VkExtent3D(targetW, targetH, 1),
-            ImageMipLevels = 1,
-            ImageArrayLayers = 1,
-            ImageSamples = VkSampleCountFlags._1Bit,
-            ImageTiling = VkImageTiling.Optimal,
-            ImageUsage = VkImageUsageFlags.TransferDstBit | VkImageUsageFlags.TransferSrcBit,
-            ImageInitialLayout = VkImageLayout.Undefined,
-            AllocRequiredProperties = VkMemoryPropertyFlags.DeviceLocalBit,
-        });
-        _hasScratch[idx] = true;
-
-        var needed = (long)targetW * targetH * 8L; // R16G16B16A16_SFLOAT = 8 bytes/pixel
         if (_hasStaging[idx])
         {
             _mapped[idx].Unmap();
             _staging[idx].Dispose();
         }
 
+        var needed = (long)srcW * srcH * 8L; // R16G16B16A16_SFLOAT = 8 bytes/pixel
         _staging[idx] = allocator.CreateBuffer(new BufferEx.CreateInfo
         {
             Name = "gatOS Display Staging",
@@ -209,55 +190,29 @@ internal sealed class FrameCapture : IDisposable
             BufferUsage = VkBufferUsageFlags.TransferDstBit,
             AllocRequiredProperties = VkMemoryPropertyFlags.HostVisibleBit | VkMemoryPropertyFlags.HostCoherentBit,
         });
-        // Map once and keep it (host-coherent, so GPU writes are visible without invalidate). Never
-        // unmapped per frame — see the _mapped field note.
+        // Map once and keep it (host-coherent, so GPU writes are visible without invalidate).
         _mapped[idx] = _staging[idx].Map();
         _hasStaging[idx] = true;
-
-        _allocW[idx] = targetW;
-        _allocH[idx] = targetH;
-        Trace($"slot {idx} resized to {targetW}x{targetH} ({needed} B staging)");
+        _srcW[idx] = srcW;
+        _srcH[idx] = srcH;
+        Trace($"slot {idx} staging sized to {srcW}x{srcH} ({needed} B)");
     }
 
     /// <summary>
-    ///     Records the capture into the engine's command buffer: transition the offscreen scene to a
-    ///     transfer source, downscale-blit it into the slot's scratch image, copy that to the slot's
-    ///     host buffer, and <b>restore</b> the offscreen to <c>SampledReadVfc</c> so the engine finds
-    ///     it exactly as it left it. The offscreen is moved with the engine's <b>own</b> sync2
-    ///     <see cref="CommandBufferEx.TransitionImages2"/> + <c>ImageBarrierInfo.Presets</c> — the same
-    ///     mechanism and scopes the engine uses on this shared image, so there is no sync1/sync2 mixing.
+    ///     Records the capture into the engine's command buffer (developer-one pattern): transition the
+    ///     offscreen to a transfer source, copy the <b>whole</b> image into the slot's host buffer, and
+    ///     restore the offscreen to <c>SampledReadVfc</c> as the engine left it. The offscreen is moved
+    ///     with the engine's <b>own</b> sync2 <see cref="CommandBufferEx.TransitionImages2"/> +
+    ///     <c>ImageBarrierInfo.Presets</c> — no sync1/sync2 mixing on the shared image.
     /// </summary>
-    private void RecordCopy(CommandBuffer cb, int idx, VkImage srcImage, int srcW, int srcH, int targetW, int targetH)
+    private void RecordCopy(CommandBuffer cb, int idx, VkImage srcImage, int srcW, int srcH)
     {
-        var dstImage = _scratch[idx].VkImage;
-
-        // offscreen: SampledReadVfc (ShaderReadOnly) -> TransferSrc; scratch: Undefined -> TransferDst.
+        // offscreen: SampledReadVfc (ShaderReadOnly) -> TransferSrc.
         cb.TransitionImages2(new[]
         {
             new ImageTransition(srcImage, ImageBarrierInfo.Presets.SampledReadVfc, ImageBarrierInfo.Presets.TransferSrc),
-            new ImageTransition(dstImage, ImageBarrierInfo.Presets.Undefined, ImageBarrierInfo.Presets.TransferDst),
         });
 
-        // GPU downscale: full-res scene -> small scratch (linear filter, same format).
-        var blit = new VkImageBlit
-        {
-            SrcSubresource = new VkImageSubresourceLayers
-                { AspectMask = VkImageAspectFlags.ColorBit, MipLevel = 0, BaseArrayLayer = 0, LayerCount = 1 },
-            DstSubresource = new VkImageSubresourceLayers
-                { AspectMask = VkImageAspectFlags.ColorBit, MipLevel = 0, BaseArrayLayer = 0, LayerCount = 1 },
-        };
-        blit.SrcOffsets[0] = new VkOffset3D { X = 0, Y = 0, Z = 0 };
-        blit.SrcOffsets[1] = new VkOffset3D { X = srcW, Y = srcH, Z = 1 };
-        blit.DstOffsets[0] = new VkOffset3D { X = 0, Y = 0, Z = 0 };
-        blit.DstOffsets[1] = new VkOffset3D { X = targetW, Y = targetH, Z = 1 };
-        cb.BlitImage(srcImage, VkImageLayout.TransferSrcOptimal, dstImage, VkImageLayout.TransferDstOptimal,
-            new[] { blit }, VkFilter.Linear);
-
-        // scratch: TransferDst -> TransferSrc, then copy to the host buffer.
-        cb.TransitionImages2(new[]
-        {
-            new ImageTransition(dstImage, ImageBarrierInfo.Presets.TransferDst, ImageBarrierInfo.Presets.TransferSrc),
-        });
         var region = new VkBufferImageCopy
         {
             BufferOffset = ByteSize.Zero,
@@ -266,9 +221,9 @@ internal sealed class FrameCapture : IDisposable
             ImageSubresource = new VkImageSubresourceLayers
                 { AspectMask = VkImageAspectFlags.ColorBit, MipLevel = 0, BaseArrayLayer = 0, LayerCount = 1 },
             ImageOffset = new VkOffset3D { X = 0, Y = 0, Z = 0 },
-            ImageExtent = new VkExtent3D { Width = targetW, Height = targetH, Depth = 1 },
+            ImageExtent = new VkExtent3D { Width = srcW, Height = srcH, Depth = 1 },
         };
-        cb.CopyImageToBuffer(dstImage, VkImageLayout.TransferSrcOptimal, _staging[idx].VkBuffer, new[] { region });
+        cb.CopyImageToBuffer(srcImage, VkImageLayout.TransferSrcOptimal, _staging[idx].VkBuffer, new[] { region });
 
         // offscreen: TransferSrc -> SampledReadVfc (restore the engine's expected end-of-frame layout).
         cb.TransitionImages2(new[]
@@ -278,35 +233,43 @@ internal sealed class FrameCapture : IDisposable
     }
 
     /// <summary>
-    ///     Maps the slot's host buffer (its copy is complete by the frames-in-flight contract),
-    ///     converts the half-float HDR pixels to BGRA8 and submits them to the surface.
+    ///     Reads the slot's persistent host mapping (its copy is complete by the frames-in-flight
+    ///     contract), nearest-neighbour downscales the full-resolution half-float HDR image to the
+    ///     stream size, converts to BGRA8 and submits it to the surface.
     /// </summary>
     private void Readback(int idx, DisplaySurface surface)
     {
-        var w = _allocW[idx];
-        var h = _allocH[idx];
-        var pixels = w * h;
-        if (_convert.Length != pixels * 4)
-            _convert = new byte[pixels * 4];
+        var srcW = _srcW[idx];
+        var srcH = _srcH[idx];
+        var dstW = _dstW[idx];
+        var dstH = _dstH[idx];
+        if (_convert.Length != dstW * dstH * 4)
+            _convert = new byte[dstW * dstH * 4];
 
-        // Read the persistent mapping (host-coherent: the completed GPU copy is already visible).
+        // Host-coherent: the completed GPU copy is already visible through the persistent mapping.
         var halves = MemoryMarshal.Cast<byte, Half>(_mapped[idx].AsSpan<byte>());
-        for (var px = 0; px < pixels; px++)
+        for (var y = 0; y < dstH; y++)
         {
-            var h4 = px * 4;
-            var o = px * 4;
-            _convert[o] = ToByte((float)halves[h4 + 2]);     // B
-            _convert[o + 1] = ToByte((float)halves[h4 + 1]); // G
-            _convert[o + 2] = ToByte((float)halves[h4]);     // R
-            _convert[o + 3] = 255;                           // A
+            var sy = y * srcH / dstH;
+            var srcRow = sy * srcW;
+            var dstRow = y * dstW;
+            for (var x = 0; x < dstW; x++)
+            {
+                var s = (srcRow + x * srcW / dstW) * 4; // half index of the source RGBA pixel
+                var o = (dstRow + x) * 4;
+                _convert[o] = ToByte((float)halves[s + 2]);     // B
+                _convert[o + 1] = ToByte((float)halves[s + 1]); // G
+                _convert[o + 2] = ToByte((float)halves[s]);     // R
+                _convert[o + 3] = 255;                          // A
+            }
         }
 
-        surface.SubmitFrame(w, h, _convert);
+        surface.SubmitFrame(dstW, dstH, _convert);
 
         if (!_loggedReadback)
         {
             _loggedReadback = true;
-            Trace($"first readback delivered (slot {idx}, {w}x{h})");
+            Trace($"first readback delivered (slot {idx}, {srcW}x{srcH} -> {dstW}x{dstH})");
         }
     }
 
@@ -316,8 +279,8 @@ internal sealed class FrameCapture : IDisposable
     /// <summary>
     ///     Appends one flushed line to <c>&lt;LogsDir&gt;/display-capture.log</c>. Crash-resilient
     ///     (AutoFlush survives a process kill) and never throws — a logging failure must not break or
-    ///     mask capture. Called only at state transitions (first record/readback, resize, errors), so
-    ///     it never spams per frame.
+    ///     mask capture. Called only at state transitions (first record/readback, resize, heartbeat,
+    ///     errors), so it never spams per frame.
     /// </summary>
     private void Trace(string message)
     {
@@ -331,7 +294,7 @@ internal sealed class FrameCapture : IDisposable
                 var path = Path.Combine(GatOsPaths.LogsDir, "display-capture.log");
                 _trace = new StreamWriter(
                     new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = true };
-                _trace.WriteLine($"=== display capture session {DateTime.UtcNow:O} (in-band) ===");
+                _trace.WriteLine($"=== display capture session {DateTime.UtcNow:O} (in-band, full-frame) ===");
             }
 
             _trace.WriteLine($"{DateTime.UtcNow:HH:mm:ss.fff} tid={Environment.CurrentManagedThreadId} {message}");
@@ -351,8 +314,6 @@ internal sealed class FrameCapture : IDisposable
         {
             for (var i = 0; i < _slots; i++)
             {
-                if (_hasScratch[i])
-                    _scratch[i].Dispose();
                 if (_hasStaging[i])
                 {
                     _mapped[i].Unmap();
