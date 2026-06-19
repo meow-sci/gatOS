@@ -83,7 +83,7 @@ listing order; empty/`.`/`..` become `_`/`_.`/`_..`. In KSA a vessel's **name *i
 | **St** | STATE | current setpoint | `0`/`1` flag, `0..1` fraction, number, vector, or token (idempotent) |
 | **T** | TRIGGER | status (default `0`) | the exact fire token (`1`) — one-shot |
 | **Sm** | STREAM | growing-log / blocking-event NDJSON | — |
-| **Smb** | BINARY STREAM | blocking-event raw bytes (binary-safe; parks for the next item) | — |
+| **Smb** | BINARY STREAM | continuous raw bytes (binary-safe; blocks for the next item, **never EOF** — `cat` reads it forever) | — |
 
 ### 2.4 errno vocabulary (frozen — `gatOS.SimFs/Commands/CommandResult.cs`)
 
@@ -427,7 +427,7 @@ capture costs nothing until a client writes `1` to `enabled` *and* opens `stream
 | `display/height` | **St** | pixels (clamped 16..1920) | Downscale target height. |
 | `display/encoding` | **St** | `rgba-zlib` \| `rgba` | Frame wire format (zlib-deflated RGBA, or raw RGBA). Unknown ⇒ `EINVAL`. |
 | `display/format` | S | `WxH@fps enc` | Read-only discovery of the live parameters. |
-| `display/stream` | **Smb** | — (read) | The binary Kitty frame feed. Each read parks for the next frame and delivers a complete, self-contained, LF-free Kitty unit; a slow reader skips to the latest frame (drop-old). Multiple readers fan out. |
+| `display/stream` | **Smb** | — (read) | The binary Kitty frame feed. A **continuous** stream: a single `cat /sim/display/stream` blocks for each next frame and renders it forever (never EOF; Ctrl-C to stop). Each frame is a complete, self-contained, LF-free Kitty unit; a slow reader skips to the latest (drop-old); multiple readers fan out. |
 
 Out-of-range writes to the numeric controls **clamp** (and succeed), matching the config's clamp-don't-reject rule.
 

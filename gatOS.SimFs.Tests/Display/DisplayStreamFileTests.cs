@@ -39,7 +39,7 @@ public sealed class DisplayStreamFileTests
     }
 
     [Test]
-    public async Task Read_ParksUntilFrame_DeliversIt_ThenOwesTwoZeros()
+    public async Task Read_ParksUntilFrame_DeliversIt_ThenParksForTheNext_NeverEof()
     {
         using var handle = _file.Open();
         var read = handle.ReadAsync(0, 65536, CancellationToken.None).AsTask();
@@ -50,11 +50,16 @@ public sealed class DisplayStreamFileTests
         Assert.That(frame.Length, Is.GreaterThan(0));
         Assert.That(frame.Span[0], Is.EqualTo((byte)0x1b), "a Kitty frame begins with ESC");
 
-        // The two zero-byte completions, then park again.
-        Assert.That((await handle.ReadAsync((ulong)frame.Length, 65536, CancellationToken.None)).IsEmpty);
-        Assert.That((await handle.ReadAsync((ulong)frame.Length, 65536, CancellationToken.None)).IsEmpty);
-        var parked = handle.ReadAsync((ulong)frame.Length, 65536, CancellationToken.None).AsTask();
-        Assert.That(await Task.WhenAny(parked, Task.Delay(150)), Is.Not.SameAs(parked));
+        // A continuous stream never returns EOF between frames — the next read parks for the next
+        // frame (so a single `cat` streams forever), and delivers it when it arrives.
+        var parked = handle.ReadAsync(0, 65536, CancellationToken.None).AsTask();
+        Assert.That(await Task.WhenAny(parked, Task.Delay(150)), Is.Not.SameAs(parked),
+            "must block for the next frame, never return an empty (EOF) read");
+
+        _surface.SubmitFrame(4, 4, Solid(4, 4));
+        var next = await parked.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.That(next.Length, Is.GreaterThan(0));
+        Assert.That(next.Span[0], Is.EqualTo((byte)0x1b));
     }
 
     [Test]
