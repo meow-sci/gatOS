@@ -83,6 +83,7 @@ listing order; empty/`.`/`..` become `_`/`_.`/`_..`. In KSA a vessel's **name *i
 | **St** | STATE | current setpoint | `0`/`1` flag, `0..1` fraction, number, vector, or token (idempotent) |
 | **T** | TRIGGER | status (default `0`) | the exact fire token (`1`) — one-shot |
 | **Sm** | STREAM | growing-log / blocking-event NDJSON | — |
+| **Smb** | BINARY STREAM | blocking-event raw bytes (binary-safe; parks for the next item) | — |
 
 ### 2.4 errno vocabulary (frozen — `gatOS.SimFs/Commands/CommandResult.cs`)
 
@@ -112,6 +113,9 @@ listing order; empty/`.`/`..` become `_`/`_.`/`_..`. In KSA a vessel's **name *i
 | `http_field_endpoints` | `true` | the `/v1/fs/<path>` mirror (off ⇒ those routes `ENOENT`) |
 | `mqtt_enabled` / `mqtt_preferred_port` | `true` / `1883` | embedded MQTT broker |
 | `command_timeout_ms` | `2000` | how long a write waits for the game thread before `ETIMEDOUT` |
+| `display_enabled` | `false` | boot seed for `/sim/display/enabled` — the screen stream (§3.8); **off by default** |
+| `display_fps` / `display_width` / `display_height` | `15` / `320` / `180` | boot seeds for the stream cadence + downscale size (runtime control is the `/sim/display/*` files) |
+| `display_encoding` | `rgba-zlib` | boot seed for the frame encoding (`rgba-zlib` \| `rgba`) |
 
 ---
 
@@ -406,6 +410,27 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/focus` | **St** | vehicle/body id | `camera.focus` | Frame | Move the camera to any astronomical by id (view-only). |
 | `debug/control_vessel` | **St** | vehicle id | `debug.control_vessel` | Frame | Focus **and** take control of a vehicle by id. |
 
+### 3.8 `/display` *(the screen stream — STREAM_PLAN.md)*
+
+A downscaled, frame-rate-limited render of the KSA viewport (the public offscreen scene target — no
+UI), encoded as the **Kitty terminal graphics protocol**. A guest program `cat`s the stream to its SSH
+stdout and any kitty-capable terminal renders it (in-game purrTTY tabs *or* external emulators). The
+controls are plain files, so any SSH client tunes the feed; they mutate the host-side capture directly
+(not a `SimCommand`), so they actuate immediately with no game-thread round-trip. **Default off** — the
+capture costs nothing until a client writes `1` to `enabled` *and* opens `stream`.
+
+| Path | A | Format / Write | Meaning |
+|---|---|---|---|
+| `display/enabled` | **St** | `0`/`1` (also `on`/`off`, `true`/`false`) | Master gate. Capture runs only while set **and** ≥1 reader has `stream` open. |
+| `display/fps` | **St** | integer (clamped 1..60) | Stream cadence, decoupled from the game frame rate. |
+| `display/width` | **St** | pixels (clamped 16..1920) | Downscale target width; the terminal renders the image at this pixel size. |
+| `display/height` | **St** | pixels (clamped 16..1920) | Downscale target height. |
+| `display/encoding` | **St** | `rgba-zlib` \| `rgba` | Frame wire format (zlib-deflated RGBA, or raw RGBA). Unknown ⇒ `EINVAL`. |
+| `display/format` | S | `WxH@fps enc` | Read-only discovery of the live parameters. |
+| `display/stream` | **Smb** | — (read) | The binary Kitty frame feed. Each read parks for the next frame and delivers a complete, self-contained, LF-free Kitty unit; a slow reader skips to the latest frame (drop-old). Multiple readers fan out. |
+
+Out-of-range writes to the numeric controls **clamp** (and succeed), matching the config's clamp-don't-reject rule.
+
 ---
 
 ## 4. The atomic `telemetry` document
@@ -552,6 +577,12 @@ Loopback only, no auth. Aggregate reads serialize the snapshot via `SimJson`.
 | GET | `/v1/fs/<path>` | raw field value `text/plain` + trailing `\n` (requires `http_field_endpoints`). |
 | GET | `/v1/fs/<path>?stream=1` | SSE; one `data: <value>` per change (multi-line split per line). |
 | POST | `/v1/fs/<path>` | write raw value to a control/debug field → `{"outcome":"ok"}`. |
+
+The `/display` control leaves mirror leaf-by-leaf through `/v1/fs/display/*` (e.g. `POST /v1/fs/display/enabled`
+with body `1`, `GET /v1/fs/display/format`) and MQTT `gatos/sim/display/*` — by construction, since they
+are ordinary scalar control files. The binary `display/stream` feed is `IsStreaming` and so is **excluded**
+from the field mirror (a dedicated HTTP media route is deferred — STREAM_PLAN.md S8); consume it from the
+guest over 9p.
 | POST | `/v1/command` | the generic JSON command (§5) → `{"outcome":"ok"}`. |
 | GET | `/v1/events` | SSE of `{ut,type,vessel?,detail}`. |
 | GET | `/v1/vessels/{id}/stream` | SSE of the per-vessel telemetry stream line. |

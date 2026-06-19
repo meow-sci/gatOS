@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using gatOS.NineP.Protocol;
 using gatOS.NineP.Vfs;
 using gatOS.SimFs.Commands;
+using gatOS.SimFs.Display;
 using gatOS.SimFs.Snapshots;
 
 namespace gatOS.SimFs;
@@ -61,22 +62,32 @@ public static class SimFsTree
     ///     Optional provider for <c>/sim/status/transports</c> (bound ports etc.); supplied by the
     ///     game mod, which alone knows the transport bindings.
     /// </param>
-    public static VfsDirectory Build(SnapshotStore store, ICommandSink? commands, Func<string>? transports)
-        => new Builder(store, commands, transports).BuildRoot();
+    /// <param name="display">
+    ///     Optional screen-stream hub (STREAM_PLAN.md): when supplied the tree gains the
+    ///     <c>/sim/display/</c> surface (the <c>enabled</c>/<c>fps</c>/<c>width</c>/<c>height</c>/
+    ///     <c>encoding</c> control files and the binary <c>stream</c> feed). Supplied by the game mod,
+    ///     which owns the render-thread capture.
+    /// </param>
+    public static VfsDirectory Build(SnapshotStore store, ICommandSink? commands, Func<string>? transports,
+        DisplaySurface? display = null)
+        => new Builder(store, commands, transports, display).BuildRoot();
 
     private sealed class Builder
     {
         private readonly SnapshotStore _store;
         private readonly ICommandSink? _commands;
         private readonly Func<string>? _transports;
+        private readonly DisplaySurface? _display;
         private readonly ConcurrentDictionary<string, ulong> _qids = new();
         private long _nextQid;
 
-        internal Builder(SnapshotStore store, ICommandSink? commands, Func<string>? transports)
+        internal Builder(SnapshotStore store, ICommandSink? commands, Func<string>? transports,
+            DisplaySurface? display)
         {
             _store = store;
             _commands = commands;
             _transports = transports;
+            _display = display;
         }
 
         internal VfsDirectory BuildRoot()
@@ -105,6 +116,10 @@ public static class SimFsTree
             // The /sim/debug cheat namespace (G-D2): only when a sink is wired and debug is enabled.
             if (_commands is { DebugEnabled: true })
                 children.Add(DebugDir());
+
+            // The screen stream (STREAM_PLAN.md): present whenever a display surface is wired.
+            if (_display is not null)
+                children.Add(DisplayDir());
 
             var fixedChildren = children.ToArray();
             return new DelegateDirectory("/", Qid("/"), () => fixedChildren);
@@ -233,6 +248,63 @@ public static class SimFsTree
                 new StaticTextFile("accessors", Qid("status/accessors"),
                     () => string.Concat(_store.Current.Accessors.Select(a => Formats.AccessorLine(a) + "\n"))),
                 Line("status/transports", "transports", () => _transports?.Invoke() ?? "unknown"));
+
+        // ---- display (the screen stream — STREAM_PLAN.md) --------------------------------
+
+        private VfsDirectory DisplayDir()
+        {
+            var settings = _display!.Settings;
+            return DelegateDirectory.Fixed("display", Qid("display"),
+                DisplaySettingFile.Create("enabled", Qid("display/enabled"),
+                    () => settings.Enabled ? "1" : "0",
+                    tok => ApplyFlag(tok, v => settings.Enabled = v)),
+                DisplaySettingFile.Create("fps", Qid("display/fps"),
+                    () => settings.Fps.ToString(),
+                    tok => ApplyInt(tok, v => settings.Fps = v)),
+                DisplaySettingFile.Create("width", Qid("display/width"),
+                    () => settings.Width.ToString(),
+                    tok => ApplyInt(tok, v => settings.Width = v)),
+                DisplaySettingFile.Create("height", Qid("display/height"),
+                    () => settings.Height.ToString(),
+                    tok => ApplyInt(tok, v => settings.Height = v)),
+                DisplaySettingFile.Create("encoding", Qid("display/encoding"),
+                    () => settings.Encoding.Token(),
+                    tok =>
+                    {
+                        if (DisplayEncodings.Parse(tok) is not { } encoding)
+                            return false;
+                        settings.Encoding = encoding;
+                        return true;
+                    }),
+                Line("display/format", "format",
+                    () => $"{settings.Width}x{settings.Height}@{settings.Fps} {settings.Encoding.Token()}"),
+                new DisplayStreamFile("stream", Qid("display/stream"), _display!));
+        }
+
+        /// <summary>Applies a <c>0</c>/<c>1</c> (or true/false/on/off) token; false = EINVAL.</summary>
+        private static bool ApplyFlag(string token, Action<bool> set)
+        {
+            switch (token.ToLowerInvariant())
+            {
+                case "1" or "true" or "on":
+                    set(true);
+                    return true;
+                case "0" or "false" or "off":
+                    set(false);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>Applies an integer token (the setter clamps the range); false = EINVAL.</summary>
+        private static bool ApplyInt(string token, Action<int> set)
+        {
+            if (!int.TryParse(token, out var value))
+                return false;
+            set(value);
+            return true;
+        }
 
         // ---- vessels ---------------------------------------------------------------------
 
