@@ -6,7 +6,7 @@ namespace gatOS.Vm;
 /// <summary>
 ///     The parsed <c>manifest.toml</c> produced by the guest image pipeline (OS_PLAN.md T2.3) —
 ///     the host↔guest boot contract: which artifacts to boot, the kernel command line, how to
-///     SSH in, and the pinned dropbear host key.
+///     SSH in, and the pinned OpenSSH host key.
 /// </summary>
 /// <param name="GuestVersion">The guest release number (matches <c>guest/GUEST_VERSION</c>).</param>
 /// <param name="AlpineVersion">The Alpine release the image was built from (informational).</param>
@@ -17,8 +17,9 @@ namespace gatOS.Vm;
 /// <param name="SshUser">Guest user to SSH in as.</param>
 /// <param name="SshKey">Private key artifact filename, relative to the manifest.</param>
 /// <param name="HostKeySha256">
-///     Pin for the guest's dropbear host key: lowercase sha256 hex of the raw ssh-ed25519 public
-///     key blob (exactly what SSH.NET's <c>HostKeyReceived.HostKey</c> hashes to).
+///     Pin for the guest's SSH host key: lowercase sha256 hex of the raw ssh-ed25519 public
+///     key blob (exactly what SSH.NET's <c>HostKeyReceived.HostKey</c> hashes to). The value is
+///     independent of which SSH server presents the key — the wire blob is the same ed25519 key.
 /// </param>
 public sealed record GuestManifest(
     int GuestVersion,

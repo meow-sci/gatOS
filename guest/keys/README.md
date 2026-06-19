@@ -6,7 +6,7 @@ guest version**. They are intentionally public.
 | File | What it is |
 |---|---|
 | `id_ed25519`, `id_ed25519.pub` | the **session keypair**. The host (`gatOS.Ssh`) authenticates as `root` with the private key; the public half is baked into the guest's `root` `authorized_keys`. |
-| `host_ed25519`, `host_ed25519.pub` | the guest's **SSH host key**, in OpenSSH format. `build-image.sh` converts the private key to dropbear's own format with `dropbearconvert` and bakes it as the dropbear host key. The host pins `sha256(raw ed25519 pubkey blob)` of this key (D8). |
+| `host_ed25519`, `host_ed25519.pub` | the guest's **SSH host key**, in OpenSSH format. `build-image.sh` bakes the private key directly as OpenSSH `sshd`'s host key (`/etc/ssh/ssh_host_ed25519_key`) — no conversion needed. The host pins `sha256(raw ed25519 pubkey blob)` of this key (D8). |
 
 ## Why static keys?
 

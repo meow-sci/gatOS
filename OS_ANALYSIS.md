@@ -227,6 +227,11 @@ Confirmed from the [QEMU networking docs](https://www.qemu.org/docs/master/syste
 
 ### 3.5 Terminal sessions: dropbear + SSH.NET (and why not serial consoles)
 
+> **Update (guest v12):** the guest SSH **server** was swapped from dropbear to OpenSSH `sshd` so
+> gatOS behaves like a normal Linux box (full OpenSSH client/server toolchain). The host side
+> (SSH.NET, the pinned ed25519 host key, the manifest pin) is unchanged — see `OPENSSH_PLAN.md`.
+> The analysis below records the original dropbear rationale.
+
 **The naive plan (virtio-serial consoles + getty) has a fatal UX flaw: resize.** Serial/virtconsole
 has no window-size channel — the guest TTY never gets `TIOCSWINSZ`, so every full-screen TUI
 renders at 80×24 regardless of the purrTTY window. The virtio spec has `VIRTIO_CONSOLE_F_SIZE` and

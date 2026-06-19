@@ -45,5 +45,5 @@ milestones land; entries marked *(planned)* are not bundled yet.
 - **Path in repo:** `guest/` (build pipeline; built artifacts NOT committed)
 - **Upstream:** https://www.alpinelinux.org/
 - **License:** Alpine packages carry their own licenses (kernel = GPLv2, busybox = GPLv2, musl =
-  MIT, dropbear = MIT-style, …). Obligation: mirror the sources for the pinned versions of the GPL
+  MIT, OpenSSH = BSD, …). Obligation: mirror the sources for the pinned versions of the GPL
   components shipped in the image.

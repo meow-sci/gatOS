@@ -221,7 +221,7 @@ client), plus `gatOS.Vm`/`gatOS.Ssh` for its in-VM integration fixture.
 KSA game process                                          QEMU subprocess
 ┌──────────────────────────────────────────────┐         ┌──────────────────────────────┐
 │ purrTTY mod (stock — M5 landed upstream)     │         │ Alpine guest (hostname gatos)│
-│   TerminalWindow tabs                        │         │   dropbear sshd :22           │
+│   TerminalWindow tabs                        │         │   OpenSSH sshd :22            │
 │      ▲ ICustomShell                          │  slirp  │   ash/bash, apk, …            │
 │ gatOS mod                                   │         │   /sim ← mount -t 9p tcp      │
 │   SshShellSession ──SSH.NET──────────────────┼─127.0.0.1:<pSsh>──► hostfwd → :22       │

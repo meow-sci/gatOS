@@ -31,7 +31,7 @@ The spike's throwaway code was deleted when M2 landed (per plan).
 
 `guest/build-image.sh` reproducibly builds the guest from pinned Alpine 3.24 mirrors — no
 setup-alpine, no openrc; busybox init runs the hand-written `guest/rootfs-overlay/`:
-- Static slirp net 10.0.2.15, dropbear key-only, qemu-ga via wrapper
+- Static slirp net 10.0.2.15, OpenSSH `sshd` key-only root login, qemu-ga via wrapper
 - `sim-mount`: 9p supervisor driven by `gatos.simport=<port>` kernel cmdline (0/absent = idle)
 - `mnt-mount`: parallel supervisor for host folder mounts — `gatos.mntport=<port>` mounts `/mnt`
   once (**guest v10+**)
@@ -43,8 +43,8 @@ The base stays small (`DISK_SIZE_MB`, 1.5 GiB); the host grows the per-save over
 `base.qcow2` (zstd qcow2), `vmlinuz-virt`, trimmed `initramfs-virt` (`features="base virtio
 ext4"`), `manifest.toml` (the host boot contract: kernel cmdline, ssh user/key, host-key pin =
 sha256 hex of the raw key blob), the **static committed** ed25519 session keypair (the SSH keys
-live in `guest/keys/` and are reused by every build/version — the dropbear host key is
-`dropbearconvert`ed from the committed OpenSSH key — so the host-key pin never drifts across
+live in `guest/keys/` and are reused by every build/version — the committed OpenSSH ed25519 key is
+baked directly as `sshd`'s host key, no conversion — so the host-key pin never drifts across
 rebuilds; loopback-only access makes the committed keys safe), `sha256sums.txt`.
 
 Build needs root on Linux (macOS dev: Docker; both documented in `guest/README.md`); a built-in

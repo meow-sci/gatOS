@@ -1,0 +1,28 @@
+# gatOS guest sshd — the SSH entry point purrTTY connects to, over a loopback-only
+# QEMU hostfwd (127.0.0.1:<random>-:22). Key-only root login; the host pins this
+# ed25519 host key by sha256 of its public-key blob (manifest host_key_sha256). The
+# image is reachable only on loopback, so the committed static keys carry no real
+# authority (see guest/keys/README.md). Players wanting a general-purpose sshd for
+# their own connections can run a second instance on another port.
+
+Port 22
+AddressFamily inet
+ListenAddress 0.0.0.0
+
+# Only the committed ed25519 host key is shipped (no rsa/ecdsa, none generated at
+# boot), so the host key sshd presents always matches the manifest pin.
+HostKey /etc/ssh/ssh_host_ed25519_key
+
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+AuthenticationMethods publickey
+UsePAM no
+
+# The gatOS login banner is printed by /etc/profile.d/zz-gatos-banner.sh for
+# interactive logins; keep sshd quiet (no pre-auth Banner, no motd) so non-interactive
+# `ssh host cmd` health probes stay clean — matching the previous dropbear behavior.
+PrintMotd no
+
+Subsystem sftp /usr/lib/ssh/sftp-server

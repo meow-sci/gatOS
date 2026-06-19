@@ -11,7 +11,7 @@ runtime shape of the running system and how to tune the telemetry pipeline.
 KSA game process                                          QEMU subprocess
 ┌──────────────────────────────────────────────┐         ┌──────────────────────────────┐
 │ purrTTY mod (stock — M5 landed upstream)     │         │ Alpine guest (hostname gatos)│
-│   TerminalWindow tabs                        │         │   dropbear sshd :22           │
+│   TerminalWindow tabs                        │         │   OpenSSH sshd :22            │
 │      ▲ ICustomShell                          │  slirp  │   ash/bash, apk, …            │
 │ gatOS mod                                   │         │   /sim ← mount -t 9p tcp      │
 │   SshShellSession ──SSH.NET──────────────────┼─127.0.0.1:<pSsh>──► hostfwd → :22       │
@@ -32,7 +32,7 @@ cmdline via `QemuCommandBuilder`:
 
 | Port purpose | Cmdline param | Guest side |
 |---|---|---|
-| SSH (hostfwd to dropbear :22) | built into `-netdev` hostfwd | dropbear |
+| SSH (hostfwd to sshd :22) | built into `-netdev` hostfwd | OpenSSH `sshd` |
 | 9P `/sim` server | `gatos.simport=<port>` | `sim-mount` supervisor |
 | 9P `/mnt` server | `gatos.mntport=<port>` (0 = idle) | `mnt-mount` supervisor |
 | HTTP `/v1` server | `gatos.httpport=<port>` | guest env `$GATOS_HTTP` |

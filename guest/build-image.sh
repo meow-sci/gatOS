@@ -9,7 +9,7 @@
 #   manifest.toml             everything the host (gatOS.Vm) needs to boot it
 #   id_ed25519 / .pub         the STATIC committed session keypair (guest/keys/), the
 #                             pubkey baked into root's authorized_keys (D8)
-#   host_key_fingerprint.txt  sha256 hex of the dropbear host key blob (D8 pinning);
+#   host_key_fingerprint.txt  sha256 hex of the ssh-ed25519 host public-key blob (D8 pinning);
 #                             stable across builds since the host key is committed too
 #   sha256sums.txt            checksums of all of the above
 #
@@ -47,8 +47,9 @@ ALPINE_KEYS_SHA256=dd211936d544f4050924ce8aec078d24e7b1b036ae70b30bd07867349587c
 # ext4 online to fill a host-resized overlay (config disk_size_gb). The base image
 # stays small (DISK_SIZE_MB); the per-save overlay is what the host grows.
 GUEST_PACKAGES="alpine-baselayout alpine-release busybox busybox-suid musl musl-utils
-                alpine-keys apk-tools linux-virt dropbear dropbear-scp dropbear-convert
-                openssh-sftp-server qemu-guest-agent ca-certificates
+                alpine-keys apk-tools linux-virt
+                openssh openssh-server openssh-client openssh-keygen openssh-sftp-server
+                qemu-guest-agent ca-certificates
                 e2fsprogs e2fsprogs-extra
                 mandoc man-pages bash zsh shadow vim neovim less curl wget git coreutils
                 libstdc++"
@@ -178,14 +179,15 @@ emit_art() { tr -d '\r' < "$1" >> "$2"; [ -z "$(tail -c1 -- "$1")" ] || printf '
 
 install_keys() {
     # The SSH keys are STATIC and committed under guest/keys/ — every build (and every
-    # guest version) bakes the same session keypair + dropbear host key, so the host-key
+    # guest version) bakes the same session keypair + OpenSSH host key, so the host-key
     # pin never drifts and a re-keyed rebuild can never desync from an installed base
     # image (D8; see guest/keys/README.md). This is safe: the guest is reachable only
     # over a loopback-only hostfwd, so the keys carry no real-world authority.
     log "installing committed static SSH keys (guest/keys/)"
     local keys="$SCRIPT_DIR/keys"
-    [ -f "$keys/id_ed25519" ] && [ -f "$keys/id_ed25519.pub" ] && [ -f "$keys/host_ed25519" ] \
-        || die "missing committed keys under $keys (expected id_ed25519[.pub] + host_ed25519)"
+    [ -f "$keys/id_ed25519" ] && [ -f "$keys/id_ed25519.pub" ] \
+        && [ -f "$keys/host_ed25519" ] && [ -f "$keys/host_ed25519.pub" ] \
+        || die "missing committed keys under $keys (expected id_ed25519[.pub] + host_ed25519[.pub])"
 
     # Session keypair: the host authenticates as root with the private key; the public
     # half is root's authorized_keys. The private key ships in out/ for the host side.
@@ -195,24 +197,33 @@ install_keys() {
     install -D -m 0600 -o root -g root "$keys/id_ed25519.pub" "$ROOTFS/root/.ssh/authorized_keys"
     chmod 0700 "$ROOTFS/root/.ssh"; chmod 0700 "$ROOTFS/root"
 
-    # Dropbear host key: convert the committed OpenSSH ed25519 host key into dropbear's
-    # own key format (dropbear cannot read OpenSSH host keys directly).
-    mkdir -p "$ROOTFS/etc/dropbear" "$ROOTFS/tmp"
-    install -m 0600 "$keys/host_ed25519" "$ROOTFS/tmp/host_ed25519.openssh"
-    chroot "$ROOTFS" /usr/bin/dropbearconvert openssh dropbear \
-        /tmp/host_ed25519.openssh /etc/dropbear/dropbear_ed25519_host_key >/dev/null 2>&1 \
-        || die "dropbearconvert could not import guest/keys/host_ed25519 (need the dropbear-convert package)"
-    rm -f "$ROOTFS/tmp/host_ed25519.openssh"
+    # OpenSSH host key: the committed key is already in OpenSSH format, so bake it
+    # directly as sshd's ed25519 host key — no conversion. sshd_config (rootfs-overlay)
+    # pins exactly this key (HostKey /etc/ssh/ssh_host_ed25519_key) so the only host key
+    # sshd ever presents is the one the manifest pins.
+    install -D -m 0600 -o root -g root "$keys/host_ed25519"     "$ROOTFS/etc/ssh/ssh_host_ed25519_key"
+    install -D -m 0644 -o root -g root "$keys/host_ed25519.pub" "$ROOTFS/etc/ssh/ssh_host_ed25519_key.pub"
 
     # Pin format (D8, consumed by gatOS.Ssh host-key verification in M4): sha256 hex of
-    # the raw ssh-ed25519 public key blob. Derive it from the key actually baked in, which
-    # cross-checks the conversion (a bad convert would change the blob and fail the smoke test).
+    # the raw ssh-ed25519 public key blob — exactly what SSH.NET's HostKeyReceived.HostKey
+    # hashes to, and identical whichever SSH server presents the key. Derived straight from
+    # the committed public key; the smoke test re-scans the live host key and re-checks it.
     local blob
-    blob="$(chroot "$ROOTFS" /usr/bin/dropbearkey -y -f /etc/dropbear/dropbear_ed25519_host_key \
-            | grep '^ssh-ed25519 ' | awk '{print $2}')"
-    [ -n "$blob" ] || die "could not read back the dropbear host public key"
+    blob="$(awk '{print $2}' "$keys/host_ed25519.pub")"
+    [ -n "$blob" ] || die "could not read the ssh-ed25519 blob from $keys/host_ed25519.pub"
     HOST_KEY_SHA256="$(sha256_hex_of_b64 "$blob")"
     echo "$HOST_KEY_SHA256" > "$OUT/host_key_fingerprint.txt"
+
+    # OpenSSH privilege separation: sshd refuses to start unless /var/empty exists
+    # (root:root, 0755, empty) and the 'sshd' privsep user exists. openssh-server's
+    # install script creates both; guarantee + assert it here so a packaging change can
+    # never become a silent boot failure. Then validate the baked sshd_config + host key
+    # end-to-end (sshd -t parses the config and checks the HostKey loads).
+    install -d -m 0755 -o root -g root "$ROOTFS/var/empty"
+    grep -q '^sshd:' "$ROOTFS/etc/passwd" \
+        || die "openssh-server did not create the 'sshd' privsep user"
+    chroot "$ROOTFS" /usr/sbin/sshd -t -f /etc/ssh/sshd_config \
+        || die "sshd -t rejected the baked /etc/ssh/sshd_config"
 }
 
 # ------------------------------------------------------------------ T2.3 stage

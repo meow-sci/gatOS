@@ -24,7 +24,8 @@ Architecture/background: `OS_ANALYSIS.md` §3.8; task specs: `OS_PLAN.md` M2; ha
 
 The guest is deliberately tiny: **no openrc** — busybox init runs `rootfs-overlay/etc/inittab`,
 which supervises exactly five things: `init-gatos` (sysinit: mounts, static slirp network
-10.0.2.15/gw 10.0.2.2, device nodes), dropbear (`-s`, key-only), `qga-gatos` (qemu-guest-agent once
+10.0.2.15/gw 10.0.2.2, device nodes), OpenSSH `sshd` (`-D -e`, key-only root login via
+`/etc/ssh/sshd_config`), `qga-gatos` (qemu-guest-agent once
 its virtio-serial port appears), `sim-mount` (the 9p `/sim` remount supervisor — reads
 `gatos.simport=<port>` from the kernel cmdline; absent or `0` means no 9p server, it idles), and
 `mnt-mount` (the parallel supervisor for host folder mounts — reads `gatos.mntport=<port>` and mounts

@@ -10,7 +10,7 @@ namespace gatOS.Ssh;
 ///     The one broker per process that owns the shared <see cref="Vm.VmHost"/> and hands out SSH
 ///     connections into the guest (OS_PLAN.md T4.1). Each call to <see cref="ConnectAsync"/> boots
 ///     the VM if needed and returns a <b>new</b> connected <see cref="SshClient"/> — one client
-///     per session keeps channel handling simple and matches dropbear's per-connection model.
+///     per session keeps channel handling simple and matches sshd's per-connection model.
 /// </summary>
 /// <remarks>
 ///     The host key presented by the guest is pinned against the manifest fingerprint
@@ -47,7 +47,7 @@ public sealed class VmConnectionBroker(VmHost vmHost) : IShellBroker, IAsyncDisp
         }
         catch (Exception ex) when (IsConnectionRefused(ex))
         {
-            // The readiness probe saw the SSH banner, but dropbear can drop one connection
+            // The readiness probe saw the SSH banner, but sshd can drop one connection
             // while it forks per-client — a single short retry covers it.
             ModLog.Log.Warn("SSH connection refused right after readiness; retrying once.");
             await Task.Delay(RefusedRetryDelay, ct);
