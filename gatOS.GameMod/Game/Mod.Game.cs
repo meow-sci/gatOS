@@ -223,7 +223,7 @@ public sealed partial class Mod
 
         try
         {
-            _frameCapture ??= new FrameCapture();
+            _frameCapture ??= new FrameCapture(Config.DisplayProbe);
             _frameCapture.TryCapture(dt, surface);
         }
         catch (Exception ex)

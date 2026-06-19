@@ -99,6 +99,7 @@ public sealed class GatOsConfig
             ("display_width", "Downscale target width in pixels (clamped 16..1920)."),
             ("display_height", "Downscale target height in pixels (clamped 16..1920)."),
             ("display_encoding", "Frame wire encoding: rgba-zlib (default) | rgba."),
+            ("display_probe", "Capture diagnostic (0 = normal; 1 = bare GPU submit; 2 = synthetic, no GPU)."),
         }),
     };
 
@@ -234,6 +235,13 @@ public sealed class GatOsConfig
 
     /// <summary>Boot seed for the frame wire encoding: <c>rgba-zlib</c> (default) | <c>rgba</c>.</summary>
     public string DisplayEncoding { get; set; } = "rgba-zlib";
+
+    /// <summary>
+    ///     Diagnostic probe for the capture path (default 0 = normal). 1 = bare empty GPU submit (no
+    ///     image touched); 2 = synthetic gradient, no GPU at all. Used to isolate the in-game capture
+    ///     crash; leave at 0 for normal use. See <c>Game/Ksa/FrameCapture.cs</c>.
+    /// </summary>
+    public int DisplayProbe { get; set; }
 
     // ---- MOUNTS: host folders shared into the guest under /mnt/<name>. ----
 
@@ -436,6 +444,7 @@ public sealed class GatOsConfig
         DisplayFps = Clamp(nameof(DisplayFps), DisplayFps, 1, 60);
         DisplayWidth = Clamp(nameof(DisplayWidth), DisplayWidth, 16, 1920);
         DisplayHeight = Clamp(nameof(DisplayHeight), DisplayHeight, 16, 1920);
+        DisplayProbe = Clamp(nameof(DisplayProbe), DisplayProbe, 0, 2);
 
         var displayEncoding = DisplayEncoding.Trim().ToLowerInvariant();
         if (displayEncoding is not ("rgba-zlib" or "rgba"))

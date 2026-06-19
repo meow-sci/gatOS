@@ -15,24 +15,19 @@ namespace gatOS.GameMod.Game.Ksa;
 ///     <see cref="DisplaySurface"/> (which encodes + serves them over <c>/sim/display/stream</c>).
 /// </summary>
 /// <remarks>
-///     <para><b>Why the offscreen target.</b> <c>Program.MainViewport.OffscreenTarget</c> is the
-///     post-resolve scene color image (no UI), reachable through public API with no reflection. Its
-///     render pass leaves it in <see cref="VkImageLayout.ShaderReadOnlyOptimal"/> (RenderTarget.cs:75)
-///     and re-enters from <see cref="VkImageLayout.Undefined"/> each frame (line 74), so the transient
-///     transition this capture does — restored before it returns — is invisible to the engine.</para>
-///     <para><b>Why a GPU blit first.</b> Reading back the full-res image every frame would move tens
-///     of MB/s over PCIe; <c>vkCmdBlitImage</c> (linear) resamples into a small reusable image first,
-///     so only the downscaled bytes are read back. The blit also converts the HDR
-///     <c>R16G16B16A16_SFLOAT</c> scene format to <c>B8G8R8A8_UNORM</c> (pre-tonemap — bright areas
-///     clamp; an in-game validation item).</para>
-///     <para><b>Threading.</b> Driven only from the game/render thread (gatOS rule 1); the submit is
-///     synchronous (StagingPool waits on a fence), so it briefly stalls the GPU. Engine types (the
-///     renderer + allocator) are reached by inference + interface constraints, never named — their
-///     assemblies are only transitively visible to gatOS.</para>
-///     <para><b>Crash trace.</b> The GPU work runs in native code, so a fault there is a process crash,
-///     not a managed exception. Every phase is written (flushed) to
+///     <para><b>Crash trace + probe ladder.</b> The GPU work runs in native code, so a fault there is
+///     a process crash, not a managed exception. Every phase is written (flushed) to
 ///     <c>&lt;LogsDir&gt;/display-capture.log</c> so the last line before a crash localizes the
-///     faulting step. See <see cref="Trace"/>.</para>
+///     faulting step. The <c>display_probe</c> config knob isolates the cause:
+///     <list type="bullet">
+///         <item><b>0</b> — the real capture (blit + readback of the live offscreen).</item>
+///         <item><b>1</b> — <c>WaitIdle</c> + an <i>empty</i> command-buffer submit (nothing touches the
+///             offscreen). If this still crashes, the bare out-of-band submit is the cause.</item>
+///         <item><b>2</b> — a synthetic moving gradient, no GPU at all. Proves the encode → stream →
+///             terminal path renders without any capture.</item>
+///     </list></para>
+///     <para>Engine types (the renderer + allocator) are reached by inference + interface constraints,
+///     never named — their assemblies are only transitively visible to gatOS.</para>
 /// </remarks>
 internal sealed class FrameCapture : IDisposable
 {
@@ -47,9 +42,14 @@ internal sealed class FrameCapture : IDisposable
     private double _sinceLastCapture;
     private bool _disposed;
 
+    private readonly int _probe;
+    private byte[] _synthetic = [];
     private long _frame;
     private TextWriter? _trace;
     private bool _traceFailed;
+
+    /// <param name="probe">Diagnostic mode (0 = real capture; 1 = bare submit; 2 = synthetic only).</param>
+    public FrameCapture(int probe = 0) => _probe = probe;
 
     /// <summary>
     ///     Captures one frame if the stream is enabled, has a reader, and the per-frame throttle has
@@ -84,9 +84,17 @@ internal sealed class FrameCapture : IDisposable
     private void Capture(int targetW, int targetH, DisplaySurface surface)
     {
         var frame = ++_frame;
-        Trace($"frame {frame}: begin (target {targetW}x{targetH})");
+        Trace($"frame {frame}: begin (target {targetW}x{targetH}, probe={_probe})");
         try
         {
+            // PROBE 2: no GPU at all — prove the encode → stream → terminal path renders.
+            if (_probe == 2)
+            {
+                SubmitSynthetic(targetW, targetH, surface, frame);
+                Trace($"frame {frame}: probe2 (synthetic) done");
+                return;
+            }
+
             var renderer = Program.GetRenderer();
             if (renderer is null)
             {
@@ -94,6 +102,32 @@ internal sealed class FrameCapture : IDisposable
                 return;
             }
 
+            var allocator = renderer.Allocator;
+
+            Trace($"frame {frame}: device wait idle (drain engine work)");
+            renderer.Device.WaitIdle();
+            Trace($"frame {frame}: device idle");
+
+            // PROBE 1: WaitIdle + an empty command-buffer submit. Nothing touches the offscreen, so
+            // if this still crashes the engine, the bare out-of-band submit is the cause.
+            if (_probe == 1)
+            {
+                Trace($"frame {frame}: PROBE 1 — empty command buffer");
+                using (var pool = allocator.CreateStagingPool(renderer.GraphicsAndCompute, 1))
+                {
+                    var cb = pool.NextCommandBuffer();
+                    cb.Begin(VkCommandBufferUsageFlags.OneTimeSubmitBit);
+                    cb.End();
+                    Trace($"frame {frame}: empty recorded; SUBMIT+WAIT (GPU)");
+                }
+
+                Trace($"frame {frame}: empty submit returned");
+                SubmitSynthetic(targetW, targetH, surface, frame);
+                Trace($"frame {frame}: probe1 done");
+                return;
+            }
+
+            // PROBE 0: the real capture.
             if (Program.MainViewport?.OffscreenTarget is not { } offscreen)
             {
                 Trace($"frame {frame}: no offscreen target — skip");
@@ -109,8 +143,6 @@ internal sealed class FrameCapture : IDisposable
             }
 
             Trace($"frame {frame}: src {srcExtent.Width}x{srcExtent.Height} fmt={offscreen.ColorImage.Format}");
-
-            var allocator = renderer.Allocator;
             EnsureResources(allocator, targetW, targetH);
             var dstImage = _scratch.VkImage;
             Trace($"frame {frame}: resources ready (scratch {_scratchW}x{_scratchH}, staging {_stagingBytes} B)");
@@ -123,15 +155,6 @@ internal sealed class FrameCapture : IDisposable
                 BaseArrayLayer = 0,
                 LayerCount = 1,
             };
-
-            // Drain the engine's in-flight GPU work before we touch its live offscreen image and
-            // submit out-of-band — exactly what KSA's own PlanetMapExporter readback does
-            // (PlanetMapExporter.cs:1618). Without this, the separate submit destabilizes the engine's
-            // next frame. WaitIdle throws a managed VkResultError (e.g. DEVICE_LOST) on failure, so a
-            // fault here is caught and logged rather than crashing silently.
-            Trace($"frame {frame}: device wait idle (drain engine work)");
-            renderer.Device.WaitIdle();
-            Trace($"frame {frame}: device idle");
 
             Trace($"frame {frame}: creating staging pool");
             using (var pool = allocator.CreateStagingPool(renderer.GraphicsAndCompute, 1))
@@ -215,6 +238,26 @@ internal sealed class FrameCapture : IDisposable
         }
     }
 
+    /// <summary>Feeds the surface a synthetic moving gradient (BGRA) — no GPU, for the probe ladder.</summary>
+    private void SubmitSynthetic(int w, int h, DisplaySurface surface, long frame)
+    {
+        var need = w * h * 4;
+        if (_synthetic.Length != need)
+            _synthetic = new byte[need];
+        var t = (byte)(frame * 4);
+        for (var y = 0; y < h; y++)
+        for (var x = 0; x < w; x++)
+        {
+            var i = (y * w + x) * 4;
+            _synthetic[i] = (byte)(x * 255 / w);     // B
+            _synthetic[i + 1] = (byte)(y * 255 / h); // G
+            _synthetic[i + 2] = t;                   // R (animates frame to frame)
+            _synthetic[i + 3] = 255;                 // A
+        }
+
+        surface.SubmitFrame(w, h, _synthetic);
+    }
+
     // Generic on the allocator: the concrete KSA allocator type lives in an assembly gatOS does not
     // reference directly (only its Brutal.VulkanApi.Abstractions interfaces are nameable here), so the
     // type is reached by inference + these interface constraints rather than by name.
@@ -296,7 +339,7 @@ internal sealed class FrameCapture : IDisposable
                 var path = Path.Combine(GatOsPaths.LogsDir, "display-capture.log");
                 _trace = new StreamWriter(
                     new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = true };
-                _trace.WriteLine($"=== display capture session {DateTime.UtcNow:O} ===");
+                _trace.WriteLine($"=== display capture session {DateTime.UtcNow:O} (probe={_probe}) ===");
             }
 
             _trace.WriteLine($"{DateTime.UtcNow:HH:mm:ss.fff} tid={Environment.CurrentManagedThreadId} {message}");
