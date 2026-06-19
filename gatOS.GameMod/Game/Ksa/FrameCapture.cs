@@ -7,6 +7,7 @@ using gatOS.Logging;
 using gatOS.SimFs.Display;
 using gatOS.Vm;
 using KSA;
+using KSA.Rendering;
 
 namespace gatOS.GameMod.Game.Ksa;
 
@@ -58,6 +59,7 @@ internal sealed class FrameCapture : IDisposable
     private bool _traceFailed;
     private bool _loggedRecord;
     private bool _loggedReadback;
+    private long _captureCount;
 
     /// <summary>
     ///     Entry point from the render hook (<see cref="DisplayRenderPatch"/>): if the per-FPS throttle
@@ -68,11 +70,13 @@ internal sealed class FrameCapture : IDisposable
     /// </summary>
     [KsaAnchor("Program.GetRenderer(), Program.MainViewport.OffscreenTarget.ColorImage/.Extent, "
                + "Renderer.Allocator/.MaxFramesInFlight, Program.ResourceFrameIndex; Allocator.CreateImage/"
-               + "CreateBuffer, CommandBuffer.PipelineBarrier/BlitImage/CopyImageToBuffer, BufferEx.Map",
+               + "CreateBuffer, CommandBufferEx.TransitionImages2 + ImageBarrierInfo.Presets + ImageTransition, "
+               + "CommandBuffer.BlitImage/CopyImageToBuffer, BufferEx.Map",
         SourceFile = "KSA/Program.cs", Verified = "2026-06-19", Risk = ChurnRisk.Medium,
-        Notes = "In-band capture recorded into the engine's frame command buffer; mirrors KSA/PlanetMapExporter.cs "
-                + "readback. The offscreen ColorImage is ShaderReadOnlyOptimal (SampledReadVfc) at RenderGame's end "
-                + "(Program.cs:4125) and is restored. Deferred readback via frames-in-flight slot reuse (no fence wait).")]
+        Notes = "In-band capture recorded into the engine's frame command buffer. The offscreen is moved with the "
+                + "engine's OWN sync2 TransitionImages2 + ImageBarrierInfo.Presets (SampledReadVfc<->TransferSrc) so "
+                + "there is no sync1/sync2 mixing on the shared image; restored to SampledReadVfc as the engine left "
+                + "it (Program.cs:4125). Deferred readback via frames-in-flight slot reuse (no fence wait).")]
     public void MaybeRecord(Program program, CommandBuffer cb, DisplaySurface surface)
     {
         var settings = surface.Settings;
@@ -131,11 +135,16 @@ internal sealed class FrameCapture : IDisposable
         // 3) Record the downscale-blit + copy-to-host into the engine's command buffer.
         RecordCopy(cb, idx, srcImage, srcW, srcH, targetW, targetH);
         _pending[idx] = true;
+        _captureCount++;
 
         if (!_loggedRecord)
         {
             _loggedRecord = true;
             Trace($"first capture recorded (slot {idx}/{_slots}, src {srcW}x{srcH} -> {targetW}x{targetH})");
+        }
+        else if (_captureCount % 30 == 0)
+        {
+            Trace($"heartbeat: {_captureCount} captures recorded (slot {idx})");
         }
     }
 
@@ -198,33 +207,23 @@ internal sealed class FrameCapture : IDisposable
     }
 
     /// <summary>
-    ///     Records the capture into the engine's command buffer: barrier the offscreen scene to a
+    ///     Records the capture into the engine's command buffer: transition the offscreen scene to a
     ///     transfer source, downscale-blit it into the slot's scratch image, copy that to the slot's
-    ///     host buffer, and <b>restore</b> the offscreen to <c>ShaderReadOnlyOptimal</c> so the engine
-    ///     finds it exactly as it left it (sync1 barriers, mirroring KSA's PlanetMapExporter).
+    ///     host buffer, and <b>restore</b> the offscreen to <c>SampledReadVfc</c> so the engine finds
+    ///     it exactly as it left it. The offscreen is moved with the engine's <b>own</b> sync2
+    ///     <see cref="CommandBufferEx.TransitionImages2"/> + <c>ImageBarrierInfo.Presets</c> — the same
+    ///     mechanism and scopes the engine uses on this shared image, so there is no sync1/sync2 mixing.
     /// </summary>
     private void RecordCopy(CommandBuffer cb, int idx, VkImage srcImage, int srcW, int srcH, int targetW, int targetH)
     {
         var dstImage = _scratch[idx].VkImage;
-        var range = new VkImageSubresourceRange
-        {
-            AspectMask = VkImageAspectFlags.ColorBit,
-            BaseMipLevel = 0,
-            LevelCount = 1,
-            BaseArrayLayer = 0,
-            LayerCount = 1,
-        };
 
-        // offscreen scene: ShaderReadOnly -> TransferSrc. Src stage is AllCommands (not just the
-        // composite's fragment-shader read): the offscreen was produced by the whole frame, so this
-        // also guarantees the transfer sees a fully-rendered image and never under-synchronizes.
-        Barrier(cb, srcImage, range, VkImageLayout.ShaderReadOnlyOptimal, VkImageLayout.TransferSrcOptimal,
-            VkAccessFlags.ShaderReadBit, VkAccessFlags.TransferReadBit,
-            VkPipelineStageFlags.AllCommandsBit, VkPipelineStageFlags.TransferBit);
-        // scratch: Undefined -> TransferDst.
-        Barrier(cb, dstImage, range, VkImageLayout.Undefined, VkImageLayout.TransferDstOptimal,
-            VkAccessFlags.None, VkAccessFlags.TransferWriteBit,
-            VkPipelineStageFlags.TopOfPipeBit, VkPipelineStageFlags.TransferBit);
+        // offscreen: SampledReadVfc (ShaderReadOnly) -> TransferSrc; scratch: Undefined -> TransferDst.
+        cb.TransitionImages2(new[]
+        {
+            new ImageTransition(srcImage, ImageBarrierInfo.Presets.SampledReadVfc, ImageBarrierInfo.Presets.TransferSrc),
+            new ImageTransition(dstImage, ImageBarrierInfo.Presets.Undefined, ImageBarrierInfo.Presets.TransferDst),
+        });
 
         // GPU downscale: full-res scene -> small scratch (linear filter, same format).
         var blit = new VkImageBlit
@@ -242,9 +241,10 @@ internal sealed class FrameCapture : IDisposable
             new[] { blit }, VkFilter.Linear);
 
         // scratch: TransferDst -> TransferSrc, then copy to the host buffer.
-        Barrier(cb, dstImage, range, VkImageLayout.TransferDstOptimal, VkImageLayout.TransferSrcOptimal,
-            VkAccessFlags.TransferWriteBit, VkAccessFlags.TransferReadBit,
-            VkPipelineStageFlags.TransferBit, VkPipelineStageFlags.TransferBit);
+        cb.TransitionImages2(new[]
+        {
+            new ImageTransition(dstImage, ImageBarrierInfo.Presets.TransferDst, ImageBarrierInfo.Presets.TransferSrc),
+        });
         var region = new VkBufferImageCopy
         {
             BufferOffset = ByteSize.Zero,
@@ -257,11 +257,11 @@ internal sealed class FrameCapture : IDisposable
         };
         cb.CopyImageToBuffer(dstImage, VkImageLayout.TransferSrcOptimal, _staging[idx].VkBuffer, new[] { region });
 
-        // offscreen scene: TransferSrc -> ShaderReadOnly (restore the engine's expected end-of-frame
-        // layout). Dst stage is AllCommands so the restore is ordered before any later use of the image.
-        Barrier(cb, srcImage, range, VkImageLayout.TransferSrcOptimal, VkImageLayout.ShaderReadOnlyOptimal,
-            VkAccessFlags.TransferReadBit, VkAccessFlags.ShaderReadBit,
-            VkPipelineStageFlags.TransferBit, VkPipelineStageFlags.AllCommandsBit);
+        // offscreen: TransferSrc -> SampledReadVfc (restore the engine's expected end-of-frame layout).
+        cb.TransitionImages2(new[]
+        {
+            new ImageTransition(srcImage, ImageBarrierInfo.Presets.TransferSrc, ImageBarrierInfo.Presets.SampledReadVfc),
+        });
     }
 
     /// <summary>
@@ -306,24 +306,6 @@ internal sealed class FrameCapture : IDisposable
 
     /// <summary>Clamps an HDR channel to [0,1] and quantizes to a byte.</summary>
     private static byte ToByte(float v) => (byte)(Math.Clamp(v, 0f, 1f) * 255f + 0.5f);
-
-    private static void Barrier(CommandBuffer cb, VkImage image, VkImageSubresourceRange range,
-        VkImageLayout oldLayout, VkImageLayout newLayout, VkAccessFlags srcAccess, VkAccessFlags dstAccess,
-        VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage)
-    {
-        var barrier = new VkImageMemoryBarrier
-        {
-            OldLayout = oldLayout,
-            NewLayout = newLayout,
-            Image = image,
-            SubresourceRange = range,
-            SrcAccessMask = srcAccess,
-            DstAccessMask = dstAccess,
-        };
-        cb.PipelineBarrier(srcStage, dstStage, VkDependencyFlags.None,
-            default(ReadOnlySpan<VkMemoryBarrier>), default(ReadOnlySpan<VkBufferMemoryBarrier>),
-            new VkImageMemoryBarrier[1] { barrier });
-    }
 
     /// <summary>
     ///     Appends one flushed line to <c>&lt;LogsDir&gt;/display-capture.log</c>. Crash-resilient
