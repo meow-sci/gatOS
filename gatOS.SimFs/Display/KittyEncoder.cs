@@ -10,17 +10,33 @@ namespace gatOS.SimFs.Display;
 /// </summary>
 /// <remarks>
 ///     <para>The frame is wrapped so a plain <c>cat /sim/display/stream</c> renders in place without
-///     disturbing the shell: <c>ESC 7</c> (save cursor) · <c>ESC [H</c> (home) · the Kitty image ·
-///     <c>ESC 8</c> (restore cursor). A fixed image+placement id is re-transmitted each frame (the
-///     "video" case purrTTY handles), and <c>C=1</c> keeps the cursor from advancing past the image.</para>
+///     disturbing the shell: <c>ESC 7</c> (save cursor) · <c>ESC [H</c> (home) · a Kitty <b>delete</b>
+///     of the (single, fixed) image id · the Kitty image transmit+display · <c>ESC 8</c> (restore
+///     cursor). <c>C=1</c> keeps the cursor from advancing past the image.</para>
+///     <para><b>The fixed-id "video" pattern.</b> Every frame deletes and re-transmits the <i>same</i>
+///     image id — exactly what terminal-doom does and what terminals (purrTTY included) are built to
+///     handle: the terminal keeps a single image/placement and updates its pixels in place. This is
+///     deliberately <b>not</b> a fresh id per frame: a new id each frame makes the terminal allocate a
+///     new GPU texture every frame and churn its image cache, which is abnormal and can destabilize the
+///     host renderer. One id, replaced in place, is the safe, supported path.</para>
 ///     <para>The whole sequence is <b>LF-free by construction</b> (base64 has no newline, and every
 ///     escape is ESC-prefixed) so it survives a cooked PTY (<c>ONLCR</c>/<c>OPOST</c> cannot corrupt
 ///     it) with no raw-mode dance required of the consumer.</para>
 /// </remarks>
 public static class KittyEncoder
 {
-    /// <summary>The kitty graphics base64 payload is chunked into pieces of at most this many bytes.</summary>
-    private const int ChunkBytes = 4096;
+    /// <summary>The single, fixed image (and placement) id reused for every frame — see the class remarks.</summary>
+    public const int VideoImageId = 1;
+
+    /// <summary>
+    ///     Max base64 chars per chunk. Kept below 4096 <b>minus the per-chunk control+framing overhead</b>
+    ///     so the <i>entire</i> escape (<c>ESC _ G</c> + control + <c>;</c> + payload + <c>ESC \</c>) stays
+    ///     under 4096 bytes. Terminals/PTYs (libghostty, the guest's SSH PTY) cap escape-sequence length
+    ///     around 4096; a full 4096-char payload pushes the escape to ~4146 bytes, which gets truncated in
+    ///     transit and corrupts the base64 (the consumer reports <c>Base64Invalid</c>). 4000 leaves ample
+    ///     room for the first chunk's longer header (e.g. <c>s=1920,v=1080</c>).
+    /// </summary>
+    private const int ChunkBytes = 4000;
 
     private const byte Esc = 0x1b;
 
@@ -41,18 +57,14 @@ public static class KittyEncoder
     /// <param name="bgra">The pixel block: <paramref name="width"/>×<paramref name="height"/>×4 bytes, BGRA.</param>
     /// <param name="encoding">Whether to zlib-deflate the RGBA block.</param>
     /// <param name="imageId">
-    ///     The Kitty image (and placement) id for this frame. Pass a <b>fresh, increasing</b> id each
-    ///     frame: terminals (purrTTY included) re-decode a re-transmitted image only when its data
-    ///     length changes, so a fixed id would freeze on a constant-length frame (a static scene, or
-    ///     any raw-RGBA frame). A new id is always decoded; <paramref name="previousImageId"/> is
-    ///     deleted so the terminal's image storage stays bounded.
-    /// </param>
-    /// <param name="previousImageId">
-    ///     The id used for the prior frame, deleted after this one is shown (0 = none, e.g. first frame).
+    ///     The single, fixed Kitty image (and placement) id reused every frame (default
+    ///     <see cref="VideoImageId"/>). The frame deletes this id and re-transmits it, so the terminal
+    ///     updates one image in place — the "video" pattern terminals are built for (see the class
+    ///     remarks for why this is not a fresh id per frame).
     /// </param>
     /// <returns>The complete, self-contained frame bytes ready to write to a terminal.</returns>
     public static byte[] EncodeFrame(int width, int height, ReadOnlySpan<byte> bgra,
-        DisplayEncoding encoding, int imageId, int previousImageId = 0)
+        DisplayEncoding encoding, int imageId = VideoImageId)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
@@ -69,12 +81,13 @@ public static class KittyEncoder
         using var output = new MemoryStream(base64.Length + 256);
         output.Write(SaveCursor);
         output.Write(HomeCursor);
+        // Delete the previous copy of this id, then re-transmit it (terminal-doom's pattern): the
+        // terminal replaces the single stored image in place rather than accumulating a new one. The
+        // delete is harmless on the first frame (the id does not exist yet) and uppercase d=I also frees
+        // the old pixel data, so storage stays at exactly one image.
+        WriteKittyDelete(output, imageId);
         WriteKittyImage(output, width, height, imageId, encoding == DisplayEncoding.RgbaZlib, base64);
         output.Write(RestoreCursor);
-        // Free the previous frame's image + placement (uppercase d=I deletes the stored data too), so a
-        // fresh-id-per-frame video does not accumulate images in the terminal.
-        if (previousImageId != 0 && previousImageId != imageId)
-            WriteKittyDelete(output, previousImageId);
         return output.ToArray();
     }
 

@@ -44,7 +44,6 @@ public sealed class DisplaySurface : IDisposable
 
     private readonly CancellationTokenSource _stopping = new();
     private int _readers;
-    private int _imageId;
     private Task? _worker;
 
     /// <param name="settings">The live, runtime-mutable stream parameters (shared with the control files).</param>
@@ -183,14 +182,12 @@ public sealed class DisplaySurface : IDisposable
 
             try
             {
-                // A fresh, increasing image id each frame (wrapping well before int overflow, skipping
-                // 0) so the terminal always re-decodes; the previous id is deleted in the encoder.
-                var previousImageId = _imageId;
-                _imageId = _imageId >= 1_000_000_000 ? 1 : _imageId + 1;
+                // One fixed image id, deleted + re-transmitted each frame (the terminal updates a single
+                // image in place — see KittyEncoder). A fresh id per frame would churn the terminal's
+                // GPU image cache.
                 byte[] encoded;
                 using (EncodeStat.Measure())
-                    encoded = KittyEncoder.EncodeFrame(width, height, work.AsSpan(0, length),
-                        Settings.Encoding, _imageId, previousImageId);
+                    encoded = KittyEncoder.EncodeFrame(width, height, work.AsSpan(0, length), Settings.Encoding);
                 Publish(encoded);
             }
             catch (Exception ex)

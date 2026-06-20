@@ -41,7 +41,7 @@ public sealed class KittyEncoderTests
         var (headers, _) = Parse(frame);
 
         Assert.That(headers, Is.Not.Empty);
-        var first = headers[0];
+        var first = headers.First(h => h.Contains("a=T")); // the transmit header (the delete precedes it)
         Assert.That(first, Does.Contain("a=T"));        // transmit + display
         Assert.That(first, Does.Contain("f=32"));       // 32-bit RGBA
         Assert.That(first, Does.Contain("o=z"));        // zlib
@@ -82,7 +82,7 @@ public sealed class KittyEncoderTests
         var frame = KittyEncoder.EncodeFrame(8, 8, bgra, DisplayEncoding.RgbaZlib, imageId: 1);
         var (headers, payload) = Parse(frame);
 
-        var rgba = headers[0].Contains("o=z") ? Inflate(payload) : payload;
+        var rgba = headers.Any(h => h.Contains("o=z")) ? Inflate(payload) : payload;
         Assert.That(rgba.Length, Is.EqualTo(8 * 8 * 4));
         // Every pixel is the swizzled solid color, opaque.
         for (var i = 0; i < rgba.Length; i += 4)
@@ -102,10 +102,12 @@ public sealed class KittyEncoderTests
             DisplayEncoding.Rgba, imageId: 1);
         var (headers, _) = Parse(frame);
 
-        Assert.That(headers, Has.Count.GreaterThanOrEqualTo(2));
-        Assert.That(headers[0], Does.Contain("m=1"));
-        Assert.That(headers[^1], Does.Contain("m=0"));
-        Assert.That(headers.Take(headers.Count - 1), Has.All.Contain("m=1"));
+        // Only the transmit chunks carry the m= continuation key (the leading delete has none).
+        var chunks = headers.Where(h => h.Contains("m=")).ToList();
+        Assert.That(chunks, Has.Count.GreaterThanOrEqualTo(2));
+        Assert.That(chunks[0], Does.Contain("m=1"));
+        Assert.That(chunks[^1], Does.Contain("m=0"));
+        Assert.That(chunks.Take(chunks.Count - 1), Has.All.Contain("m=1"));
     }
 
     [Test]
@@ -114,19 +116,27 @@ public sealed class KittyEncoderTests
             KittyEncoder.EncodeFrame(4, 4, new byte[10], DisplayEncoding.Rgba, 1));
 
     [Test]
-    public void EncodeFrame_WithPreviousId_DeletesItSoFramesDoNotAccumulate()
+    public void EncodeFrame_DeletesItsOwnIdBeforeRetransmitting()
     {
-        var frame = KittyEncoder.EncodeFrame(2, 2, SolidBgra(2, 2, 1, 1, 1),
-            DisplayEncoding.Rgba, imageId: 7, previousImageId: 6);
-        // base64 has no comma, so this control string cannot collide with the payload.
-        Assert.That(Encoding.ASCII.GetString(frame), Does.Contain("d=I,i=6"));
+        var frame = KittyEncoder.EncodeFrame(2, 2, SolidBgra(2, 2, 1, 1, 1), DisplayEncoding.Rgba, imageId: 7);
+        var text = Encoding.ASCII.GetString(frame);
+
+        // Every frame deletes the single fixed id (uppercase d=I frees the data too) and re-transmits it,
+        // so the terminal replaces one image in place rather than accumulating per-frame images.
+        var delete = text.IndexOf("d=I,i=7", StringComparison.Ordinal);
+        var transmit = text.IndexOf("a=T", StringComparison.Ordinal);
+        Assert.That(delete, Is.GreaterThanOrEqualTo(0), "frame must delete its own id");
+        Assert.That(transmit, Is.GreaterThanOrEqualTo(0), "frame must transmit its id");
+        Assert.That(delete, Is.LessThan(transmit), "the delete must precede the transmit");
     }
 
     [Test]
-    public void EncodeFrame_FirstFrame_HasNoDelete()
+    public void EncodeFrame_DefaultsToTheFixedVideoId()
     {
-        var frame = KittyEncoder.EncodeFrame(2, 2, SolidBgra(2, 2, 1, 1, 1), DisplayEncoding.Rgba, imageId: 1);
-        Assert.That(Encoding.ASCII.GetString(frame), Does.Not.Contain("a=d"));
+        var frame = KittyEncoder.EncodeFrame(2, 2, SolidBgra(2, 2, 1, 1, 1), DisplayEncoding.Rgba);
+        var (headers, _) = Parse(frame);
+        var transmit = headers.First(h => h.Contains("a=T"));
+        Assert.That(transmit, Does.Contain($"i={KittyEncoder.VideoImageId}"));
     }
 
     // ---- helpers ----
@@ -163,8 +173,16 @@ public sealed class KittyEncoderTests
                     end++;
                 var body = Encoding.ASCII.GetString(frame, start, end - start);
                 var semi = body.IndexOf(';');
-                headers.Add(body[..semi]);
-                base64.Append(body[(semi + 1)..]);
+                if (semi < 0)
+                {
+                    headers.Add(body); // control-only APC (e.g. a delete) — no ';' payload
+                }
+                else
+                {
+                    headers.Add(body[..semi]);
+                    base64.Append(body[(semi + 1)..]);
+                }
+
                 i = end + 2;
             }
             else

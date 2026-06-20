@@ -93,11 +93,10 @@ KSA render thread (GameMod/Game/Ksa/, [KsaAnchor])       background worker (gatO
 │ Harmony transpiler in RenderGame (before End) │        │ KittyEncoder                                 │
 │   if !Enabled || !HasReaders → return         │        │   BGRA→RGBA swizzle                           │
 │   throttle to DisplaySettings.Fps             │        │   zlib compress (System.IO.Compression)      │
-│   src = OffscreenTarget.ColorImage  (A)       │  ring  │   Kitty APC frame (fresh id/frame, chunked   │
-│   record into the engine's OWN command buffer:│ (drop- │     base64, ESC7/ESC[H … ESC8 wrap, LF-free) │
-│     BlitImage src → scratch[idx] (linear,R16F)│  old)  │   → DisplayStreamFile.Publish(frameBytes)    │
-│     CopyImageToBuffer scratch → staging[idx]  │        │                                              │
-│     restore src → ShaderReadOnly              │        │                                              │
+│   src = OffscreenTarget.ColorImage  (A)       │  ring  │   Kitty APC frame: ONE fixed id, deleted +   │
+│   record into the engine's OWN command buffer:│ (drop- │     re-transmitted each frame (video case),  │
+│     CopyImageToBuffer src → staging[idx](full)│  old)  │     chunked base64, ESC7/ESC[H … ESC8, LF-free│
+│     restore src → ShaderReadOnly              │        │   → DisplayStreamFile.Publish(frameBytes)    │
 │   deferred: map staging[idx] on its NEXT      │        │                                              │
 │     visit (fence already waited), HDR→BGRA8 ──┼────────┼──────────────────────┬───────────────────────┘
 │     → DisplaySurface.SubmitFrame(w,h,bgra)    │        reads DisplaySettings  │ fan-out to all open fids
