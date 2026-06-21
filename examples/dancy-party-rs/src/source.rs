@@ -554,9 +554,12 @@ struct RunningParty {
     plan: Plan,
     color_paths: Vec<String>,
     goal_paths: Vec<String>,
-    last_color_wire: Option<String>,
-    last_goal: Option<u8>,
-    /// Color broadcasts skipped because the async pool hadn't drained the previous one yet.
+    /// Last color wire-form written **per light** (parallel to `color_paths`) for dedupe. With no
+    /// stagger every entry holds the same value; with stagger they diverge as the wave ripples.
+    color_seen: Vec<Option<String>>,
+    /// Last goal written per light (parallel to `goal_paths`).
+    goal_seen: Vec<Option<u8>>,
+    /// Color passes skipped because the async pool hadn't drained the previous one yet.
     dropped: u64,
 }
 
@@ -583,15 +586,17 @@ pub fn spawn_worker(
             if let Some(rp) = party.as_mut() {
                 // --- partying: render one frame, then wait up to one frame for a command ---
                 let elapsed = rp.start.elapsed().as_secs_f64() * 1000.0;
-                let frame = rp.plan.frame(elapsed);
-                write_frame(&mut bc, rp, &frame);
+                // The "lead" frame (offset 0) drives the UI preview; per-light writes (which may be
+                // staggered behind it) happen in write_frame.
+                let lead = rp.plan.frame(elapsed);
+                write_frame(&mut bc, rp, elapsed);
 
                 if last_ui.elapsed() >= ui_min_gap {
                     last_ui = Instant::now();
                     let _ = tx.send(FromWorker::Tick {
-                        color: frame.color,
-                        segment: frame.segment,
-                        goal: frame.goal,
+                        color: lead.color,
+                        segment: lead.segment,
+                        goal: lead.goal,
                         targets: rp.color_paths.len(),
                         error: bc.stats().take_error(),
                         perf: bc.stats().snapshot(write_cfg, rp.dropped),
@@ -649,13 +654,15 @@ fn handle(
                 ));
             } else {
                 bc.stats().reset(); // measure each run fresh
+                let color_seen = vec![None; color_paths.len()];
+                let goal_seen = vec![None; goal_paths.len()];
                 *party = Some(RunningParty {
                     start: Instant::now(),
                     plan,
                     color_paths,
                     goal_paths,
-                    last_color_wire: None,
-                    last_goal: None,
+                    color_seen,
+                    goal_seen,
                     dropped: 0,
                 });
             }
@@ -691,33 +698,40 @@ fn resolve_targets(catalog: &[VesselLights], selected: &[String]) -> (Vec<String
     (colors, goals)
 }
 
-/// Writes one frame to every target: the color to all `color` paths (only when the quantized wire
-/// form changed since last frame — a cheap global dedupe, not per-light tracking) and, on a segment
-/// boundary, the new goal to all `goal` paths. Errors are accumulated in the shared [`WriteStats`].
+/// Writes the current frame to every target, **per light**. Each light `i` is animated at
+/// `elapsed - i * stagger_ms` so a non-zero stagger ripples the palette across the lights; with
+/// `stagger_ms == 0` every light resolves to the same lead frame, i.e. the original lockstep
+/// broadcast. Each light only writes when its own quantized color / goal actually changes (per-light
+/// dedupe — still no full re-broadcast on a static palette). Errors accumulate in the shared
+/// [`WriteStats`].
 ///
-/// In async mode, a color broadcast is **skipped** (and counted in `dropped`) while the pool still
-/// has the previous broadcast in flight — this bounds the queue to ~two broadcasts and surfaces a
-/// "writes can't keep up" signal instead of growing memory without limit.
-fn write_frame(bc: &mut Broadcaster, rp: &mut RunningParty, frame: &crate::party::Frame) {
-    let wire = frame.color.to_sim();
-    if rp.last_color_wire.as_deref() != Some(wire.as_str()) {
-        if bc.inflight() <= rp.color_paths.len() {
-            for p in &rp.color_paths {
-                bc.send(p, &wire);
+/// In async mode the whole color pass is **skipped** (and counted in `dropped`) while the pool still
+/// has the previous pass in flight — this bounds the queue and surfaces a "writes can't keep up"
+/// signal instead of growing memory without limit. Goal writes (at most two per segment) always go.
+fn write_frame(bc: &mut Broadcaster, rp: &mut RunningParty, elapsed_ms: f64) {
+    let stagger = rp.plan.stagger_ms;
+
+    if bc.inflight() <= rp.color_paths.len() {
+        for i in 0..rp.color_paths.len() {
+            let local = elapsed_ms - i as f64 * stagger;
+            let wire = rp.plan.frame(local).color.to_sim();
+            if rp.color_seen[i].as_deref() != Some(wire.as_str()) {
+                bc.send(&rp.color_paths[i], &wire);
+                rp.color_seen[i] = Some(wire);
             }
-            rp.last_color_wire = Some(wire);
-        } else {
-            // Leave last_color_wire unchanged so we retry this color once the pool catches up.
-            rp.dropped += 1;
         }
+    } else {
+        // Leave color_seen untouched so this pass retries once the pool catches up.
+        rp.dropped += 1;
     }
 
-    if rp.last_goal != Some(frame.goal) {
-        let g = frame.goal.to_string();
-        for p in &rp.goal_paths {
-            bc.send(p, &g);
+    for j in 0..rp.goal_paths.len() {
+        let local = elapsed_ms - j as f64 * stagger;
+        let goal = rp.plan.frame(local).goal;
+        if rp.goal_seen[j] != Some(goal) {
+            bc.send(&rp.goal_paths[j], &goal.to_string());
+            rp.goal_seen[j] = Some(goal);
         }
-        rp.last_goal = Some(frame.goal);
     }
 }
 
@@ -838,6 +852,18 @@ mod tests {
         }
     }
 
+    fn party(plan: Plan, colors: usize, goals: usize) -> RunningParty {
+        RunningParty {
+            start: Instant::now(),
+            plan,
+            color_paths: (0..colors).map(|n| format!("v/{n}/color")).collect(),
+            goal_paths: (0..goals).map(|n| format!("v/{n}/goal")).collect(),
+            color_seen: vec![None; colors],
+            goal_seen: vec![None; goals],
+            dropped: 0,
+        }
+    }
+
     #[test]
     fn write_frame_dedupes_color_and_writes_goal_on_flip() {
         let src = Arc::new(MockSource {
@@ -845,36 +871,41 @@ mod tests {
             writes: Mutex::new(Vec::new()),
         });
         let mut bc = sync_bc(src.clone());
-        let mut rp = RunningParty {
-            start: Instant::now(),
-            plan: Plan::new(vec![Rgb::WHITE], 1000),
-            color_paths: vec!["v/0/color".into(), "v/1/color".into()],
-            goal_paths: vec!["v/0/goal".into()],
-            last_color_wire: None,
-            last_goal: None,
-            dropped: 0,
-        };
-        let f0 = crate::party::Frame {
-            color: Rgb::new(1.0, 0.0, 0.0),
-            segment: 0,
-            goal: 1,
-        };
-        write_frame(&mut bc, &mut rp, &f0);
+        // Single-color plan, no stagger: color is constant red, the goal flips at 1000 ms.
+        let mut rp = party(Plan::new(vec![Rgb::new(1.0, 0.0, 0.0)], 1000), 2, 1);
+
+        write_frame(&mut bc, &mut rp, 0.0);
         // First frame: both colors + the one goal.
         assert_eq!(src.writes.lock().unwrap().len(), 3);
 
-        // Same color, same goal -> no further writes (global dedupe).
-        write_frame(&mut bc, &mut rp, &f0);
+        // Same color, same goal -> no further writes (per-light dedupe).
+        write_frame(&mut bc, &mut rp, 100.0);
         assert_eq!(src.writes.lock().unwrap().len(), 3);
 
-        // Goal flips -> one goal write, color unchanged so still deduped.
-        let f1 = crate::party::Frame {
-            color: Rgb::new(1.0, 0.0, 0.0),
-            segment: 1,
-            goal: 0,
-        };
-        write_frame(&mut bc, &mut rp, &f1);
+        // Goal flips at the segment boundary -> one goal write, color unchanged so still deduped.
+        write_frame(&mut bc, &mut rp, 1000.0);
         assert_eq!(src.writes.lock().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn stagger_desyncs_lights_so_they_dont_all_write_the_same_color() {
+        // Two-color red/blue plan, 1000 ms/color. With a 500 ms stagger, light 1 is half a segment
+        // behind light 0, so at t=0 they hold different colors and must each get their own write.
+        let src = Arc::new(MockSource {
+            catalog: vec![],
+            writes: Mutex::new(Vec::new()),
+        });
+        let mut bc = sync_bc(src.clone());
+        let plan = Plan::new(vec![Rgb::new(1.0, 0.0, 0.0), Rgb::new(0.0, 0.0, 1.0)], 1000)
+            .with_stagger(500.0);
+        let mut rp = party(plan, 2, 0);
+
+        write_frame(&mut bc, &mut rp, 500.0);
+        let writes = src.writes.lock().unwrap();
+        // Light 0 at local 500 (halfway red->blue); light 1 at local 0 (pure red). Different wires.
+        let v0 = &writes.iter().find(|(p, _)| p == "v/0/color").unwrap().1;
+        let v1 = &writes.iter().find(|(p, _)| p == "v/1/color").unwrap().1;
+        assert_ne!(v0, v1, "staggered lights should resolve to different colors");
     }
 
     #[test]
@@ -892,21 +923,8 @@ mod tests {
                 writers: 4,
             },
         );
-        let mut rp = RunningParty {
-            start: Instant::now(),
-            plan: Plan::new(vec![Rgb::new(1.0, 0.0, 0.0)], 1000),
-            color_paths: (0..10).map(|n| format!("v/{n}/color")).collect(),
-            goal_paths: (0..10).map(|n| format!("v/{n}/goal")).collect(),
-            last_color_wire: None,
-            last_goal: None,
-            dropped: 0,
-        };
-        let frame = crate::party::Frame {
-            color: Rgb::new(1.0, 0.0, 0.0),
-            segment: 0,
-            goal: 1,
-        };
-        write_frame(&mut bc, &mut rp, &frame);
+        let mut rp = party(Plan::new(vec![Rgb::new(1.0, 0.0, 0.0)], 1000), 10, 10);
+        write_frame(&mut bc, &mut rp, 0.0);
         bc.drain();
         let writes = src.writes.lock().unwrap();
         assert_eq!(writes.len(), 20); // 10 colors + 10 goals

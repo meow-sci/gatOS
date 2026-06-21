@@ -93,6 +93,7 @@ a live readout: total writes, **per-write latency** (avg / max / last), and, in 
 | flag | what it changes | why it matters |
 | ---- | --------------- | -------------- |
 | `--steps <n>` | Quantize each fade to `<n>` discrete colors per segment (0 = continuous, the default; `1` = hard cut, no fade). | Caps the number of **distinct** color writes per color step. The biggest lever on write *volume* — a smooth-looking fade may be writing dozens of near-identical colors a second. |
+| `--stagger-ms <n>` | Offset each light by `n` ms so the palette **ripples** across the lights instead of all changing at once (0 = lockstep, the default). | A visual effect, but also spreads each color step's writes out over time instead of bursting them. With it on, lights animate independently (per-light dedupe), so the total write volume rises — pair it with `--async`. |
 | `--async` | Hand writes to a background thread **pool** instead of blocking the animation loop on each one. | Tests whether the bottleneck is *per-write latency serialized across lights*. If sync stalls but async keeps up (low backlog), the writes are slow but parallelizable. |
 | `--writers <n>` | Async pool width (1..64, default 8). | How much write parallelism the 9p server actually benefits from before it saturates. |
 
@@ -109,13 +110,17 @@ cargo run -- --steps 8              # at most 8 colors per fade — far fewer wr
 cargo run -- --steps 1             # pure color-cycle, no interpolation (minimum writes)
 cargo run -- --async               # non-blocking writes, 8-thread pool
 cargo run -- --async --writers 24  # wider pool for a rig with many lights
-cargo run -- --hz 20 --steps 4 --async   # combine all three to hunt the bottleneck
+cargo run -- --stagger-ms 80 --async   # rippling wave across the lights, non-blocking writes
+cargo run -- --hz 20 --steps 4 --async   # combine to hunt the bottleneck
 ```
 
-Colors are deduped globally: a color is only written when its quantized wire value actually changes,
-so `--steps` directly bounds the color-write rate regardless of `--hz`. (Goal pulses still fire on
-every color step.) When you stop the party, the async queue is drained before the lights are reset to
-white, so nothing lands stale.
+Colors are deduped per light: a light is only rewritten when *its own* quantized color actually
+changes, so `--steps` bounds the color-write rate regardless of `--hz`. With `--stagger-ms 0` (the
+default) every light shares one color each tick, so this collapses to a single deduped broadcast —
+exactly the original lockstep behaviour. A non-zero stagger gives each light its own clock (light `i`
+runs `i × stagger-ms` behind the lead), so they ripple — at the cost of more total writes, since they
+no longer share a value. (Goal pulses still fire on each light's color step.) When you stop the party,
+the async queue is drained before the lights are reset to white, so nothing lands stale.
 
 ## Controls
 

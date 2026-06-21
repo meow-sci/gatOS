@@ -68,6 +68,7 @@ struct Config {
     source: SourceKind,
     hz: f64,
     steps: u32,
+    stagger_ms: f64,
     write_cfg: WriteConfig,
     help: bool,
 }
@@ -78,6 +79,7 @@ impl Config {
         let mut root: Option<String> = None;
         let mut hz: Option<f64> = None;
         let mut steps: Option<u32> = None;
+        let mut stagger_ms: Option<f64> = None;
         let mut async_writes = false;
         let mut writers: Option<usize> = None;
         let mut help = false;
@@ -99,6 +101,12 @@ impl Config {
                         _ => return Err("--steps wants a number in 0..1000 (0 = continuous)".into()),
                     }
                 }
+                "--stagger-ms" => {
+                    stagger_ms = match args.next().map(|s| s.parse::<f64>()) {
+                        Some(Ok(v)) if (0.0..=60_000.0).contains(&v) => Some(v),
+                        _ => return Err("--stagger-ms wants a number in 0..60000 (0 = lockstep)".into()),
+                    }
+                }
                 "--async" => async_writes = true,
                 "--writers" => {
                     writers = match args.next().map(|s| s.parse::<usize>()) {
@@ -115,6 +123,7 @@ impl Config {
             source: resolve_source(url, root),
             hz: hz.unwrap_or(60.0),
             steps: steps.unwrap_or(0),
+            stagger_ms: stagger_ms.unwrap_or(0.0),
             write_cfg: WriteConfig {
                 async_writes,
                 writers: writers.unwrap_or(8),
@@ -152,7 +161,7 @@ fn build_source(kind: SourceKind) -> Arc<dyn Source> {
 fn print_help() {
     println!("dancy-party-rs \u{2014} a party-lights console over gatOS /sim");
     println!();
-    println!("USAGE: dancy-party-rs [--root <dir> | --url <base>] [--hz <n>] [--steps <n>] [--async [--writers <n>]]");
+    println!("USAGE: dancy-party-rs [--root <dir> | --url <base>] [--hz <n>] [--steps <n>] [--stagger-ms <n>] [--async [--writers <n>]]");
     println!();
     println!("  --root <dir>   read/write the /sim mount at <dir> (default: /sim when present)");
     println!("  --url <base>   use HTTP /v1/fs instead (e.g. $GATOS_HTTP, http://127.0.0.1:4242/v1)");
@@ -161,6 +170,8 @@ fn print_help() {
     println!("Performance experiment knobs (the fade can lag with many lights — use these to find why):");
     println!("  --steps <n>    quantize each color fade to <n> discrete values, 0..1000 (default 0 =");
     println!("                 continuous). Fewer steps = fewer distinct 9p writes; 1 = hard cut, no fade.");
+    println!("  --stagger-ms <n>  offset each light by <n> ms so the palette ripples across the lights");
+    println!("                 instead of all changing at once, 0..60000 (default 0 = lockstep).");
     println!("  --async        hand light writes to a background thread pool instead of blocking the");
     println!("                 animation loop on each write.");
     println!("  --writers <n>  pool size for --async, 1..64 (default 8).");
@@ -180,7 +191,14 @@ fn run(terminal: &mut Tui, config: Config) -> io::Result<()> {
     let label = source.label();
     spawn_worker(source, config.hz, config.write_cfg, cmd_rx, update_tx);
 
-    let mut app = App::new(cmd_tx, label, config.hz, config.steps, config.write_cfg);
+    let mut app = App::new(
+        cmd_tx,
+        label,
+        config.hz,
+        config.steps,
+        config.stagger_ms,
+        config.write_cfg,
+    );
 
     // A short tick keeps the live color band animating smoothly between input events (the worker
     // pushes throttled frames; we just need to redraw to show them).

@@ -80,6 +80,9 @@ fn render_title(f: &mut Frame, app: &App, area: Rect) {
             spans.push(kv("per", &format!("{}ms", app.per_ms)));
             spans.push(kv("hz", &fmt_hz(app.hz)));
             spans.push(kv("steps", &fmt_steps(app.steps)));
+            if app.stagger_ms > 0.0 {
+                spans.push(kv("stag", &format!("{}ms", app.stagger_ms as u64)));
+            }
             spans.push(kv(
                 "wr",
                 &if app.write_cfg.async_writes {
@@ -220,8 +223,9 @@ fn render_perf_row(f: &mut Frame, app: &App, area: Rect) {
         _ => {
             spans.push(Span::styled(
                 format!(
-                    "idle \u{b7} steps {} \u{b7} {} \u{b7} {} hz",
+                    "idle \u{b7} steps {} \u{b7} stagger {}ms \u{b7} {} \u{b7} {} hz",
                     fmt_steps(app.steps),
+                    app.stagger_ms as u64,
                     if app.write_cfg.async_writes {
                         format!("async\u{00d7}{}", app.write_cfg.writers)
                     } else {
@@ -725,7 +729,7 @@ mod tests {
 
     fn app() -> App {
         let (tx, _rx) = mpsc::channel();
-        App::new(tx, "fs:/sim".into(), 60.0, 0, crate::source::WriteConfig::default())
+        App::new(tx, "fs:/sim".into(), 60.0, 0, 0.0, crate::source::WriteConfig::default())
     }
 
     #[test]

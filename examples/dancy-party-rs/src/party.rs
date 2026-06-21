@@ -22,6 +22,11 @@ pub struct Plan {
     /// quantization in [`Rgb::to_sim`]); `1` snaps to each palette color with no fade at all; higher
     /// values trade smoothness for fewer distinct color writes. Fewer steps ⇒ fewer 9p writes.
     pub steps: u32,
+    /// Per-light time offset in milliseconds (the `--stagger-ms` knob): light `i` is animated as if
+    /// the clock were `i * stagger_ms` behind the lead, so the palette ripples across the lights
+    /// instead of every light changing at once. `0` (default) means no stagger — every light shares
+    /// the lead frame, the original lockstep broadcast.
+    pub stagger_ms: f64,
 }
 
 /// One animation frame: the interpolated tint to push to every light's `color`, plus the current
@@ -39,12 +44,19 @@ impl Plan {
             colors,
             per_ms: (per_ms as f64).max(1.0),
             steps: 0,
+            stagger_ms: 0.0,
         }
     }
 
     /// Builder: quantize the cross-fade to `steps` discrete values per segment (`0` = continuous).
     pub fn with_steps(mut self, steps: u32) -> Self {
         self.steps = steps;
+        self
+    }
+
+    /// Builder: offset each light by `stagger_ms` so the palette ripples across them (`0` = lockstep).
+    pub fn with_stagger(mut self, stagger_ms: f64) -> Self {
+        self.stagger_ms = stagger_ms.max(0.0);
         self
     }
 

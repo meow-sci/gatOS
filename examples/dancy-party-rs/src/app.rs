@@ -103,6 +103,8 @@ pub struct App {
     pub hz: f64,
     /// Fade-quantization steps per segment (`--steps`; 0 = continuous). Part of every published plan.
     pub steps: u32,
+    /// Per-light time stagger in ms (`--stagger-ms`; 0 = lockstep). Part of every published plan.
+    pub stagger_ms: f64,
     /// The write-pipeline tuning (`--async`/`--writers`), echoed in the UI; the worker owns the live
     /// behaviour, this is just for display.
     pub write_cfg: WriteConfig,
@@ -146,6 +148,7 @@ impl App {
         label: String,
         hz: f64,
         steps: u32,
+        stagger_ms: f64,
         write_cfg: WriteConfig,
     ) -> Self {
         let app = Self {
@@ -167,6 +170,7 @@ impl App {
             label,
             hz,
             steps,
+            stagger_ms,
             write_cfg,
             perf: None,
             status: "scanning for vessels\u{2026}".into(),
@@ -284,7 +288,9 @@ impl App {
     }
 
     fn plan(&self) -> Plan {
-        Plan::new(self.colors.clone(), self.per_ms).with_steps(self.steps)
+        Plan::new(self.colors.clone(), self.per_ms)
+            .with_steps(self.steps)
+            .with_stagger(self.stagger_ms)
     }
 
     // ---- keyboard ----------------------------------------------------------------------------
@@ -849,7 +855,7 @@ mod tests {
 
     fn app() -> App {
         let (tx, _rx) = mpsc::channel();
-        App::new(tx, "mock".into(), 60.0, 0, WriteConfig::default())
+        App::new(tx, "mock".into(), 60.0, 0, 0.0, WriteConfig::default())
     }
 
     fn catalog() -> Vec<VesselLights> {
