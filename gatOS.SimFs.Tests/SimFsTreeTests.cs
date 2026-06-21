@@ -176,6 +176,9 @@ public sealed class SimFsTreeTests
             "vessels/by-id/test-1/solar/0/tracker_angle", "vessels/by-id/test-1/solar/0/state",
             "vessels/by-id/test-1/lights/0/on", "vessels/by-id/test-1/lights/0/brightness",
             "vessels/by-id/test-1/lights/0/color",
+            // the light part's co-located actuate animation (linked to vessel-level animation 1)
+            "vessels/by-id/test-1/lights/0/goal", "vessels/by-id/test-1/lights/0/current",
+            "vessels/by-id/test-1/lights/0/state",
             "vessels/by-id/test-1/generators/0/active", "vessels/by-id/test-1/generators/0/produced",
             "vessels/by-id/test-1/docking/0/docked", "vessels/by-id/test-1/docking/0/docked_to",
             "vessels/by-id/test-1/docking/0/pushoff_force", "vessels/by-id/test-1/docking/0/undock",
@@ -200,6 +203,8 @@ public sealed class SimFsTreeTests
             Assert.That(files["vessels/by-id/test-1/rcs/0/map"], Is.EqualTo("Pitch|Yaw\n"));
             Assert.That(files["vessels/by-id/test-1/solar/0/tracker_angle"], Is.EqualTo("30\n"));
             Assert.That(files["vessels/by-id/test-1/lights/0/on"], Is.EqualTo("1\n"));
+            Assert.That(files["vessels/by-id/test-1/lights/0/state"], Is.EqualTo("Retracted\n"),
+                "the light's co-located animation reads vessel-level animation 1's state");
             Assert.That(files["vessels/by-id/test-1/docking/0/docked_to"], Is.EqualTo("part-7\n"));
             Assert.That(files["vessels/by-id/test-1/docking/0/pushoff_force"], Is.EqualTo("7000\n"));
             Assert.That(files["debug/vessels/test-1/docking/0/pushoff_force"], Is.EqualTo("7000\n"));

@@ -29,11 +29,16 @@ public sealed class ControlSurfaceTests
         var root = SimFsTree.Build(_store, _sink, () => "9p 4242\ncontrol on");
         _store.Publish(TestData.Snapshot(1, TestData.Vessel(
             lightsOn: false,
-            animations: [new AnimationSnapshot(0, 0, 0, "Retracted", IsSolar: true)],
+            animations:
+            [
+                new AnimationSnapshot(0, 0, 0, "Retracted", IsSolar: true),
+                new AnimationSnapshot(1, 0.3, 0.2, "Deploying", IsSolar: false),
+            ],
             solar: [new SolarSnapshot(0, 0, false, 0, 1, false, 0, AnimationIndex: 0)],
             decouplers: [new DecouplerSnapshot(0, false)],
             rcs: [new RcsSnapshot(0, false, true, "None")],
-            lights: [new LightSnapshot(0, false, 1, new double3Snap(1, 1, 1))],
+            // The light carries an actuate animation linked to vessel-level ordinal 1.
+            lights: [new LightSnapshot(0, false, 1, new double3Snap(1, 1, 1), AnimationIndex: 1)],
             docking: [new DockingSnapshot(0, true, "part-2") { PushoffForceN = 7000 }])));
         _server = new NinePServer(root);
         await _server.StartAsync();
@@ -195,6 +200,17 @@ public sealed class ControlSurfaceTests
         await WriteAsync("1 0 0\n", "vessels", "by-id", "test-1", "lights", "0", "color");
         Assert.That(_sink.Last!.Action, Is.EqualTo("light.color"));
         Assert.That(_sink.Last!.Values, Is.EqualTo(new[] { 1d, 0d, 0d }));
+    }
+
+    [Test]
+    public async Task LightGoal_MapsToUnderlyingAnimationOrdinal()
+    {
+        // lights/0 carries an actuate animation whose vessel-level ordinal is 1; the co-located
+        // goal routes the one animation.goal action (also reachable under animations/1/goal).
+        await WriteAsync("0.5\n", "vessels", "by-id", "test-1", "lights", "0", "goal");
+        Assert.That(_sink.Last, Is.EqualTo(new SimCommand("test-1", "animation.goal", 1, 0.5)));
+        Assert.That(await ReadAsync("vessels", "by-id", "test-1", "lights", "0", "current"), Is.EqualTo("0.2\n"));
+        Assert.That(await ReadAsync("vessels", "by-id", "test-1", "lights", "0", "state"), Is.EqualTo("Deploying\n"));
     }
 
     [Test]

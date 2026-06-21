@@ -315,6 +315,15 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 | `lights/<n>/on` | **St** | flag | Read = on; **write `0`/`1`** (action `light.on`). |
 | `lights/<n>/brightness` | **St** | number | **Write** intensity (action `light.brightness`). |
 | `lights/<n>/color` | **St** | `r g b` | **Write** RGB, each 0..1 (action `light.color`). |
+| `lights/<n>/goal` | **St** | fraction | Actuate/deploy setpoint 0..1 (action `animation.goal`). **Only present when the light part has an animation.** |
+| `lights/<n>/current` | S | scalar | Actual deploy fraction 0..1 (only with an animation). |
+| `lights/<n>/state` | S | string | Animation deployment state — `Deployed`/`Retracted`/`Deploying`/`Retracting`/`Broken` (only with an animation). |
+
+> The `goal`/`current`/`state` trio is **co-located** here for convenience: it is the *same*
+> vessel-level keyframe animation also reachable under `animations/<n>/` (§3.4.14). Both views write
+> the one `animation.goal` action by the animation's vessel-level ordinal, so writing either path
+> drives the same actuator — they are not independent. A light part with no animation omits the three
+> files entirely.
 
 #### 3.4.12 Docking ports *(present when fitted)* — `…/docking/<n>/`
 
@@ -477,7 +486,7 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `light.on` | light n | value `0`/`1` | Frame | `lights/<n>/on` | |
 | `light.brightness` | light n | value number | Frame | `lights/<n>/brightness` | |
 | `light.color` | light n | values `[r,g,b]` | Frame | `lights/<n>/color` | |
-| `animation.goal` | anim n | value `0..1` | Frame | `animations/<n>/goal`, `solar/<n>/goal` | |
+| `animation.goal` | anim n | value `0..1` | Frame | `animations/<n>/goal`, `solar/<n>/goal`, `lights/<n>/goal` | one ordinal, three views |
 | `decoupler.fire` | decoupler n | value `1` | Frame | `decouplers/<n>/fire` | one-shot |
 | `docking.undock` | docking n | value `1` | Frame | `docking/<n>/undock` | one-shot |
 | `camera.focus` | — | token = id | Frame | `ctl/focus`, `bodies/<id>/focus`, `debug/focus` | view-only; no authority gate |

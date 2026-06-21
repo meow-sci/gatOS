@@ -99,6 +99,7 @@ feedback. Authority gate (G-D1): `control_all_vessels=false` restricts to the ac
 | `…/engines/<n>/active` | St | `0`/`1` | `EngineController.SetIsActive(vehicle, bool)` | Low | Frame |
 | `…/animations/<n>/goal` | St | `0..1` | `KeyframeAnimationModule.TimeGoal = f × Shared.Duration` | Low | Frame |
 | `…/solar/<n>/goal` | St | `0..1` | same as `animations/<n>/goal` (solar-filtered view, same ordinal) | Low | Frame |
+| `…/lights/<n>/goal` | St | `0..1` | same as `animations/<n>/goal` (light-filtered view, same ordinal; only when the light part has an animation) | Low | Frame |
 
 `vessels/active/…` is an alias for the controlled vessel and accepts the same writes.
 
@@ -132,6 +133,7 @@ core telemetry and the extension dirs vanish (logged once) rather than the sampl
 | `…/solar/<n>/{produced,occluded,sun_aoa,efficiency,tracker_angle,state,current,goal}` | S/St | `SolarPanelState.*`; `SolarTrackerState.CurrentAngle` (1:1 by index); deploy via linked `KeyframeAnimationModule` | M |
 | `…/generators/<n>/{active,produced}` | S | `GeneratorState.{Active,Produced}` | M |
 | `…/lights/<n>/{on,brightness,color}` | S/St | `PowerConsumer.LightIsActive`; `LightModule.Template.{Intensity,ColorRgb}` | M (template H) |
+| `…/lights/<n>/{goal,current,state}` | S/St | actuate animation via linked `KeyframeAnimationModule` (`Parent.FullPart.SubtreeModules.Get<KeyframeAnimationModule>()`, same scan `SolarPanel.OnPartCreated` uses); only when the light part has one | M |
 | `…/docking/<n>/{docked,docked_to,pushoff_force}` | S | `DockingPort.Docked`/`DockedToPart.Id`/`PushoffForce` (N) | M |
 | `…/decouplers/<n>/{fired,fire}` | S/T | `Decoupler.IsActive` | M |
 

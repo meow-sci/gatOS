@@ -651,15 +651,36 @@ public static class SimFsTree
                     ? LightDir(p, vesselId, idx)
                     : null);
 
+        /// <summary>
+        ///     One light by index: <c>on</c>/<c>brightness</c>/<c>color</c> always, plus the
+        ///     co-located actuate <c>goal</c>/<c>current</c>/<c>state</c> control when the light part
+        ///     carries a deploy animation (<see cref="LightSnapshot.AnimationIndex"/>). The same
+        ///     vessel-level animation is also reachable under <c>animations/&lt;n&gt;/</c>; both route
+        ///     the one <c>animation.goal</c> action by its ordinal (mirrors <see cref="SolarPanelDir"/>).
+        /// </summary>
         private VfsDirectory LightDir(string p, string vesselId, int index)
         {
             var q = $"{p}/lights/{index}";
-            return DelegateDirectory.Fixed($"{index}", Qid(q),
+            var light = Light(vesselId, index);
+            var children = new List<VfsNode>
+            {
                 FlagControl($"{q}/on", "on", vesselId, "light.on", index, () => Formats.Flag(Light(vesselId, index).On)),
                 NumberControl($"{q}/brightness", "brightness", vesselId, "light.brightness", index,
                     () => Formats.Scalar(Light(vesselId, index).Intensity)),
                 VectorControl($"{q}/color", "color", vesselId, "light.color", index, 3,
-                    () => Formats.Vector(Light(vesselId, index).Color)));
+                    () => Formats.Vector(Light(vesselId, index).Color)),
+            };
+            if (light.AnimationIndex >= 0)
+            {
+                var animIndex = light.AnimationIndex;
+                children.Add(FractionControl($"{q}/goal", "goal", vesselId, "animation.goal", animIndex,
+                    () => Formats.Scalar(Anim(vesselId, animIndex).GoalFraction)));
+                children.Add(Line($"{q}/current", "current",
+                    () => Formats.Scalar(Anim(vesselId, animIndex).CurrentFraction)));
+                children.Add(Line($"{q}/state", "state", () => Anim(vesselId, animIndex).DeploymentState));
+            }
+
+            return DelegateDirectory.Fixed($"{index}", Qid(q), children.ToArray());
         }
 
         private VfsDirectory DockingDir(string p, string vesselId)

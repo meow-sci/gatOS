@@ -481,14 +481,18 @@ internal static class VesselReader
     }
 
     [KsaAnchor("vehicle.Parts.Modules.Get<LightModule>(); .Template.Intensity.Value/.ColorRgb; "
-               + "Parent.FullPart.LightSwitch.LightIsActive",
-        SourceFile = "KSA/LightModule.cs", Verified = "2026-06-12", Risk = ChurnRisk.High,
-        Notes = "Template internals are High-churn; on-state reads the part's LightSwitch PowerConsumer.")]
+               + "Parent.FullPart.LightSwitch.LightIsActive; Parent.FullPart.SubtreeModules.Get<KeyframeAnimationModule>()",
+        SourceFile = "KSA/LightModule.cs", Verified = "2026-06-20", Risk = ChurnRisk.High,
+        Notes = "Template internals are High-churn; on-state reads the part's LightSwitch PowerConsumer. "
+                + "AnimationIndex links a light part's actuate animation to the vessel-level animation ordinal "
+                + "(the same subtree scan SolarPanel.OnPartCreated uses), so lights/<n>/goal co-locates the deploy "
+                + "control alongside on/brightness/color.")]
     private static IReadOnlyList<LightSnapshot> SampleLights(Vehicle vehicle)
     {
         var modules = vehicle.Parts.Modules.Get<LightModule>();
         if (modules.Length == 0)
             return [];
+        var animations = vehicle.Parts.Modules.Get<KeyframeAnimationModule>();
         var result = new List<LightSnapshot>(modules.Length);
         for (var i = 0; i < modules.Length; i++)
         {
@@ -497,10 +501,19 @@ internal static class VesselReader
             double intensity = light.Template.Intensity.Value;
             var rgb = light.Template.ColorRgb;
             result.Add(new LightSnapshot(i, on, Sanitize.Finite(intensity),
-                new double3Snap(Sanitize.Finite(rgb.R), Sanitize.Finite(rgb.G), Sanitize.Finite(rgb.B))));
+                new double3Snap(Sanitize.Finite(rgb.R), Sanitize.Finite(rgb.G), Sanitize.Finite(rgb.B)),
+                AnimationIndex: AnimationIndexOf(animations, LightAnimation(light))));
         }
 
         return result;
+    }
+
+    /// <summary>The light part's actuate/deploy animation, or null when it has none (same subtree
+    /// scan <c>SolarPanel.OnPartCreated</c> uses to bind a panel's deploy animation).</summary>
+    private static KeyframeAnimationModule? LightAnimation(LightModule light)
+    {
+        var span = light.Parent.FullPart.SubtreeModules.Get<KeyframeAnimationModule>();
+        return span.Length > 0 ? span[0] : null;
     }
 
     [KsaAnchor("vehicle.Parts.Modules.Get<DockingPort>(); .Docked, .DockedToPart.Id, .PushoffForce",

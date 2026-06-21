@@ -278,7 +278,19 @@ public sealed record GeneratorSnapshot(int Index, bool Active, double ProducedW)
 /// <param name="On">Whether the light is on.</param>
 /// <param name="Intensity">Light intensity (template units).</param>
 /// <param name="Color">RGB color, each 0..1.</param>
-public sealed record LightSnapshot(int Index, bool On, double Intensity, double3Snap Color);
+/// <param name="AnimationIndex">
+///     The vessel-level animation ordinal of this light part's actuate/deploy animation, or
+///     <see cref="NoAnimation"/> when the light part has none. The tree co-locates the deploy
+///     <c>goal</c>/<c>current</c>/<c>state</c> control onto <c>lights/&lt;n&gt;/</c> when set — the
+///     same animation also reachable under <c>animations/&lt;n&gt;/</c> (mirrors <see cref="SolarSnapshot"/>).
+/// </param>
+public sealed record LightSnapshot(
+    int Index, bool On, double Intensity, double3Snap Color,
+    int AnimationIndex = LightSnapshot.NoAnimation)
+{
+    /// <summary>Sentinel <see cref="AnimationIndex"/> for a light with no actuate animation.</summary>
+    public const int NoAnimation = -1;
+}
 
 /// <summary>One docking port's state.</summary>
 /// <param name="Index">Stable per-vessel docking-port index.</param>
