@@ -45,7 +45,7 @@ a set of in-game passes (T6.6/T9.3/G1–G4) that require a live KSA flight; chec
 |---|---|---|
 | M0 — scaffold | DONE | `gatos.slnx`, `Directory.Build.props`, `GatOsPaths` |
 | M1 — spike | DONE | `spike/NOTES.md` (**required reading** before M3/M4/M7/M8) |
-| M2 — guest image | DONE | `guest/build-image.sh`, `guest/fetch-guest.*`, `GUEST_VERSION`=10 |
+| M2 — guest image | DONE | `guest/build-image.sh`, `guest/fetch-guest.*`, `GUEST_VERSION`=14 |
 | M3 — gatOS.Vm | DONE | `VmHost.cs`, `QemuCommandBuilder`, `DiskManager`, `PortAllocator` |
 | M4 — gatOS.Ssh | DONE | `SshShellSession.cs`, `VmConnectionBroker.cs` |
 | M5 — purrTTY upstream | DONE (tip release cut) | purrtty commits `9fb5e13`/`a56966a` |
@@ -58,12 +58,16 @@ a set of in-game passes (T6.6/T9.3/G1–G4) that require a live KSA flight; chec
 | G6 — TypeScript SDK | DONE | `examples/sdk-ts/` |
 | G7 — serial/bus | DONE | `gatOS.Bus/` |
 | MQTT transport | DONE | `gatOS.Mqtt/` |
-| Host folder mounts | DONE (needs guest v10 published) | `NineP/Vfs/HostDirectory.cs`, `HostFile.cs` |
+| Host folder mounts | DONE | `NineP/Vfs/HostDirectory.cs`, `HostFile.cs` |
 | T11.1 — QEMU win-x64 | DONE | `tools/fetch-qemu.*`, `vendor/qemu/win-x64/` |
 | M10+ | **Not yet implemented** | — |
 
 The full `GATOS_IT=1` integration suite ran 321/321 green (Windows/TCG, guest v3, 2026-06-13).
-`HostMountIntegrationTests` needs guest v10 published. **M10 (persistence & savegame) is next.**
+Since then guest v10 added the `coreutils` package, whose GNU `tail` shadowed busybox `tail` in
+PATH and broke `tail -f` on the 9p `/sim` mount (GNU `tail -f` follows via inotify, which v9fs
+never delivers for the host-side appends that grow `stream`/`events`/`alarm`) — failing
+`SimMountIntegrationTests`; fixed in guest **v14** by the `usr/local/bin/tail` poll-mode shim
+(verified against a live mount, Windows/TCG, 2026-06-20). **M10 (persistence & savegame) is next.**
 
 > **`spike/NOTES.md` is REQUIRED READING before any M3/M4/M7/M8 work** — notably: `i_size`
 > must be truthful on ≥6.11 kernels; two distinct file models exist (growing-log `tail -f` vs
