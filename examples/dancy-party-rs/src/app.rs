@@ -16,7 +16,7 @@ use ratatui::layout::{Position, Rect};
 
 use crate::color::{self, Rgb};
 use crate::party::Plan;
-use crate::source::{FromWorker, ToWorker, VesselLights};
+use crate::source::{FromWorker, ToWorker, VesselLights, WriteConfig, WriteSnapshot};
 use crate::xkcd::XKCD;
 
 /// Which of the two top-level screens is showing.
@@ -101,6 +101,13 @@ pub struct App {
     pub control: bool,
     pub label: String,
     pub hz: f64,
+    /// Fade-quantization steps per segment (`--steps`; 0 = continuous). Part of every published plan.
+    pub steps: u32,
+    /// The write-pipeline tuning (`--async`/`--writers`), echoed in the UI; the worker owns the live
+    /// behaviour, this is just for display.
+    pub write_cfg: WriteConfig,
+    /// Latest write-pipeline perf snapshot from the worker (latency/throughput/backlog), while partying.
+    pub perf: Option<WriteSnapshot>,
     pub status: String,
     pub status_err: bool,
 
@@ -134,7 +141,13 @@ const MIN_PER_MS: u64 = 50;
 const TIME_STEP: u64 = 100;
 
 impl App {
-    pub fn new(tx: Sender<ToWorker>, label: String, hz: f64) -> Self {
+    pub fn new(
+        tx: Sender<ToWorker>,
+        label: String,
+        hz: f64,
+        steps: u32,
+        write_cfg: WriteConfig,
+    ) -> Self {
         let app = Self {
             screen: Screen::Vessels,
             modal: Modal::None,
@@ -153,6 +166,9 @@ impl App {
             control: false,
             label,
             hz,
+            steps,
+            write_cfg,
+            perf: None,
             status: "scanning for vessels\u{2026}".into(),
             status_err: false,
             vessel_rects: Vec::new(),
@@ -194,6 +210,7 @@ impl App {
                 goal,
                 targets,
                 error,
+                perf,
             } => {
                 self.partying = true;
                 self.live = Some(LiveFrame {
@@ -201,6 +218,7 @@ impl App {
                     segment,
                     goal,
                 });
+                self.perf = Some(perf);
                 if let Some(e) = error {
                     self.status = format!("party write failed \u{2014} {e}");
                     self.status_err = true;
@@ -214,6 +232,7 @@ impl App {
             FromWorker::Stopped { error } => {
                 self.partying = false;
                 self.live = None;
+                self.perf = None;
                 self.pending_stop = false;
                 match error {
                     Some(e) => {
@@ -265,7 +284,7 @@ impl App {
     }
 
     fn plan(&self) -> Plan {
-        Plan::new(self.colors.clone(), self.per_ms)
+        Plan::new(self.colors.clone(), self.per_ms).with_steps(self.steps)
     }
 
     // ---- keyboard ----------------------------------------------------------------------------
@@ -830,7 +849,7 @@ mod tests {
 
     fn app() -> App {
         let (tx, _rx) = mpsc::channel();
-        App::new(tx, "mock".into(), 60.0)
+        App::new(tx, "mock".into(), 60.0, 0, WriteConfig::default())
     }
 
     fn catalog() -> Vec<VesselLights> {

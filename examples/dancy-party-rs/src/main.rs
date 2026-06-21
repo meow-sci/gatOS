@@ -20,6 +20,7 @@ mod xkcd;
 use std::io::{self, Stdout};
 use std::path::Path;
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ratatui::backend::CrosstermBackend;
@@ -33,7 +34,7 @@ use ratatui::crossterm::terminal::{
 use ratatui::Terminal;
 
 use app::App;
-use source::{spawn_worker, FromWorker, FsSource, HttpSource, Source, ToWorker};
+use source::{spawn_worker, FromWorker, FsSource, HttpSource, Source, ToWorker, WriteConfig};
 
 type Tui = Terminal<CrosstermBackend<Stdout>>;
 
@@ -66,6 +67,8 @@ enum SourceKind {
 struct Config {
     source: SourceKind,
     hz: f64,
+    steps: u32,
+    write_cfg: WriteConfig,
     help: bool,
 }
 
@@ -74,6 +77,9 @@ impl Config {
         let mut url: Option<String> = None;
         let mut root: Option<String> = None;
         let mut hz: Option<f64> = None;
+        let mut steps: Option<u32> = None;
+        let mut async_writes = false;
+        let mut writers: Option<usize> = None;
         let mut help = false;
 
         let mut args = std::env::args().skip(1);
@@ -87,6 +93,19 @@ impl Config {
                         _ => return Err("--hz wants a number in 1..240".into()),
                     }
                 }
+                "--steps" => {
+                    steps = match args.next().map(|s| s.parse::<u32>()) {
+                        Some(Ok(v)) if v <= 1000 => Some(v),
+                        _ => return Err("--steps wants a number in 0..1000 (0 = continuous)".into()),
+                    }
+                }
+                "--async" => async_writes = true,
+                "--writers" => {
+                    writers = match args.next().map(|s| s.parse::<usize>()) {
+                        Some(Ok(v)) if (1..=64).contains(&v) => Some(v),
+                        _ => return Err("--writers wants a number in 1..64".into()),
+                    }
+                }
                 "-h" | "--help" => help = true,
                 other => return Err(format!("unknown argument '{other}' (try --help)")),
             }
@@ -95,6 +114,11 @@ impl Config {
         Ok(Self {
             source: resolve_source(url, root),
             hz: hz.unwrap_or(60.0),
+            steps: steps.unwrap_or(0),
+            write_cfg: WriteConfig {
+                async_writes,
+                writers: writers.unwrap_or(8),
+            },
             help,
         })
     }
@@ -118,21 +142,30 @@ fn resolve_source(url: Option<String>, root: Option<String>) -> SourceKind {
     SourceKind::Fs("/sim".to_string())
 }
 
-fn build_source(kind: SourceKind) -> Box<dyn Source> {
+fn build_source(kind: SourceKind) -> Arc<dyn Source> {
     match kind {
-        SourceKind::Fs(root) => Box::new(FsSource::new(root)),
-        SourceKind::Http(base) => Box::new(HttpSource::new(base)),
+        SourceKind::Fs(root) => Arc::new(FsSource::new(root)),
+        SourceKind::Http(base) => Arc::new(HttpSource::new(base)),
     }
 }
 
 fn print_help() {
     println!("dancy-party-rs \u{2014} a party-lights console over gatOS /sim");
     println!();
-    println!("USAGE: dancy-party-rs [--root <dir> | --url <base>] [--hz <n>]");
+    println!("USAGE: dancy-party-rs [--root <dir> | --url <base>] [--hz <n>] [--steps <n>] [--async [--writers <n>]]");
     println!();
     println!("  --root <dir>   read/write the /sim mount at <dir> (default: /sim when present)");
     println!("  --url <base>   use HTTP /v1/fs instead (e.g. $GATOS_HTTP, http://127.0.0.1:4242/v1)");
     println!("  --hz <n>       party color-update rate, 1..240 (default 60)");
+    println!();
+    println!("Performance experiment knobs (the fade can lag with many lights — use these to find why):");
+    println!("  --steps <n>    quantize each color fade to <n> discrete values, 0..1000 (default 0 =");
+    println!("                 continuous). Fewer steps = fewer distinct 9p writes; 1 = hard cut, no fade.");
+    println!("  --async        hand light writes to a background thread pool instead of blocking the");
+    println!("                 animation loop on each write.");
+    println!("  --writers <n>  pool size for --async, 1..64 (default 8).");
+    println!("  The party screen shows live write latency / throughput / backlog so you can read off the");
+    println!("  per-write cost and whether the loop is keeping up.");
     println!();
     println!("In the guest, no flags are needed: it reads /sim and drives the selected vessels' lights.");
     println!("Vessels screen: \u{2191}\u{2193} move \u{b7} space arm \u{b7} a all \u{b7} r rescan \u{b7} Enter \u{2192} party.");
@@ -145,9 +178,9 @@ fn run(terminal: &mut Tui, config: Config) -> io::Result<()> {
 
     let source = build_source(config.source);
     let label = source.label();
-    spawn_worker(source, config.hz, cmd_rx, update_tx);
+    spawn_worker(source, config.hz, config.write_cfg, cmd_rx, update_tx);
 
-    let mut app = App::new(cmd_tx, label, config.hz);
+    let mut app = App::new(cmd_tx, label, config.hz, config.steps, config.write_cfg);
 
     // A short tick keeps the live color band animating smoothly between input events (the worker
     // pushes throttled frames; we just need to redraw to show them).

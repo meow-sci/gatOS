@@ -15,7 +15,9 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::color::Rgb;
@@ -52,9 +54,10 @@ impl VesselLights {
     }
 }
 
-/// A read/write/discover interface over the `/sim` light surface. Implementations run on the worker
-/// thread only.
-pub trait Source: Send {
+/// A read/write/discover interface over the `/sim` light surface. Discovery/health run on the worker
+/// thread; `write` may also be called from the async writer-pool threads (`--async`), so the trait is
+/// `Send + Sync`.
+pub trait Source: Send + Sync {
     /// Writes `value` to a field as one newline-terminated write (the `echo value > file` shape), so a
     /// control file actuates and a failure carries the real errno.
     fn write(&self, path: &str, value: &str) -> Result<(), CmdError>;
@@ -319,6 +322,191 @@ fn errno_name(raw: Option<i32>) -> String {
     }
 }
 
+// ---- write tuning + stats (the perf-experiment knobs) -------------------------------------------
+
+/// How the party broadcasts each frame's writes — the `--async`/`--writers` perf experiment.
+#[derive(Clone, Copy, Debug)]
+pub struct WriteConfig {
+    /// `false` (default): write every light synchronously on the animation thread, blocking on each
+    /// (so a slow 9p write directly stalls the fade). `true`: hand writes to a pool of `writers`
+    /// background threads and never block the animation loop.
+    pub async_writes: bool,
+    /// Number of background writer threads when `async_writes` is set (ignored otherwise).
+    pub writers: usize,
+}
+
+impl Default for WriteConfig {
+    fn default() -> Self {
+        Self {
+            async_writes: false,
+            writers: 8,
+        }
+    }
+}
+
+/// A point-in-time view of the write pipeline's behaviour, pushed to the UI each tick so the operator
+/// can read off the actual cost of a `/sim` light write and whether the loop is keeping up.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct WriteSnapshot {
+    /// Writes issued since the party started (color + goal, across all lights).
+    pub writes: u64,
+    /// Mean / max / most-recent single-write latency, in microseconds.
+    pub avg_us: u64,
+    pub max_us: u64,
+    pub last_us: u64,
+    /// Writes still queued/in-flight on the async pool (always 0 in sync mode).
+    pub inflight: usize,
+    /// Color broadcasts skipped because the async pool was still draining the previous one — the
+    /// "can't keep up" signal. Always 0 in sync mode.
+    pub dropped: u64,
+    /// Whether the async pool is in use, and its width.
+    pub async_writes: bool,
+    pub writers: usize,
+}
+
+/// Shared, lock-light accumulator the sync path and every pool thread update as writes complete.
+#[derive(Default)]
+struct WriteStats {
+    inflight: AtomicUsize,
+    count: AtomicU64,
+    total_us: AtomicU64,
+    max_us: AtomicU64,
+    last_us: AtomicU64,
+    err: Mutex<Option<String>>,
+}
+
+impl WriteStats {
+    fn record(&self, us: u64, err: Option<String>) {
+        self.count.fetch_add(1, Ordering::Relaxed);
+        self.total_us.fetch_add(us, Ordering::Relaxed);
+        self.max_us.fetch_max(us, Ordering::Relaxed);
+        self.last_us.store(us, Ordering::Relaxed);
+        if let Some(e) = err {
+            let mut slot = self.err.lock().unwrap();
+            if slot.is_none() {
+                *slot = Some(e);
+            }
+        }
+    }
+
+    /// Resets the counters at the start of a run so each party measures fresh (in-flight is left
+    /// alone — the previous run's pool is drained before a new one starts).
+    fn reset(&self) {
+        self.count.store(0, Ordering::Relaxed);
+        self.total_us.store(0, Ordering::Relaxed);
+        self.max_us.store(0, Ordering::Relaxed);
+        self.last_us.store(0, Ordering::Relaxed);
+        *self.err.lock().unwrap() = None;
+    }
+
+    fn take_error(&self) -> Option<String> {
+        self.err.lock().unwrap().take()
+    }
+
+    fn snapshot(&self, cfg: WriteConfig, dropped: u64) -> WriteSnapshot {
+        let count = self.count.load(Ordering::Relaxed);
+        let total = self.total_us.load(Ordering::Relaxed);
+        WriteSnapshot {
+            writes: count,
+            avg_us: total.checked_div(count).unwrap_or(0),
+            max_us: self.max_us.load(Ordering::Relaxed),
+            last_us: self.last_us.load(Ordering::Relaxed),
+            inflight: self.inflight.load(Ordering::Relaxed),
+            dropped,
+            async_writes: cfg.async_writes,
+            writers: cfg.writers,
+        }
+    }
+}
+
+/// The write fan-out for a frame. `Sync` writes inline on the animation thread; `Pool` round-robins
+/// jobs across background threads. Both feed the same [`WriteStats`], so latency is measured either
+/// way. Built once per worker and reused across parties.
+enum Broadcaster {
+    Sync {
+        source: Arc<dyn Source>,
+        stats: Arc<WriteStats>,
+    },
+    Pool {
+        txs: Vec<Sender<(String, String)>>,
+        next: usize,
+        stats: Arc<WriteStats>,
+    },
+}
+
+impl Broadcaster {
+    fn build(source: Arc<dyn Source>, cfg: WriteConfig) -> Self {
+        let stats = Arc::new(WriteStats::default());
+        if !cfg.async_writes {
+            return Broadcaster::Sync { source, stats };
+        }
+        let mut txs = Vec::new();
+        for _ in 0..cfg.writers.max(1) {
+            let (tx, rx) = mpsc::channel::<(String, String)>();
+            txs.push(tx);
+            let src = source.clone();
+            let st = stats.clone();
+            std::thread::spawn(move || {
+                // Ends when its sender drops (worker exit). Each job writes one field and records its
+                // own latency; the in-flight count drops as the queue drains.
+                for (path, value) in rx {
+                    let t0 = Instant::now();
+                    let err = src.write(&path, &value).err().map(|e| format!("{}: {}", e.errno, e.message));
+                    st.record(t0.elapsed().as_micros() as u64, err);
+                    st.inflight.fetch_sub(1, Ordering::Relaxed);
+                }
+            });
+        }
+        Broadcaster::Pool {
+            txs,
+            next: 0,
+            stats,
+        }
+    }
+
+    fn stats(&self) -> &Arc<WriteStats> {
+        match self {
+            Broadcaster::Sync { stats, .. } | Broadcaster::Pool { stats, .. } => stats,
+        }
+    }
+
+    fn inflight(&self) -> usize {
+        self.stats().inflight.load(Ordering::Relaxed)
+    }
+
+    /// Issues one field write. Sync mode blocks (and times) the write here; pool mode enqueues it and
+    /// returns immediately, the chosen thread timing it as it drains.
+    fn send(&mut self, path: &str, value: &str) {
+        match self {
+            Broadcaster::Sync { source, stats } => {
+                let t0 = Instant::now();
+                let err = source.write(path, value).err().map(|e| format!("{}: {}", e.errno, e.message));
+                stats.record(t0.elapsed().as_micros() as u64, err);
+            }
+            Broadcaster::Pool { txs, next, stats } => {
+                stats.inflight.fetch_add(1, Ordering::Relaxed);
+                let i = *next;
+                *next = (*next + 1) % txs.len();
+                if txs[i].send((path.to_string(), value.to_string())).is_err() {
+                    stats.inflight.fetch_sub(1, Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
+    /// Blocks until the pool has drained every queued write (no-op in sync mode). Bounded so a wedged
+    /// write can't hang shutdown.
+    fn drain(&self) {
+        if let Broadcaster::Sync { .. } = self {
+            return;
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while self.inflight() > 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+}
+
 // ---- worker channel protocol --------------------------------------------------------------------
 
 /// A request from the UI thread to the worker.
@@ -351,6 +539,7 @@ pub enum FromWorker {
         goal: u8,
         targets: usize,
         error: Option<String>,
+        perf: WriteSnapshot,
     },
     /// The party stopped (lights reset); carries any error from the reset writes.
     Stopped { error: Option<String> },
@@ -367,13 +556,16 @@ struct RunningParty {
     goal_paths: Vec<String>,
     last_color_wire: Option<String>,
     last_goal: Option<u8>,
+    /// Color broadcasts skipped because the async pool hadn't drained the previous one yet.
+    dropped: u64,
 }
 
 /// Spawns the worker thread. It owns the source for its whole life; the returned channels are the
-/// only way to talk to it. Dropping the `ToWorker` sender makes the worker exit.
+/// only way to talk to it. Dropping the `ToWorker` sender makes the worker (and its writer pool) exit.
 pub fn spawn_worker(
-    source: Box<dyn Source>,
+    source: Arc<dyn Source>,
     hz: f64,
+    write_cfg: WriteConfig,
     rx: Receiver<ToWorker>,
     tx: Sender<FromWorker>,
 ) {
@@ -385,13 +577,14 @@ pub fn spawn_worker(
         let mut catalog: Vec<VesselLights> = Vec::new();
         let mut party: Option<RunningParty> = None;
         let mut last_ui = Instant::now() - ui_min_gap;
+        let mut bc = Broadcaster::build(source.clone(), write_cfg);
 
         loop {
             if let Some(rp) = party.as_mut() {
                 // --- partying: render one frame, then wait up to one frame for a command ---
                 let elapsed = rp.start.elapsed().as_secs_f64() * 1000.0;
                 let frame = rp.plan.frame(elapsed);
-                let err = write_frame(&*source, rp, &frame);
+                write_frame(&mut bc, rp, &frame);
 
                 if last_ui.elapsed() >= ui_min_gap {
                     last_ui = Instant::now();
@@ -400,13 +593,14 @@ pub fn spawn_worker(
                         segment: frame.segment,
                         goal: frame.goal,
                         targets: rp.color_paths.len(),
-                        error: err,
+                        error: bc.stats().take_error(),
+                        perf: bc.stats().snapshot(write_cfg, rp.dropped),
                     });
                 }
 
                 match rx.recv_timeout(frame_dt) {
                     Ok(cmd) => {
-                        if handle(cmd, &*source, &mut catalog, &mut party, &tx) {
+                        if handle(cmd, &source, &mut bc, &mut catalog, &mut party, &tx) {
                             return;
                         }
                     }
@@ -417,7 +611,7 @@ pub fn spawn_worker(
                 // --- idle: block until there's something to do ---
                 match rx.recv() {
                     Ok(cmd) => {
-                        if handle(cmd, &*source, &mut catalog, &mut party, &tx) {
+                        if handle(cmd, &source, &mut bc, &mut catalog, &mut party, &tx) {
                             return;
                         }
                     }
@@ -431,7 +625,8 @@ pub fn spawn_worker(
 /// Handles one command. Returns `true` if the worker should exit (channel hung up while resetting).
 fn handle(
     cmd: ToWorker,
-    source: &dyn Source,
+    source: &Arc<dyn Source>,
+    bc: &mut Broadcaster,
     catalog: &mut Vec<VesselLights>,
     party: &mut Option<RunningParty>,
     tx: &Sender<FromWorker>,
@@ -453,6 +648,7 @@ fn handle(
                     "no lights on the selected vessel(s)".into(),
                 ));
             } else {
+                bc.stats().reset(); // measure each run fresh
                 *party = Some(RunningParty {
                     start: Instant::now(),
                     plan,
@@ -460,6 +656,7 @@ fn handle(
                     goal_paths,
                     last_color_wire: None,
                     last_goal: None,
+                    dropped: 0,
                 });
             }
         }
@@ -470,7 +667,10 @@ fn handle(
         }
         ToWorker::Stop => {
             if let Some(rp) = party.take() {
-                let err = reset_lights(source, &rp);
+                // Drain any in-flight async writes first, so a stale queued color can't land *after*
+                // the reset and leave a light stuck mid-party. Then reset synchronously.
+                bc.drain();
+                let err = reset_lights(&**source, &rp);
                 let _ = tx.send(FromWorker::Stopped { error: err });
             }
         }
@@ -493,34 +693,37 @@ fn resolve_targets(catalog: &[VesselLights], selected: &[String]) -> (Vec<String
 
 /// Writes one frame to every target: the color to all `color` paths (only when the quantized wire
 /// form changed since last frame — a cheap global dedupe, not per-light tracking) and, on a segment
-/// boundary, the new goal to all `goal` paths. Returns the first write error seen, if any.
-fn write_frame(source: &dyn Source, rp: &mut RunningParty, frame: &crate::party::Frame) -> Option<String> {
-    let mut first_err: Option<String> = None;
-
+/// boundary, the new goal to all `goal` paths. Errors are accumulated in the shared [`WriteStats`].
+///
+/// In async mode, a color broadcast is **skipped** (and counted in `dropped`) while the pool still
+/// has the previous broadcast in flight — this bounds the queue to ~two broadcasts and surfaces a
+/// "writes can't keep up" signal instead of growing memory without limit.
+fn write_frame(bc: &mut Broadcaster, rp: &mut RunningParty, frame: &crate::party::Frame) {
     let wire = frame.color.to_sim();
     if rp.last_color_wire.as_deref() != Some(wire.as_str()) {
-        for p in &rp.color_paths {
-            if let Err(e) = source.write(p, &wire) {
-                first_err.get_or_insert(format!("{}: {}", e.errno, e.message));
+        if bc.inflight() <= rp.color_paths.len() {
+            for p in &rp.color_paths {
+                bc.send(p, &wire);
             }
+            rp.last_color_wire = Some(wire);
+        } else {
+            // Leave last_color_wire unchanged so we retry this color once the pool catches up.
+            rp.dropped += 1;
         }
-        rp.last_color_wire = Some(wire);
     }
 
     if rp.last_goal != Some(frame.goal) {
         let g = frame.goal.to_string();
         for p in &rp.goal_paths {
-            if let Err(e) = source.write(p, &g) {
-                first_err.get_or_insert(format!("{}: {}", e.errno, e.message));
-            }
+            bc.send(p, &g);
         }
         rp.last_goal = Some(frame.goal);
     }
-
-    first_err
 }
 
-/// Resets every targeted light to white with goal 0 — the "STOP, MY EYES" cleanup.
+/// Resets every targeted light to white with goal 0 — the "STOP, MY EYES" cleanup. Always written
+/// synchronously and directly through the source (the pool is drained first) so the reset is
+/// guaranteed durable before the `Stopped` ack.
 fn reset_lights(source: &dyn Source, rp: &RunningParty) -> Option<String> {
     let mut first_err: Option<String> = None;
     let white = Rgb::WHITE.to_sim();
@@ -628,12 +831,20 @@ mod tests {
         assert_eq!(c2.len(), 2);
     }
 
+    fn sync_bc(source: Arc<dyn Source>) -> Broadcaster {
+        Broadcaster::Sync {
+            source,
+            stats: Arc::new(WriteStats::default()),
+        }
+    }
+
     #[test]
     fn write_frame_dedupes_color_and_writes_goal_on_flip() {
-        let src = MockSource {
+        let src = Arc::new(MockSource {
             catalog: vec![],
             writes: Mutex::new(Vec::new()),
-        };
+        });
+        let mut bc = sync_bc(src.clone());
         let mut rp = RunningParty {
             start: Instant::now(),
             plan: Plan::new(vec![Rgb::WHITE], 1000),
@@ -641,18 +852,19 @@ mod tests {
             goal_paths: vec!["v/0/goal".into()],
             last_color_wire: None,
             last_goal: None,
+            dropped: 0,
         };
         let f0 = crate::party::Frame {
             color: Rgb::new(1.0, 0.0, 0.0),
             segment: 0,
             goal: 1,
         };
-        write_frame(&src, &mut rp, &f0);
+        write_frame(&mut bc, &mut rp, &f0);
         // First frame: both colors + the one goal.
         assert_eq!(src.writes.lock().unwrap().len(), 3);
 
         // Same color, same goal -> no further writes (global dedupe).
-        write_frame(&src, &mut rp, &f0);
+        write_frame(&mut bc, &mut rp, &f0);
         assert_eq!(src.writes.lock().unwrap().len(), 3);
 
         // Goal flips -> one goal write, color unchanged so still deduped.
@@ -661,8 +873,45 @@ mod tests {
             segment: 1,
             goal: 0,
         };
-        write_frame(&src, &mut rp, &f1);
+        write_frame(&mut bc, &mut rp, &f1);
         assert_eq!(src.writes.lock().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn async_pool_writes_every_light_and_drains() {
+        // An async broadcaster fans one frame out across the pool; after draining, every targeted
+        // light path has been written exactly once, and the latency stats are populated.
+        let src = Arc::new(MockSource {
+            catalog: vec![],
+            writes: Mutex::new(Vec::new()),
+        });
+        let mut bc = Broadcaster::build(
+            src.clone(),
+            WriteConfig {
+                async_writes: true,
+                writers: 4,
+            },
+        );
+        let mut rp = RunningParty {
+            start: Instant::now(),
+            plan: Plan::new(vec![Rgb::new(1.0, 0.0, 0.0)], 1000),
+            color_paths: (0..10).map(|n| format!("v/{n}/color")).collect(),
+            goal_paths: (0..10).map(|n| format!("v/{n}/goal")).collect(),
+            last_color_wire: None,
+            last_goal: None,
+            dropped: 0,
+        };
+        let frame = crate::party::Frame {
+            color: Rgb::new(1.0, 0.0, 0.0),
+            segment: 0,
+            goal: 1,
+        };
+        write_frame(&mut bc, &mut rp, &frame);
+        bc.drain();
+        let writes = src.writes.lock().unwrap();
+        assert_eq!(writes.len(), 20); // 10 colors + 10 goals
+        assert!(writes.iter().any(|(p, _)| p == "v/3/color"));
+        assert!(bc.stats().count.load(Ordering::Relaxed) == 20);
     }
 
     #[test]
@@ -686,7 +935,13 @@ mod tests {
 
         let (cmd_tx, cmd_rx) = mpsc::channel::<ToWorker>();
         let (up_tx, up_rx) = mpsc::channel::<FromWorker>();
-        spawn_worker(Box::new(FsSource::new(&root)), 60.0, cmd_rx, up_tx);
+        spawn_worker(
+            Arc::new(FsSource::new(&root)),
+            60.0,
+            WriteConfig::default(),
+            cmd_rx,
+            up_tx,
+        );
 
         // Discover -> Catalog with the one light.
         cmd_tx.send(ToWorker::Discover).unwrap();

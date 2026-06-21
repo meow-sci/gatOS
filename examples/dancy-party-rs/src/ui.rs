@@ -79,6 +79,15 @@ fn render_title(f: &mut Frame, app: &App, area: Rect) {
             spans.push(kv("colors", &app.colors.len().to_string()));
             spans.push(kv("per", &format!("{}ms", app.per_ms)));
             spans.push(kv("hz", &fmt_hz(app.hz)));
+            spans.push(kv("steps", &fmt_steps(app.steps)));
+            spans.push(kv(
+                "wr",
+                &if app.write_cfg.async_writes {
+                    format!("async\u{00d7}{}", app.write_cfg.writers)
+                } else {
+                    "sync".into()
+                },
+            ));
             spans.push(if app.partying {
                 Span::styled(
                     "\u{1f389} PARTY ",
@@ -164,6 +173,7 @@ fn render_party(f: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::vertical([
         Constraint::Min(3),    // palette
         Constraint::Length(1), // time
+        Constraint::Length(1), // write-pipeline perf readout
         Constraint::Length(1), // live preview band
         Constraint::Length(1), // buttons
     ])
@@ -171,8 +181,59 @@ fn render_party(f: &mut Frame, app: &mut App, area: Rect) {
 
     render_palette(f, app, chunks[0]);
     render_time_row(f, app, chunks[1]);
-    render_live_band(f, app, chunks[2]);
-    render_buttons(f, app, chunks[3]);
+    render_perf_row(f, app, chunks[2]);
+    render_live_band(f, app, chunks[3]);
+    render_buttons(f, app, chunks[4]);
+}
+
+/// The write-pipeline readout — the whole point of the perf knobs. While partying it shows the actual
+/// measured per-write latency, the write throughput, and (in async mode) the in-flight backlog and
+/// dropped-broadcast count. Idle, it just restates the active tuning.
+fn render_perf_row(f: &mut Frame, app: &App, area: Rect) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let mut spans = vec![Span::styled("writes ", Style::new().fg(LABEL))];
+    match app.perf {
+        Some(p) if app.partying => {
+            spans.push(Span::styled(
+                format!("{} ", p.writes),
+                Style::new().fg(VALUE).add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(
+                format!("\u{b7} lat avg {} max {} last {} ", us(p.avg_us), us(p.max_us), us(p.last_us)),
+                Style::new().fg(VALUE),
+            ));
+            if p.async_writes {
+                let backlog_col = if p.inflight > 0 { ACCENT } else { LABEL };
+                spans.push(Span::styled(
+                    format!("\u{b7} {}-pool backlog {} ", p.writers, p.inflight),
+                    Style::new().fg(backlog_col),
+                ));
+                let drop_col = if p.dropped > 0 { BAD } else { LABEL };
+                spans.push(Span::styled(
+                    format!("\u{b7} dropped {} ", p.dropped),
+                    Style::new().fg(drop_col),
+                ));
+            }
+        }
+        _ => {
+            spans.push(Span::styled(
+                format!(
+                    "idle \u{b7} steps {} \u{b7} {} \u{b7} {} hz",
+                    fmt_steps(app.steps),
+                    if app.write_cfg.async_writes {
+                        format!("async\u{00d7}{}", app.write_cfg.writers)
+                    } else {
+                        "sync".into()
+                    },
+                    fmt_hz(app.hz),
+                ),
+                Style::new().fg(LABEL),
+            ));
+        }
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn render_palette(f: &mut Frame, app: &mut App, area: Rect) {
@@ -615,6 +676,23 @@ fn fmt_hz(hz: f64) -> String {
     }
 }
 
+fn fmt_steps(steps: u32) -> String {
+    if steps == 0 {
+        "cont".into()
+    } else {
+        steps.to_string()
+    }
+}
+
+/// Formats a microsecond latency compactly — `µs` under a millisecond, `ms` above.
+fn us(micros: u64) -> String {
+    if micros < 1000 {
+        format!("{micros}\u{00b5}s")
+    } else {
+        format!("{:.1}ms", micros as f64 / 1000.0)
+    }
+}
+
 fn trunc(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -647,7 +725,7 @@ mod tests {
 
     fn app() -> App {
         let (tx, _rx) = mpsc::channel();
-        App::new(tx, "fs:/sim".into(), 60.0)
+        App::new(tx, "fs:/sim".into(), 60.0, 0, crate::source::WriteConfig::default())
     }
 
     #[test]

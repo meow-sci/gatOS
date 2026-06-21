@@ -17,6 +17,11 @@ use crate::color::Rgb;
 pub struct Plan {
     pub colors: Vec<Rgb>,
     pub per_ms: f64,
+    /// How many discrete color values the cross-fade is quantized to **per segment** (the `--steps`
+    /// perf knob). `0` means continuous (the fade is limited only by `--hz` and the 5-decimal wire
+    /// quantization in [`Rgb::to_sim`]); `1` snaps to each palette color with no fade at all; higher
+    /// values trade smoothness for fewer distinct color writes. Fewer steps ⇒ fewer 9p writes.
+    pub steps: u32,
 }
 
 /// One animation frame: the interpolated tint to push to every light's `color`, plus the current
@@ -33,7 +38,14 @@ impl Plan {
         Self {
             colors,
             per_ms: (per_ms as f64).max(1.0),
+            steps: 0,
         }
+    }
+
+    /// Builder: quantize the cross-fade to `steps` discrete values per segment (`0` = continuous).
+    pub fn with_steps(mut self, steps: u32) -> Self {
+        self.steps = steps;
+        self
     }
 
     /// The frame at `elapsed_ms` since the party began. With an empty palette the color falls back to
@@ -49,7 +61,16 @@ impl Plan {
         }
         let progress = (elapsed_ms.max(0.0)) / self.per_ms;
         let segment = progress.floor() as u64;
-        let t = progress - segment as f64; // 0..1 within the current segment
+        let t_raw = progress - segment as f64; // 0..1 within the current segment
+        // `--steps` quantizes the fade: snap `t` to the nearest lower of `steps` evenly-spaced values
+        // (0, 1/s, … (s-1)/s). This caps the number of *distinct* colors written per segment to
+        // `steps`, the main lever for cutting 9p write volume. `steps == 0` leaves the fade continuous.
+        let t = if self.steps == 0 {
+            t_raw
+        } else {
+            let s = self.steps as f64;
+            ((t_raw * s).floor() / s).min((s - 1.0) / s)
+        };
         let from = self.colors[(segment as usize) % n];
         let to = self.colors[((segment as usize) + 1) % n];
         Frame {
@@ -114,5 +135,25 @@ mod tests {
     fn empty_palette_is_total() {
         let plan = Plan::new(vec![], 500);
         assert_eq!(plan.frame(1234.0).color, Rgb::WHITE);
+    }
+
+    #[test]
+    fn steps_quantize_the_fade() {
+        let red = rgb(1.0, 0.0, 0.0);
+        let blue = rgb(0.0, 0.0, 1.0);
+
+        // steps = 1: snap to the segment's start color for the whole segment (no fade).
+        let snap = Plan::new(vec![red, blue], 1000).with_steps(1);
+        assert_eq!(snap.frame(0.0).color, red);
+        assert_eq!(snap.frame(900.0).color, red); // still red until the segment flips
+        assert_eq!(snap.frame(1000.0).color, blue);
+
+        // steps = 4: t snaps to {0, .25, .5, .75}. At 60% through, that floors to .5.
+        let q = Plan::new(vec![red, blue], 1000).with_steps(4);
+        let f = q.frame(600.0);
+        assert!((f.color.r - 0.5).abs() < 1e-9 && (f.color.b - 0.5).abs() < 1e-9);
+        // Just shy of the next segment still caps at .75, never reaching pure blue mid-segment.
+        let late = q.frame(999.0);
+        assert!((late.color.b - 0.75).abs() < 1e-9);
     }
 }
