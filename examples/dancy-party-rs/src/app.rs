@@ -1,0 +1,924 @@
+//! Application state + input handling. Two screens — a vessel **multi-select** and the **party**
+//! console — plus three modals (manual color entry, the XKCD fuzzy picker, and the per-color-time
+//! editor). The render pass ([`crate::ui`]) reads this state and writes back the interactive
+//! hit-test rects (vessel rows, color-row buttons, the party toggle, modal lists) that the mouse
+//! handler tests on the next event, so keyboard and mouse drive the exact same actions.
+//!
+//! All `/sim` I/O lives on the worker thread ([`crate::source`]); this type only *sends* commands
+//! (discover / start / update / stop) and folds the worker's replies into display state.
+
+use std::sync::mpsc::Sender;
+
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::{Position, Rect};
+
+use crate::color::{self, Rgb};
+use crate::party::Plan;
+use crate::source::{FromWorker, ToWorker, VesselLights};
+use crate::xkcd::XKCD;
+
+/// Which of the two top-level screens is showing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Screen {
+    Vessels,
+    Party,
+}
+
+/// Focus within the party screen — Tab cycles it; the active section interprets the arrow/letter keys.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    Colors,
+    Time,
+    Button,
+}
+
+/// One vessel row on the select screen: its `/sim` id, how many lights it has, and whether it's
+/// armed for the party.
+pub struct VesselRow {
+    pub id: String,
+    pub lights: usize,
+    pub selected: bool,
+}
+
+pub enum Modal {
+    None,
+    AddColor(AddColorModal),
+    Xkcd(XkcdModal),
+    Time(TimeModal),
+}
+
+/// Manual color entry — type an RGB triple (`255 128 0`) or hex (`#ff8000`); a live swatch previews
+/// the parse. `Tab` jumps to the XKCD picker.
+pub struct AddColorModal {
+    pub text: String,
+    pub area: Rect,
+}
+
+/// The XKCD fuzzy picker — a space-separated **AND** filter over the bundled survey palette with a
+/// live preview swatch of the highlighted color.
+pub struct XkcdModal {
+    pub query: String,
+    /// Lowercased humanized name per `XKCD` entry (parallel index), built once on open.
+    pub hays: Vec<String>,
+    pub filtered: Vec<usize>,
+    pub selected: usize,
+    pub offset: usize,
+    pub area: Rect,
+    pub item_rects: Vec<(Rect, usize)>,
+}
+
+/// Per-color-time editor — type a millisecond value.
+pub struct TimeModal {
+    pub text: String,
+    pub area: Rect,
+}
+
+pub struct App {
+    pub screen: Screen,
+    pub modal: Modal,
+    pub should_quit: bool,
+    /// Set when we asked the worker to reset lights on the way out, so `main` waits for the ack.
+    pub pending_stop: bool,
+
+    // ---- vessel screen ----
+    pub vessels: Vec<VesselRow>,
+    pub vsel: usize,
+    pub discovering: bool,
+
+    // ---- party screen ----
+    pub colors: Vec<Rgb>,
+    pub csel: usize,
+    pub per_ms: u64,
+    pub focus: Focus,
+    pub partying: bool,
+    /// The latest live frame from the worker (preview swatch + heartbeat), or `None` when stopped.
+    pub live: Option<LiveFrame>,
+
+    // ---- shared ----
+    pub connected: bool,
+    pub control: bool,
+    pub label: String,
+    pub hz: f64,
+    pub status: String,
+    pub status_err: bool,
+
+    // ---- hit-test rects recorded each render ----
+    pub vessel_rects: Vec<(Rect, usize)>,
+    pub color_rects: Vec<(Rect, usize)>,
+    pub up_btns: Vec<(Rect, usize)>,
+    pub down_btns: Vec<(Rect, usize)>,
+    pub del_btns: Vec<(Rect, usize)>,
+    pub add_btn: Rect,
+    pub xkcd_btn: Rect,
+    pub time_minus: Rect,
+    pub time_plus: Rect,
+    pub party_btn: Rect,
+    pub back_btn: Rect,
+
+    tx: Sender<ToWorker>,
+}
+
+/// A throttled live animation frame mirrored from the worker for the UI preview.
+#[derive(Clone, Copy)]
+pub struct LiveFrame {
+    pub color: Rgb,
+    pub segment: u64,
+    pub goal: u8,
+}
+
+/// The per-color time floor (ms) — fast enough to strobe, slow enough that a 9p write storm at 60 Hz
+/// still keeps up.
+const MIN_PER_MS: u64 = 50;
+const TIME_STEP: u64 = 100;
+
+impl App {
+    pub fn new(tx: Sender<ToWorker>, label: String, hz: f64) -> Self {
+        let app = Self {
+            screen: Screen::Vessels,
+            modal: Modal::None,
+            should_quit: false,
+            pending_stop: false,
+            vessels: Vec::new(),
+            vsel: 0,
+            discovering: true,
+            colors: Vec::new(),
+            csel: 0,
+            per_ms: 1200,
+            focus: Focus::Colors,
+            partying: false,
+            live: None,
+            connected: false,
+            control: false,
+            label,
+            hz,
+            status: "scanning for vessels\u{2026}".into(),
+            status_err: false,
+            vessel_rects: Vec::new(),
+            color_rects: Vec::new(),
+            up_btns: Vec::new(),
+            down_btns: Vec::new(),
+            del_btns: Vec::new(),
+            add_btn: Rect::default(),
+            xkcd_btn: Rect::default(),
+            time_minus: Rect::default(),
+            time_plus: Rect::default(),
+            party_btn: Rect::default(),
+            back_btn: Rect::default(),
+            tx,
+        };
+        let _ = app.tx.send(ToWorker::Discover);
+        app
+    }
+
+    // ---- worker replies ----------------------------------------------------------------------
+
+    pub fn apply(&mut self, msg: FromWorker) {
+        match msg {
+            FromWorker::Catalog { vessels, health } => {
+                self.discovering = false;
+                self.connected = health.connected;
+                self.control = health.control;
+                self.merge_vessels(vessels);
+                self.status = if self.vessels.is_empty() {
+                    "no vessels found \u{2014} start a flight, then press r to rescan".into()
+                } else {
+                    format!("{} vessel(s) found \u{2014} space to arm, Enter to party", self.vessels.len())
+                };
+                self.status_err = false;
+            }
+            FromWorker::Tick {
+                color,
+                segment,
+                goal,
+                targets,
+                error,
+            } => {
+                self.partying = true;
+                self.live = Some(LiveFrame {
+                    color,
+                    segment,
+                    goal,
+                });
+                if let Some(e) = error {
+                    self.status = format!("party write failed \u{2014} {e}");
+                    self.status_err = true;
+                } else {
+                    self.status = format!(
+                        "\u{1f389} PARTY \u{b7} {targets} light(s) \u{b7} seg {segment} \u{b7} goal {goal}"
+                    );
+                    self.status_err = false;
+                }
+            }
+            FromWorker::Stopped { error } => {
+                self.partying = false;
+                self.live = None;
+                self.pending_stop = false;
+                match error {
+                    Some(e) => {
+                        self.status = format!("stopped, but reset failed \u{2014} {e}");
+                        self.status_err = true;
+                    }
+                    None => {
+                        self.status = "stopped \u{2014} lights reset to white".into();
+                        self.status_err = false;
+                    }
+                }
+            }
+            FromWorker::Refused(why) => {
+                self.partying = false;
+                self.live = None;
+                self.status = format!("can't party \u{2014} {why}");
+                self.status_err = true;
+            }
+        }
+    }
+
+    /// Folds a fresh catalog into the vessel rows, preserving each vessel's armed state by id.
+    fn merge_vessels(&mut self, cat: Vec<VesselLights>) {
+        let armed: Vec<String> = self
+            .vessels
+            .iter()
+            .filter(|v| v.selected)
+            .map(|v| v.id.clone())
+            .collect();
+        self.vessels = cat
+            .into_iter()
+            .map(|v| VesselRow {
+                selected: armed.contains(&v.id),
+                lights: v.light_count(),
+                id: v.id,
+            })
+            .collect();
+        if self.vsel >= self.vessels.len() {
+            self.vsel = self.vessels.len().saturating_sub(1);
+        }
+    }
+
+    pub fn selected_vessel_ids(&self) -> Vec<String> {
+        self.vessels
+            .iter()
+            .filter(|v| v.selected)
+            .map(|v| v.id.clone())
+            .collect()
+    }
+
+    fn plan(&self) -> Plan {
+        Plan::new(self.colors.clone(), self.per_ms)
+    }
+
+    // ---- keyboard ----------------------------------------------------------------------------
+
+    pub fn on_key(&mut self, key: KeyEvent) {
+        match &mut self.modal {
+            Modal::AddColor(_) => self.on_key_add(key),
+            Modal::Xkcd(_) => self.on_key_xkcd(key),
+            Modal::Time(_) => self.on_key_time(key),
+            Modal::None => match self.screen {
+                Screen::Vessels => self.on_key_vessels(key),
+                Screen::Party => self.on_key_party(key),
+            },
+        }
+    }
+
+    fn on_key_vessels(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => self.quit(),
+            KeyCode::Up | KeyCode::Char('k') => self.move_vsel(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.move_vsel(1),
+            KeyCode::Char(' ') => self.toggle_vessel(self.vsel),
+            KeyCode::Char('a') => self.toggle_all_vessels(),
+            KeyCode::Char('r') => self.rescan(),
+            KeyCode::Enter | KeyCode::Char('p') => self.go_party(),
+            _ => {}
+        }
+    }
+
+    fn on_key_party(&mut self, key: KeyEvent) {
+        // Enter / P is the headline action from anywhere on the screen.
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('P') => {
+                self.toggle_party();
+                return;
+            }
+            KeyCode::Char('q') => {
+                self.quit();
+                return;
+            }
+            KeyCode::Esc | KeyCode::Char('b') => {
+                self.back_to_vessels();
+                return;
+            }
+            KeyCode::Tab => {
+                self.cycle_focus(1);
+                return;
+            }
+            KeyCode::BackTab => {
+                self.cycle_focus(-1);
+                return;
+            }
+            _ => {}
+        }
+        match self.focus {
+            Focus::Colors => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => self.move_csel(-1),
+                KeyCode::Down | KeyCode::Char('j') => self.move_csel(1),
+                KeyCode::Char('[') => self.move_color(-1),
+                KeyCode::Char(']') => self.move_color(1),
+                KeyCode::Char('a') => self.open_add_color(),
+                KeyCode::Char('f') | KeyCode::Char('x') => self.open_xkcd(),
+                KeyCode::Char('d') | KeyCode::Delete | KeyCode::Backspace => self.remove_color(),
+                _ => {}
+            },
+            Focus::Time => match key.code {
+                KeyCode::Left | KeyCode::Char('-') | KeyCode::Char('_') => self.nudge_time(-1),
+                KeyCode::Right | KeyCode::Char('=') | KeyCode::Char('+') => self.nudge_time(1),
+                KeyCode::Char('e') => self.open_time(),
+                _ => {}
+            },
+            Focus::Button => {}
+        }
+        // Shift+Up / Shift+Down reorder the focused color regardless of section, a common reflex.
+        if key.modifiers.contains(KeyModifiers::SHIFT) {
+            match key.code {
+                KeyCode::Up => self.move_color(-1),
+                KeyCode::Down => self.move_color(1),
+                _ => {}
+            }
+        }
+    }
+
+    fn on_key_add(&mut self, key: KeyEvent) {
+        let Modal::AddColor(m) = &mut self.modal else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => self.modal = Modal::None,
+            KeyCode::Tab => self.open_xkcd(),
+            KeyCode::Enter => {
+                if let Some(rgb) = color::parse(&m.text) {
+                    self.add_color(rgb);
+                    self.modal = Modal::None;
+                } else {
+                    self.status = "couldn't parse \u{2014} try `255 128 0` or `#ff8000`".into();
+                    self.status_err = true;
+                }
+            }
+            KeyCode::Backspace => {
+                m.text.pop();
+            }
+            KeyCode::Char(c) => m.text.push(c),
+            _ => {}
+        }
+    }
+
+    fn on_key_xkcd(&mut self, key: KeyEvent) {
+        let Modal::Xkcd(m) = &mut self.modal else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => self.modal = Modal::None,
+            KeyCode::Up => m.move_sel(-1),
+            KeyCode::Down => m.move_sel(1),
+            KeyCode::Enter => {
+                if let Some(&idx) = m.filtered.get(m.selected) {
+                    self.add_color(Rgb::from_f32(XKCD[idx].1));
+                    self.modal = Modal::None;
+                }
+            }
+            KeyCode::Backspace => {
+                m.query.pop();
+                m.refilter();
+            }
+            KeyCode::Char(c) => {
+                m.query.push(c);
+                m.refilter();
+            }
+            _ => {}
+        }
+    }
+
+    fn on_key_time(&mut self, key: KeyEvent) {
+        let Modal::Time(m) = &mut self.modal else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => self.modal = Modal::None,
+            KeyCode::Enter => {
+                if let Ok(v) = m.text.trim().parse::<u64>() {
+                    self.per_ms = v.max(MIN_PER_MS);
+                    self.republish_plan();
+                    self.modal = Modal::None;
+                } else {
+                    self.status = "enter a whole number of milliseconds".into();
+                    self.status_err = true;
+                }
+            }
+            KeyCode::Backspace => {
+                m.text.pop();
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() => m.text.push(c),
+            _ => {}
+        }
+    }
+
+    // ---- vessel actions ----------------------------------------------------------------------
+
+    fn move_vsel(&mut self, d: i32) {
+        let n = self.vessels.len();
+        if n == 0 {
+            return;
+        }
+        self.vsel = (self.vsel as i32 + d).rem_euclid(n as i32) as usize;
+    }
+
+    fn toggle_vessel(&mut self, i: usize) {
+        if let Some(v) = self.vessels.get_mut(i) {
+            v.selected = !v.selected;
+        }
+    }
+
+    fn toggle_all_vessels(&mut self) {
+        let all_on = self.vessels.iter().all(|v| v.selected);
+        for v in &mut self.vessels {
+            v.selected = !all_on;
+        }
+    }
+
+    fn rescan(&mut self) {
+        self.discovering = true;
+        self.status = "rescanning\u{2026}".into();
+        self.status_err = false;
+        let _ = self.tx.send(ToWorker::Discover);
+    }
+
+    fn go_party(&mut self) {
+        if self.selected_vessel_ids().is_empty() {
+            self.status = "arm at least one vessel first (space)".into();
+            self.status_err = true;
+            return;
+        }
+        self.screen = Screen::Party;
+        self.focus = Focus::Colors;
+        if self.colors.is_empty() {
+            self.status = "build a palette: a = RGB/hex \u{b7} f = XKCD picker".into();
+            self.status_err = false;
+        }
+    }
+
+    fn back_to_vessels(&mut self) {
+        if self.partying {
+            self.stop_party();
+        }
+        self.screen = Screen::Vessels;
+    }
+
+    // ---- party actions -----------------------------------------------------------------------
+
+    fn cycle_focus(&mut self, d: i32) {
+        let order = [Focus::Colors, Focus::Time, Focus::Button];
+        let cur = order.iter().position(|f| *f == self.focus).unwrap_or(0);
+        self.focus = order[(cur as i32 + d).rem_euclid(3) as usize];
+    }
+
+    fn move_csel(&mut self, d: i32) {
+        let n = self.colors.len();
+        if n == 0 {
+            return;
+        }
+        self.csel = (self.csel as i32 + d).rem_euclid(n as i32) as usize;
+    }
+
+    /// Moves the selected color one slot earlier/later (`dir` -1/+1), following it with the cursor.
+    fn move_color(&mut self, dir: i32) {
+        let n = self.colors.len();
+        if n < 2 {
+            return;
+        }
+        let j = self.csel as i32 + dir;
+        if j < 0 || j >= n as i32 {
+            return;
+        }
+        self.colors.swap(self.csel, j as usize);
+        self.csel = j as usize;
+        self.republish_plan();
+    }
+
+    fn add_color(&mut self, rgb: Rgb) {
+        self.colors.push(rgb);
+        self.csel = self.colors.len() - 1;
+        self.republish_plan();
+        self.status = format!("added {}", rgb.to_hex());
+        self.status_err = false;
+    }
+
+    fn remove_color(&mut self) {
+        if self.colors.is_empty() {
+            return;
+        }
+        let removed = self.colors.remove(self.csel.min(self.colors.len() - 1));
+        if self.csel >= self.colors.len() {
+            self.csel = self.colors.len().saturating_sub(1);
+        }
+        self.republish_plan();
+        self.status = format!("removed {}", removed.to_hex());
+        self.status_err = false;
+    }
+
+    fn nudge_time(&mut self, dir: i32) {
+        let next = self.per_ms as i64 + dir as i64 * TIME_STEP as i64;
+        self.per_ms = next.max(MIN_PER_MS as i64) as u64;
+        self.republish_plan();
+    }
+
+    fn toggle_party(&mut self) {
+        if self.partying {
+            self.stop_party();
+        } else {
+            self.start_party();
+        }
+    }
+
+    fn start_party(&mut self) {
+        let vessels = self.selected_vessel_ids();
+        if vessels.is_empty() {
+            self.status = "no vessels armed \u{2014} go back (b) and arm one".into();
+            self.status_err = true;
+            return;
+        }
+        if self.colors.is_empty() {
+            self.status = "add at least one color (a or f)".into();
+            self.status_err = true;
+            return;
+        }
+        self.partying = true; // optimistic; the first Tick confirms
+        self.status = "LET'S PARTY! \u{1f389}".into();
+        self.status_err = false;
+        let _ = self.tx.send(ToWorker::Start {
+            vessels,
+            plan: self.plan(),
+        });
+    }
+
+    fn stop_party(&mut self) {
+        self.partying = false;
+        self.live = None;
+        let _ = self.tx.send(ToWorker::Stop);
+        self.status = "stopping \u{2014} resetting lights to white\u{2026}".into();
+        self.status_err = false;
+    }
+
+    /// Pushes the current palette/time to a running party so edits take effect without a restart.
+    fn republish_plan(&self) {
+        if self.partying {
+            let _ = self.tx.send(ToWorker::Update { plan: self.plan() });
+        }
+    }
+
+    // ---- modals: open ------------------------------------------------------------------------
+
+    fn open_add_color(&mut self) {
+        self.modal = Modal::AddColor(AddColorModal {
+            text: String::new(),
+            area: Rect::default(),
+        });
+    }
+
+    pub fn open_xkcd(&mut self) {
+        let hays: Vec<String> = XKCD.iter().map(|(n, _)| color::humanize(n)).collect();
+        let mut m = XkcdModal {
+            query: String::new(),
+            hays,
+            filtered: (0..XKCD.len()).collect(),
+            selected: 0,
+            offset: 0,
+            area: Rect::default(),
+            item_rects: Vec::new(),
+        };
+        m.refilter();
+        self.modal = Modal::Xkcd(m);
+    }
+
+    fn open_time(&mut self) {
+        self.modal = Modal::Time(TimeModal {
+            text: self.per_ms.to_string(),
+            area: Rect::default(),
+        });
+    }
+
+    fn quit(&mut self) {
+        if self.partying {
+            // Reset the lights on the way out; `main` waits briefly for the Stopped ack.
+            let _ = self.tx.send(ToWorker::Stop);
+            self.pending_stop = true;
+            self.partying = false;
+        }
+        self.should_quit = true;
+    }
+
+    // ---- mouse -------------------------------------------------------------------------------
+
+    pub fn on_mouse(&mut self, m: MouseEvent) {
+        match &self.modal {
+            Modal::Xkcd(_) => self.on_mouse_xkcd(m),
+            Modal::AddColor(_) | Modal::Time(_) => {
+                // Click outside the box dismisses; otherwise ignore (typing drives these).
+                if let MouseEventKind::Down(MouseButton::Left) = m.kind {
+                    let area = match &self.modal {
+                        Modal::AddColor(a) => a.area,
+                        Modal::Time(t) => t.area,
+                        _ => Rect::default(),
+                    };
+                    if !area.contains(Position {
+                        x: m.column,
+                        y: m.row,
+                    }) {
+                        self.modal = Modal::None;
+                    }
+                }
+            }
+            Modal::None => match self.screen {
+                Screen::Vessels => self.on_mouse_vessels(m),
+                Screen::Party => self.on_mouse_party(m),
+            },
+        }
+    }
+
+    fn on_mouse_vessels(&mut self, m: MouseEvent) {
+        match m.kind {
+            MouseEventKind::ScrollUp => self.move_vsel(-1),
+            MouseEventKind::ScrollDown => self.move_vsel(1),
+            MouseEventKind::Down(MouseButton::Left) => {
+                let pos = Position {
+                    x: m.column,
+                    y: m.row,
+                };
+                if let Some(&(_, i)) = self.vessel_rects.iter().find(|(r, _)| r.contains(pos)) {
+                    self.vsel = i;
+                    self.toggle_vessel(i);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_mouse_party(&mut self, m: MouseEvent) {
+        let pos = Position {
+            x: m.column,
+            y: m.row,
+        };
+        match m.kind {
+            MouseEventKind::ScrollUp => {
+                self.focus = Focus::Colors;
+                self.move_csel(-1);
+            }
+            MouseEventKind::ScrollDown => {
+                self.focus = Focus::Colors;
+                self.move_csel(1);
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(&(_, i)) = self.up_btns.iter().find(|(r, _)| r.contains(pos)) {
+                    self.focus = Focus::Colors;
+                    self.csel = i;
+                    self.move_color(-1);
+                } else if let Some(&(_, i)) = self.down_btns.iter().find(|(r, _)| r.contains(pos)) {
+                    self.focus = Focus::Colors;
+                    self.csel = i;
+                    self.move_color(1);
+                } else if let Some(&(_, i)) = self.del_btns.iter().find(|(r, _)| r.contains(pos)) {
+                    self.focus = Focus::Colors;
+                    self.csel = i;
+                    self.remove_color();
+                } else if let Some(&(_, i)) = self.color_rects.iter().find(|(r, _)| r.contains(pos)) {
+                    self.focus = Focus::Colors;
+                    self.csel = i;
+                } else if self.add_btn.contains(pos) {
+                    self.open_add_color();
+                } else if self.xkcd_btn.contains(pos) {
+                    self.open_xkcd();
+                } else if self.time_minus.contains(pos) {
+                    self.focus = Focus::Time;
+                    self.nudge_time(-1);
+                } else if self.time_plus.contains(pos) {
+                    self.focus = Focus::Time;
+                    self.nudge_time(1);
+                } else if self.party_btn.contains(pos) {
+                    self.toggle_party();
+                } else if self.back_btn.contains(pos) {
+                    self.back_to_vessels();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_mouse_xkcd(&mut self, m: MouseEvent) {
+        match m.kind {
+            MouseEventKind::ScrollUp => {
+                if let Modal::Xkcd(x) = &mut self.modal {
+                    x.move_sel(-1)
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if let Modal::Xkcd(x) = &mut self.modal {
+                    x.move_sel(1)
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                let pos = Position {
+                    x: m.column,
+                    y: m.row,
+                };
+                let pick = if let Modal::Xkcd(x) = &mut self.modal {
+                    if let Some(&(_, row)) = x.item_rects.iter().find(|(r, _)| r.contains(pos)) {
+                        x.selected = row;
+                        x.filtered.get(row).copied()
+                    } else if !x.area.contains(pos) {
+                        self.modal = Modal::None;
+                        return;
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                if let Some(idx) = pick {
+                    self.add_color(Rgb::from_f32(XKCD[idx].1));
+                    self.modal = Modal::None;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl XkcdModal {
+    pub fn move_sel(&mut self, d: i32) {
+        let n = self.filtered.len();
+        if n == 0 {
+            return;
+        }
+        self.selected = (self.selected as i32 + d).rem_euclid(n as i32) as usize;
+    }
+
+    /// Fuzzy, space-separated **AND** filter over the humanized color names (same discipline as the
+    /// `simfs-dashboard` search): every term must match, ranked best-first.
+    pub fn refilter(&mut self) {
+        let terms: Vec<String> = self.query.split_whitespace().map(str::to_lowercase).collect();
+        let mut scored: Vec<(i64, usize)> = self
+            .hays
+            .iter()
+            .enumerate()
+            .filter_map(|(i, hay)| {
+                let mut total = 0i64;
+                for t in &terms {
+                    total += fuzzy_score(t, hay)?;
+                }
+                Some((total, i))
+            })
+            .collect();
+        scored.sort_by_key(|&(s, _)| std::cmp::Reverse(s));
+        self.filtered = scored.into_iter().map(|(_, i)| i).collect();
+        if self.selected >= self.filtered.len() {
+            self.selected = self.filtered.len().saturating_sub(1);
+        }
+        self.offset = 0;
+    }
+}
+
+/// Scores one (already-lowercased) `term` against an (already-lowercased) `hay`, or `None` when it
+/// doesn't match. Contiguous substrings score high (with a word-boundary bonus); a scattered
+/// subsequence scores low but still counts.
+fn fuzzy_score(term: &str, hay: &str) -> Option<i64> {
+    if term.is_empty() {
+        return Some(0);
+    }
+    if let Some(pos) = hay.find(term) {
+        let boundary = pos == 0 || matches!(hay.as_bytes()[pos - 1], b' ' | b'-' | b'_');
+        let mut score = 1000 - pos.min(500) as i64;
+        if boundary {
+            score += 300;
+        }
+        return Some(score);
+    }
+    subsequence_score(term, hay)
+}
+
+fn subsequence_score(term: &str, hay: &str) -> Option<i64> {
+    let mut chars = term.chars();
+    let mut need = chars.next();
+    let mut gaps = 0i64;
+    let mut started = false;
+    for hc in hay.chars() {
+        match need {
+            Some(tc) if tc == hc => {
+                started = true;
+                need = chars.next();
+            }
+            _ if started => gaps += 1,
+            _ => {}
+        }
+    }
+    need.is_none().then(|| 100 - gaps.min(90))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    fn app() -> App {
+        let (tx, _rx) = mpsc::channel();
+        App::new(tx, "mock".into(), 60.0)
+    }
+
+    fn catalog() -> Vec<VesselLights> {
+        vec![
+            VesselLights {
+                id: "Hunter".into(),
+                color_paths: vec!["a".into(), "b".into()],
+                goal_paths: vec!["g".into()],
+            },
+            VesselLights {
+                id: "Polaris".into(),
+                color_paths: vec!["c".into()],
+                goal_paths: vec![],
+            },
+        ]
+    }
+
+    #[test]
+    fn selection_survives_a_rescan() {
+        let mut a = app();
+        a.apply(FromWorker::Catalog {
+            vessels: catalog(),
+            health: Default::default(),
+        });
+        a.toggle_vessel(0);
+        assert_eq!(a.selected_vessel_ids(), vec!["Hunter".to_string()]);
+        // A rescan returns the same vessels — the armed state must persist by id.
+        a.apply(FromWorker::Catalog {
+            vessels: catalog(),
+            health: Default::default(),
+        });
+        assert_eq!(a.selected_vessel_ids(), vec!["Hunter".to_string()]);
+    }
+
+    #[test]
+    fn cannot_party_without_arming_a_vessel() {
+        let mut a = app();
+        a.apply(FromWorker::Catalog {
+            vessels: catalog(),
+            health: Default::default(),
+        });
+        a.go_party();
+        assert_eq!(a.screen, Screen::Vessels); // refused, with a hint
+        assert!(a.status_err);
+        a.toggle_vessel(0);
+        a.go_party();
+        assert_eq!(a.screen, Screen::Party);
+    }
+
+    #[test]
+    fn color_palette_add_remove_reorder() {
+        let mut a = app();
+        a.add_color(Rgb::from_u8(255, 0, 0));
+        a.add_color(Rgb::from_u8(0, 255, 0));
+        a.add_color(Rgb::from_u8(0, 0, 255));
+        assert_eq!(a.colors.len(), 3);
+        // Selected is the last-added (blue); move it up swaps with green.
+        a.csel = 2;
+        a.move_color(-1);
+        assert_eq!(a.csel, 1);
+        assert_eq!(a.colors[1], Rgb::from_u8(0, 0, 255));
+        // Remove the selected one.
+        a.remove_color();
+        assert_eq!(a.colors.len(), 2);
+    }
+
+    #[test]
+    fn time_has_a_floor() {
+        let mut a = app();
+        a.per_ms = 100;
+        a.nudge_time(-1); // -100 -> would be 0, clamped to MIN_PER_MS
+        assert_eq!(a.per_ms, MIN_PER_MS);
+    }
+
+    #[test]
+    fn xkcd_search_is_fuzzy_and_anded() {
+        let mut a = app();
+        a.open_xkcd();
+        let Modal::Xkcd(m) = &mut a.modal else {
+            panic!("expected xkcd modal")
+        };
+        m.query = "cloudy blue".into();
+        m.refilter();
+        let top = m.filtered[0];
+        assert_eq!(XKCD[top].0, "CloudyBlue");
+        // AND semantics: a nonsense second term drops everything.
+        m.query = "blue zzzzz".into();
+        m.refilter();
+        assert!(m.filtered.is_empty());
+    }
+}
