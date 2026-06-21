@@ -75,12 +75,47 @@ cargo run -- --hz 30                          # gentler color update rate (defau
 ```
 
 ```
-USAGE: dancy-party-rs [--root <dir> | --url <base>] [--hz <n>]
+USAGE: dancy-party-rs [--root <dir> | --url <base>] [--hz <n>] [--steps <n>] [--async [--writers <n>]]
 ```
 
 `--hz` is how often the cross-fade color is rewritten while partying (1..240, default 60). On a busy
 rig with many lights, lower it to cut the write rate; the second freshness gate is still the in-game
 `sample_rate_hz` (how fast the host samples the game).
+
+### Tuning the write load (perf experiments)
+
+Each color step is broadcast as a real file write to **every** selected light, so with a lot of lights
+the fade can visibly lag. The `/sim` 9p bridge has its own refresh cadence and a per-write cost that
+isn't known up front — these flags exist to **measure and isolate** that cost. The party screen shows
+a live readout: total writes, **per-write latency** (avg / max / last), and, in async mode, the pool
+**backlog** and **dropped**-broadcast count.
+
+| flag | what it changes | why it matters |
+| ---- | --------------- | -------------- |
+| `--steps <n>` | Quantize each fade to `<n>` discrete colors per segment (0 = continuous, the default; `1` = hard cut, no fade). | Caps the number of **distinct** color writes per color step. The biggest lever on write *volume* — a smooth-looking fade may be writing dozens of near-identical colors a second. |
+| `--async` | Hand writes to a background thread **pool** instead of blocking the animation loop on each one. | Tests whether the bottleneck is *per-write latency serialized across lights*. If sync stalls but async keeps up (low backlog), the writes are slow but parallelizable. |
+| `--writers <n>` | Async pool width (1..64, default 8). | How much write parallelism the 9p server actually benefits from before it saturates. |
+
+Reading the readout while partying:
+
+- **`lat avg/max`** — the real cost of one `echo … > …/color`. This is the number to compare across
+  transports (in-guest `/sim` vs host `--url` HTTP) and across `sample_rate_hz` settings.
+- **`backlog`** (async only) — writes still queued. Steadily climbing backlog + rising **`dropped`**
+  means the writes can't keep up at this `--hz` × light-count; lower `--hz`, lower `--steps`, or raise
+  `--writers`.
+
+```sh
+cargo run -- --steps 8              # at most 8 colors per fade — far fewer writes, still smooth-ish
+cargo run -- --steps 1             # pure color-cycle, no interpolation (minimum writes)
+cargo run -- --async               # non-blocking writes, 8-thread pool
+cargo run -- --async --writers 24  # wider pool for a rig with many lights
+cargo run -- --hz 20 --steps 4 --async   # combine all three to hunt the bottleneck
+```
+
+Colors are deduped globally: a color is only written when its quantized wire value actually changes,
+so `--steps` directly bounds the color-write rate regardless of `--hz`. (Goal pulses still fire on
+every color step.) When you stop the party, the async queue is drained before the lights are reset to
+white, so nothing lands stale.
 
 ## Controls
 
