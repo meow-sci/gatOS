@@ -195,6 +195,44 @@ impl Settings {
             _ => String::new(),
         }
     }
+
+    /// The current value of a row as a bare integer string — what the manual-input popup prefills (so
+    /// the user edits from the live value rather than an empty field).
+    pub fn row_input_value(&self, row: usize) -> String {
+        match row {
+            0 => format!("{}", self.hz.round() as u64),
+            1 => self.steps.to_string(),
+            2 => self.color_ms.to_string(),
+            3 => self.anim_ms.to_string(),
+            4 => format!("{}", self.color_stagger_ms as u64),
+            5 => format!("{}", self.anim_stagger_ms as u64),
+            6 => format!("{}", self.bright_min as u64),
+            7 => format!("{}", self.bright_max as u64),
+            8 => self.bright_ms.to_string(),
+            9 => self.bright_steps.to_string(),
+            _ => String::new(),
+        }
+    }
+
+    /// Applies a manually-typed whole number `v` to row `row`, clamped to that row's valid range. The
+    /// input is unconstrained (0 or higher); the clamp keeps the setting usable (e.g. frame rate can't
+    /// be 0, durations have a floor).
+    pub fn set_from_input(&mut self, row: usize, v: u64) {
+        let vf = v as f64;
+        match row {
+            0 => self.hz = vf.clamp(1.0, 240.0),
+            1 => self.steps = v.min(1000) as u32,
+            2 => self.color_ms = v.clamp(MIN_MS, MAX_MS),
+            3 => self.anim_ms = v.clamp(MIN_MS, MAX_MS),
+            4 => self.color_stagger_ms = vf.clamp(0.0, MAX_STAGGER),
+            5 => self.anim_stagger_ms = vf.clamp(0.0, MAX_STAGGER),
+            6 => self.bright_min = vf.clamp(0.0, BRIGHT_SCALE),
+            7 => self.bright_max = vf.clamp(0.0, BRIGHT_SCALE),
+            8 => self.bright_ms = v.clamp(MIN_MS, MAX_MS),
+            9 => self.bright_steps = v.min(1000) as u32,
+            _ => {}
+        }
+    }
 }
 
 fn fmt_hz(hz: f64) -> String {
@@ -219,6 +257,7 @@ pub enum Modal {
     Xkcd(XkcdModal),
     Time(TimeModal),
     Settings(SettingsModal),
+    SettingInput(SettingInputModal),
     SaveProfile(SaveProfileModal),
     ConfirmQuit(ConfirmQuitModal),
 }
@@ -255,6 +294,15 @@ pub struct SettingsModal {
     pub sel: usize,
     pub area: Rect,
     pub rows: Vec<(Rect, usize)>,
+}
+
+/// Manual numeric entry for one settings row (opened with `Enter` from the settings popup) — type a
+/// whole number (0 or higher), `Enter` applies it (clamped to the row's range), `Esc` returns to the
+/// settings list. Lets you set a precise value the ←/→ stepping is too coarse or too slow to reach.
+pub struct SettingInputModal {
+    pub row: usize,
+    pub text: String,
+    pub area: Rect,
 }
 
 /// The save-profile prompt — type a name, `Enter` writes `<name>.yaml` (palette + all settings, but
@@ -531,6 +579,7 @@ impl App {
             Modal::Xkcd(_) => self.on_key_xkcd(key),
             Modal::Time(_) => self.on_key_time(key),
             Modal::Settings(_) => self.on_key_settings(key),
+            Modal::SettingInput(_) => self.on_key_setting_input(key),
             Modal::SaveProfile(_) => self.on_key_save_profile(key),
             Modal::ConfirmQuit(_) => self.on_key_confirm_quit(key),
             Modal::None if self.hidden => self.on_key_hidden(key),
@@ -730,6 +779,7 @@ impl App {
         };
         match key.code {
             KeyCode::Esc | KeyCode::Char('s') | KeyCode::Char('q') => self.modal = Modal::None,
+            KeyCode::Enter => self.open_setting_input(sel),
             KeyCode::Up | KeyCode::Char('k') => {
                 if let Modal::Settings(m) = &mut self.modal {
                     m.sel = (sel + SETTING_ROWS - 1) % SETTING_ROWS;
@@ -747,6 +797,46 @@ impl App {
             KeyCode::Right | KeyCode::Char('=') | KeyCode::Char('+') | KeyCode::Char('l') => {
                 self.settings.adjust(sel, 1, big);
                 self.republish_plan();
+            }
+            _ => {}
+        }
+    }
+
+    /// Handles the manual numeric-entry popup for a settings row: digits only, `Enter` applies (clamped
+    /// to the row's range) and returns to the settings list, `Esc` returns without changing anything.
+    fn on_key_setting_input(&mut self, key: KeyEvent) {
+        let row = match &self.modal {
+            Modal::SettingInput(m) => m.row,
+            _ => return,
+        };
+        match key.code {
+            KeyCode::Esc => self.reopen_settings(row),
+            KeyCode::Enter => {
+                let text = match &self.modal {
+                    Modal::SettingInput(m) => m.text.trim().to_string(),
+                    _ => return,
+                };
+                match text.parse::<u64>() {
+                    Ok(v) => {
+                        self.settings.set_from_input(row, v);
+                        self.republish_plan();
+                        self.reopen_settings(row);
+                    }
+                    Err(_) => {
+                        self.status = "enter a whole number (0 or higher)".into();
+                        self.status_err = true;
+                    }
+                }
+            }
+            KeyCode::Backspace => {
+                if let Modal::SettingInput(m) = &mut self.modal {
+                    m.text.pop();
+                }
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                if let Modal::SettingInput(m) = &mut self.modal {
+                    m.text.push(c);
+                }
             }
             _ => {}
         }
@@ -974,10 +1064,24 @@ impl App {
     }
 
     fn open_settings(&mut self) {
+        self.reopen_settings(0);
+    }
+
+    /// Opens (or returns to) the settings popup with row `sel` highlighted.
+    fn reopen_settings(&mut self, sel: usize) {
         self.modal = Modal::Settings(SettingsModal {
-            sel: 0,
+            sel: sel.min(SETTING_ROWS - 1),
             area: Rect::default(),
             rows: Vec::new(),
+        });
+    }
+
+    /// Opens the manual numeric-entry popup for a settings row, prefilled with its current value.
+    fn open_setting_input(&mut self, row: usize) {
+        self.modal = Modal::SettingInput(SettingInputModal {
+            row,
+            text: self.settings.row_input_value(row),
+            area: Rect::default(),
         });
     }
 
@@ -1028,6 +1132,7 @@ impl App {
         match &self.modal {
             Modal::Xkcd(_) => self.on_mouse_xkcd(m),
             Modal::Settings(_) => self.on_mouse_settings(m),
+            Modal::SettingInput(_) => self.on_mouse_setting_input(m),
             Modal::ConfirmQuit(_) => self.on_mouse_confirm_quit(m),
             Modal::AddColor(_) | Modal::Time(_) | Modal::SaveProfile(_) => {
                 // Click outside the box dismisses; otherwise ignore (typing drives these).
@@ -1123,6 +1228,25 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Setting-input clicks: a click outside the box returns to the settings list (typing drives it).
+    fn on_mouse_setting_input(&mut self, m: MouseEvent) {
+        if let MouseEventKind::Down(MouseButton::Left) = m.kind {
+            let (row, inside) = match &self.modal {
+                Modal::SettingInput(s) => (
+                    s.row,
+                    s.area.contains(Position {
+                        x: m.column,
+                        y: m.row,
+                    }),
+                ),
+                _ => return,
+            };
+            if !inside {
+                self.reopen_settings(row);
+            }
         }
     }
 
@@ -1412,6 +1536,61 @@ mod tests {
             s.adjust(0, 1, true);
         }
         assert_eq!(s.hz, 240.0);
+    }
+
+    #[test]
+    fn enter_on_a_settings_row_opens_manual_input_and_applies_it() {
+        let mut a = app();
+        a.screen = Screen::Party;
+        a.open_settings();
+        // Move to "color time" (row 2) and open the manual-entry popup.
+        a.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        a.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        match &a.modal {
+            Modal::SettingInput(m) => assert_eq!(m.row, 2),
+            _ => panic!("expected SettingInput modal"),
+        }
+        // Clear the prefill and type an arbitrary value.
+        for _ in 0..8 {
+            a.on_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        }
+        for c in "4200".chars() {
+            press(&mut a, c);
+        }
+        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(a.settings.color_ms, 4200);
+        // It returns to the settings list on the same row.
+        match &a.modal {
+            Modal::Settings(m) => assert_eq!(m.sel, 2),
+            _ => panic!("expected to return to Settings"),
+        }
+    }
+
+    #[test]
+    fn manual_input_clamps_to_the_row_range() {
+        let mut s = Settings::default();
+        s.set_from_input(0, 0); // frame rate can't be 0
+        assert_eq!(s.hz, 1.0);
+        s.set_from_input(0, 99_999); // ...nor absurdly high
+        assert_eq!(s.hz, 240.0);
+        s.set_from_input(2, 0); // duration floor
+        assert_eq!(s.color_ms, 50);
+        s.set_from_input(6, 999_999); // brightness scale ceiling
+        assert_eq!(s.bright_min, BRIGHT_SCALE);
+        s.set_from_input(1, 7); // fade steps takes the value verbatim
+        assert_eq!(s.steps, 7);
+    }
+
+    #[test]
+    fn manual_input_esc_returns_without_change() {
+        let mut a = app();
+        a.open_settings();
+        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)); // open input on row 0
+        let before = a.settings.hz;
+        a.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(matches!(a.modal, Modal::Settings(_)));
+        assert_eq!(a.settings.hz, before);
     }
 
     #[test]

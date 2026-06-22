@@ -68,6 +68,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         Modal::Xkcd(_) => render_xkcd(f, app),
         Modal::Time(_) => render_time(f, app),
         Modal::Settings(_) => render_settings(f, app),
+        Modal::SettingInput(_) => render_setting_input(f, app),
         Modal::SaveProfile(_) => render_save_profile(f, app),
         Modal::ConfirmQuit(_) => render_confirm_quit(f, app),
         Modal::None => {}
@@ -905,7 +906,7 @@ fn render_settings(f: &mut Frame, app: &mut App) {
             Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
         ))
         .title_bottom(Span::styled(
-            " \u{2191}\u{2193} row \u{b7} \u{2190}\u{2192} adjust (Shift coarse) \u{b7} Esc close ",
+            " \u{2191}\u{2193} row \u{b7} \u{2190}\u{2192} adjust (Shift coarse) \u{b7} Enter type \u{b7} Esc close ",
             Style::new().fg(LABEL),
         ))
         .style(Style::new().bg(BAR_BG));
@@ -944,6 +945,58 @@ fn render_settings(f: &mut Frame, app: &mut App) {
             ),
         ]);
         f.render_widget(Paragraph::new(line), rect);
+    }
+}
+
+/// The manual numeric-entry popup for one settings row (opened with `Enter` from the settings list).
+fn render_setting_input(f: &mut Frame, app: &mut App) {
+    let screen = f.area();
+    let width = 44u16.min(screen.width.saturating_sub(2)).max(20);
+    let height = 6u16.min(screen.height.saturating_sub(2)).max(4);
+    let popup = centered(screen, width, height);
+    f.render_widget(Clear, popup);
+
+    let row = match &app.modal {
+        Modal::SettingInput(m) => m.row,
+        _ => return,
+    };
+    let block = Block::bordered()
+        .border_style(Style::new().fg(ACCENT))
+        .title(Span::styled(
+            format!(" set {} ", Settings::row_label(row)),
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            " Enter set \u{b7} Esc back ",
+            Style::new().fg(LABEL),
+        ))
+        .style(Style::new().bg(BAR_BG));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let Modal::SettingInput(m) = &mut app.modal else {
+        return;
+    };
+    m.area = popup;
+    if inner.height == 0 {
+        return;
+    }
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            "whole number, 0 or higher",
+            Style::new().fg(LABEL),
+        )),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
+    if inner.height >= 2 {
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("> ", Style::new().fg(TITLE)),
+                Span::styled(m.text.clone(), Style::new().fg(VALUE).add_modifier(Modifier::BOLD)),
+                Span::styled("\u{2588}", Style::new().fg(LABEL)),
+            ])),
+            Rect::new(inner.x, inner.y + 1, inner.width, 1),
+        );
     }
 }
 
