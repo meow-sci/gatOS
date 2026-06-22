@@ -55,6 +55,14 @@ pub struct Settings {
     pub color_stagger_ms: f64,
     /// Per-light animation-clock stagger, ms.
     pub anim_stagger_ms: f64,
+    /// Random-brightness range floor, 0..1 (`bright_min == bright_max` disables the effect).
+    pub bright_min: f64,
+    /// Random-brightness range ceiling, 0..1.
+    pub bright_max: f64,
+    /// Time each random brightness target holds before drifting to the next, ms.
+    pub bright_ms: u64,
+    /// Brightness-drift quantization steps (0 = continuous).
+    pub bright_steps: u32,
 }
 
 impl Default for Settings {
@@ -66,12 +74,17 @@ impl Default for Settings {
             anim_ms: 2500,
             color_stagger_ms: 0.0,
             anim_stagger_ms: 0.0,
+            // Brightness variation off by default (min == max == full).
+            bright_min: 1.0,
+            bright_max: 1.0,
+            bright_ms: 600,
+            bright_steps: 0,
         }
     }
 }
 
 /// The number of editable rows in the settings popup (see [`Settings::adjust`]).
-pub const SETTING_ROWS: usize = 6;
+pub const SETTING_ROWS: usize = 10;
 
 const MIN_MS: u64 = 50;
 const MAX_MS: u64 = 60_000;
@@ -107,6 +120,22 @@ impl Settings {
                 let step = if big { 100.0 } else { 10.0 };
                 self.anim_stagger_ms = (self.anim_stagger_ms + dir as f64 * step).clamp(0.0, MAX_STAGGER);
             }
+            6 => {
+                let step = if big { 0.2 } else { 0.05 };
+                self.bright_min = (self.bright_min + dir as f64 * step).clamp(0.0, 1.0);
+            }
+            7 => {
+                let step = if big { 0.2 } else { 0.05 };
+                self.bright_max = (self.bright_max + dir as f64 * step).clamp(0.0, 1.0);
+            }
+            8 => {
+                let step = if big { 1000 } else { 100 };
+                self.bright_ms = (self.bright_ms as i64 + d * step).clamp(MIN_MS as i64, MAX_MS as i64) as u64;
+            }
+            9 => {
+                let step = if big { 10 } else { 1 };
+                self.bright_steps = (self.bright_steps as i64 + d * step).clamp(0, 1000) as u32;
+            }
             _ => {}
         }
     }
@@ -120,6 +149,10 @@ impl Settings {
             3 => "anim time",
             4 => "color stagger",
             5 => "anim stagger",
+            6 => "bright min",
+            7 => "bright max",
+            8 => "bright time",
+            9 => "bright steps",
             _ => "",
         }
     }
@@ -139,6 +172,22 @@ impl Settings {
             3 => format!("{} ms", self.anim_ms),
             4 => format!("{} ms", self.color_stagger_ms as u64),
             5 => format!("{} ms", self.anim_stagger_ms as u64),
+            6 => format!("{:.2}", self.bright_min),
+            7 => format!("{:.2}", self.bright_max),
+            8 => {
+                if self.bright_min >= self.bright_max {
+                    format!("{} ms (off)", self.bright_ms)
+                } else {
+                    format!("{} ms", self.bright_ms)
+                }
+            }
+            9 => {
+                if self.bright_steps == 0 {
+                    "continuous".into()
+                } else {
+                    format!("{} steps", self.bright_steps)
+                }
+            }
             _ => String::new(),
         }
     }
@@ -462,6 +511,12 @@ impl App {
         Plan::new(self.colors.clone(), self.settings.color_ms, self.settings.anim_ms)
             .with_steps(self.settings.steps)
             .with_staggers(self.settings.color_stagger_ms, self.settings.anim_stagger_ms)
+            .with_brightness(
+                self.settings.bright_min,
+                self.settings.bright_max,
+                self.settings.bright_ms,
+                self.settings.bright_steps,
+            )
     }
 
     // ---- keyboard ----------------------------------------------------------------------------
@@ -1353,6 +1408,26 @@ mod tests {
             s.adjust(0, 1, true);
         }
         assert_eq!(s.hz, 240.0);
+    }
+
+    #[test]
+    fn settings_adjust_covers_the_brightness_rows() {
+        let mut s = Settings::default();
+        assert_eq!(s.bright_min, 1.0);
+        assert_eq!(s.bright_max, 1.0);
+        s.adjust(6, -1, false); // bright min -0.05
+        assert!((s.bright_min - 0.95).abs() < 1e-9);
+        s.adjust(7, -1, true); // bright max -0.2
+        assert!((s.bright_max - 0.8).abs() < 1e-9);
+        s.adjust(8, 1, false); // bright time +100
+        assert_eq!(s.bright_ms, 700);
+        s.adjust(9, 1, false); // bright steps +1
+        assert_eq!(s.bright_steps, 1);
+        // Floors/ceilings hold.
+        for _ in 0..100 {
+            s.adjust(6, -1, true);
+        }
+        assert_eq!(s.bright_min, 0.0);
     }
 
     #[test]

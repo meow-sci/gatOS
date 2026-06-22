@@ -25,8 +25,9 @@ Two screens:
    - **Battery + refill** — an aggregate battery meter across the armed vessels, with a **`[ refill ⚡ ]`**
      button next to it (key `g`) that tops every armed vessel's battery back up (`debug.refill_battery`).
    - **Settings (`s`)** — a popup with every display knob, all live (a running party adopts changes at
-     once): **frame rate**, **fade steps**, **color time**, **anim time**, **color stagger**, and
-     **anim stagger**. See [Settings](#settings) below.
+     once): **frame rate**, **fade steps**, **color time**, **anim time**, **color stagger**,
+     **anim stagger**, and the random **brightness** range / time / steps. See [Settings](#settings)
+     below.
    - **LETS PARTY! / STOP, MY EYES** — the toggle. On, it animates; off, it resets every light to
      white and stops.
    - **Save profile (`w`)** — prompt for a name and write the palette + every setting to a reusable
@@ -124,6 +125,10 @@ Press `s` on the party screen. `↑`/`↓` pick a row, `←`/`→` adjust (hold 
 | **anim time** | `--anim-ms <n>` | 2500 | The deploy goal-pulse half-period, ms — the deploy animation runs on its **own** clock, independent of the color. Keep it ≥ the ~2 s in-game stroke so each extend/retract actually completes (the original bug: a fast shared clock cut the deploy off before it finished). |
 | **color stagger** | `--color-stagger-ms <n>` | 0 (lockstep) | Offset each light's **color** clock by `n` ms so the palette ripples across the lights. |
 | **anim stagger** | `--anim-stagger-ms <n>` | 0 (lockstep) | Offset each light's **animation** clock by `n` ms so the deploy pulse ripples across the lights — independently of the color stagger. |
+| **bright min** | `--bright-min <f>` | 1.0 (off) | Floor of the random per-light **brightness** multiplier, 0..1. |
+| **bright max** | `--bright-max <f>` | 1.0 (off) | Ceiling of the random brightness multiplier, 0..1. **Set `min < max` to enable** the effect: each light drifts between independent random brightness targets drawn from `[min, max]`, dimming the palette color so the rig twinkles. `min == max` disables it (constant brightness = that value). |
+| **bright time** | `--bright-ms <n>` | 600 | How long each random brightness target holds before drifting to the next, ms. |
+| **bright steps** | `--bright-steps <n>` | 0 (continuous) | Quantize the brightness drift to `<n>` discrete values per segment — same write-volume lever as **fade steps**, but for brightness. |
 
 The two clocks and their two staggers are fully independent: you can ripple the color while every light
 deploys in lockstep, fade fast while the deploy stays slow enough to finish, or any combination.
@@ -134,6 +139,8 @@ cargo run -- --steps 1                          # pure color-cycle, no interpola
 cargo run -- --color-ms 600 --anim-ms 3000      # snappy color, deploys that fully extend/retract
 cargo run -- --color-stagger-ms 80              # a colour wave rippling across the lights
 cargo run -- --anim-stagger-ms 200              # a deploy wave, colour still in lockstep
+cargo run -- --bright-min 0.2 --bright-max 1.0  # random per-light brightness twinkle
+cargo run -- --bright-min 0.3 --bright-max 1 --bright-ms 200 --bright-steps 4   # snappier, quantized
 ```
 
 Colors are deduped per light: a light is only rewritten when *its own* quantized color actually
@@ -170,6 +177,10 @@ color_ms: 1200
 anim_ms: 2500
 color_stagger_ms: 0
 anim_stagger_ms: 0
+bright_min: 1
+bright_max: 1
+bright_ms: 600
+bright_steps: 0
 colors:
   - "#ff0000"
   - "#00ff00"

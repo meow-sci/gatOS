@@ -127,6 +127,22 @@ impl Config {
                     Some(Ok(v)) if (0.0..=60_000.0).contains(&v) => settings.anim_stagger_ms = v,
                     _ => return Err("--anim-stagger-ms wants a number in 0..60000".into()),
                 },
+                "--bright-min" => match args.next().map(|s| s.parse::<f64>()) {
+                    Some(Ok(v)) if (0.0..=1.0).contains(&v) => settings.bright_min = v,
+                    _ => return Err("--bright-min wants a number in 0..1".into()),
+                },
+                "--bright-max" => match args.next().map(|s| s.parse::<f64>()) {
+                    Some(Ok(v)) if (0.0..=1.0).contains(&v) => settings.bright_max = v,
+                    _ => return Err("--bright-max wants a number in 0..1".into()),
+                },
+                "--bright-ms" => match args.next().map(|s| s.parse::<u64>()) {
+                    Some(Ok(v)) if (50..=60_000).contains(&v) => settings.bright_ms = v,
+                    _ => return Err("--bright-ms wants a number in 50..60000".into()),
+                },
+                "--bright-steps" => match args.next().map(|s| s.parse::<u32>()) {
+                    Some(Ok(v)) if v <= 1000 => settings.bright_steps = v,
+                    _ => return Err("--bright-steps wants a number in 0..1000 (0 = continuous)".into()),
+                },
                 "-h" | "--help" => help = true,
                 other => return Err(format!("unknown argument '{other}' (try --help)")),
             }
@@ -188,6 +204,10 @@ fn print_help() {
     println!("                      in-game stroke and each extend/retract actually completes.");
     println!("  --color-stagger-ms <n>  per-light color offset, 0..60000 (default 0 = lockstep)");
     println!("  --anim-stagger-ms <n>   per-light deploy offset, 0..60000 (default 0 = lockstep)");
+    println!("  --bright-min <f>        random-brightness floor, 0..1 (default 1 = off)");
+    println!("  --bright-max <f>        random-brightness ceiling, 0..1 (default 1). min<max enables it.");
+    println!("  --bright-ms <n>         time between random brightness targets, ms, 50..60000 (default 600)");
+    println!("  --bright-steps <n>      quantize the brightness drift to <n> values, 0..1000 (0 = continuous)");
     println!();
     println!("In the guest, no flags are needed: it reads /sim and drives the selected vessels' lights.");
     println!("Vessels screen: \u{2191}\u{2193} move \u{b7} space arm \u{b7} a all \u{b7} r rescan \u{b7} Enter \u{2192} party.");

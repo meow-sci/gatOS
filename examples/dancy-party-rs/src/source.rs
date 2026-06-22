@@ -463,7 +463,10 @@ async fn worker_loop(source: Arc<dyn Source>, mut rx: UnboundedReceiver<ToWorker
             _ = frame.tick(), if party.is_some() => {
                 let rp = party.as_mut().expect("guard ensures Some");
                 let elapsed = rp.start.elapsed().as_secs_f64() * 1000.0;
-                let (lead_color, color_seg) = rp.plan.color_at(elapsed);
+                // The preview band mirrors light 0's actual output — palette color dimmed by its
+                // brightness — so the calmer copy reflects the brightness flicker too.
+                let (lead_raw, color_seg) = rp.plan.color_at(elapsed);
+                let lead_color = lead_raw.scaled(rp.plan.brightness_at(0, elapsed));
                 let (goal, anim_seg) = rp.plan.goal_at(elapsed);
 
                 // Compute the per-light writes that actually changed this frame, then fire each one
@@ -672,7 +675,13 @@ fn frame_writes(rp: &mut RunningParty, elapsed_ms: f64) -> Vec<(String, String)>
 
     for i in 0..rp.color_paths.len() {
         let local = elapsed_ms - i as f64 * color_stagger;
-        let wire = rp.plan.color_at(local).0.to_sim();
+        // The palette color (on this light's color clock) scaled by its own random brightness (on the
+        // brightness clock). Both feed the per-light dedupe below, so a static color *and* steady
+        // brightness re-broadcasts nothing, while a varying brightness only writes when its quantized
+        // value actually moves.
+        let color = rp.plan.color_at(local).0;
+        let bright = rp.plan.brightness_at(i, elapsed_ms);
+        let wire = color.scaled(bright).to_sim();
         if rp.color_seen[i].as_deref() != Some(wire.as_str()) {
             out.push((rp.color_paths[i].clone(), wire.clone()));
             rp.color_seen[i] = Some(wire);

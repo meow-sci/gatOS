@@ -35,6 +35,17 @@ pub struct Plan {
     pub color_stagger_ms: f64,
     /// Per-light animation-clock offset, ms (`0` = every light pulses in lockstep).
     pub anim_stagger_ms: f64,
+    /// Random-brightness range floor (0..1). When `bright_min == bright_max` the effect is off and the
+    /// brightness multiplier is a constant (default `1.0` = full, untouched color).
+    pub bright_min: f64,
+    /// Random-brightness range ceiling (0..1).
+    pub bright_max: f64,
+    /// How long each random brightness target holds before drifting to the next, ms (the brightness
+    /// clock's segment length).
+    pub bright_ms: f64,
+    /// How many discrete brightness values the drift between two targets is quantized to (`0` =
+    /// continuous). Like the color `steps`, this bounds the **distinct** brightness writes per segment.
+    pub bright_steps: u32,
 }
 
 impl Plan {
@@ -46,6 +57,11 @@ impl Plan {
             steps: 0,
             color_stagger_ms: 0.0,
             anim_stagger_ms: 0.0,
+            // Default: brightness effect off (constant full brightness).
+            bright_min: 1.0,
+            bright_max: 1.0,
+            bright_ms: 600.0,
+            bright_steps: 0,
         }
     }
 
@@ -60,6 +76,42 @@ impl Plan {
         self.color_stagger_ms = color_stagger_ms.max(0.0);
         self.anim_stagger_ms = anim_stagger_ms.max(0.0);
         self
+    }
+
+    /// Builder: configure the random per-light brightness drift (range, change interval, quantization).
+    /// `min == max` turns it off (constant brightness = that value; `1.0` = untouched).
+    pub fn with_brightness(mut self, min: f64, max: f64, bright_ms: u64, bright_steps: u32) -> Self {
+        self.bright_min = min.clamp(0.0, 1.0);
+        self.bright_max = max.clamp(0.0, 1.0);
+        self.bright_ms = (bright_ms as f64).max(1.0);
+        self.bright_steps = bright_steps;
+        self
+    }
+
+    /// The brightness multiplier (0..1) for light `light` at `elapsed_ms` on the **brightness clock**.
+    /// Each light drifts between independent random targets — one per `bright_ms` segment, drawn from
+    /// `[bright_min, bright_max]` — interpolating (optionally quantized to `bright_steps`) between them,
+    /// so the rig twinkles. Pure and deterministic: the targets come from a hash of `(light, segment)`,
+    /// so the same plan always produces the same flicker (and it's testable). Off when `min == max`.
+    pub fn brightness_at(&self, light: usize, elapsed_ms: f64) -> f64 {
+        let lo = self.bright_min.min(self.bright_max).clamp(0.0, 1.0);
+        let hi = self.bright_min.max(self.bright_max).clamp(0.0, 1.0);
+        if hi - lo < 1e-9 {
+            return hi;
+        }
+        let progress = elapsed_ms.max(0.0) / self.bright_ms;
+        let segment = progress.floor() as u64;
+        let t_raw = progress - segment as f64;
+        let t = if self.bright_steps == 0 {
+            t_raw
+        } else {
+            let s = self.bright_steps as f64;
+            ((t_raw * s).floor() / s).min((s - 1.0) / s)
+        };
+        let l = light as u64;
+        let from = lo + rand01(l, segment) * (hi - lo);
+        let to = lo + rand01(l, segment + 1) * (hi - lo);
+        from + (to - from) * t
     }
 
     /// The interpolated palette color at `elapsed_ms` on the **color clock**, plus the current
@@ -93,6 +145,21 @@ impl Plan {
         let segment = (elapsed_ms.max(0.0) / self.anim_ms).floor() as u64;
         (((segment + 1) % 2) as u8, segment)
     }
+}
+
+/// A deterministic pseudo-random value in `[0, 1)` from two integer inputs (a SplitMix64-style mix).
+/// Keying on `(light, segment)` gives each light its own reproducible brightness sequence without a
+/// PRNG dependency or any per-frame state.
+fn rand01(a: u64, b: u64) -> f64 {
+    let mut x = a
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(b.wrapping_add(1).wrapping_mul(0xD1B5_4A32_D192_ED03));
+    x ^= x >> 30;
+    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x ^= x >> 27;
+    x = x.wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^= x >> 31;
+    (x >> 11) as f64 / (1u64 << 53) as f64
 }
 
 #[cfg(test)]
@@ -156,6 +223,47 @@ mod tests {
     fn empty_palette_is_total() {
         let plan = Plan::new(vec![], 500, 500);
         assert_eq!(plan.color_at(1234.0).0, Rgb::WHITE);
+    }
+
+    #[test]
+    fn brightness_is_off_when_min_equals_max() {
+        // Default plan: min == max == 1.0 -> always full brightness, regardless of time/light.
+        let plan = Plan::new(vec![rgb(1.0, 0.0, 0.0)], 1000, 1000);
+        assert_eq!(plan.brightness_at(0, 0.0), 1.0);
+        assert_eq!(plan.brightness_at(3, 1234.0), 1.0);
+        // A constant non-full value is also "off" (no variation) but dims everything uniformly.
+        let dim = plan.with_brightness(0.3, 0.3, 500, 0);
+        assert_eq!(dim.brightness_at(0, 0.0), 0.3);
+        assert_eq!(dim.brightness_at(7, 999.0), 0.3);
+    }
+
+    #[test]
+    fn brightness_stays_in_range_and_is_deterministic() {
+        let plan = Plan::new(vec![rgb(1.0, 1.0, 1.0)], 1000, 1000).with_brightness(0.2, 0.8, 500, 0);
+        for light in 0..5 {
+            for step in 0..50 {
+                let b = plan.brightness_at(light, step as f64 * 37.0);
+                assert!((0.2..=0.8).contains(&b), "brightness {b} out of range");
+            }
+        }
+        // Deterministic: same (light, time) -> same value.
+        assert_eq!(
+            plan.brightness_at(2, 321.0),
+            plan.brightness_at(2, 321.0)
+        );
+    }
+
+    #[test]
+    fn brightness_varies_across_lights_and_segments() {
+        let plan = Plan::new(vec![rgb(1.0, 1.0, 1.0)], 1000, 1000).with_brightness(0.0, 1.0, 500, 0);
+        // Different lights land on different targets at the same instant (random per-light).
+        let l0 = plan.brightness_at(0, 0.0);
+        let l1 = plan.brightness_at(1, 0.0);
+        assert!((l0 - l1).abs() > 1e-9, "lights should differ");
+        // The same light changes its target across brightness segments.
+        let seg0 = plan.brightness_at(0, 0.0);
+        let seg2 = plan.brightness_at(0, 1000.0); // two 500 ms segments later
+        assert!((seg0 - seg2).abs() > 1e-9, "segments should differ");
     }
 
     #[test]

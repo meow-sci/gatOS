@@ -203,6 +203,12 @@ fn render_title(f: &mut Frame, app: &App, area: Rect) {
                     &format!("{}/{}ms", s.color_stagger_ms as u64, s.anim_stagger_ms as u64),
                 ));
             }
+            if s.bright_min < s.bright_max {
+                spans.push(kv(
+                    "bri",
+                    &format!("{:.2}-{:.2}", s.bright_min, s.bright_max),
+                ));
+            }
             if app.partying {
                 spans.push(kv("wr", &format!("{} ({})", app.writes, app.inflight)));
                 spans.push(Span::styled(
@@ -1111,6 +1117,10 @@ mod tests {
         assert!(text.contains("color stagger"));
         assert!(text.contains("anim stagger"));
         assert!(text.contains("frame rate"));
+        assert!(text.contains("bright min"));
+        assert!(text.contains("bright max"));
+        assert!(text.contains("bright time"));
+        assert!(text.contains("bright steps"));
     }
 
     #[test]

@@ -56,6 +56,10 @@ impl Profile {
         out.push_str(&format!("anim_ms: {}\n", s.anim_ms));
         out.push_str(&format!("color_stagger_ms: {}\n", fmt_f(s.color_stagger_ms)));
         out.push_str(&format!("anim_stagger_ms: {}\n", fmt_f(s.anim_stagger_ms)));
+        out.push_str(&format!("bright_min: {}\n", fmt_f(s.bright_min)));
+        out.push_str(&format!("bright_max: {}\n", fmt_f(s.bright_max)));
+        out.push_str(&format!("bright_ms: {}\n", s.bright_ms));
+        out.push_str(&format!("bright_steps: {}\n", s.bright_steps));
         out.push_str("colors:\n");
         for c in &self.colors {
             out.push_str(&format!("  - \"{}\"\n", c.to_hex()));
@@ -120,6 +124,26 @@ impl Profile {
                 "anim_stagger_ms" => {
                     if let Ok(v) = value.parse::<f64>() {
                         settings.anim_stagger_ms = v.clamp(0.0, MAX_STAGGER);
+                    }
+                }
+                "bright_min" => {
+                    if let Ok(v) = value.parse::<f64>() {
+                        settings.bright_min = v.clamp(0.0, 1.0);
+                    }
+                }
+                "bright_max" => {
+                    if let Ok(v) = value.parse::<f64>() {
+                        settings.bright_max = v.clamp(0.0, 1.0);
+                    }
+                }
+                "bright_ms" => {
+                    if let Ok(v) = value.parse::<f64>() {
+                        settings.bright_ms = (v.round() as i64).clamp(MIN_MS, MAX_MS) as u64;
+                    }
+                }
+                "bright_steps" => {
+                    if let Ok(v) = value.parse::<f64>() {
+                        settings.bright_steps = (v.round() as i64).clamp(0, 1000) as u32;
                     }
                 }
                 "colors" => in_colors = value.is_empty(),
@@ -248,6 +272,10 @@ mod tests {
                 anim_ms: 3000,
                 color_stagger_ms: 80.0,
                 anim_stagger_ms: 200.0,
+                bright_min: 0.25,
+                bright_max: 0.9,
+                bright_ms: 400,
+                bright_steps: 6,
             },
             colors: vec![Rgb::from_u8(255, 0, 0), Rgb::from_u8(0, 128, 255)],
         }

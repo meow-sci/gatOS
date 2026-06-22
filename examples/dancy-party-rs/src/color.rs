@@ -40,6 +40,13 @@ impl Rgb {
         Self::new(c[0] as f64, c[1] as f64, c[2] as f64)
     }
 
+    /// Scales every channel by `f` (a 0..1 brightness multiplier) — `1.0` leaves the color untouched,
+    /// `0.0` is black. Used by the random-brightness effect to dim each light independently.
+    pub fn scaled(self, f: f64) -> Rgb {
+        let f = f.clamp(0.0, 1.0);
+        Rgb::new(self.r * f, self.g * f, self.b * f)
+    }
+
     /// Linear interpolation toward `other` by `t` (0 = self, 1 = other), per channel.
     pub fn lerp(self, other: Rgb, t: f64) -> Rgb {
         let t = t.clamp(0.0, 1.0);
