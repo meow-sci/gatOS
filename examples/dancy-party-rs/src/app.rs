@@ -167,6 +167,7 @@ pub enum Modal {
     Time(TimeModal),
     Settings(SettingsModal),
     SaveProfile(SaveProfileModal),
+    ConfirmQuit(ConfirmQuitModal),
 }
 
 /// Manual color entry — type an RGB triple (`255 128 0`) or hex (`#ff8000`); a live swatch previews
@@ -208,6 +209,15 @@ pub struct SettingsModal {
 pub struct SaveProfileModal {
     pub text: String,
     pub area: Rect,
+}
+
+/// The quit confirmation — `y`/`Enter` quits, `n`/`Esc` cancels. Records the two button rects for the
+/// mouse handler.
+#[derive(Default)]
+pub struct ConfirmQuitModal {
+    pub area: Rect,
+    pub quit_btn: Rect,
+    pub cancel_btn: Rect,
 }
 
 /// The aggregate battery view across the armed vessels (average charge over the `count` that have a
@@ -463,6 +473,7 @@ impl App {
             Modal::Time(_) => self.on_key_time(key),
             Modal::Settings(_) => self.on_key_settings(key),
             Modal::SaveProfile(_) => self.on_key_save_profile(key),
+            Modal::ConfirmQuit(_) => self.on_key_confirm_quit(key),
             Modal::None if self.hidden => self.on_key_hidden(key),
             Modal::None => match self.screen {
                 Screen::Vessels => self.on_key_vessels(key),
@@ -478,14 +489,26 @@ impl App {
             KeyCode::Esc | KeyCode::Char('h') => self.hidden = false,
             KeyCode::Enter | KeyCode::Char('p') | KeyCode::Char('P') => self.toggle_party(),
             KeyCode::Char('g') => self.refill_battery(),
-            KeyCode::Char('q') => self.quit(),
+            KeyCode::Char('q') => self.request_quit(),
+            _ => {}
+        }
+    }
+
+    /// `q` (and Esc on the vessel screen) asks before leaving — see [`Self::on_key_confirm_quit`].
+    fn on_key_confirm_quit(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                self.modal = Modal::None;
+                self.quit();
+            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => self.modal = Modal::None,
             _ => {}
         }
     }
 
     fn on_key_vessels(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => self.quit(),
+            KeyCode::Char('q') | KeyCode::Esc => self.request_quit(),
             KeyCode::Up | KeyCode::Char('k') => self.move_vsel(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_vsel(1),
             KeyCode::Char(' ') => self.toggle_vessel(self.vsel),
@@ -504,7 +527,7 @@ impl App {
                 return;
             }
             KeyCode::Char('q') => {
-                self.quit();
+                self.request_quit();
                 return;
             }
             KeyCode::Esc | KeyCode::Char('b') => {
@@ -925,6 +948,11 @@ impl App {
         }
     }
 
+    /// Opens the quit confirmation (the `q`/Esc-to-leave gate). Confirming calls [`Self::quit`].
+    fn request_quit(&mut self) {
+        self.modal = Modal::ConfirmQuit(ConfirmQuitModal::default());
+    }
+
     fn quit(&mut self) {
         if self.partying {
             // Reset the lights on the way out; `main` waits briefly for the Stopped ack.
@@ -941,6 +969,7 @@ impl App {
         match &self.modal {
             Modal::Xkcd(_) => self.on_mouse_xkcd(m),
             Modal::Settings(_) => self.on_mouse_settings(m),
+            Modal::ConfirmQuit(_) => self.on_mouse_confirm_quit(m),
             Modal::AddColor(_) | Modal::Time(_) | Modal::SaveProfile(_) => {
                 // Click outside the box dismisses; otherwise ignore (typing drives these).
                 if let MouseEventKind::Down(MouseButton::Left) = m.kind {
@@ -1035,6 +1064,28 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Quit-confirmation clicks: the two buttons, or click outside to cancel.
+    fn on_mouse_confirm_quit(&mut self, m: MouseEvent) {
+        if let MouseEventKind::Down(MouseButton::Left) = m.kind {
+            let pos = Position {
+                x: m.column,
+                y: m.row,
+            };
+            let (quit_hit, inside) = match &self.modal {
+                Modal::ConfirmQuit(c) => (c.quit_btn.contains(pos), c.area.contains(pos)),
+                _ => (false, false),
+            };
+            if quit_hit {
+                self.modal = Modal::None;
+                self.quit();
+            } else if !inside
+                || matches!(&self.modal, Modal::ConfirmQuit(c) if c.cancel_btn.contains(pos))
+            {
+                self.modal = Modal::None;
+            }
         }
     }
 
@@ -1389,6 +1440,37 @@ mod tests {
         assert_eq!(loaded.settings.color_ms, 777);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn q_asks_before_quitting_and_cancel_keeps_running() {
+        let mut a = app();
+        press(&mut a, 'q');
+        assert!(matches!(a.modal, Modal::ConfirmQuit(_)));
+        assert!(!a.should_quit, "q alone must not quit");
+        // n cancels.
+        press(&mut a, 'n');
+        assert!(matches!(a.modal, Modal::None));
+        assert!(!a.should_quit);
+    }
+
+    #[test]
+    fn confirming_the_quit_dialog_quits() {
+        let mut a = app();
+        press(&mut a, 'q');
+        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(a.should_quit);
+    }
+
+    #[test]
+    fn q_confirmation_works_from_the_party_screen_too() {
+        let mut a = app();
+        a.screen = Screen::Party;
+        press(&mut a, 'q');
+        assert!(matches!(a.modal, Modal::ConfirmQuit(_)));
+        assert!(!a.should_quit);
+        press(&mut a, 'y');
+        assert!(a.should_quit);
     }
 
     #[test]

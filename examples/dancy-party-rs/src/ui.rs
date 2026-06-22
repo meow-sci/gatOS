@@ -39,9 +39,13 @@ const BAR_BG: Color = Color::Rgb(20, 16, 32);
 const SWATCH: &str = "\u{2588}\u{2588}\u{2588}\u{2588}"; // ████
 
 pub fn render(f: &mut Frame, app: &mut App) {
-    // Hide mode collapses everything to a single status bar so the party doesn't block the game.
+    // Hide mode collapses everything to a single status bar so the party doesn't block the game. The
+    // quit confirmation still overlays it (it can be triggered by `q` from the hidden bar).
     if app.hidden {
         render_hidden(f, app);
+        if matches!(app.modal, Modal::ConfirmQuit(_)) {
+            render_confirm_quit(f, app);
+        }
         return;
     }
 
@@ -65,15 +69,16 @@ pub fn render(f: &mut Frame, app: &mut App) {
         Modal::Time(_) => render_time(f, app),
         Modal::Settings(_) => render_settings(f, app),
         Modal::SaveProfile(_) => render_save_profile(f, app),
+        Modal::ConfirmQuit(_) => render_confirm_quit(f, app),
         Modal::None => {}
     }
 }
 
 // ---- hide mode (status-bar-only overlay) --------------------------------------------------------
 
-/// The whole UI collapsed to one bar on the bottom row: title, party state, the battery meter, and
-/// the three live buttons (refill / party toggle / show). Everything else is left blank — and blanks
-/// are transparent — so the game shows through while a party runs. Records the button rects.
+/// The whole UI collapsed to one bar on the top row: title, party state, the battery meter, and the
+/// three live buttons (refill / party toggle / show). Everything else is left blank — and blanks are
+/// transparent — so the game shows through while a party runs. Records the button rects.
 fn render_hidden(f: &mut Frame, app: &mut App) {
     let screen = f.area();
     app.party_btn = Rect::default();
@@ -82,7 +87,7 @@ fn render_hidden(f: &mut Frame, app: &mut App) {
     if screen.height == 0 || screen.width == 0 {
         return;
     }
-    let bar = Rect::new(screen.x, screen.y + screen.height - 1, screen.width, 1);
+    let bar = Rect::new(screen.x, screen.y, screen.width, 1);
 
     // Build the bar as contiguous tagged segments, then assign each button its rect from the running
     // x offset (the segments abut, so widths sum exactly).
@@ -803,6 +808,77 @@ fn render_save_profile(f: &mut Frame, app: &mut App) {
             ])),
             Rect::new(inner.x, inner.y + 1, inner.width, 1),
         );
+    }
+}
+
+/// The quit confirmation — a small centered popup with `[ quit ]` / `[ cancel ]` buttons (records
+/// their rects for the mouse handler). Reachable from every screen, so it overlays whatever's behind.
+fn render_confirm_quit(f: &mut Frame, app: &mut App) {
+    let screen = f.area();
+    let width = 40u16.min(screen.width.saturating_sub(2)).max(18);
+    let height = 5u16.min(screen.height.saturating_sub(2)).max(4);
+    let popup = centered(screen, width, height);
+    f.render_widget(Clear, popup);
+
+    let partying = app.partying;
+    let block = Block::bordered()
+        .border_style(Style::new().fg(BAD))
+        .title(Span::styled(
+            " quit? ",
+            Style::new().fg(BAD).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            " y/Enter quit \u{b7} n/Esc cancel ",
+            Style::new().fg(LABEL),
+        ))
+        .style(Style::new().bg(BAR_BG));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let Modal::ConfirmQuit(m) = &mut app.modal else {
+        return;
+    };
+    m.area = popup;
+    m.quit_btn = Rect::default();
+    m.cancel_btn = Rect::default();
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let msg = if partying {
+        "Quit? The party stops and lights reset to white."
+    } else {
+        "Quit dancy-party-rs?"
+    };
+    f.render_widget(
+        Paragraph::new(Span::styled(msg, Style::new().fg(VALUE))),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
+
+    if inner.height >= 3 {
+        let y = inner.y + 2;
+        let quit = "[ quit ]";
+        let cancel = "[ cancel ]";
+        let qw = (quit.chars().count() as u16).min(inner.width);
+        let quit_rect = Rect::new(inner.x, y, qw, 1);
+        m.quit_btn = quit_rect;
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                quit,
+                Style::new().fg(BAD).add_modifier(Modifier::BOLD),
+            )),
+            quit_rect,
+        );
+        let cx = inner.x + qw + 2;
+        if cx < inner.x + inner.width {
+            let cw = (cancel.chars().count() as u16).min(inner.x + inner.width - cx);
+            let cancel_rect = Rect::new(cx, y, cw, 1);
+            m.cancel_btn = cancel_rect;
+            f.render_widget(
+                Paragraph::new(Span::styled(cancel, Style::new().fg(LABEL))),
+                cancel_rect,
+            );
+        }
     }
 }
 
