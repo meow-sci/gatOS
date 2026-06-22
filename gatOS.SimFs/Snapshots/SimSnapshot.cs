@@ -290,6 +290,15 @@ public sealed record LightSnapshot(
 {
     /// <summary>Sentinel <see cref="AnimationIndex"/> for a light with no actuate animation.</summary>
     public const int NoAnimation = -1;
+
+    /// <summary>
+    ///     The spotlight beam spread — the outer cone <b>half-angle</b> in degrees
+    ///     (<c>LightModule.Template.OuterAngle</c>, stored in radians by KSA). Larger ⇒ wider, more
+    ///     diffuse beam; the stock default is 45°. Writable via <c>lights/&lt;n&gt;/spread</c>
+    ///     (action <c>light.spread</c>); KSA clamps the effective value to ~0..89.94°. Only affects
+    ///     spotlights — point lights carry the value but ignore it when rendering.
+    /// </summary>
+    public double SpreadDeg { get; init; }
 }
 
 /// <summary>One docking port's state.</summary>

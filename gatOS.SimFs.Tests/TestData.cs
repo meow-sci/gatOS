@@ -63,7 +63,7 @@ internal static class TestData
                 rcs: [new RcsSnapshot(0, true, true, "Pitch|Yaw")],
                 // The light carries an actuate animation linked to vessel-level ordinal 1 (the non-solar
                 // animation above), so its co-located goal/current/state control surfaces.
-                lights: [new LightSnapshot(0, true, 1.0, new double3Snap(1, 1, 1), AnimationIndex: 1)])
+                lights: [new LightSnapshot(0, true, 1.0, new double3Snap(1, 1, 1), AnimationIndex: 1) { SpreadDeg = 45 }])
             with
             {
                 Navball = new NavballSnapshot(10, 20, 30, 1.5, 3400, "Lvlh", 7670),

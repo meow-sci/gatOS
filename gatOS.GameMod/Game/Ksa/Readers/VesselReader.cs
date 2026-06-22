@@ -480,13 +480,14 @@ internal static class VesselReader
         return result;
     }
 
-    [KsaAnchor("vehicle.Parts.Modules.Get<LightModule>(); .Template.Intensity.Value/.ColorRgb; "
+    [KsaAnchor("vehicle.Parts.Modules.Get<LightModule>(); .Template.Intensity.Value/.ColorRgb/.OuterAngle.Value; "
                + "Parent.FullPart.LightSwitch.LightIsActive; Parent.FullPart.SubtreeModules.Get<KeyframeAnimationModule>()",
-        SourceFile = "KSA/LightModule.cs", Verified = "2026-06-20", Risk = ChurnRisk.High,
+        SourceFile = "KSA/LightModule.cs", Verified = "2026-06-21", Risk = ChurnRisk.High,
         Notes = "Template internals are High-churn; on-state reads the part's LightSwitch PowerConsumer. "
+                + "OuterAngle is the spotlight outer-cone half-angle (radians); exposed as spread (degrees). "
                 + "AnimationIndex links a light part's actuate animation to the vessel-level animation ordinal "
                 + "(the same subtree scan SolarPanel.OnPartCreated uses), so lights/<n>/goal co-locates the deploy "
-                + "control alongside on/brightness/color.")]
+                + "control alongside on/brightness/color/spread.")]
     private static IReadOnlyList<LightSnapshot> SampleLights(Vehicle vehicle)
     {
         var modules = vehicle.Parts.Modules.Get<LightModule>();
@@ -502,7 +503,10 @@ internal static class VesselReader
             var rgb = light.Template.ColorRgb;
             result.Add(new LightSnapshot(i, on, Sanitize.Finite(intensity),
                 new double3Snap(Sanitize.Finite(rgb.R), Sanitize.Finite(rgb.G), Sanitize.Finite(rgb.B)),
-                AnimationIndex: AnimationIndexOf(animations, LightAnimation(light))));
+                AnimationIndex: AnimationIndexOf(animations, LightAnimation(light)))
+            {
+                SpreadDeg = Sanitize.Finite(light.Template.OuterAngle.Value * RadToDeg),
+            });
         }
 
         return result;

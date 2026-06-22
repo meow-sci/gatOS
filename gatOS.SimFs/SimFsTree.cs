@@ -652,7 +652,7 @@ public static class SimFsTree
                     : null);
 
         /// <summary>
-        ///     One light by index: <c>on</c>/<c>brightness</c>/<c>color</c> always, plus the
+        ///     One light by index: <c>on</c>/<c>brightness</c>/<c>color</c>/<c>spread</c> always, plus the
         ///     co-located actuate <c>goal</c>/<c>current</c>/<c>state</c> control when the light part
         ///     carries a deploy animation (<see cref="LightSnapshot.AnimationIndex"/>). The same
         ///     vessel-level animation is also reachable under <c>animations/&lt;n&gt;/</c>; both route
@@ -669,6 +669,8 @@ public static class SimFsTree
                     () => Formats.Scalar(Light(vesselId, index).Intensity)),
                 VectorControl($"{q}/color", "color", vesselId, "light.color", index, 3,
                     () => Formats.Vector(Light(vesselId, index).Color)),
+                NumberControl($"{q}/spread", "spread", vesselId, "light.spread", index,
+                    () => Formats.Scalar(Light(vesselId, index).SpreadDeg)),
             };
             if (light.AnimationIndex >= 0)
             {

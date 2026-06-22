@@ -38,7 +38,7 @@ public sealed class ControlSurfaceTests
             decouplers: [new DecouplerSnapshot(0, false)],
             rcs: [new RcsSnapshot(0, false, true, "None")],
             // The light carries an actuate animation linked to vessel-level ordinal 1.
-            lights: [new LightSnapshot(0, false, 1, new double3Snap(1, 1, 1), AnimationIndex: 1)],
+            lights: [new LightSnapshot(0, false, 1, new double3Snap(1, 1, 1), AnimationIndex: 1) { SpreadDeg = 45 }],
             docking: [new DockingSnapshot(0, true, "part-2") { PushoffForceN = 7000 }])));
         _server = new NinePServer(root);
         await _server.StartAsync();
@@ -190,7 +190,7 @@ public sealed class ControlSurfaceTests
     }
 
     [Test]
-    public async Task LightControls_OnBrightnessColor()
+    public async Task LightControls_OnBrightnessColorSpread()
     {
         await WriteAsync("1\n", "vessels", "by-id", "test-1", "lights", "0", "on");
         Assert.That(_sink.Last, Is.EqualTo(new SimCommand("test-1", "light.on", 0, 1)));
@@ -200,6 +200,11 @@ public sealed class ControlSurfaceTests
         await WriteAsync("1 0 0\n", "vessels", "by-id", "test-1", "lights", "0", "color");
         Assert.That(_sink.Last!.Action, Is.EqualTo("light.color"));
         Assert.That(_sink.Last!.Values, Is.EqualTo(new[] { 1d, 0d, 0d }));
+        Assert.That(await ReadAsync("vessels", "by-id", "test-1", "lights", "0", "spread"), Is.EqualTo("45\n"),
+            "spread reads back the outer-cone half-angle in degrees");
+        await WriteAsync("60\n", "vessels", "by-id", "test-1", "lights", "0", "spread");
+        Assert.That(_sink.Last, Is.EqualTo(new SimCommand("test-1", "light.spread", 0, 60)),
+            "spread is a number of degrees");
     }
 
     [Test]

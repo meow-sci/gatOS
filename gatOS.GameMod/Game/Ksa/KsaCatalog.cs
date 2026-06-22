@@ -94,6 +94,7 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels) : ICommandEx
         "light.on" => LightActuator.SetOn(vehicle, c.Ordinal, c.Value > 0.5),
         "light.brightness" => LightActuator.SetBrightness(vehicle, c.Ordinal, c.Value),
         "light.color" => LightActuator.SetColor(vehicle, c.Ordinal, c.Values ?? []),
+        "light.spread" => LightActuator.SetSpread(vehicle, c.Ordinal, c.Value),
         "decoupler.fire" => DecouplerActuator.Fire(vehicle, c.Ordinal),
         "docking.undock" => DockingActuator.Undock(vehicle, c.Ordinal),
 

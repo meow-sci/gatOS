@@ -315,6 +315,7 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 | `lights/<n>/on` | **St** | flag | Read = on; **write `0`/`1`** (action `light.on`). |
 | `lights/<n>/brightness` | **St** | number | **Write** intensity (action `light.brightness`). |
 | `lights/<n>/color` | **St** | `r g b` | **Write** RGB, each 0..1 (action `light.color`). |
+| `lights/<n>/spread` | **St** | number | Spotlight beam spread — outer-cone **half-angle in degrees** (action `light.spread`). Larger ⇒ wider/softer beam; stock default 45°. Effective value clamped to ~0..89.94°. Only affects spotlights (point lights carry but ignore it). |
 | `lights/<n>/goal` | **St** | fraction | Actuate/deploy setpoint 0..1 (action `animation.goal`). **Only present when the light part has an animation.** |
 | `lights/<n>/current` | S | scalar | Actual deploy fraction 0..1 (only with an animation). |
 | `lights/<n>/state` | S | string | Animation deployment state — `Deployed`/`Retracted`/`Deploying`/`Retracting`/`Broken` (only with an animation). |
@@ -486,6 +487,7 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `light.on` | light n | value `0`/`1` | Frame | `lights/<n>/on` | |
 | `light.brightness` | light n | value number | Frame | `lights/<n>/brightness` | |
 | `light.color` | light n | values `[r,g,b]` | Frame | `lights/<n>/color` | |
+| `light.spread` | light n | value number (deg) | Frame | `lights/<n>/spread` | outer-cone half-angle; clamped ~0..89.94° |
 | `animation.goal` | anim n | value `0..1` | Frame | `animations/<n>/goal`, `solar/<n>/goal`, `lights/<n>/goal` | one ordinal, three views |
 | `decoupler.fire` | decoupler n | value `1` | Frame | `decouplers/<n>/fire` | one-shot |
 | `docking.undock` | docking n | value `1` | Frame | `docking/<n>/undock` | one-shot |

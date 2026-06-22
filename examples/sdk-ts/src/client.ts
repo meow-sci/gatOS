@@ -198,6 +198,11 @@ export class LightHandle {
   setColor(r: number, g: number, b: number) {
     return this.t.command({ vessel_id: this.id, action: "light.color", ordinal: this.n, values: [r, g, b] });
   }
+
+  /** Spotlight beam spread — outer-cone half-angle in degrees (stock 45°, clamped ~0..89.94°). */
+  setSpread(degrees: number) {
+    return this.t.command({ vessel_id: this.id, action: "light.spread", ordinal: this.n, value: degrees });
+  }
 }
 
 /** The cheat namespace (only works when `debug_namespace` is enabled host-side). */

@@ -9,14 +9,19 @@ namespace gatOS.GameMod.Game.Ksa.Actuators;
 ///     Light controls (KSA_GAME_INTEGRATION_PLAN §5.1/§5.2). The vessel master toggle mirrors
 ///     <c>Vehicle.ToggleLights()</c> as a set (the proven unscience <c>zippo</c>/<c>red-alert</c>
 ///     path); per-light on/off drives the part's <c>PowerConsumer.LightIsActive</c>; per-light
-///     brightness/colour mutate the light's <see cref="LightModule.TemplateData"/>. Because that
-///     template is <b>shared</b> across all lights spawned from the same part template, a
+///     brightness/colour/spread mutate the light's <see cref="LightModule.TemplateData"/>. Because
+///     that template is <b>shared</b> across all lights spawned from the same part template, a
 ///     per-instance write first clones the template (tracked in a <see cref="ConditionalWeakTable{TKey,TValue}"/>)
-///     so one light's change doesn't recolour every identical light — the red-alert pattern.
-///     Game-thread only; may throw — <c>KsaCatalog</c> wraps every call.
+///     so one light's change doesn't recolour (or re-spread) every identical light — the red-alert
+///     pattern. Game-thread only; may throw — <c>KsaCatalog</c> wraps every call.
 /// </summary>
 internal static class LightActuator
 {
+    // KSA's render-side clamp on the spotlight outer-cone half-angle (Light.CreateSpotLight): the
+    // valid radian band the template value must land in (~0..89.94 deg). MAX is just under π/2.
+    private const double MinOuterAngleRad = 1E-05;
+    private const double MaxOuterAngleRad = 1.5697963;
+
     // Lights whose Template has been unshared (cloned) for per-instance writes.
     private static readonly ConditionalWeakTable<LightModule, object> Unshared = new();
     private static readonly object Marker = new();
@@ -76,6 +81,22 @@ internal static class LightActuator
         return CommandResult.Ok;
     }
 
+    [KsaAnchor("LightModule.Template.OuterAngle.Value (per-instance, after template clone)",
+        SourceFile = "KSA/LightModule.cs / KSA/FloatReference.cs", Verified = "2026-06-21", Risk = ChurnRisk.High,
+        Notes = "Spotlight outer-cone half-angle. Argument is degrees; stored as radians, clamped to KSA's "
+                + "render range [1E-05, 1.5697963] rad (~0..89.94 deg, see Light.CreateSpotLight). Template is "
+                + "shared; EnsureUnshared clones OuterAngle (red-alert pattern) so one light's spread doesn't "
+                + "widen every identical light.")]
+    internal static CommandResult SetSpread(Vehicle vehicle, int ordinal, double degrees)
+    {
+        if (GetLight(vehicle, ordinal) is not { } light)
+            return new CommandResult(CommandOutcome.NotFound, $"light {ordinal} does not exist");
+        EnsureUnshared(light);
+        var radians = Math.Clamp(degrees * (Math.PI / 180.0), MinOuterAngleRad, MaxOuterAngleRad);
+        light.Template.OuterAngle.Value = (float)radians;
+        return CommandResult.Ok;
+    }
+
     private static LightModule? GetLight(Vehicle vehicle, int ordinal)
     {
         var lights = vehicle.Parts.Modules.Get<LightModule>();
@@ -89,6 +110,7 @@ internal static class LightActuator
         var clone = ShallowClone(light.Template);
         clone.Intensity = ShallowClone(light.Template.Intensity);
         clone.ColorRgb = ShallowClone(light.Template.ColorRgb);
+        clone.OuterAngle = ShallowClone(light.Template.OuterAngle);
         light.Template = clone;
         Unshared.Add(light, Marker);
     }
