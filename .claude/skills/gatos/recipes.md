@@ -205,3 +205,13 @@ await command({ vessel_id: "Polaris", action: "debug.control_vessel", token: "Po
 
 See also the in-repo Rust references: `examples/gogogo-rs` (minimal control panel) and
 `examples/land-o-matic` (full G-FOLD/UPFG autopilot).
+
+## 8. Fan out one write to many files in a single tick
+
+A `/sim` write doesn't return until the next game tick (the 9p thread enqueues the command, the game
+thread drains it), so a *sequential* loop pays one tick **per file** —
+`for f in /sim/vessels/by-id/*/lights/*/on; do echo 1 > "$f"; done` is one tick per light. Issue the
+writes **concurrently** and they batch into the same tick's drain instead. `examples/kecho` is a tiny
+`echo`-like CLI that does exactly this — `kecho 1 /sim/vessels/by-id/*/lights/*/on` turns on every
+light of every vessel at once. Use it (or the same concurrent-dispatch pattern) for any glob fan-out
+over control files: lights, RCS, throttles, etc.
