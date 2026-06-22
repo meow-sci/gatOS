@@ -209,9 +209,11 @@ See also the in-repo Rust references: `examples/gogogo-rs` (minimal control pane
 ## 8. Fan out one write to many files in a single tick
 
 A `/sim` write doesn't return until the next game tick (the 9p thread enqueues the command, the game
-thread drains it), so a *sequential* loop pays one tick **per file** —
-`for f in /sim/vessels/by-id/*/lights/*/on; do echo 1 > "$f"; done` is one tick per light. Issue the
-writes **concurrently** and they batch into the same tick's drain instead. `examples/kecho` is a tiny
-`echo`-like CLI that does exactly this — `kecho 1 /sim/vessels/by-id/*/lights/*/on` turns on every
-light of every vessel at once. Use it (or the same concurrent-dispatch pattern) for any glob fan-out
-over control files: lights, RCS, throttles, etc.
+thread drains it), so writing one value to many files *sequentially* pays one tick **per file**. (And
+you can't redirect to a glob: `echo 1 > /sim/.../*/on` is an `ambiguous redirect` — `>` is one fd. The
+composable shape is `tee`, which takes the files as args and the value on stdin:
+`echo 1 | tee /sim/.../*/on >/dev/null` — but `tee` writes them sequentially.) Issue the writes
+**concurrently** and they batch into the same tick's drain instead. `examples/kecho` is a tiny *concurrent
+`tee`* that does exactly this — `echo 1 | kecho /sim/vessels/by-id/*/lights/*/on` turns on every light of
+every vessel in one tick. Use it (or the same concurrent-dispatch pattern) for any glob fan-out over
+control files: lights, RCS, throttles, etc.

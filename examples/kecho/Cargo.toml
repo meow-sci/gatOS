@@ -2,7 +2,7 @@
 name = "kecho"
 version = "0.1.0"
 edition = "2021"
-description = "echo, but it writes one value to many gatOS /sim files concurrently — so a fan-out like `kecho 1 /sim/vessels/by-id/*/lights/*/on` lands in a single game tick instead of one write per tick"
+description = "a concurrent `tee` for gatOS /sim — `echo 1 | kecho /sim/vessels/by-id/*/lights/*/on` writes stdin to every path at once, so the fan-out lands in a single game tick instead of one write per tick"
 license = "MIT"
 publish = false
 

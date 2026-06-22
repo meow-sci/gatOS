@@ -1,12 +1,13 @@
 //! Where a write actually goes. Two backends mirror the sibling Rust examples:
 //!
-//! - [`FsSink`] writes the **real `/sim` mount** with `std::fs` (the in-guest default): a write is one
-//!   `open`+`write`+`close`, with the value newline-terminated so a control file actuates (the 9p
-//!   server line-buffers and actuates on the `\n`).
+//! - [`FsSink`] writes the **real `/sim` mount** with `std::fs`: a write is one `open`+`write`+`close`
+//!   of the exact bytes from stdin (so `echo 1 | kecho …` delivers `1\n`, and the trailing newline the
+//!   9p control files actuate on rides along for free — `kecho` itself never touches the payload).
 //! - [`HttpSink`] uses the mod's HTTP `/v1/fs/<path>` field mirror (the `--url`/`$GATOS_HTTP` host-dev
-//!   mode). The field endpoint actuates on receipt, so no trailing newline is needed (or sent).
+//!   mode). The field endpoint actuates on receipt and a stray trailing newline can confuse a strict
+//!   parser, so the body is sent with trailing `\n`/`\r` trimmed.
 //!
-//! Neither sink batches or holds state — a sink is a stateless "write this string to that path"
+//! Neither sink batches or holds state — a sink is a stateless "write these bytes to that path"
 //! function. The *concurrency* (and therefore the single-tick fan-out that is the whole point of
 //! kecho) lives one layer up, in `main::dispatch`, which fires one `spawn_blocking(sink.write(..))`
 //! per target file. The trait is `Send + Sync` precisely so it can be shared across those tasks.
@@ -23,12 +24,12 @@ pub struct WriteError {
     pub message: String,
 }
 
-/// A "write one value to one path" backend. Stateless and `Send + Sync` so `main::dispatch` can clone
-/// an `Arc<dyn Sink>` into every concurrent write task.
+/// A "write these bytes to one path" backend. Stateless and `Send + Sync` so `main::dispatch` can
+/// clone an `Arc<dyn Sink>` into every concurrent write task.
 pub trait Sink: Send + Sync {
-    /// Writes `value` to `path` as one actuating write. `append_newline` controls whether a trailing
-    /// `\n` is added: the `/sim` mount needs it to actuate a control file, the HTTP mirror does not.
-    fn write(&self, path: &str, value: &str, append_newline: bool) -> Result<(), WriteError>;
+    /// Writes `data` to `path` as one actuating write (the bytes are the verbatim stdin payload —
+    /// binary-safe, like `cat`/`tee`).
+    fn write(&self, path: &str, data: &[u8]) -> Result<(), WriteError>;
 
     /// A short label for the `--verbose` summary (e.g. `fs` or the HTTP base URL).
     fn label(&self) -> String;
@@ -37,20 +38,15 @@ pub trait Sink: Send + Sync {
 // ---- filesystem sink (the real /sim mount) ------------------------------------------------------
 
 /// Writes paths **verbatim** with `std::fs`. The expected use is in-guest with the shell having already
-/// glob-expanded absolute `/sim/...` paths (`kecho 1 /sim/vessels/by-id/*/lights/*/on`); relative paths
-/// resolve against the process cwd, exactly like `echo … > path` would.
+/// glob-expanded absolute `/sim/...` paths (`echo 1 | kecho /sim/vessels/by-id/*/lights/*/on`);
+/// relative paths resolve against the process cwd, exactly like `tee path` would.
 pub struct FsSink;
 
 impl Sink for FsSink {
-    fn write(&self, path: &str, value: &str, append_newline: bool) -> Result<(), WriteError> {
+    fn write(&self, path: &str, data: &[u8]) -> Result<(), WriteError> {
         // One write replaces the file's contents — the gatOS control files are single-value, so this is
-        // the `echo value > file` shape, not an append.
-        let payload = if append_newline {
-            format!("{value}\n")
-        } else {
-            value.to_string()
-        };
-        fs::write(path, payload).map_err(|e| WriteError {
+        // the `echo value > file` shape, not an append. `data` is passed through untouched.
+        fs::write(path, data).map_err(|e| WriteError {
             errno: errno_name(e.raw_os_error()),
             message: e.to_string(),
         })
@@ -85,14 +81,14 @@ impl HttpSink {
 }
 
 impl Sink for HttpSink {
-    fn write(&self, path: &str, value: &str, _append_newline: bool) -> Result<(), WriteError> {
-        // The field endpoint actuates on receipt; the newline the FS mount needs is irrelevant here, so
-        // we always POST the raw value (matching dancy-party-rs's HTTP source).
+    fn write(&self, path: &str, data: &[u8]) -> Result<(), WriteError> {
+        // The field endpoint actuates on receipt; trim a trailing newline so a piped `echo`'s `\n`
+        // doesn't reach a strict value parser (the FS mount, by contrast, wants that newline).
         let rel = http_rel(path);
         match self
             .agent
             .post(&format!("{}/fs/{rel}", self.base))
-            .send_string(value)
+            .send_bytes(trim_trailing_newline(data))
         {
             Ok(_) => Ok(()),
             Err(ureq::Error::Status(code, resp)) => Err(WriteError {
@@ -119,6 +115,15 @@ impl Sink for HttpSink {
 pub fn http_rel(path: &str) -> String {
     let p = path.trim_start_matches('/');
     p.strip_prefix("sim/").unwrap_or(p).to_string()
+}
+
+/// Returns `data` with any trailing `\n`/`\r` bytes removed (for the HTTP body).
+fn trim_trailing_newline(data: &[u8]) -> &[u8] {
+    let mut end = data.len();
+    while end > 0 && (data[end - 1] == b'\n' || data[end - 1] == b'\r') {
+        end -= 1;
+    }
+    &data[..end]
 }
 
 /// Maps the HTTP field-endpoint status code to the matching control-file errno name, so an HTTP
@@ -163,20 +168,12 @@ mod tests {
     }
 
     #[test]
-    fn fs_write_appends_a_newline_by_default() {
-        let d = tmp_dir("nl");
+    fn fs_write_is_verbatim() {
+        // kecho never edits the payload: whatever stdin held (e.g. `echo`'s `1\n`) lands byte-for-byte.
+        let d = tmp_dir("verbatim");
         let f = d.join("on");
-        FsSink.write(f.to_str().unwrap(), "1", true).unwrap();
+        FsSink.write(f.to_str().unwrap(), b"1\n").unwrap();
         assert_eq!(fs::read_to_string(&f).unwrap(), "1\n");
-        let _ = fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn fs_write_suppresses_newline_with_flag() {
-        let d = tmp_dir("nonl");
-        let f = d.join("on");
-        FsSink.write(f.to_str().unwrap(), "1", false).unwrap();
-        assert_eq!(fs::read_to_string(&f).unwrap(), "1");
         let _ = fs::remove_dir_all(&d);
     }
 
@@ -184,8 +181,8 @@ mod tests {
     fn fs_write_overwrites_rather_than_appends() {
         let d = tmp_dir("overwrite");
         let f = d.join("color");
-        FsSink.write(f.to_str().unwrap(), "1 0 0", true).unwrap();
-        FsSink.write(f.to_str().unwrap(), "0 0 1", true).unwrap();
+        FsSink.write(f.to_str().unwrap(), b"1 0 0\n").unwrap();
+        FsSink.write(f.to_str().unwrap(), b"0 0 1\n").unwrap();
         assert_eq!(fs::read_to_string(&f).unwrap(), "0 0 1\n");
         let _ = fs::remove_dir_all(&d);
     }
@@ -195,9 +192,7 @@ mod tests {
         // A missing parent directory fails. The *name* of the errno is OS-specific (ENOENT in the
         // Linux guest, a different raw code on a Windows dev host), so we only assert it failed with a
         // non-empty tag; the exact Linux mapping is covered by `errno_table_names_the_common_codes`.
-        let err = FsSink
-            .write("/no/such/kecho/dir/on", "1", true)
-            .unwrap_err();
+        let err = FsSink.write("/no/such/kecho/dir/on", b"1\n").unwrap_err();
         assert!(!err.errno.is_empty());
     }
 
@@ -209,6 +204,14 @@ mod tests {
         assert_eq!(http_rel("vessels/active/id"), "vessels/active/id");
         // A path that merely *starts* with "sim" but isn't the segment is left intact.
         assert_eq!(http_rel("/simulator/x"), "simulator/x");
+    }
+
+    #[test]
+    fn trim_trailing_newline_drops_cr_and_lf() {
+        assert_eq!(trim_trailing_newline(b"1\n"), b"1");
+        assert_eq!(trim_trailing_newline(b"1 0 0\r\n"), b"1 0 0");
+        assert_eq!(trim_trailing_newline(b"1"), b"1");
+        assert_eq!(trim_trailing_newline(b""), b"");
     }
 
     #[test]

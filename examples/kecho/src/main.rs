@@ -1,42 +1,43 @@
-//! kecho — `echo`, but it writes one value to **many** gatOS `/sim` files **concurrently**.
+//! kecho — `tee`, but it fans its writes out to many gatOS `/sim` files **in a single game tick**.
 //!
 //! ## Why this exists
 //!
-//! `/sim` control files actuate the game, but a write doesn't return until the next game tick: the 9p
-//! server enqueues the command and the game thread drains the queue once per frame (see the gatOS
-//! threading rules). So a *sequential* fan-out —
+//! You can't redirect to many files at once. `echo 1 > /sim/vessels/by-id/*/lights/*/on` doesn't do
+//! what it looks like: `>` is shell redirection to **one** file descriptor, and when the glob matches
+//! more than one file the shell errors with `ambiguous redirect` — the program never even sees the
+//! targets. The composable Unix answer is `tee`, which takes the files as *arguments* and the data on
+//! *stdin*:
 //!
 //! ```sh
-//! for f in /sim/vessels/by-id/*/lights/*/on; do echo 1 > "$f"; done
+//! echo 1 | tee /sim/vessels/by-id/*/lights/*/on >/dev/null
 //! ```
 //!
-//! — pays one whole game tick **per file**: 40 lights ≈ 40 ticks. It isn't that `echo` is slow; it's
-//! that the writes are *serialized*, each blocking for its own tick before the next one starts.
+//! That works, but `tee` writes the files **sequentially**, and a `/sim` write doesn't return until the
+//! next game tick (the 9p server enqueues the command and the game thread drains the queue once per
+//! frame — the gatOS threading rules). So sequential `tee` over 40 lights ≈ 40 ticks, visibly laggy.
 //!
-//! kecho fixes that by issuing every write **at once**. The shell still does the globbing —
+//! kecho is a drop-in concurrent `tee` for that: it reads stdin and writes those bytes to **every** path
+//! argument **at once** (one `spawn_blocking` per file on tokio's blocking pool, collected with a
+//! `JoinSet`), so all the commands sit in the 9p server's queue together and drain in the **same tick**.
+//! 40 lights ≈ 1 tick. It stays composable like `cat`/`tee` — pipes, here-strings (`<<<`), and command
+//! substitution all work, and (like `tee`) stdin is echoed to stdout so it can sit mid-pipeline.
 //!
-//! ```sh
-//! kecho 1 /sim/vessels/by-id/*/lights/*/on
-//! ```
-//!
-//! — but kecho hands every expanded path to the tokio blocking pool simultaneously (`spawn_blocking`
-//! per file, collected with a `JoinSet`), so all the commands are sitting in the 9p server's queue
-//! together and drain in the **same tick's** `CommandQueue.Drain`. 40 lights ≈ 1 tick. This is the same
-//! fire-and-forget dispatch dancy-party-rs uses; the only difference is that kecho is a short-lived CLI,
-//! so it waits for the whole batch (one barrier) before exiting — a true detach would race process exit
-//! against threads that hadn't issued their `write()` yet and silently drop writes.
+//! This is the same fire-and-forget dispatch dancy-party-rs uses; the one difference is that kecho is a
+//! short-lived CLI, so it waits for the whole batch (one barrier) before exiting — a true detach would
+//! race process exit against threads that hadn't issued their `write()` yet and silently drop writes.
 //!
 //! ## Usage
 //!
 //! ```text
-//! kecho [OPTIONS] VALUE PATH...
+//! echo VALUE | kecho [OPTIONS] PATH...
 //! ```
 //!
-//! Writes `VALUE` (plus a trailing newline, so control files actuate) to every `PATH`. Quote a value
-//! with spaces — vectors and state-vectors are single arguments: `kecho "1 0 0" …/color`. See `--help`.
+//! Whatever is on stdin is written verbatim to every `PATH`. Pipe `echo` for control files — its
+//! trailing newline rides along and actuates the file. See `--help`.
 
 mod sink;
 
+use std::io::{Read, Write};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Instant;
@@ -62,15 +63,14 @@ fn main() -> ExitCode {
     run(config)
 }
 
-/// A parsed command line. `value` is written to every `paths` entry.
+/// A parsed command line. stdin is written to every `paths` entry.
 struct Config {
-    value: String,
     paths: Vec<String>,
-    /// Append a trailing `\n` to the value (default true; `-n` turns it off). Control files actuate on
-    /// the newline, so you almost never want it off.
-    append_newline: bool,
     /// Print a one-line summary to stderr when done.
     verbose: bool,
+    /// Suppress the `tee`-style passthrough of stdin to stdout (handy when kecho is the last stage and
+    /// you don't want the value echoed back).
+    quiet: bool,
     /// Cap on simultaneously in-flight writes (`0` = unbounded — the default, and the point: all in one
     /// tick). A positive value throttles via a semaphore, trading single-tick latency for fewer
     /// concurrent fds.
@@ -81,37 +81,27 @@ struct Config {
 }
 
 impl Config {
-    /// Parses argv (already skipping the program name). Options precede positionals; the first
-    /// positional is the value and the rest are target paths. `--` forces everything after it to be a
-    /// positional, so a value or path may start with `-` (`kecho -- -1 …/x`).
+    /// Parses argv (already skipping the program name). All positionals are target paths; `--` forces
+    /// everything after it to be a path, so a path may start with `-`.
     fn parse(args: impl Iterator<Item = String>) -> Result<Self, String> {
-        let mut value: Option<String> = None;
         let mut paths: Vec<String> = Vec::new();
-        let mut append_newline = true;
         let mut verbose = false;
+        let mut quiet = false;
         let mut jobs = 0usize;
         let mut url: Option<String> = None;
         let mut help = false;
         let mut positional_only = false;
 
-        let push = |v: String, value: &mut Option<String>, paths: &mut Vec<String>| {
-            if value.is_none() {
-                *value = Some(v);
-            } else {
-                paths.push(v);
-            }
-        };
-
         let mut args = args;
         while let Some(arg) = args.next() {
             if positional_only {
-                push(arg, &mut value, &mut paths);
+                paths.push(arg);
                 continue;
             }
             match arg.as_str() {
                 "--" => positional_only = true,
-                "-n" => append_newline = false,
                 "-v" | "--verbose" => verbose = true,
+                "-q" | "--quiet" => quiet = true,
                 "-h" | "--help" => help = true,
                 "--url" => {
                     url = Some(args.next().ok_or("--url wants a base URL (e.g. $GATOS_HTTP)")?)
@@ -122,36 +112,30 @@ impl Config {
                         .parse::<usize>()
                         .map_err(|_| format!("--jobs wants a number, got '{n}'"))?;
                 }
-                // An unknown `-x` flag is an error; a bare `-` (stdin convention) or a negative-looking
-                // token is treated as a positional so values like `-1` work without `--`.
-                other if other.starts_with('-') && other.len() > 1 && !looks_numeric(other) => {
+                other if other.starts_with('-') && other.len() > 1 => {
                     return Err(format!("unknown option '{other}'"));
                 }
-                _ => push(arg, &mut value, &mut paths),
+                _ => paths.push(arg),
             }
         }
 
         if help {
             return Ok(Self {
-                value: String::new(),
                 paths,
-                append_newline,
                 verbose,
+                quiet,
                 jobs,
                 url,
                 help: true,
             });
         }
-
-        let value = value.ok_or("missing VALUE (usage: kecho [OPTIONS] VALUE PATH...)")?;
         if paths.is_empty() {
-            return Err("need at least one target PATH to write to".into());
+            return Err("need at least one target PATH (usage: echo VALUE | kecho PATH...)".into());
         }
         Ok(Self {
-            value,
             paths,
-            append_newline,
             verbose,
+            quiet,
             jobs,
             url,
             help: false,
@@ -159,13 +143,18 @@ impl Config {
     }
 }
 
-/// Whether a leading-`-` token is actually a number (`-1`, `-1.5`) rather than a flag, so it falls
-/// through to being a positional value.
-fn looks_numeric(s: &str) -> bool {
-    s.parse::<f64>().is_ok()
-}
-
 fn run(config: Config) -> ExitCode {
+    // Read the whole payload from stdin once (control values are tiny; binary-safe like cat/tee).
+    let mut data = Vec::new();
+    if let Err(e) = std::io::stdin().read_to_end(&mut data) {
+        eprintln!("kecho: reading stdin: {e}");
+        return ExitCode::from(2);
+    }
+    // tee-style passthrough so kecho composes mid-pipeline (silence it with -q or `>/dev/null`).
+    if !config.quiet {
+        let _ = std::io::stdout().write_all(&data);
+    }
+
     let sink: Arc<dyn Sink> = match &config.url {
         Some(u) => Arc::new(HttpSink::new(u.clone())),
         None => Arc::new(FsSink),
@@ -182,9 +171,8 @@ fn run(config: Config) -> ExitCode {
     let start = Instant::now();
     let failures = rt.block_on(dispatch(
         sink,
-        &config.value,
+        Arc::new(data),
         config.paths,
-        config.append_newline,
         config.jobs,
     ));
     let elapsed = start.elapsed();
@@ -215,18 +203,16 @@ fn run(config: Config) -> ExitCode {
 /// in flight via a semaphore (the permit is held until that write completes).
 async fn dispatch(
     sink: Arc<dyn Sink>,
-    value: &str,
+    data: Arc<Vec<u8>>,
     paths: Vec<String>,
-    append_newline: bool,
     jobs: usize,
 ) -> Vec<(String, WriteError)> {
-    let value = Arc::new(value.to_string());
     let sem = (jobs > 0).then(|| Arc::new(Semaphore::new(jobs)));
     let mut set = JoinSet::new();
 
     for path in paths {
         let sink = sink.clone();
-        let value = value.clone();
+        let data = data.clone();
         // Acquiring before spawn naturally throttles the loop to `jobs` in-flight writes; with no
         // semaphore every path is spawned immediately (the single-tick fan-out).
         let permit = match &sem {
@@ -235,7 +221,7 @@ async fn dispatch(
         };
         set.spawn_blocking(move || {
             let _permit = permit; // released when this write finishes
-            let result = sink.write(&path, &value, append_newline);
+            let result = sink.write(&path, &data);
             (path, result)
         });
     }
@@ -260,35 +246,37 @@ async fn dispatch(
 }
 
 fn print_help() {
-    println!("kecho \u{2014} echo one value to many gatOS /sim files, concurrently");
+    println!("kecho \u{2014} tee one stdin value to many gatOS /sim files, concurrently");
     println!();
-    println!("USAGE: kecho [OPTIONS] VALUE PATH...");
+    println!("USAGE: echo VALUE | kecho [OPTIONS] PATH...");
     println!();
-    println!("Writes VALUE to every PATH at once. Where a sequential shell loop pays one game tick");
-    println!("per file (each /sim write blocks until the next tick), kecho fires every write");
-    println!("simultaneously so they land in a single tick. Quote a value with spaces:");
-    println!("  kecho \"1 0 0\" /sim/vessels/by-id/Hunter/lights/*/color");
+    println!("Reads stdin and writes it to every PATH at once. You can't redirect to many files");
+    println!("(`echo 1 > a b` is an 'ambiguous redirect'); like `tee`, kecho takes the files as");
+    println!("arguments and the value on stdin \u{2014} but it fans the writes out concurrently, so they");
+    println!("land in ONE game tick instead of one per file the way a sequential `tee` would.");
+    println!();
+    println!("Pipe `echo` for control files \u{2014} its trailing newline rides along and actuates the file:");
+    println!("  echo 1 | kecho /sim/vessels/by-id/*/lights/*/on");
     println!();
     println!("OPTIONS:");
-    println!("  -n             do not append a trailing newline (control files actuate on the");
-    println!("                 newline, so you rarely want this)");
+    println!("  -q, --quiet    don't echo stdin back to stdout (tee passthrough is on by default)");
     println!("  -j, --jobs <n> cap simultaneously in-flight writes (default 0 = unbounded, i.e. all");
     println!("                 in one tick). A positive value throttles the fan-out.");
     println!("  --url <base>   write via the HTTP /v1/fs mirror at <base> instead of the filesystem");
     println!("                 (host dev; e.g. $GATOS_HTTP, http://127.0.0.1:4242/v1). No shell");
     println!("                 globbing on the host \u{2014} pass explicit paths.");
     println!("  -v, --verbose  print a one-line summary (count + elapsed) to stderr");
-    println!("  --             end options; treat the rest as VALUE then PATHs (for values/paths");
-    println!("                 that start with '-')");
+    println!("  --             end options; treat the rest as PATHs (for paths starting with '-')");
     println!("  -h, --help     show this help");
     println!();
     println!("EXAMPLES:");
-    println!("  kecho 1 /sim/vessels/by-id/*/lights/*/on       # all lights, every vessel, one tick");
-    println!("  kecho 0 /sim/vessels/active/rcs/*/active        # cut every RCS thruster at once");
-    println!("  kecho \"1 0 0\" /sim/vessels/by-id/Hunter/lights/*/color   # paint them red");
+    println!("  echo 1 | kecho /sim/vessels/by-id/*/lights/*/on        # all lights, every vessel, one tick");
+    println!("  echo 0 | kecho /sim/vessels/active/rcs/*/active         # cut every RCS thruster at once");
+    println!("  echo '1 0 0' | kecho /sim/vessels/by-id/Hunter/lights/*/color   # paint them red");
+    println!("  kecho /sim/.../*/on <<< 1                               # here-string instead of a pipe");
     println!();
     println!("EXIT: 0 = all writes ok, 1 = one or more failed (each printed as");
-    println!("      'kecho: <path>: <ERRNO> <message>'), 2 = bad arguments.");
+    println!("      'kecho: <path>: <ERRNO> <message>'), 2 = bad arguments / stdin error.");
 }
 
 #[cfg(test)]
@@ -301,58 +289,43 @@ mod tests {
     }
 
     #[test]
-    fn splits_value_from_paths() {
-        let c = parse(&["1", "/a/on", "/b/on"]).unwrap();
-        assert_eq!(c.value, "1");
+    fn collects_paths() {
+        let c = parse(&["/a/on", "/b/on"]).unwrap();
         assert_eq!(c.paths, vec!["/a/on", "/b/on"]);
-        assert!(c.append_newline && !c.verbose && c.jobs == 0 && c.url.is_none());
+        assert!(!c.verbose && !c.quiet && c.jobs == 0 && c.url.is_none());
     }
 
     #[test]
-    fn n_flag_suppresses_newline() {
-        let c = parse(&["-n", "1", "/a/on"]).unwrap();
-        assert!(!c.append_newline);
-        assert_eq!(c.value, "1");
-    }
-
-    #[test]
-    fn captures_url_jobs_and_verbose() {
-        let c = parse(&["--url", "http://h/v1", "-j", "4", "-v", "1", "/a/on"]).unwrap();
+    fn captures_url_jobs_quiet_and_verbose() {
+        let c = parse(&["--url", "http://h/v1", "-j", "4", "-q", "-v", "/a/on"]).unwrap();
         assert_eq!(c.url.as_deref(), Some("http://h/v1"));
         assert_eq!(c.jobs, 4);
-        assert!(c.verbose);
+        assert!(c.quiet && c.verbose);
+        assert_eq!(c.paths, vec!["/a/on"]);
     }
 
     #[test]
-    fn double_dash_lets_value_start_with_dash() {
-        let c = parse(&["--", "-1", "/a/x"]).unwrap();
-        assert_eq!(c.value, "-1");
-        assert_eq!(c.paths, vec!["/a/x"]);
+    fn double_dash_lets_a_path_start_with_dash() {
+        let c = parse(&["--", "-weird-path", "/a/x"]).unwrap();
+        assert_eq!(c.paths, vec!["-weird-path", "/a/x"]);
     }
 
     #[test]
-    fn negative_number_value_needs_no_double_dash() {
-        // `-1` looks numeric, so it's a positional, not an unknown flag.
-        let c = parse(&["-1.5", "/a/x"]).unwrap();
-        assert_eq!(c.value, "-1.5");
-    }
-
-    #[test]
-    fn errors_on_unknown_flag_missing_value_and_no_paths() {
-        assert!(parse(&["--nope", "1", "/a"]).is_err());
-        assert!(parse(&[]).is_err()); // no value
-        assert!(parse(&["1"]).is_err()); // value but no paths
+    fn errors_on_unknown_flag_no_paths_and_dangling_option() {
+        assert!(parse(&["--nope", "/a"]).is_err());
+        assert!(parse(&[]).is_err()); // no paths
+        assert!(parse(&["-q"]).is_err()); // option but no paths
         assert!(parse(&["--url"]).is_err()); // dangling option arg
-        assert!(parse(&["-j", "x", "1", "/a"]).is_err()); // non-numeric jobs
+        assert!(parse(&["-j", "x", "/a"]).is_err()); // non-numeric jobs
     }
 
     #[test]
-    fn help_short_circuits_without_requiring_value() {
+    fn help_short_circuits_without_requiring_paths() {
         let c = parse(&["--help"]).unwrap();
         assert!(c.help);
     }
 
-    /// The behavior that matters: a fan-out writes the value to *every* path, and all of them land.
+    /// The behavior that matters: the stdin payload is written to *every* path, and all of them land.
     #[test]
     fn dispatch_writes_every_target() {
         let d = std::env::temp_dir().join(format!("kecho_disp_{}", std::process::id()));
@@ -367,9 +340,8 @@ mod tests {
             .unwrap();
         let failures = rt.block_on(dispatch(
             Arc::new(FsSink),
-            "1",
+            Arc::new(b"1\n".to_vec()),
             paths.clone(),
-            true,
             0,
         ));
         assert!(failures.is_empty(), "no write should fail: {failures:?}");
@@ -392,7 +364,12 @@ mod tests {
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
-        let failures = rt.block_on(dispatch(Arc::new(FsSink), "x", paths.clone(), true, 3));
+        let failures = rt.block_on(dispatch(
+            Arc::new(FsSink),
+            Arc::new(b"x\n".to_vec()),
+            paths.clone(),
+            3,
+        ));
         assert!(failures.is_empty());
         assert_eq!(fs::read_to_string(&paths[19]).unwrap(), "x\n");
         let _ = fs::remove_dir_all(&d);
@@ -412,23 +389,13 @@ mod tests {
             .unwrap();
         let failures = rt.block_on(dispatch(
             Arc::new(FsSink),
-            "1",
+            Arc::new(b"1\n".to_vec()),
             vec![good.clone(), bad.clone()],
-            true,
             0,
         ));
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].0, bad);
         assert_eq!(fs::read_to_string(&good).unwrap(), "1\n"); // the good one still wrote
         let _ = fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn looks_numeric_distinguishes_values_from_flags() {
-        assert!(looks_numeric("-1"));
-        assert!(looks_numeric("-1.5"));
-        assert!(looks_numeric("42"));
-        assert!(!looks_numeric("-n"));
-        assert!(!looks_numeric("--url"));
     }
 }
