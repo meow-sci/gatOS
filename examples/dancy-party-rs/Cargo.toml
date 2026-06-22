@@ -19,6 +19,12 @@ ratatui = "0.29"
 ureq = { version = "2", default-features = false, features = ["json"] }
 # Only used to read /v1/vessels + /v1/status JSON in the HTTP source.
 serde_json = "1"
+# The worker runs on a small current-thread tokio runtime: it drives the animation/battery timers
+# and dispatches every light write as a fire-and-forget `spawn_blocking` task (we never await the
+# result — the gatOS backend batches writes per game tick, so a write "response" is a whole frame
+# away and this program doesn't care). No bespoke writer pool; tokio's blocking pool absorbs the
+# concurrent in-flight writes.
+tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
 
 [profile.release]
 opt-level = "z"

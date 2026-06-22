@@ -1,9 +1,10 @@
 //! Rendering. **Transparency is the rule** (the project-wide TUI discipline): cell backgrounds are
 //! left unset so purrTTY shows the live game through the text; only the top/bottom bars and the modal
 //! popups get a subtle background. Color swatches are drawn as foreground block glyphs (`████`) in the
-//! true color, so they read against the game without painting a box. The render pass also records the
-//! interactive rects (vessel rows, per-color buttons, the time stepper, the party toggle, modal lists)
-//! back onto [`App`] for the next mouse event.
+//! true color, and the battery bar as a colored foreground block run, so they read against the game
+//! without painting a box. The render pass also records the interactive rects (vessel rows, per-color
+//! buttons, the time stepper, the refill / settings / party buttons, modal lists) back onto [`App`]
+//! for the next mouse event.
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -11,22 +12,39 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::Frame;
 
-use crate::app::{App, Focus, Modal, Screen};
+use crate::app::{App, Focus, Modal, Screen, Settings, SETTING_ROWS};
 use crate::color::{self, Rgb};
 use crate::xkcd::XKCD;
+
+/// One contiguous segment of the hide-mode bar, tagged so the layout pass can record the clickable
+/// button rects (everything else is `None`).
+enum HideTag {
+    None,
+    Party,
+    Refill,
+    Show,
+}
 
 const TITLE: Color = Color::Magenta;
 const LABEL: Color = Color::DarkGray;
 const VALUE: Color = Color::White;
 const GOOD: Color = Color::Green;
+const WARN: Color = Color::Yellow;
 const BAD: Color = Color::Red;
 const ACCENT: Color = Color::LightMagenta;
 const FOCUS: Color = Color::LightCyan;
+const EMPTY: Color = Color::DarkGray; // the unfilled run of a fg bar
 const BAR_BG: Color = Color::Rgb(20, 16, 32);
 
 const SWATCH: &str = "\u{2588}\u{2588}\u{2588}\u{2588}"; // ████
 
 pub fn render(f: &mut Frame, app: &mut App) {
+    // Hide mode collapses everything to a single status bar so the party doesn't block the game.
+    if app.hidden {
+        render_hidden(f, app);
+        return;
+    }
+
     let chunks = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(0),
@@ -45,8 +63,100 @@ pub fn render(f: &mut Frame, app: &mut App) {
         Modal::AddColor(_) => render_add_color(f, app),
         Modal::Xkcd(_) => render_xkcd(f, app),
         Modal::Time(_) => render_time(f, app),
+        Modal::Settings(_) => render_settings(f, app),
+        Modal::SaveProfile(_) => render_save_profile(f, app),
         Modal::None => {}
     }
+}
+
+// ---- hide mode (status-bar-only overlay) --------------------------------------------------------
+
+/// The whole UI collapsed to one bar on the bottom row: title, party state, the battery meter, and
+/// the three live buttons (refill / party toggle / show). Everything else is left blank — and blanks
+/// are transparent — so the game shows through while a party runs. Records the button rects.
+fn render_hidden(f: &mut Frame, app: &mut App) {
+    let screen = f.area();
+    app.party_btn = Rect::default();
+    app.refill_btn = Rect::default();
+    app.hide_show_btn = Rect::default();
+    if screen.height == 0 || screen.width == 0 {
+        return;
+    }
+    let bar = Rect::new(screen.x, screen.y + screen.height - 1, screen.width, 1);
+
+    // Build the bar as contiguous tagged segments, then assign each button its rect from the running
+    // x offset (the segments abut, so widths sum exactly).
+    let mut items: Vec<(Span, HideTag)> = vec![
+        (
+            Span::styled(
+                " \u{1f483} DANCY ",
+                Style::new().fg(TITLE).add_modifier(Modifier::BOLD),
+            ),
+            HideTag::None,
+        ),
+        if app.partying {
+            (
+                Span::styled(
+                    "\u{1f389} PARTY ",
+                    Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+                ),
+                HideTag::None,
+            )
+        } else {
+            (Span::styled("idle ", Style::new().fg(LABEL)), HideTag::None)
+        },
+        (label("\u{b7} battery "), HideTag::None),
+    ];
+
+    match app.battery.fraction {
+        Some(frac) if app.battery.count > 0 => {
+            items.push((pct_span(frac), HideTag::None));
+            items.push((Span::raw(" "), HideTag::None));
+            for s in bar_spans(frac, 8, level_color(frac)) {
+                items.push((s, HideTag::None));
+            }
+        }
+        _ => items.push((label("\u{2014} none"), HideTag::None)),
+    }
+
+    items.push((Span::raw("  "), HideTag::None));
+    items.push((
+        Span::styled(
+            " [ refill \u{26a1} ] ",
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        HideTag::Refill,
+    ));
+    items.push((Span::raw(" "), HideTag::None));
+    let (party_txt, party_col) = if app.partying {
+        (" [ STOP, MY EYES ] ", BAD)
+    } else {
+        (" [ LETS PARTY! ] ", GOOD)
+    };
+    items.push((
+        Span::styled(party_txt, Style::new().fg(party_col).add_modifier(Modifier::BOLD)),
+        HideTag::Party,
+    ));
+    items.push((Span::raw(" "), HideTag::None));
+    items.push((Span::styled(" [ h show ] ", Style::new().fg(LABEL)), HideTag::Show));
+
+    let right = bar.x + bar.width;
+    let mut x = bar.x;
+    for (span, tag) in &items {
+        let w = span.content.chars().count() as u16;
+        let sx = x.min(right);
+        let rect = Rect::new(sx, bar.y, w.min(right.saturating_sub(sx)), 1);
+        match tag {
+            HideTag::Party => app.party_btn = rect,
+            HideTag::Refill => app.refill_btn = rect,
+            HideTag::Show => app.hide_show_btn = rect,
+            HideTag::None => {}
+        }
+        x = x.saturating_add(w);
+    }
+
+    let line = Line::from(items.into_iter().map(|(s, _)| s).collect::<Vec<_>>());
+    f.render_widget(Paragraph::new(line).style(Style::new().bg(BAR_BG)), bar);
 }
 
 // ---- title bar ----------------------------------------------------------------------------------
@@ -76,29 +186,27 @@ fn render_title(f: &mut Frame, app: &App, area: Rect) {
             spans.push(kv("armed", &format!("{armed}/{}", app.vessels.len())));
         }
         Screen::Party => {
+            let s = &app.settings;
             spans.push(kv("colors", &app.colors.len().to_string()));
-            spans.push(kv("per", &format!("{}ms", app.per_ms)));
-            spans.push(kv("hz", &fmt_hz(app.hz)));
-            spans.push(kv("steps", &fmt_steps(app.steps)));
-            if app.stagger_ms > 0.0 {
-                spans.push(kv("stag", &format!("{}ms", app.stagger_ms as u64)));
+            spans.push(kv("color", &format!("{}ms", s.color_ms)));
+            spans.push(kv("anim", &format!("{}ms", s.anim_ms)));
+            spans.push(kv("hz", &fmt_hz(s.hz)));
+            spans.push(kv("steps", &fmt_steps(s.steps)));
+            if s.color_stagger_ms > 0.0 || s.anim_stagger_ms > 0.0 {
+                spans.push(kv(
+                    "stag",
+                    &format!("{}/{}ms", s.color_stagger_ms as u64, s.anim_stagger_ms as u64),
+                ));
             }
-            spans.push(kv(
-                "wr",
-                &if app.write_cfg.async_writes {
-                    format!("async\u{00d7}{}", app.write_cfg.writers)
-                } else {
-                    "sync".into()
-                },
-            ));
-            spans.push(if app.partying {
-                Span::styled(
+            if app.partying {
+                spans.push(kv("wr", &format!("{} ({})", app.writes, app.inflight)));
+                spans.push(Span::styled(
                     "\u{1f389} PARTY ",
                     Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-                )
+                ));
             } else {
-                Span::styled("idle ", Style::new().fg(LABEL))
-            });
+                spans.push(Span::styled("idle ", Style::new().fg(LABEL)));
+            }
         }
     }
     spans.push(ctl_badge("ctl", app.control));
@@ -175,8 +283,8 @@ fn render_party(f: &mut Frame, app: &mut App, area: Rect) {
     }
     let chunks = Layout::vertical([
         Constraint::Min(3),    // palette
-        Constraint::Length(1), // time
-        Constraint::Length(1), // write-pipeline perf readout
+        Constraint::Length(1), // time row
+        Constraint::Length(1), // battery + refill
         Constraint::Length(1), // live preview band
         Constraint::Length(1), // buttons
     ])
@@ -184,60 +292,55 @@ fn render_party(f: &mut Frame, app: &mut App, area: Rect) {
 
     render_palette(f, app, chunks[0]);
     render_time_row(f, app, chunks[1]);
-    render_perf_row(f, app, chunks[2]);
+    render_battery_row(f, app, chunks[2]);
     render_live_band(f, app, chunks[3]);
     render_buttons(f, app, chunks[4]);
 }
 
-/// The write-pipeline readout — the whole point of the perf knobs. While partying it shows the actual
-/// measured per-write latency, the write throughput, and (in async mode) the in-flight backlog and
-/// dropped-broadcast count. Idle, it just restates the active tuning.
-fn render_perf_row(f: &mut Frame, app: &App, area: Rect) {
+/// The battery meter — an aggregate charge bar across the armed vessels, with a `[ refill ⚡ ]`
+/// button anchored at the right edge of the row (records `app.refill_btn`).
+fn render_battery_row(f: &mut Frame, app: &mut App, area: Rect) {
     if area.height == 0 || area.width == 0 {
         return;
     }
-    let mut spans = vec![Span::styled("writes ", Style::new().fg(LABEL))];
-    match app.perf {
-        Some(p) if app.partying => {
-            spans.push(Span::styled(
-                format!("{} ", p.writes),
-                Style::new().fg(VALUE).add_modifier(Modifier::BOLD),
-            ));
-            spans.push(Span::styled(
-                format!("\u{b7} lat avg {} max {} last {} ", us(p.avg_us), us(p.max_us), us(p.last_us)),
-                Style::new().fg(VALUE),
-            ));
-            if p.async_writes {
-                let backlog_col = if p.inflight > 0 { ACCENT } else { LABEL };
+    let btn_txt = " [ refill \u{26a1} ] ";
+    let bw = (btn_txt.chars().count() as u16).min(area.width);
+    let btn_rect = Rect::new(area.x + area.width.saturating_sub(bw), area.y, bw, 1);
+    app.refill_btn = btn_rect;
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            btn_txt,
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )),
+        btn_rect,
+    );
+
+    let left = Rect::new(area.x, area.y, area.width.saturating_sub(bw), 1);
+    if left.width == 0 {
+        return;
+    }
+    let bar_w = (left.width.saturating_sub(18)).min(24) as usize;
+    let mut spans = vec![label("battery ")];
+    match app.battery.fraction {
+        Some(frac) if app.battery.count > 0 => {
+            spans.push(pct_span(frac));
+            spans.push(Span::raw(" "));
+            if bar_w > 0 {
+                spans.extend(bar_spans(frac, bar_w, level_color(frac)));
+            }
+            if app.battery.count > 1 {
                 spans.push(Span::styled(
-                    format!("\u{b7} {}-pool backlog {} ", p.writers, p.inflight),
-                    Style::new().fg(backlog_col),
-                ));
-                let drop_col = if p.dropped > 0 { BAD } else { LABEL };
-                spans.push(Span::styled(
-                    format!("\u{b7} dropped {} ", p.dropped),
-                    Style::new().fg(drop_col),
+                    format!(" avg/{}", app.battery.count),
+                    Style::new().fg(LABEL),
                 ));
             }
         }
-        _ => {
-            spans.push(Span::styled(
-                format!(
-                    "idle \u{b7} steps {} \u{b7} stagger {}ms \u{b7} {} \u{b7} {} hz",
-                    fmt_steps(app.steps),
-                    app.stagger_ms as u64,
-                    if app.write_cfg.async_writes {
-                        format!("async\u{00d7}{}", app.write_cfg.writers)
-                    } else {
-                        "sync".into()
-                    },
-                    fmt_hz(app.hz),
-                ),
-                Style::new().fg(LABEL),
-            ));
-        }
+        _ => spans.push(Span::styled(
+            "\u{2014} no battery on armed vessel(s)",
+            Style::new().fg(LABEL),
+        )),
     }
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
+    f.render_widget(Paragraph::new(Line::from(spans)), left);
 }
 
 fn render_palette(f: &mut Frame, app: &mut App, area: Rect) {
@@ -308,10 +411,7 @@ fn render_palette(f: &mut Frame, app: &mut App, area: Rect) {
             Span::raw("  "),
             Span::styled(SWATCH, Style::new().fg(c.to_term())),
             Span::raw("  "),
-            Span::styled(
-                format!("{:>3}", idx + 1),
-                Style::new().fg(LABEL),
-            ),
+            Span::styled(format!("{:>3}", idx + 1), Style::new().fg(LABEL)),
             Span::raw("  "),
             Span::styled(
                 c.to_hex(),
@@ -347,33 +447,38 @@ fn render_time_row(f: &mut Frame, app: &mut App, area: Rect) {
         Span::styled("time per color ", label_style),
         Span::styled("[-]", Style::new().fg(ACCENT)),
         Span::styled(
-            format!(" {:>5} ms ", app.per_ms),
+            format!(" {:>5} ms ", app.settings.color_ms),
             Style::new().fg(VALUE).add_modifier(Modifier::BOLD),
         ),
         Span::styled("[+]", Style::new().fg(ACCENT)),
-        Span::styled("   (e to type)", Style::new().fg(LABEL)),
+        Span::styled("   (e type \u{b7} s settings)", Style::new().fg(LABEL)),
     ]);
     f.render_widget(Paragraph::new(line), area);
 }
 
-/// A full-width band of the live interpolated color while partying — the thing your eyes are
-/// (probably) being assaulted by, mirrored in the terminal. Empty when idle.
+/// A full-width band of the live interpolated color while partying, with the two independent clock
+/// segments + goal. Empty when idle.
 fn render_live_band(f: &mut Frame, app: &App, area: Rect) {
     if area.height == 0 || area.width == 0 {
         return;
     }
     if let Some(live) = app.live {
-        let label = format!(" LIVE  {}  seg {} goal {} ", live.color.to_hex(), live.segment, live.goal);
+        let labeltxt = format!(
+            " LIVE  {}  color {}  anim {}  goal {} ",
+            live.color.to_hex(),
+            live.color_segment,
+            live.anim_segment,
+            live.goal
+        );
         let bar = "\u{2588}".repeat(area.width as usize);
         f.render_widget(
             Paragraph::new(Span::styled(bar, Style::new().fg(live.color.to_term()))),
             area,
         );
-        // Overlay the readout in a contrasting style on top of the band's left edge.
-        let w = (label.chars().count() as u16).min(area.width);
+        let w = (labeltxt.chars().count() as u16).min(area.width);
         f.render_widget(
             Paragraph::new(Span::styled(
-                label,
+                labeltxt,
                 Style::new().fg(Color::Black).bg(live.color.to_term()),
             )),
             Rect::new(area.x, area.y, w, 1),
@@ -385,38 +490,63 @@ fn render_buttons(f: &mut Frame, app: &mut App, area: Rect) {
     if area.height == 0 || area.width == 0 {
         return;
     }
+    let right = area.x + area.width;
+    let mut x = area.x;
+
+    // Back (left).
     let back = "[ \u{2039} back ]";
-    let back_rect = Rect::new(area.x, area.y, back.chars().count() as u16, 1);
+    let back_w = (back.chars().count() as u16).min(right.saturating_sub(x));
+    let back_rect = Rect::new(x, area.y, back_w, 1);
     app.back_btn = back_rect;
     f.render_widget(
         Paragraph::new(Span::styled(back, Style::new().fg(LABEL))),
         back_rect,
     );
+    x = back_rect.x + back_rect.width + 1;
 
-    let (label, col) = if app.partying {
+    // Settings (next to back).
+    let setg = "[ settings ]";
+    let setg_w = (setg.chars().count() as u16).min(right.saturating_sub(x.min(right)));
+    let setg_rect = Rect::new(x.min(right), area.y, setg_w, 1);
+    app.settings_btn = setg_rect;
+    if setg_w > 0 {
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                setg,
+                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+            )),
+            setg_rect,
+        );
+    }
+
+    // Party toggle (centered, but kept clear of the settings button and the right edge).
+    let (label_txt, col) = if app.partying {
         ("[ STOP, MY EYES ]", BAD)
     } else {
         ("[ LETS PARTY! ]", GOOD)
     };
     let focused = app.focus == Focus::Button;
     let style = if focused {
-        Style::new().fg(col).bg(Color::Rgb(40, 40, 40)).add_modifier(Modifier::BOLD)
+        Style::new()
+            .fg(col)
+            .bg(Color::Rgb(40, 40, 40))
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::new().fg(col).add_modifier(Modifier::BOLD)
     };
-    let w = label.chars().count() as u16;
-    let right = area.x + area.width;
-    // Center the button, but keep it clear of the back link, and never let it spill past the edge.
-    let x = (area.x + area.width.saturating_sub(w) / 2)
-        .max(back_rect.x + back_rect.width)
+    let w = label_txt.chars().count() as u16;
+    let guard = setg_rect.x + setg_rect.width + 1;
+    let px = (area.x + area.width.saturating_sub(w) / 2)
+        .max(guard)
         .min(right.saturating_sub(1));
-    let width = w.min(right.saturating_sub(x));
-    if width == 0 {
+    let pw = w.min(right.saturating_sub(px));
+    if pw == 0 {
+        app.party_btn = Rect::default();
         return;
     }
-    let rect = Rect::new(x, area.y, width, 1);
+    let rect = Rect::new(px, area.y, pw, 1);
     app.party_btn = rect;
-    f.render_widget(Paragraph::new(Span::styled(label, style)), rect);
+    f.render_widget(Paragraph::new(Span::styled(label_txt, style)), rect);
 }
 
 // ---- status bar ---------------------------------------------------------------------------------
@@ -432,7 +562,7 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
             "  \u{b7}  \u{2191}\u{2193} move \u{b7} space arm \u{b7} a all \u{b7} r rescan \u{b7} Enter party \u{b7} q quit"
         }
         (_, Modal::None) => {
-            "  \u{b7}  Tab focus \u{b7} Enter/P party \u{b7} b back \u{b7} q quit"
+            "  \u{b7}  Tab focus \u{b7} Enter/P party \u{b7} g refill \u{b7} s settings \u{b7} w save \u{b7} h hide \u{b7} b back \u{b7} q quit"
         }
         _ => "",
     };
@@ -502,10 +632,7 @@ fn render_add_color(f: &mut Frame, app: &mut App) {
             Span::raw("  "),
             Span::styled(format!("rgb {}", rgb255(c)), Style::new().fg(LABEL)),
         ]),
-        None => Line::from(Span::styled(
-            "\u{2026} type a color",
-            Style::new().fg(LABEL),
-        )),
+        None => Line::from(Span::styled("\u{2026} type a color", Style::new().fg(LABEL))),
     };
     if inner.height >= 3 {
         f.render_widget(Paragraph::new(preview_line), Rect::new(inner.x, inner.y + 2, inner.width, 1));
@@ -542,7 +669,6 @@ fn render_xkcd(f: &mut Frame, app: &mut App) {
         return;
     }
 
-    // Input row, with a swatch of the highlighted color on the right.
     let preview = m.filtered.get(m.selected).map(|&i| Rgb::from_f32(XKCD[i].1));
     let mut input_spans = vec![
         Span::styled("\u{1f50d} ", Style::new().fg(TITLE)),
@@ -633,7 +759,113 @@ fn render_time(f: &mut Frame, app: &mut App) {
     );
 }
 
-// ---- helpers ------------------------------------------------------------------------------------
+fn render_save_profile(f: &mut Frame, app: &mut App) {
+    let screen = f.area();
+    let width = 52u16.min(screen.width.saturating_sub(2));
+    let height = 5u16.min(screen.height.saturating_sub(2));
+    let popup = centered(screen, width, height);
+    f.render_widget(Clear, popup);
+
+    let block = Block::bordered()
+        .border_style(Style::new().fg(ACCENT))
+        .title(Span::styled(
+            " save profile ",
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            " Enter save (palette + settings, not vessels) \u{b7} Esc cancel ",
+            Style::new().fg(LABEL),
+        ))
+        .style(Style::new().bg(BAR_BG));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let Modal::SaveProfile(m) = &mut app.modal else {
+        return;
+    };
+    m.area = popup;
+    if inner.height == 0 {
+        return;
+    }
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            "profile name",
+            Style::new().fg(LABEL),
+        )),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
+    if inner.height >= 2 {
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("> ", Style::new().fg(TITLE)),
+                Span::styled(m.text.clone(), Style::new().fg(VALUE).add_modifier(Modifier::BOLD)),
+                Span::styled("\u{2588}", Style::new().fg(LABEL)),
+            ])),
+            Rect::new(inner.x, inner.y + 1, inner.width, 1),
+        );
+    }
+}
+
+/// The settings popup — every display-affecting knob, edited live. Like the other menus it trades
+/// transparency for readability (bg fill + `Clear`) and records its hit-test rects (popup area + one
+/// rect per row) back into the modal for the next mouse event. A running party adopts changes at once.
+fn render_settings(f: &mut Frame, app: &mut App) {
+    let screen = f.area();
+    let width = 54u16.min(screen.width.saturating_sub(2)).max(28);
+    let height = (SETTING_ROWS as u16 + 3).min(screen.height).max(5);
+    let popup = centered(screen, width, height);
+    f.render_widget(Clear, popup);
+
+    let block = Block::bordered()
+        .border_style(Style::new().fg(ACCENT))
+        .title(Span::styled(
+            " settings ",
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            " \u{2191}\u{2193} row \u{b7} \u{2190}\u{2192} adjust (Shift coarse) \u{b7} Esc close ",
+            Style::new().fg(LABEL),
+        ))
+        .style(Style::new().bg(BAR_BG));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let Modal::Settings(m) = &mut app.modal else {
+        return;
+    };
+    m.area = popup;
+    m.rows.clear();
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    for row in 0..SETTING_ROWS {
+        if row as u16 >= inner.height {
+            break;
+        }
+        let y = inner.y + row as u16;
+        let rect = Rect::new(inner.x, y, inner.width, 1);
+        m.rows.push((rect, row));
+
+        let focused = row == m.sel;
+        let (marker, name_style) = if focused {
+            ("\u{25b6} ", Style::new().fg(FOCUS).add_modifier(Modifier::BOLD))
+        } else {
+            ("  ", Style::new().fg(VALUE))
+        };
+        let line = Line::from(vec![
+            Span::styled(marker, Style::new().fg(ACCENT)),
+            Span::styled(format!("{:<16}", Settings::row_label(row)), name_style),
+            Span::styled(
+                app.settings.row_value(row),
+                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+        ]);
+        f.render_widget(Paragraph::new(line), rect);
+    }
+}
+
+// ---- span / formatting helpers ------------------------------------------------------------------
 
 fn centered(screen: Rect, width: u16, height: u16) -> Rect {
     Rect {
@@ -659,11 +891,42 @@ fn kv<'a>(k: &'a str, v: &str) -> Span<'a> {
     Span::styled(format!("{k} {v}  "), Style::new().fg(VALUE))
 }
 
+fn label(s: &str) -> Span<'static> {
+    Span::styled(s.to_string(), Style::new().fg(LABEL))
+}
+
 fn ctl_badge(name: &str, on: bool) -> Span<'static> {
     if on {
         Span::styled(format!("{name}:on"), Style::new().fg(GOOD))
     } else {
         Span::styled(format!("{name}:off"), Style::new().fg(LABEL))
+    }
+}
+
+/// A foreground ratio bar: a colored filled run + a dim empty run (no background — see-through).
+fn bar_spans(frac: f64, width: usize, color: Color) -> Vec<Span<'static>> {
+    let frac = frac.clamp(0.0, 1.0);
+    let filled = ((frac * width as f64).round() as usize).min(width);
+    vec![
+        Span::styled("\u{2588}".repeat(filled), Style::new().fg(color)),
+        Span::styled("\u{2591}".repeat(width - filled), Style::new().fg(EMPTY)),
+    ]
+}
+
+fn pct_span(frac: f64) -> Span<'static> {
+    Span::styled(
+        format!("{:>3}%", (frac.clamp(0.0, 1.0) * 100.0).round() as i64),
+        Style::new().fg(level_color(frac)).add_modifier(Modifier::BOLD),
+    )
+}
+
+fn level_color(frac: f64) -> Color {
+    if frac >= 0.5 {
+        GOOD
+    } else if frac >= 0.2 {
+        WARN
+    } else {
+        BAD
     }
 }
 
@@ -688,15 +951,6 @@ fn fmt_steps(steps: u32) -> String {
     }
 }
 
-/// Formats a microsecond latency compactly — `µs` under a millisecond, `ms` above.
-fn us(micros: u64) -> String {
-    if micros < 1000 {
-        format!("{micros}\u{00b5}s")
-    } else {
-        format!("{:.1}ms", micros as f64 / 1000.0)
-    }
-}
-
 fn trunc(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -708,10 +962,10 @@ fn trunc(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Settings;
     use crate::source::{FromWorker, Health, VesselLights};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
-    use std::sync::mpsc;
 
     fn render_to_text(app: &mut App, w: u16, h: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
@@ -728,8 +982,8 @@ mod tests {
     }
 
     fn app() -> App {
-        let (tx, _rx) = mpsc::channel();
-        App::new(tx, "fs:/sim".into(), 60.0, 0, 0.0, crate::source::WriteConfig::default())
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        App::new(tx, "fs:/sim".into(), Settings::default(), Vec::new())
     }
 
     #[test]
@@ -753,14 +1007,34 @@ mod tests {
     }
 
     #[test]
-    fn party_screen_shows_toggle_label() {
+    fn party_screen_shows_toggle_and_battery_and_settings() {
         let mut a = app();
         a.screen = Screen::Party;
-        let off = render_to_text(&mut a, 70, 14);
+        let off = render_to_text(&mut a, 80, 16);
         assert!(off.contains("LETS PARTY!"));
+        assert!(off.contains("battery"));
+        assert!(off.contains("refill"));
+        assert!(off.contains("settings"));
         a.partying = true;
-        let on = render_to_text(&mut a, 70, 14);
+        let on = render_to_text(&mut a, 80, 16);
         assert!(on.contains("STOP, MY EYES"));
+    }
+
+    #[test]
+    fn settings_popup_lists_decoupled_timing_rows() {
+        let mut a = app();
+        a.screen = Screen::Party;
+        // Open settings the way a key would.
+        a.on_key(ratatui::crossterm::event::KeyEvent::new(
+            ratatui::crossterm::event::KeyCode::Char('s'),
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        ));
+        let text = render_to_text(&mut a, 80, 18);
+        assert!(text.contains("color time"));
+        assert!(text.contains("anim time"));
+        assert!(text.contains("color stagger"));
+        assert!(text.contains("anim stagger"));
+        assert!(text.contains("frame rate"));
     }
 
     #[test]
@@ -771,6 +1045,38 @@ mod tests {
             let _ = render_to_text(&mut a, w, h);
             a.open_xkcd();
             let _ = render_to_text(&mut a, w, h);
+            a.modal = Modal::None;
+            a.hidden = true;
+            let _ = render_to_text(&mut a, w, h);
         }
+    }
+
+    #[test]
+    fn hide_mode_shows_only_a_status_bar_with_the_buttons() {
+        let mut a = app();
+        a.screen = Screen::Party;
+        a.hidden = true;
+        let text = render_to_text(&mut a, 80, 16);
+        assert!(text.contains("DANCY"));
+        assert!(text.contains("LETS PARTY!"));
+        assert!(text.contains("refill"));
+        assert!(text.contains("show"));
+        // The palette/title chrome of the full UI must be gone (only the one bar renders).
+        assert!(!text.contains("palette"));
+        // Button rects were recorded for the mouse handler.
+        assert!(a.party_btn.width > 0 && a.refill_btn.width > 0 && a.hide_show_btn.width > 0);
+    }
+
+    #[test]
+    fn save_profile_modal_renders() {
+        let mut a = app();
+        a.screen = Screen::Party;
+        a.on_key(ratatui::crossterm::event::KeyEvent::new(
+            ratatui::crossterm::event::KeyCode::Char('w'),
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        ));
+        let text = render_to_text(&mut a, 80, 18);
+        assert!(text.contains("save profile"));
+        assert!(text.contains("profile name"));
     }
 }

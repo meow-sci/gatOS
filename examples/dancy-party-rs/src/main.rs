@@ -1,18 +1,23 @@
 //! dancy-party-rs — a ratatui **party-lights console** over the gatOS `/sim` filesystem.
 //!
 //! Pick vessels (multi-select), build an ordered color palette — typed as RGB/hex or fuzzy-picked
-//! from the bundled XKCD survey — set a per-color time, and hit **LETS PARTY!**. A worker thread then
-//! cross-fades the palette at `--hz` and pulses each light's deploy `goal`, broadcasting the frame to
-//! every `lights/<n>/color` + `lights/<n>/goal` file on the selected vessels. Hit **STOP, MY EYES**
-//! (or quit) and every light snaps back to white.
+//! from the bundled XKCD survey — tune the timing, and hit **LETS PARTY!**. A worker thread then
+//! cross-fades the palette and pulses each light's deploy `goal` on **two independent clocks**,
+//! broadcasting each frame to every `lights/<n>/color` + `lights/<n>/goal` file on the selected
+//! vessels. Hit **STOP, MY EYES** (or quit) and every light snaps back to white.
 //!
-//! Architecture (mirrors the sibling examples): one worker thread owns the [`source::Source`] and runs
-//! the animation loop; the main thread runs the render + input loop and never touches I/O. The light
-//! tree is discovered **once** (re-walking a 9p tree is costly) and cached on the worker.
+//! Architecture: one worker thread hosts a tiny tokio runtime ([`source::spawn_worker`]) that owns the
+//! [`source::Source`], drives the animation + battery timers, and dispatches every light write
+//! **fire-and-forget** (it never waits on the write's result — the gatOS backend batches writes per
+//! game tick, so a response is a whole frame away and this console doesn't care). The main thread runs
+//! the render + input loop and never touches I/O. The light tree is discovered **once** (re-walking a
+//! 9p tree is costly) and cached on the worker. Every display knob lives in [`app::Settings`] and is
+//! editable live from the in-app settings popup on the party screen.
 
 mod app;
 mod color;
 mod party;
+mod profile;
 mod source;
 mod ui;
 mod xkcd;
@@ -33,8 +38,9 @@ use ratatui::crossterm::terminal::{
 };
 use ratatui::Terminal;
 
-use app::App;
-use source::{spawn_worker, FromWorker, FsSource, HttpSource, Source, ToWorker, WriteConfig};
+use app::{App, Settings};
+use color::Rgb;
+use source::{spawn_worker, FromWorker, FsSource, HttpSource, Source, ToWorker};
 
 type Tui = Terminal<CrosstermBackend<Stdout>>;
 
@@ -66,10 +72,10 @@ enum SourceKind {
 
 struct Config {
     source: SourceKind,
-    hz: f64,
-    steps: u32,
-    stagger_ms: f64,
-    write_cfg: WriteConfig,
+    /// Seed values for the in-app [`Settings`] (all live-tunable from the party-screen settings popup).
+    settings: Settings,
+    /// The palette to start with — empty by default, or seeded from a `--profile` file.
+    colors: Vec<Rgb>,
     help: bool,
 }
 
@@ -77,11 +83,8 @@ impl Config {
     fn from_args() -> Result<Self, String> {
         let mut url: Option<String> = None;
         let mut root: Option<String> = None;
-        let mut hz: Option<f64> = None;
-        let mut steps: Option<u32> = None;
-        let mut stagger_ms: Option<f64> = None;
-        let mut async_writes = false;
-        let mut writers: Option<usize> = None;
+        let mut settings = Settings::default();
+        let mut colors: Vec<Rgb> = Vec::new();
         let mut help = false;
 
         let mut args = std::env::args().skip(1);
@@ -89,31 +92,41 @@ impl Config {
             match arg.as_str() {
                 "--url" => url = args.next(),
                 "--root" => root = args.next(),
-                "--hz" => {
-                    hz = match args.next().map(|s| s.parse::<f64>()) {
-                        Some(Ok(v)) if (1.0..=240.0).contains(&v) => Some(v),
-                        _ => return Err("--hz wants a number in 1..240".into()),
+                "--profile" => match args.next() {
+                    Some(name) => {
+                        // A profile restores every display knob + the palette (but not the vessels —
+                        // those are picked fresh each run). Applied over the seeds, so an explicit
+                        // timing flag after --profile still wins.
+                        let p = profile::load(&name).map_err(|e| format!("--profile: {e}"))?;
+                        settings = p.settings;
+                        colors = p.colors;
                     }
-                }
-                "--steps" => {
-                    steps = match args.next().map(|s| s.parse::<u32>()) {
-                        Some(Ok(v)) if v <= 1000 => Some(v),
-                        _ => return Err("--steps wants a number in 0..1000 (0 = continuous)".into()),
-                    }
-                }
-                "--stagger-ms" => {
-                    stagger_ms = match args.next().map(|s| s.parse::<f64>()) {
-                        Some(Ok(v)) if (0.0..=60_000.0).contains(&v) => Some(v),
-                        _ => return Err("--stagger-ms wants a number in 0..60000 (0 = lockstep)".into()),
-                    }
-                }
-                "--async" => async_writes = true,
-                "--writers" => {
-                    writers = match args.next().map(|s| s.parse::<usize>()) {
-                        Some(Ok(v)) if (1..=64).contains(&v) => Some(v),
-                        _ => return Err("--writers wants a number in 1..64".into()),
-                    }
-                }
+                    None => return Err("--profile wants a name (or path to a .yaml)".into()),
+                },
+                "--hz" => match args.next().map(|s| s.parse::<f64>()) {
+                    Some(Ok(v)) if (1.0..=240.0).contains(&v) => settings.hz = v,
+                    _ => return Err("--hz wants a number in 1..240".into()),
+                },
+                "--steps" => match args.next().map(|s| s.parse::<u32>()) {
+                    Some(Ok(v)) if v <= 1000 => settings.steps = v,
+                    _ => return Err("--steps wants a number in 0..1000 (0 = continuous)".into()),
+                },
+                "--color-ms" => match args.next().map(|s| s.parse::<u64>()) {
+                    Some(Ok(v)) if (50..=60_000).contains(&v) => settings.color_ms = v,
+                    _ => return Err("--color-ms wants a number in 50..60000".into()),
+                },
+                "--anim-ms" => match args.next().map(|s| s.parse::<u64>()) {
+                    Some(Ok(v)) if (50..=60_000).contains(&v) => settings.anim_ms = v,
+                    _ => return Err("--anim-ms wants a number in 50..60000".into()),
+                },
+                "--color-stagger-ms" => match args.next().map(|s| s.parse::<f64>()) {
+                    Some(Ok(v)) if (0.0..=60_000.0).contains(&v) => settings.color_stagger_ms = v,
+                    _ => return Err("--color-stagger-ms wants a number in 0..60000".into()),
+                },
+                "--anim-stagger-ms" => match args.next().map(|s| s.parse::<f64>()) {
+                    Some(Ok(v)) if (0.0..=60_000.0).contains(&v) => settings.anim_stagger_ms = v,
+                    _ => return Err("--anim-stagger-ms wants a number in 0..60000".into()),
+                },
                 "-h" | "--help" => help = true,
                 other => return Err(format!("unknown argument '{other}' (try --help)")),
             }
@@ -121,13 +134,8 @@ impl Config {
 
         Ok(Self {
             source: resolve_source(url, root),
-            hz: hz.unwrap_or(60.0),
-            steps: steps.unwrap_or(0),
-            stagger_ms: stagger_ms.unwrap_or(0.0),
-            write_cfg: WriteConfig {
-                async_writes,
-                writers: writers.unwrap_or(8),
-            },
+            settings,
+            colors,
             help,
         })
     }
@@ -161,44 +169,43 @@ fn build_source(kind: SourceKind) -> Arc<dyn Source> {
 fn print_help() {
     println!("dancy-party-rs \u{2014} a party-lights console over gatOS /sim");
     println!();
-    println!("USAGE: dancy-party-rs [--root <dir> | --url <base>] [--hz <n>] [--steps <n>] [--stagger-ms <n>] [--async [--writers <n>]]");
+    println!("USAGE: dancy-party-rs [--root <dir> | --url <base>] [--profile <name>] [timing seeds]");
     println!();
     println!("  --root <dir>   read/write the /sim mount at <dir> (default: /sim when present)");
     println!("  --url <base>   use HTTP /v1/fs instead (e.g. $GATOS_HTTP, http://127.0.0.1:4242/v1)");
-    println!("  --hz <n>       party color-update rate, 1..240 (default 60)");
+    println!("  --profile <name>  load a saved profile (palette + all timing/settings, NOT vessels).");
+    println!("                    A bare name resolves to <dir>/<name>.yaml; a path is used as-is.");
+    println!("                    Save one from the party screen with  w . Profiles dir:");
+    println!("                    $DANCY_PROFILE_DIR, else ~/.dancy-party/profiles.");
     println!();
-    println!("Performance experiment knobs (the fade can lag with many lights — use these to find why):");
-    println!("  --steps <n>    quantize each color fade to <n> discrete values, 0..1000 (default 0 =");
-    println!("                 continuous). Fewer steps = fewer distinct 9p writes; 1 = hard cut, no fade.");
-    println!("  --stagger-ms <n>  offset each light by <n> ms so the palette ripples across the lights");
-    println!("                 instead of all changing at once, 0..60000 (default 0 = lockstep).");
-    println!("  --async        hand light writes to a background thread pool instead of blocking the");
-    println!("                 animation loop on each write.");
-    println!("  --writers <n>  pool size for --async, 1..64 (default 8).");
-    println!("  The party screen shows live write latency / throughput / backlog so you can read off the");
-    println!("  per-write cost and whether the loop is keeping up.");
+    println!("Timing seeds (all live-tunable in the party-screen settings popup; press  s):");
+    println!("  --hz <n>            animation frame rate, 1..240 (default 30)");
+    println!("  --steps <n>         quantize each color fade to <n> discrete values, 0..1000 (default 0 =");
+    println!("                      continuous). Fewer steps = fewer distinct 9p writes; 1 = hard cut.");
+    println!("  --color-ms <n>      per-color cross-fade duration, ms (default 1200)");
+    println!("  --anim-ms <n>       deploy goal-pulse half-period, ms (default 2500) \u{2014} the color and the");
+    println!("                      deploy animation run on INDEPENDENT clocks, so keep this \u{2265} the ~2 s");
+    println!("                      in-game stroke and each extend/retract actually completes.");
+    println!("  --color-stagger-ms <n>  per-light color offset, 0..60000 (default 0 = lockstep)");
+    println!("  --anim-stagger-ms <n>   per-light deploy offset, 0..60000 (default 0 = lockstep)");
     println!();
     println!("In the guest, no flags are needed: it reads /sim and drives the selected vessels' lights.");
     println!("Vessels screen: \u{2191}\u{2193} move \u{b7} space arm \u{b7} a all \u{b7} r rescan \u{b7} Enter \u{2192} party.");
-    println!("Party screen:   a RGB/hex \u{b7} f XKCD picker \u{b7} [ ] reorder \u{b7} d remove \u{b7} Enter/P toggle party.");
+    println!("Party screen:   a RGB/hex \u{b7} f XKCD \u{b7} [ ] reorder \u{b7} d remove \u{b7} s settings \u{b7} g refill \u{b7} Enter/P party.");
+    println!("                w save profile \u{b7} h hide (status-bar-only overlay for in-game use).");
 }
 
 fn run(terminal: &mut Tui, config: Config) -> io::Result<()> {
-    let (cmd_tx, cmd_rx) = mpsc::channel::<ToWorker>();
+    // Commands to the worker go over an unbounded tokio channel (sending is sync, so the render thread
+    // never blocks); the worker's replies come back over a std channel the UI polls.
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<ToWorker>();
     let (update_tx, update_rx) = mpsc::channel::<FromWorker>();
 
     let source = build_source(config.source);
     let label = source.label();
-    spawn_worker(source, config.hz, config.write_cfg, cmd_rx, update_tx);
+    spawn_worker(source, config.settings.hz, cmd_rx, update_tx);
 
-    let mut app = App::new(
-        cmd_tx,
-        label,
-        config.hz,
-        config.steps,
-        config.stagger_ms,
-        config.write_cfg,
-    );
+    let mut app = App::new(cmd_tx, label, config.settings, config.colors);
 
     // A short tick keeps the live color band animating smoothly between input events (the worker
     // pushes throttled frames; we just need to redraw to show them).

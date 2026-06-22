@@ -1,22 +1,26 @@
 //! Application state + input handling. Two screens — a vessel **multi-select** and the **party**
-//! console — plus three modals (manual color entry, the XKCD fuzzy picker, and the per-color-time
-//! editor). The render pass ([`crate::ui`]) reads this state and writes back the interactive
-//! hit-test rects (vessel rows, color-row buttons, the party toggle, modal lists) that the mouse
-//! handler tests on the next event, so keyboard and mouse drive the exact same actions.
+//! console — plus four modals (manual color entry, the XKCD fuzzy picker, the per-color-time editor,
+//! and the **settings** popup). The render pass ([`crate::ui`]) reads this state and writes back the
+//! interactive hit-test rects (vessel rows, color-row buttons, the party/refill/settings buttons,
+//! modal lists) that the mouse handler tests on the next event, so keyboard and mouse drive the exact
+//! same actions.
 //!
 //! All `/sim` I/O lives on the worker thread ([`crate::source`]); this type only *sends* commands
-//! (discover / start / update / stop) and folds the worker's replies into display state.
-
-use std::sync::mpsc::Sender;
+//! (discover / watch / start / update / refill / stop) and folds the worker's replies into display
+//! state. Every display-affecting knob lives in [`Settings`] and is editable live from the settings
+//! popup; a running party adopts changes immediately (the plan is republished without resetting the
+//! clock).
 
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::{Position, Rect};
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::color::{self, Rgb};
 use crate::party::Plan;
-use crate::source::{FromWorker, ToWorker, VesselLights, WriteConfig, WriteSnapshot};
+use crate::profile::{self, Profile};
+use crate::source::{FromWorker, ToWorker, VesselLights};
 use crate::xkcd::XKCD;
 
 /// Which of the two top-level screens is showing.
@@ -34,6 +38,120 @@ pub enum Focus {
     Button,
 }
 
+/// Every display-affecting knob, all live-editable from the settings popup. The animation timing is
+/// **decoupled** from the color timing: `color_ms` paces the palette cross-fade while `anim_ms` paces
+/// the deploy goal-pulse, and each has its own per-light stagger.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Settings {
+    /// Animation frame rate (the worker's dispatch cadence), Hz, clamped 1..240.
+    pub hz: f64,
+    /// Fade quantization steps per color segment (0 = continuous).
+    pub steps: u32,
+    /// Per-color cross-fade duration, ms.
+    pub color_ms: u64,
+    /// Per goal-pulse (deploy animation) half-period, ms — keep ≥ the ~2 s in-game stroke so it finishes.
+    pub anim_ms: u64,
+    /// Per-light color-clock stagger, ms.
+    pub color_stagger_ms: f64,
+    /// Per-light animation-clock stagger, ms.
+    pub anim_stagger_ms: f64,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            hz: 30.0,
+            steps: 0,
+            color_ms: 1200,
+            anim_ms: 2500,
+            color_stagger_ms: 0.0,
+            anim_stagger_ms: 0.0,
+        }
+    }
+}
+
+/// The number of editable rows in the settings popup (see [`Settings::adjust`]).
+pub const SETTING_ROWS: usize = 6;
+
+const MIN_MS: u64 = 50;
+const MAX_MS: u64 = 60_000;
+const MAX_STAGGER: f64 = 60_000.0;
+
+impl Settings {
+    /// Nudges row `row` by `dir` (-1/+1), a coarse step when `big` (Shift), within each knob's range.
+    /// Live-applied by the caller (republished to a running party).
+    pub fn adjust(&mut self, row: usize, dir: i32, big: bool) {
+        let d = dir as i64;
+        match row {
+            0 => {
+                let step = if big { 25.0 } else { 5.0 };
+                self.hz = (self.hz + dir as f64 * step).clamp(1.0, 240.0);
+            }
+            1 => {
+                let step = if big { 10 } else { 1 };
+                self.steps = (self.steps as i64 + d * step).clamp(0, 1000) as u32;
+            }
+            2 => {
+                let step = if big { 1000 } else { 100 };
+                self.color_ms = (self.color_ms as i64 + d * step).clamp(MIN_MS as i64, MAX_MS as i64) as u64;
+            }
+            3 => {
+                let step = if big { 1000 } else { 100 };
+                self.anim_ms = (self.anim_ms as i64 + d * step).clamp(MIN_MS as i64, MAX_MS as i64) as u64;
+            }
+            4 => {
+                let step = if big { 100.0 } else { 10.0 };
+                self.color_stagger_ms = (self.color_stagger_ms + dir as f64 * step).clamp(0.0, MAX_STAGGER);
+            }
+            5 => {
+                let step = if big { 100.0 } else { 10.0 };
+                self.anim_stagger_ms = (self.anim_stagger_ms + dir as f64 * step).clamp(0.0, MAX_STAGGER);
+            }
+            _ => {}
+        }
+    }
+
+    /// The label for a settings row.
+    pub fn row_label(row: usize) -> &'static str {
+        match row {
+            0 => "frame rate",
+            1 => "fade steps",
+            2 => "color time",
+            3 => "anim time",
+            4 => "color stagger",
+            5 => "anim stagger",
+            _ => "",
+        }
+    }
+
+    /// The formatted current value for a settings row.
+    pub fn row_value(&self, row: usize) -> String {
+        match row {
+            0 => format!("{} Hz", fmt_hz(self.hz)),
+            1 => {
+                if self.steps == 0 {
+                    "continuous".into()
+                } else {
+                    format!("{} steps", self.steps)
+                }
+            }
+            2 => format!("{} ms", self.color_ms),
+            3 => format!("{} ms", self.anim_ms),
+            4 => format!("{} ms", self.color_stagger_ms as u64),
+            5 => format!("{} ms", self.anim_stagger_ms as u64),
+            _ => String::new(),
+        }
+    }
+}
+
+fn fmt_hz(hz: f64) -> String {
+    if (hz - hz.round()).abs() < 1e-6 {
+        format!("{}", hz.round() as i64)
+    } else {
+        format!("{hz:.1}")
+    }
+}
+
 /// One vessel row on the select screen: its `/sim` id, how many lights it has, and whether it's
 /// armed for the party.
 pub struct VesselRow {
@@ -47,6 +165,8 @@ pub enum Modal {
     AddColor(AddColorModal),
     Xkcd(XkcdModal),
     Time(TimeModal),
+    Settings(SettingsModal),
+    SaveProfile(SaveProfileModal),
 }
 
 /// Manual color entry — type an RGB triple (`255 128 0`) or hex (`#ff8000`); a live swatch previews
@@ -69,10 +189,33 @@ pub struct XkcdModal {
     pub item_rects: Vec<(Rect, usize)>,
 }
 
-/// Per-color-time editor — type a millisecond value.
+/// Per-color-time editor — type a millisecond value (a quick path to the `color_ms` setting).
 pub struct TimeModal {
     pub text: String,
     pub area: Rect,
+}
+
+/// The settings popup — a list of [`Settings`] rows; ←/→ adjust the selected one (Shift = coarse),
+/// ↑/↓ move, Esc/`s` close. Records its hit-test rects for the mouse handler.
+pub struct SettingsModal {
+    pub sel: usize,
+    pub area: Rect,
+    pub rows: Vec<(Rect, usize)>,
+}
+
+/// The save-profile prompt — type a name, `Enter` writes `<name>.yaml` (palette + all settings, but
+/// not the armed vessels) to the profiles directory; `Esc` cancels.
+pub struct SaveProfileModal {
+    pub text: String,
+    pub area: Rect,
+}
+
+/// The aggregate battery view across the armed vessels (average charge over the `count` that have a
+/// battery; `fraction` is `None` when none do).
+#[derive(Clone, Copy, Default)]
+pub struct BatteryView {
+    pub fraction: Option<f64>,
+    pub count: usize,
 }
 
 pub struct App {
@@ -81,6 +224,9 @@ pub struct App {
     pub should_quit: bool,
     /// Set when we asked the worker to reset lights on the way out, so `main` waits for the ack.
     pub pending_stop: bool,
+    /// **Hide mode** — collapse the whole UI to a single status bar (party toggle + battery + refill)
+    /// so a running party doesn't block the game. Toggled with `h`; `h`/`Esc` restores the full UI.
+    pub hidden: bool,
 
     // ---- vessel screen ----
     pub vessels: Vec<VesselRow>,
@@ -90,26 +236,22 @@ pub struct App {
     // ---- party screen ----
     pub colors: Vec<Rgb>,
     pub csel: usize,
-    pub per_ms: u64,
     pub focus: Focus,
     pub partying: bool,
     /// The latest live frame from the worker (preview swatch + heartbeat), or `None` when stopped.
     pub live: Option<LiveFrame>,
+    /// Aggregate battery across the armed vessels (updated whether or not a party is running).
+    pub battery: BatteryView,
+    /// Writes dispatched since the current party started, and how many are still in flight.
+    pub writes: u64,
+    pub inflight: usize,
 
     // ---- shared ----
     pub connected: bool,
     pub control: bool,
     pub label: String,
-    pub hz: f64,
-    /// Fade-quantization steps per segment (`--steps`; 0 = continuous). Part of every published plan.
-    pub steps: u32,
-    /// Per-light time stagger in ms (`--stagger-ms`; 0 = lockstep). Part of every published plan.
-    pub stagger_ms: f64,
-    /// The write-pipeline tuning (`--async`/`--writers`), echoed in the UI; the worker owns the live
-    /// behaviour, this is just for display.
-    pub write_cfg: WriteConfig,
-    /// Latest write-pipeline perf snapshot from the worker (latency/throughput/backlog), while partying.
-    pub perf: Option<WriteSnapshot>,
+    /// Every display-affecting knob; edited live from the settings popup, adopted by a running party.
+    pub settings: Settings,
     pub status: String,
     pub status_err: bool,
 
@@ -123,56 +265,57 @@ pub struct App {
     pub xkcd_btn: Rect,
     pub time_minus: Rect,
     pub time_plus: Rect,
+    pub refill_btn: Rect,
+    pub settings_btn: Rect,
     pub party_btn: Rect,
     pub back_btn: Rect,
+    /// The "show" button on the hide-mode bar (restores the full UI).
+    pub hide_show_btn: Rect,
 
-    tx: Sender<ToWorker>,
+    tx: UnboundedSender<ToWorker>,
 }
 
 /// A throttled live animation frame mirrored from the worker for the UI preview.
 #[derive(Clone, Copy)]
 pub struct LiveFrame {
     pub color: Rgb,
-    pub segment: u64,
+    pub color_segment: u64,
+    pub anim_segment: u64,
     pub goal: u8,
 }
 
-/// The per-color time floor (ms) — fast enough to strobe, slow enough that a 9p write storm at 60 Hz
-/// still keeps up.
-const MIN_PER_MS: u64 = 50;
+/// The per-color time floor (ms) — fast enough to strobe, slow enough that the worker keeps up.
+const MIN_PER_MS: u64 = MIN_MS;
 const TIME_STEP: u64 = 100;
 
 impl App {
     pub fn new(
-        tx: Sender<ToWorker>,
+        tx: UnboundedSender<ToWorker>,
         label: String,
-        hz: f64,
-        steps: u32,
-        stagger_ms: f64,
-        write_cfg: WriteConfig,
+        settings: Settings,
+        colors: Vec<Rgb>,
     ) -> Self {
         let app = Self {
             screen: Screen::Vessels,
             modal: Modal::None,
             should_quit: false,
             pending_stop: false,
+            hidden: false,
             vessels: Vec::new(),
             vsel: 0,
             discovering: true,
-            colors: Vec::new(),
+            colors,
             csel: 0,
-            per_ms: 1200,
             focus: Focus::Colors,
             partying: false,
             live: None,
+            battery: BatteryView::default(),
+            writes: 0,
+            inflight: 0,
             connected: false,
             control: false,
             label,
-            hz,
-            steps,
-            stagger_ms,
-            write_cfg,
-            perf: None,
+            settings,
             status: "scanning for vessels\u{2026}".into(),
             status_err: false,
             vessel_rects: Vec::new(),
@@ -184,8 +327,11 @@ impl App {
             xkcd_btn: Rect::default(),
             time_minus: Rect::default(),
             time_plus: Rect::default(),
+            refill_btn: Rect::default(),
+            settings_btn: Rect::default(),
             party_btn: Rect::default(),
             back_btn: Rect::default(),
+            hide_show_btn: Rect::default(),
             tx,
         };
         let _ = app.tx.send(ToWorker::Discover);
@@ -204,39 +350,44 @@ impl App {
                 self.status = if self.vessels.is_empty() {
                     "no vessels found \u{2014} start a flight, then press r to rescan".into()
                 } else {
-                    format!("{} vessel(s) found \u{2014} space to arm, Enter to party", self.vessels.len())
+                    format!(
+                        "{} vessel(s) found \u{2014} space to arm, Enter to party",
+                        self.vessels.len()
+                    )
                 };
                 self.status_err = false;
             }
+            FromWorker::Battery { fraction, count } => {
+                self.battery = BatteryView { fraction, count };
+            }
             FromWorker::Tick {
                 color,
-                segment,
+                color_segment,
+                anim_segment,
                 goal,
                 targets,
-                error,
-                perf,
+                writes,
+                inflight,
             } => {
                 self.partying = true;
                 self.live = Some(LiveFrame {
                     color,
-                    segment,
+                    color_segment,
+                    anim_segment,
                     goal,
                 });
-                self.perf = Some(perf);
-                if let Some(e) = error {
-                    self.status = format!("party write failed \u{2014} {e}");
-                    self.status_err = true;
-                } else {
-                    self.status = format!(
-                        "\u{1f389} PARTY \u{b7} {targets} light(s) \u{b7} seg {segment} \u{b7} goal {goal}"
-                    );
-                    self.status_err = false;
-                }
+                self.writes = writes;
+                self.inflight = inflight;
+                self.status = format!(
+                    "\u{1f389} PARTY \u{b7} {targets} light(s) \u{b7} color {color_segment} \u{b7} anim {anim_segment} \u{b7} goal {goal}"
+                );
+                self.status_err = false;
             }
             FromWorker::Stopped { error } => {
                 self.partying = false;
                 self.live = None;
-                self.perf = None;
+                self.writes = 0;
+                self.inflight = 0;
                 self.pending_stop = false;
                 match error {
                     Some(e) => {
@@ -249,6 +400,16 @@ impl App {
                     }
                 }
             }
+            FromWorker::RefillDone { error } => match error {
+                Some(e) => {
+                    self.status = format!("battery refill failed \u{2014} {e}");
+                    self.status_err = true;
+                }
+                None => {
+                    self.status = "battery refilled \u{26a1}".into();
+                    self.status_err = false;
+                }
+            },
             FromWorker::Refused(why) => {
                 self.partying = false;
                 self.live = None;
@@ -288,9 +449,9 @@ impl App {
     }
 
     fn plan(&self) -> Plan {
-        Plan::new(self.colors.clone(), self.per_ms)
-            .with_steps(self.steps)
-            .with_stagger(self.stagger_ms)
+        Plan::new(self.colors.clone(), self.settings.color_ms, self.settings.anim_ms)
+            .with_steps(self.settings.steps)
+            .with_staggers(self.settings.color_stagger_ms, self.settings.anim_stagger_ms)
     }
 
     // ---- keyboard ----------------------------------------------------------------------------
@@ -300,10 +461,25 @@ impl App {
             Modal::AddColor(_) => self.on_key_add(key),
             Modal::Xkcd(_) => self.on_key_xkcd(key),
             Modal::Time(_) => self.on_key_time(key),
+            Modal::Settings(_) => self.on_key_settings(key),
+            Modal::SaveProfile(_) => self.on_key_save_profile(key),
+            Modal::None if self.hidden => self.on_key_hidden(key),
             Modal::None => match self.screen {
                 Screen::Vessels => self.on_key_vessels(key),
                 Screen::Party => self.on_key_party(key),
             },
+        }
+    }
+
+    /// Hide-mode keys: the screen is one status bar, so only the party toggle / refill / restore (and
+    /// quit) are live.
+    fn on_key_hidden(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('h') => self.hidden = false,
+            KeyCode::Enter | KeyCode::Char('p') | KeyCode::Char('P') => self.toggle_party(),
+            KeyCode::Char('g') => self.refill_battery(),
+            KeyCode::Char('q') => self.quit(),
+            _ => {}
         }
     }
 
@@ -321,7 +497,7 @@ impl App {
     }
 
     fn on_key_party(&mut self, key: KeyEvent) {
-        // Enter / P is the headline action from anywhere on the screen.
+        // Screen-wide actions from anywhere on the party screen.
         match key.code {
             KeyCode::Enter | KeyCode::Char('P') => {
                 self.toggle_party();
@@ -333,6 +509,22 @@ impl App {
             }
             KeyCode::Esc | KeyCode::Char('b') => {
                 self.back_to_vessels();
+                return;
+            }
+            KeyCode::Char('s') => {
+                self.open_settings();
+                return;
+            }
+            KeyCode::Char('g') => {
+                self.refill_battery();
+                return;
+            }
+            KeyCode::Char('w') => {
+                self.open_save_profile();
+                return;
+            }
+            KeyCode::Char('h') => {
+                self.hidden = true;
                 return;
             }
             KeyCode::Tab => {
@@ -432,7 +624,7 @@ impl App {
             KeyCode::Esc => self.modal = Modal::None,
             KeyCode::Enter => {
                 if let Ok(v) = m.text.trim().parse::<u64>() {
-                    self.per_ms = v.max(MIN_PER_MS);
+                    self.settings.color_ms = v.clamp(MIN_PER_MS, MAX_MS);
                     self.republish_plan();
                     self.modal = Modal::None;
                 } else {
@@ -444,6 +636,60 @@ impl App {
                 m.text.pop();
             }
             KeyCode::Char(c) if c.is_ascii_digit() => m.text.push(c),
+            _ => {}
+        }
+    }
+
+    fn on_key_settings(&mut self, key: KeyEvent) {
+        let big = key.modifiers.contains(KeyModifiers::SHIFT);
+        let sel = match &self.modal {
+            Modal::Settings(m) => m.sel,
+            _ => return,
+        };
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('s') | KeyCode::Char('q') => self.modal = Modal::None,
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Modal::Settings(m) = &mut self.modal {
+                    m.sel = (sel + SETTING_ROWS - 1) % SETTING_ROWS;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Modal::Settings(m) = &mut self.modal {
+                    m.sel = (sel + 1) % SETTING_ROWS;
+                }
+            }
+            KeyCode::Left | KeyCode::Char('-') | KeyCode::Char('_') | KeyCode::Char('h') => {
+                self.settings.adjust(sel, -1, big);
+                self.republish_plan();
+            }
+            KeyCode::Right | KeyCode::Char('=') | KeyCode::Char('+') | KeyCode::Char('l') => {
+                self.settings.adjust(sel, 1, big);
+                self.republish_plan();
+            }
+            _ => {}
+        }
+    }
+
+    fn on_key_save_profile(&mut self, key: KeyEvent) {
+        let Modal::SaveProfile(m) = &mut self.modal else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => self.modal = Modal::None,
+            KeyCode::Enter => {
+                let name = m.text.trim().to_string();
+                if name.is_empty() {
+                    self.status = "enter a profile name".into();
+                    self.status_err = true;
+                } else {
+                    self.save_profile(&name);
+                    self.modal = Modal::None;
+                }
+            }
+            KeyCode::Backspace => {
+                m.text.pop();
+            }
+            KeyCode::Char(c) => m.text.push(c),
             _ => {}
         }
     }
@@ -479,13 +725,16 @@ impl App {
     }
 
     fn go_party(&mut self) {
-        if self.selected_vessel_ids().is_empty() {
+        let armed = self.selected_vessel_ids();
+        if armed.is_empty() {
             self.status = "arm at least one vessel first (space)".into();
             self.status_err = true;
             return;
         }
         self.screen = Screen::Party;
         self.focus = Focus::Colors;
+        // Tell the worker which vessels to watch so the battery meter populates before a party starts.
+        let _ = self.tx.send(ToWorker::Watch { vessels: armed });
         if self.colors.is_empty() {
             self.status = "build a palette: a = RGB/hex \u{b7} f = XKCD picker".into();
             self.status_err = false;
@@ -552,9 +801,15 @@ impl App {
     }
 
     fn nudge_time(&mut self, dir: i32) {
-        let next = self.per_ms as i64 + dir as i64 * TIME_STEP as i64;
-        self.per_ms = next.max(MIN_PER_MS as i64) as u64;
+        let next = self.settings.color_ms as i64 + dir as i64 * TIME_STEP as i64;
+        self.settings.color_ms = next.clamp(MIN_PER_MS as i64, MAX_MS as i64) as u64;
         self.republish_plan();
+    }
+
+    fn refill_battery(&mut self) {
+        let _ = self.tx.send(ToWorker::RefillBattery);
+        self.status = "refilling battery\u{2026}".into();
+        self.status_err = false;
     }
 
     fn toggle_party(&mut self) {
@@ -583,6 +838,7 @@ impl App {
         let _ = self.tx.send(ToWorker::Start {
             vessels,
             plan: self.plan(),
+            hz: self.settings.hz,
         });
     }
 
@@ -594,10 +850,13 @@ impl App {
         self.status_err = false;
     }
 
-    /// Pushes the current palette/time to a running party so edits take effect without a restart.
+    /// Pushes the current palette/timing to a running party so edits take effect without a restart.
     fn republish_plan(&self) {
         if self.partying {
-            let _ = self.tx.send(ToWorker::Update { plan: self.plan() });
+            let _ = self.tx.send(ToWorker::Update {
+                plan: self.plan(),
+                hz: self.settings.hz,
+            });
         }
     }
 
@@ -627,9 +886,43 @@ impl App {
 
     fn open_time(&mut self) {
         self.modal = Modal::Time(TimeModal {
-            text: self.per_ms.to_string(),
+            text: self.settings.color_ms.to_string(),
             area: Rect::default(),
         });
+    }
+
+    fn open_settings(&mut self) {
+        self.modal = Modal::Settings(SettingsModal {
+            sel: 0,
+            area: Rect::default(),
+            rows: Vec::new(),
+        });
+    }
+
+    fn open_save_profile(&mut self) {
+        self.modal = Modal::SaveProfile(SaveProfileModal {
+            text: String::new(),
+            area: Rect::default(),
+        });
+    }
+
+    /// Serializes the current palette + settings (not the armed vessels) to `<name>.yaml` and reports
+    /// the written path (or the error) on the status line.
+    fn save_profile(&mut self, name: &str) {
+        let prof = Profile {
+            settings: self.settings,
+            colors: self.colors.clone(),
+        };
+        match profile::save(name, &prof) {
+            Ok(path) => {
+                self.status = format!("saved profile \u{2192} {}", path.display());
+                self.status_err = false;
+            }
+            Err(e) => {
+                self.status = format!("save failed \u{2014} {e}");
+                self.status_err = true;
+            }
+        }
     }
 
     fn quit(&mut self) {
@@ -647,12 +940,14 @@ impl App {
     pub fn on_mouse(&mut self, m: MouseEvent) {
         match &self.modal {
             Modal::Xkcd(_) => self.on_mouse_xkcd(m),
-            Modal::AddColor(_) | Modal::Time(_) => {
+            Modal::Settings(_) => self.on_mouse_settings(m),
+            Modal::AddColor(_) | Modal::Time(_) | Modal::SaveProfile(_) => {
                 // Click outside the box dismisses; otherwise ignore (typing drives these).
                 if let MouseEventKind::Down(MouseButton::Left) = m.kind {
                     let area = match &self.modal {
                         Modal::AddColor(a) => a.area,
                         Modal::Time(t) => t.area,
+                        Modal::SaveProfile(s) => s.area,
                         _ => Rect::default(),
                     };
                     if !area.contains(Position {
@@ -663,6 +958,7 @@ impl App {
                     }
                 }
             }
+            Modal::None if self.hidden => self.on_mouse_hidden(m),
             Modal::None => match self.screen {
                 Screen::Vessels => self.on_mouse_vessels(m),
                 Screen::Party => self.on_mouse_party(m),
@@ -728,10 +1024,72 @@ impl App {
                 } else if self.time_plus.contains(pos) {
                     self.focus = Focus::Time;
                     self.nudge_time(1);
+                } else if self.refill_btn.contains(pos) {
+                    self.refill_battery();
+                } else if self.settings_btn.contains(pos) {
+                    self.open_settings();
                 } else if self.party_btn.contains(pos) {
                     self.toggle_party();
                 } else if self.back_btn.contains(pos) {
                     self.back_to_vessels();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Hide-mode clicks: only the three bar buttons (party toggle / refill / show) are live.
+    fn on_mouse_hidden(&mut self, m: MouseEvent) {
+        if let MouseEventKind::Down(MouseButton::Left) = m.kind {
+            let pos = Position {
+                x: m.column,
+                y: m.row,
+            };
+            if self.party_btn.contains(pos) {
+                self.toggle_party();
+            } else if self.refill_btn.contains(pos) {
+                self.refill_battery();
+            } else if self.hide_show_btn.contains(pos) {
+                self.hidden = false;
+            }
+        }
+    }
+
+    fn on_mouse_settings(&mut self, m: MouseEvent) {
+        let sel = match &self.modal {
+            Modal::Settings(s) => s.sel,
+            _ => return,
+        };
+        match m.kind {
+            MouseEventKind::ScrollUp => {
+                self.settings.adjust(sel, 1, false);
+                self.republish_plan();
+            }
+            MouseEventKind::ScrollDown => {
+                self.settings.adjust(sel, -1, false);
+                self.republish_plan();
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                let pos = Position {
+                    x: m.column,
+                    y: m.row,
+                };
+                let (hit, inside) = match &self.modal {
+                    Modal::Settings(s) => (
+                        s.rows
+                            .iter()
+                            .find(|(r, _)| r.contains(pos))
+                            .map(|&(_, i)| i),
+                        s.area.contains(pos),
+                    ),
+                    _ => (None, false),
+                };
+                if let Some(i) = hit {
+                    if let Modal::Settings(s) = &mut self.modal {
+                        s.sel = i;
+                    }
+                } else if !inside {
+                    self.modal = Modal::None;
                 }
             }
             _ => {}
@@ -851,11 +1209,11 @@ fn subsequence_score(term: &str, hay: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc;
+    use crate::source::Health;
 
     fn app() -> App {
-        let (tx, _rx) = mpsc::channel();
-        App::new(tx, "mock".into(), 60.0, 0, 0.0, WriteConfig::default())
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        App::new(tx, "mock".into(), Settings::default(), Vec::new())
     }
 
     fn catalog() -> Vec<VesselLights> {
@@ -873,30 +1231,27 @@ mod tests {
         ]
     }
 
+    fn catalog_msg() -> FromWorker {
+        FromWorker::Catalog {
+            vessels: catalog(),
+            health: Health::default(),
+        }
+    }
+
     #[test]
     fn selection_survives_a_rescan() {
         let mut a = app();
-        a.apply(FromWorker::Catalog {
-            vessels: catalog(),
-            health: Default::default(),
-        });
+        a.apply(catalog_msg());
         a.toggle_vessel(0);
         assert_eq!(a.selected_vessel_ids(), vec!["Hunter".to_string()]);
-        // A rescan returns the same vessels — the armed state must persist by id.
-        a.apply(FromWorker::Catalog {
-            vessels: catalog(),
-            health: Default::default(),
-        });
+        a.apply(catalog_msg());
         assert_eq!(a.selected_vessel_ids(), vec!["Hunter".to_string()]);
     }
 
     #[test]
     fn cannot_party_without_arming_a_vessel() {
         let mut a = app();
-        a.apply(FromWorker::Catalog {
-            vessels: catalog(),
-            health: Default::default(),
-        });
+        a.apply(catalog_msg());
         a.go_party();
         assert_eq!(a.screen, Screen::Vessels); // refused, with a hint
         assert!(a.status_err);
@@ -912,22 +1267,41 @@ mod tests {
         a.add_color(Rgb::from_u8(0, 255, 0));
         a.add_color(Rgb::from_u8(0, 0, 255));
         assert_eq!(a.colors.len(), 3);
-        // Selected is the last-added (blue); move it up swaps with green.
         a.csel = 2;
         a.move_color(-1);
         assert_eq!(a.csel, 1);
         assert_eq!(a.colors[1], Rgb::from_u8(0, 0, 255));
-        // Remove the selected one.
         a.remove_color();
         assert_eq!(a.colors.len(), 2);
     }
 
     #[test]
-    fn time_has_a_floor() {
+    fn color_time_has_a_floor() {
         let mut a = app();
-        a.per_ms = 100;
-        a.nudge_time(-1); // -100 -> would be 0, clamped to MIN_PER_MS
-        assert_eq!(a.per_ms, MIN_PER_MS);
+        a.settings.color_ms = 100;
+        a.nudge_time(-1); // -100 -> would be 0, clamped to the floor
+        assert_eq!(a.settings.color_ms, MIN_PER_MS);
+    }
+
+    #[test]
+    fn settings_adjust_is_independent_for_color_and_anim() {
+        let mut s = Settings::default();
+        // Color and animation timing move independently.
+        let (c0, a0) = (s.color_ms, s.anim_ms);
+        s.adjust(2, 1, false); // color time +100
+        assert_eq!(s.color_ms, c0 + 100);
+        assert_eq!(s.anim_ms, a0); // animation untouched
+        s.adjust(3, -1, true); // anim time -1000 (coarse)
+        assert_eq!(s.anim_ms, a0 - 1000);
+        // Independent staggers, too.
+        s.adjust(4, 1, false); // color stagger +10
+        assert_eq!(s.color_stagger_ms, 10.0);
+        assert_eq!(s.anim_stagger_ms, 0.0);
+        // Frame rate clamps at 240.
+        for _ in 0..100 {
+            s.adjust(0, 1, true);
+        }
+        assert_eq!(s.hz, 240.0);
     }
 
     #[test]
@@ -941,9 +1315,89 @@ mod tests {
         m.refilter();
         let top = m.filtered[0];
         assert_eq!(XKCD[top].0, "CloudyBlue");
-        // AND semantics: a nonsense second term drops everything.
         m.query = "blue zzzzz".into();
         m.refilter();
         assert!(m.filtered.is_empty());
+    }
+
+    #[test]
+    fn battery_reply_updates_the_meter() {
+        let mut a = app();
+        a.apply(FromWorker::Battery {
+            fraction: Some(0.5),
+            count: 2,
+        });
+        assert_eq!(a.battery.count, 2);
+        assert_eq!(a.battery.fraction, Some(0.5));
+    }
+
+    fn press(a: &mut App, c: char) {
+        a.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn h_toggles_hide_mode_on_the_party_screen() {
+        let mut a = app();
+        a.screen = Screen::Party;
+        assert!(!a.hidden);
+        press(&mut a, 'h'); // hide
+        assert!(a.hidden);
+        // While hidden, normal party keys don't fire (e.g. 'a' must not open the add-color modal).
+        press(&mut a, 'a');
+        assert!(matches!(a.modal, Modal::None));
+        press(&mut a, 'h'); // show again
+        assert!(!a.hidden);
+    }
+
+    #[test]
+    fn hide_mode_still_toggles_the_party() {
+        let mut a = app();
+        a.apply(catalog_msg());
+        a.toggle_vessel(0);
+        a.go_party();
+        a.add_color(Rgb::from_u8(255, 0, 0));
+        a.hidden = true;
+        assert!(!a.partying);
+        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(a.partying); // optimistic start fired even from the hidden bar
+    }
+
+    #[test]
+    fn w_saves_a_profile_round_tripping_palette_and_settings() {
+        // A path-like name is written verbatim (no dependence on the global `$DANCY_PROFILE_DIR`).
+        let dir = std::env::temp_dir().join(format!("dancy_app_prof_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let target = dir.join("myshow.yaml");
+        let name = target.to_string_lossy().into_owned();
+
+        let mut a = app();
+        a.screen = Screen::Party;
+        a.add_color(Rgb::from_u8(10, 20, 30));
+        a.settings.color_ms = 777;
+        // Open the save modal, type the (path-like) name, Enter.
+        press(&mut a, 'w');
+        assert!(matches!(a.modal, Modal::SaveProfile(_)));
+        for c in name.chars() {
+            press(&mut a, c);
+        }
+        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(a.modal, Modal::None));
+        assert!(!a.status_err, "save should report success: {}", a.status);
+
+        let loaded = profile::load(&name).unwrap();
+        assert_eq!(loaded.colors, vec![Rgb::from_u8(10, 20, 30)]);
+        assert_eq!(loaded.settings.color_ms, 777);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn empty_profile_name_is_rejected() {
+        let mut a = app();
+        a.screen = Screen::Party;
+        press(&mut a, 'w');
+        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)); // no name typed
+        assert!(matches!(a.modal, Modal::SaveProfile(_))); // stays open
+        assert!(a.status_err);
     }
 }
