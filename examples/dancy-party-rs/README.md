@@ -115,7 +115,9 @@ second freshness gate, as always, is the in-game `sample_rate_hz` (how fast the 
 ### Settings
 
 Press `s` on the party screen. `↑`/`↓` pick a row, `←`/`→` adjust (hold **Shift** for a coarse step),
-`Esc` closes. Scroll over the popup adjusts the highlighted row.
+`Esc` closes. Scroll over the popup adjusts the highlighted row. Press **`Enter`** on a row for a
+manual-entry popup where you can type an exact whole number (0 or higher) — handy when the stepping is
+too coarse or too slow; the value is clamped to that setting's range.
 
 | setting | seed flag | default | what it does |
 | ------- | --------- | ------- | ------------ |
@@ -209,7 +211,9 @@ quits — or click the bar's buttons.
   - *Time focus:* `←`/`→` (or `-`/`=`) step the color time ±100 ms · `e` type a value.
   - Click the `[ refill ⚡ ]` and `[ settings ]` buttons too.
 - **Settings popup:** `↑`/`↓` pick a row · `←`/`→` adjust (Shift = coarse) · scroll to adjust ·
-  `Esc`/`s` close. Click a row to select it.
+  `Enter` type an exact value · `Esc`/`s` close. Click a row to select it.
+- **Setting-input popup:** type a whole number (0 or higher), `Enter` to apply (clamped to the row's
+  range), `Esc` to go back.
 - **Add-color modal:** type an RGB triple or hex, `Enter` to add, `Tab` to jump to the XKCD picker.
 - **XKCD picker:** type to fuzzy-filter (space = AND), `↑`/`↓`/scroll to browse, `Enter` to add.
 - **Save-profile modal:** type a name, `Enter` to write, `Esc` to cancel.
