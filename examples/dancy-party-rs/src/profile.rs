@@ -29,7 +29,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::app::Settings;
+use crate::app::{Settings, BRIGHT_SCALE};
 use crate::color::{self, Rgb};
 
 /// A reusable show: the ordered palette + every display knob. The selected vessels are intentionally
@@ -128,12 +128,12 @@ impl Profile {
                 }
                 "bright_min" => {
                     if let Ok(v) = value.parse::<f64>() {
-                        settings.bright_min = v.clamp(0.0, 1.0);
+                        settings.bright_min = v.clamp(0.0, BRIGHT_SCALE);
                     }
                 }
                 "bright_max" => {
                     if let Ok(v) = value.parse::<f64>() {
-                        settings.bright_max = v.clamp(0.0, 1.0);
+                        settings.bright_max = v.clamp(0.0, BRIGHT_SCALE);
                     }
                 }
                 "bright_ms" => {
@@ -272,8 +272,8 @@ mod tests {
                 anim_ms: 3000,
                 color_stagger_ms: 80.0,
                 anim_stagger_ms: 200.0,
-                bright_min: 0.25,
-                bright_max: 0.9,
+                bright_min: 2500.0,
+                bright_max: 9000.0,
                 bright_ms: 400,
                 bright_steps: 6,
             },

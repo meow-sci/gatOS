@@ -55,9 +55,10 @@ pub struct Settings {
     pub color_stagger_ms: f64,
     /// Per-light animation-clock stagger, ms.
     pub anim_stagger_ms: f64,
-    /// Random-brightness range floor, 0..1 (`bright_min == bright_max` disables the effect).
+    /// Random-brightness range floor, on the `0..`[`BRIGHT_SCALE`] scale (`bright_min == bright_max`
+    /// disables the effect). Divided by [`BRIGHT_SCALE`] to get the 0..1 color multiplier.
     pub bright_min: f64,
-    /// Random-brightness range ceiling, 0..1.
+    /// Random-brightness range ceiling, on the `0..`[`BRIGHT_SCALE`] scale.
     pub bright_max: f64,
     /// Time each random brightness target holds before drifting to the next, ms.
     pub bright_ms: u64,
@@ -74,9 +75,9 @@ impl Default for Settings {
             anim_ms: 2500,
             color_stagger_ms: 0.0,
             anim_stagger_ms: 0.0,
-            // Brightness variation off by default (min == max == full).
-            bright_min: 1.0,
-            bright_max: 1.0,
+            // Brightness variation off by default (min == max == full = the top of the scale).
+            bright_min: BRIGHT_SCALE,
+            bright_max: BRIGHT_SCALE,
             bright_ms: 600,
             bright_steps: 0,
         }
@@ -89,6 +90,9 @@ pub const SETTING_ROWS: usize = 10;
 const MIN_MS: u64 = 50;
 const MAX_MS: u64 = 60_000;
 const MAX_STAGGER: f64 = 60_000.0;
+/// The top of the brightness min/max scale (full brightness, = a 1.0 color multiplier). The
+/// configured 0..[`BRIGHT_SCALE`] value is divided by this to get the actual 0..1 multiplier.
+pub const BRIGHT_SCALE: f64 = 10_000.0;
 
 impl Settings {
     /// Nudges row `row` by `dir` (-1/+1), a coarse step when `big` (Shift), within each knob's range.
@@ -121,12 +125,12 @@ impl Settings {
                 self.anim_stagger_ms = (self.anim_stagger_ms + dir as f64 * step).clamp(0.0, MAX_STAGGER);
             }
             6 => {
-                let step = if big { 0.2 } else { 0.05 };
-                self.bright_min = (self.bright_min + dir as f64 * step).clamp(0.0, 1.0);
+                let step = if big { 20.0 } else { 1.0 };
+                self.bright_min = (self.bright_min + dir as f64 * step).clamp(0.0, BRIGHT_SCALE);
             }
             7 => {
-                let step = if big { 0.2 } else { 0.05 };
-                self.bright_max = (self.bright_max + dir as f64 * step).clamp(0.0, 1.0);
+                let step = if big { 20.0 } else { 1.0 };
+                self.bright_max = (self.bright_max + dir as f64 * step).clamp(0.0, BRIGHT_SCALE);
             }
             8 => {
                 let step = if big { 1000 } else { 100 };
@@ -172,8 +176,8 @@ impl Settings {
             3 => format!("{} ms", self.anim_ms),
             4 => format!("{} ms", self.color_stagger_ms as u64),
             5 => format!("{} ms", self.anim_stagger_ms as u64),
-            6 => format!("{:.2}", self.bright_min),
-            7 => format!("{:.2}", self.bright_max),
+            6 => format!("{}", self.bright_min as u64),
+            7 => format!("{}", self.bright_max as u64),
             8 => {
                 if self.bright_min >= self.bright_max {
                     format!("{} ms (off)", self.bright_ms)
@@ -512,8 +516,8 @@ impl App {
             .with_steps(self.settings.steps)
             .with_staggers(self.settings.color_stagger_ms, self.settings.anim_stagger_ms)
             .with_brightness(
-                self.settings.bright_min,
-                self.settings.bright_max,
+                self.settings.bright_min / BRIGHT_SCALE,
+                self.settings.bright_max / BRIGHT_SCALE,
                 self.settings.bright_ms,
                 self.settings.bright_steps,
             )
@@ -1413,21 +1417,26 @@ mod tests {
     #[test]
     fn settings_adjust_covers_the_brightness_rows() {
         let mut s = Settings::default();
-        assert_eq!(s.bright_min, 1.0);
-        assert_eq!(s.bright_max, 1.0);
-        s.adjust(6, -1, false); // bright min -0.05
-        assert!((s.bright_min - 0.95).abs() < 1e-9);
-        s.adjust(7, -1, true); // bright max -0.2
-        assert!((s.bright_max - 0.8).abs() < 1e-9);
+        assert_eq!(s.bright_min, BRIGHT_SCALE); // 10000 = off/full
+        assert_eq!(s.bright_max, BRIGHT_SCALE);
+        s.adjust(6, -1, false); // bright min -1 (regular step)
+        assert_eq!(s.bright_min, 9999.0);
+        s.adjust(7, -1, true); // bright max -20 (coarse step)
+        assert_eq!(s.bright_max, 9980.0);
         s.adjust(8, 1, false); // bright time +100
         assert_eq!(s.bright_ms, 700);
         s.adjust(9, 1, false); // bright steps +1
         assert_eq!(s.bright_steps, 1);
-        // Floors/ceilings hold.
-        for _ in 0..100 {
+        // Floor holds at 0 (coarse step of 20, plenty of iterations to drive past it).
+        for _ in 0..1000 {
             s.adjust(6, -1, true);
         }
         assert_eq!(s.bright_min, 0.0);
+        // Ceiling holds at the top of the scale.
+        for _ in 0..1000 {
+            s.adjust(7, 1, true);
+        }
+        assert_eq!(s.bright_max, BRIGHT_SCALE);
     }
 
     #[test]

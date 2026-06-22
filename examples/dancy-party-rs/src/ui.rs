@@ -206,7 +206,7 @@ fn render_title(f: &mut Frame, app: &App, area: Rect) {
             if s.bright_min < s.bright_max {
                 spans.push(kv(
                     "bri",
-                    &format!("{:.2}-{:.2}", s.bright_min, s.bright_max),
+                    &format!("{}-{}", s.bright_min as u64, s.bright_max as u64),
                 ));
             }
             if app.partying {

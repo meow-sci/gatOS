@@ -125,8 +125,8 @@ Press `s` on the party screen. `↑`/`↓` pick a row, `←`/`→` adjust (hold 
 | **anim time** | `--anim-ms <n>` | 2500 | The deploy goal-pulse half-period, ms — the deploy animation runs on its **own** clock, independent of the color. Keep it ≥ the ~2 s in-game stroke so each extend/retract actually completes (the original bug: a fast shared clock cut the deploy off before it finished). |
 | **color stagger** | `--color-stagger-ms <n>` | 0 (lockstep) | Offset each light's **color** clock by `n` ms so the palette ripples across the lights. |
 | **anim stagger** | `--anim-stagger-ms <n>` | 0 (lockstep) | Offset each light's **animation** clock by `n` ms so the deploy pulse ripples across the lights — independently of the color stagger. |
-| **bright min** | `--bright-min <f>` | 1.0 (off) | Floor of the random per-light **brightness** multiplier, 0..1. |
-| **bright max** | `--bright-max <f>` | 1.0 (off) | Ceiling of the random brightness multiplier, 0..1. **Set `min < max` to enable** the effect: each light drifts between independent random brightness targets drawn from `[min, max]`, dimming the palette color so the rig twinkles. `min == max` disables it (constant brightness = that value). |
+| **bright min** | `--bright-min <n>` | 10000 (off) | Floor of the random per-light **brightness** range, on a `0..10000` scale (10000 = full; the value is divided by 10000 to get the actual color multiplier). Step 1, coarse (Shift) 20. |
+| **bright max** | `--bright-max <n>` | 10000 (off) | Ceiling of the random brightness range, `0..10000`. **Set `min < max` to enable** the effect: each light drifts between independent random brightness targets drawn from `[min, max]`, dimming the palette color so the rig twinkles. `min == max` disables it (constant brightness = that value ÷ 10000). |
 | **bright time** | `--bright-ms <n>` | 600 | How long each random brightness target holds before drifting to the next, ms. |
 | **bright steps** | `--bright-steps <n>` | 0 (continuous) | Quantize the brightness drift to `<n>` discrete values per segment — same write-volume lever as **fade steps**, but for brightness. |
 
@@ -139,8 +139,8 @@ cargo run -- --steps 1                          # pure color-cycle, no interpola
 cargo run -- --color-ms 600 --anim-ms 3000      # snappy color, deploys that fully extend/retract
 cargo run -- --color-stagger-ms 80              # a colour wave rippling across the lights
 cargo run -- --anim-stagger-ms 200              # a deploy wave, colour still in lockstep
-cargo run -- --bright-min 0.2 --bright-max 1.0  # random per-light brightness twinkle
-cargo run -- --bright-min 0.3 --bright-max 1 --bright-ms 200 --bright-steps 4   # snappier, quantized
+cargo run -- --bright-min 2000 --bright-max 10000   # random per-light brightness twinkle (0..10000)
+cargo run -- --bright-min 3000 --bright-max 10000 --bright-ms 200 --bright-steps 4   # snappier, quantized
 ```
 
 Colors are deduped per light: a light is only rewritten when *its own* quantized color actually
@@ -177,8 +177,8 @@ color_ms: 1200
 anim_ms: 2500
 color_stagger_ms: 0
 anim_stagger_ms: 0
-bright_min: 1
-bright_max: 1
+bright_min: 10000
+bright_max: 10000
 bright_ms: 600
 bright_steps: 0
 colors:

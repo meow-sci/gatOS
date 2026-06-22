@@ -128,12 +128,12 @@ impl Config {
                     _ => return Err("--anim-stagger-ms wants a number in 0..60000".into()),
                 },
                 "--bright-min" => match args.next().map(|s| s.parse::<f64>()) {
-                    Some(Ok(v)) if (0.0..=1.0).contains(&v) => settings.bright_min = v,
-                    _ => return Err("--bright-min wants a number in 0..1".into()),
+                    Some(Ok(v)) if (0.0..=10_000.0).contains(&v) => settings.bright_min = v,
+                    _ => return Err("--bright-min wants a number in 0..10000".into()),
                 },
                 "--bright-max" => match args.next().map(|s| s.parse::<f64>()) {
-                    Some(Ok(v)) if (0.0..=1.0).contains(&v) => settings.bright_max = v,
-                    _ => return Err("--bright-max wants a number in 0..1".into()),
+                    Some(Ok(v)) if (0.0..=10_000.0).contains(&v) => settings.bright_max = v,
+                    _ => return Err("--bright-max wants a number in 0..10000".into()),
                 },
                 "--bright-ms" => match args.next().map(|s| s.parse::<u64>()) {
                     Some(Ok(v)) if (50..=60_000).contains(&v) => settings.bright_ms = v,
@@ -204,8 +204,8 @@ fn print_help() {
     println!("                      in-game stroke and each extend/retract actually completes.");
     println!("  --color-stagger-ms <n>  per-light color offset, 0..60000 (default 0 = lockstep)");
     println!("  --anim-stagger-ms <n>   per-light deploy offset, 0..60000 (default 0 = lockstep)");
-    println!("  --bright-min <f>        random-brightness floor, 0..1 (default 1 = off)");
-    println!("  --bright-max <f>        random-brightness ceiling, 0..1 (default 1). min<max enables it.");
+    println!("  --bright-min <n>        random-brightness floor, 0..10000 (default 10000 = off)");
+    println!("  --bright-max <n>        random-brightness ceiling, 0..10000 (default 10000). min<max enables it.");
     println!("  --bright-ms <n>         time between random brightness targets, ms, 50..60000 (default 600)");
     println!("  --bright-steps <n>      quantize the brightness drift to <n> values, 0..1000 (0 = continuous)");
     println!();
