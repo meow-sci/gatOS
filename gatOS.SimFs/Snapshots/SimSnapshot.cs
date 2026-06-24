@@ -292,13 +292,24 @@ public sealed record LightSnapshot(
     public const int NoAnimation = -1;
 
     /// <summary>
-    ///     The spotlight beam spread — the outer cone <b>half-angle</b> in degrees
-    ///     (<c>LightModule.Template.OuterAngle</c>, stored in radians by KSA). Larger ⇒ wider, more
-    ///     diffuse beam; the stock default is 45°. Writable via <c>lights/&lt;n&gt;/spread</c>
-    ///     (action <c>light.spread</c>); KSA clamps the effective value to ~0..89.94°. Only affects
-    ///     spotlights — point lights carry the value but ignore it when rendering.
+    ///     The spotlight cone <b>outer</b> half-angle in degrees (<c>LightModule.Template.OuterAngle</c>,
+    ///     stored in radians by KSA). The hard edge of the beam — beyond it the cone contributes
+    ///     nothing. Larger ⇒ wider beam; the stock default is 45°. Writable via
+    ///     <c>lights/&lt;n&gt;/outer_angle</c> (action <c>light.outer_angle</c>); KSA clamps the
+    ///     effective value to ~0..89.94°. Only affects spotlights — point lights carry it but ignore
+    ///     it when rendering.
     /// </summary>
-    public double SpreadDeg { get; init; }
+    public double OuterAngleDeg { get; init; }
+
+    /// <summary>
+    ///     The spotlight cone <b>inner</b> half-angle in degrees (<c>LightModule.Template.InnerAngle</c>,
+    ///     stored in radians by KSA). Inside it the beam is at full brightness; between inner and outer
+    ///     it falls off. Smaller relative to <see cref="OuterAngleDeg"/> ⇒ softer edge; equal ⇒ a hard
+    ///     edge. To make a narrow pinpoint/laser the inner angle must come down with the outer (KSA
+    ///     swaps the two if inner &gt; outer). Writable via <c>lights/&lt;n&gt;/inner_angle</c> (action
+    ///     <c>light.inner_angle</c>); KSA clamps it to <c>[0, outer]</c>.
+    /// </summary>
+    public double InnerAngleDeg { get; init; }
 }
 
 /// <summary>One docking port's state.</summary>

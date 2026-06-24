@@ -64,6 +64,11 @@ pub struct Settings {
     pub bright_ms: u64,
     /// Brightness-drift quantization steps (0 = continuous).
     pub bright_steps: u32,
+    /// Animation actuation floor, on the `0..`[`ANIM_SCALE`] scale — the goal the retract half drives to
+    /// (`anim_min == anim_max` turns the animation off). Divided by [`ANIM_SCALE`] for the 0..1 setpoint.
+    pub anim_min: f64,
+    /// Animation actuation ceiling, on the `0..`[`ANIM_SCALE`] scale — the goal the extend half drives to.
+    pub anim_max: f64,
 }
 
 impl Default for Settings {
@@ -80,12 +85,15 @@ impl Default for Settings {
             bright_max: BRIGHT_SCALE,
             bright_ms: 600,
             bright_steps: 0,
+            // Animation pulses across the full retract..extend range by default (0..1 = 0..ANIM_SCALE).
+            anim_min: 0.0,
+            anim_max: ANIM_SCALE,
         }
     }
 }
 
 /// The number of editable rows in the settings popup (see [`Settings::adjust`]).
-pub const SETTING_ROWS: usize = 10;
+pub const SETTING_ROWS: usize = 12;
 
 const MIN_MS: u64 = 50;
 const MAX_MS: u64 = 60_000;
@@ -93,6 +101,9 @@ const MAX_STAGGER: f64 = 60_000.0;
 /// The top of the brightness min/max scale (full brightness, = a 1.0 color multiplier). The
 /// configured 0..[`BRIGHT_SCALE`] value is divided by this to get the actual 0..1 multiplier.
 pub const BRIGHT_SCALE: f64 = 10_000.0;
+/// The top of the animation actuation min/max scale (= a fully-extended `1.0` goal). The configured
+/// 0..[`ANIM_SCALE`] value is divided by this to get the actual 0..1 goal setpoint.
+pub const ANIM_SCALE: f64 = 10_000.0;
 
 impl Settings {
     /// Nudges row `row` by `dir` (-1/+1), a coarse step when `big` (Shift), within each knob's range.
@@ -140,6 +151,14 @@ impl Settings {
                 let step = if big { 10 } else { 1 };
                 self.bright_steps = (self.bright_steps as i64 + d * step).clamp(0, 1000) as u32;
             }
+            10 => {
+                let step = if big { 500.0 } else { 50.0 };
+                self.anim_min = (self.anim_min + dir as f64 * step).clamp(0.0, ANIM_SCALE);
+            }
+            11 => {
+                let step = if big { 500.0 } else { 50.0 };
+                self.anim_max = (self.anim_max + dir as f64 * step).clamp(0.0, ANIM_SCALE);
+            }
             _ => {}
         }
     }
@@ -157,6 +176,8 @@ impl Settings {
             7 => "bright max",
             8 => "bright time",
             9 => "bright steps",
+            10 => "anim min",
+            11 => "anim max",
             _ => "",
         }
     }
@@ -173,7 +194,13 @@ impl Settings {
                 }
             }
             2 => format!("{} ms", self.color_ms),
-            3 => format!("{} ms", self.anim_ms),
+            3 => {
+                if self.anim_min == self.anim_max {
+                    format!("{} ms (off)", self.anim_ms)
+                } else {
+                    format!("{} ms", self.anim_ms)
+                }
+            }
             4 => format!("{} ms", self.color_stagger_ms as u64),
             5 => format!("{} ms", self.anim_stagger_ms as u64),
             6 => format!("{}", self.bright_min as u64),
@@ -192,6 +219,8 @@ impl Settings {
                     format!("{} steps", self.bright_steps)
                 }
             }
+            10 => format!("{}", self.anim_min as u64),
+            11 => format!("{}", self.anim_max as u64),
             _ => String::new(),
         }
     }
@@ -210,6 +239,8 @@ impl Settings {
             7 => format!("{}", self.bright_max as u64),
             8 => self.bright_ms.to_string(),
             9 => self.bright_steps.to_string(),
+            10 => format!("{}", self.anim_min as u64),
+            11 => format!("{}", self.anim_max as u64),
             _ => String::new(),
         }
     }
@@ -230,6 +261,8 @@ impl Settings {
             7 => self.bright_max = vf.clamp(0.0, BRIGHT_SCALE),
             8 => self.bright_ms = v.clamp(MIN_MS, MAX_MS),
             9 => self.bright_steps = v.min(1000) as u32,
+            10 => self.anim_min = vf.clamp(0.0, ANIM_SCALE),
+            11 => self.anim_max = vf.clamp(0.0, ANIM_SCALE),
             _ => {}
         }
     }
@@ -240,6 +273,23 @@ fn fmt_hz(hz: f64) -> String {
         format!("{}", hz.round() as i64)
     } else {
         format!("{hz:.1}")
+    }
+}
+
+/// Friendly rendering of a goal actuation setpoint for the status line / live band: `off` when the
+/// animation is disabled (`None`), else the 0..1 fraction trimmed to 2 decimals (`1`, `0`, `0.75`).
+pub fn fmt_goal_display(goal: Option<f64>) -> String {
+    match goal {
+        None => "off".to_string(),
+        Some(v) => {
+            let s = format!("{:.2}", v.clamp(0.0, 1.0));
+            let trimmed = s.trim_end_matches('0').trim_end_matches('.');
+            if trimmed.is_empty() {
+                "0".to_string()
+            } else {
+                trimmed.to_string()
+            }
+        }
     }
 }
 
@@ -392,7 +442,8 @@ pub struct LiveFrame {
     pub color: Rgb,
     pub color_segment: u64,
     pub anim_segment: u64,
-    pub goal: u8,
+    /// The goal actuation setpoint (0..1) this frame, or `None` when the animation is off.
+    pub goal: Option<f64>,
 }
 
 /// The per-color time floor (ms) — fast enough to strobe, slow enough that the worker keeps up.
@@ -489,8 +540,9 @@ impl App {
                 });
                 self.writes = writes;
                 self.inflight = inflight;
+                let goal_txt = fmt_goal_display(goal);
                 self.status = format!(
-                    "\u{1f389} PARTY \u{b7} {targets} light(s) \u{b7} color {color_segment} \u{b7} anim {anim_segment} \u{b7} goal {goal}"
+                    "\u{1f389} PARTY \u{b7} {targets} light(s) \u{b7} color {color_segment} \u{b7} anim {anim_segment} \u{b7} goal {goal_txt}"
                 );
                 self.status_err = false;
             }
@@ -568,6 +620,10 @@ impl App {
                 self.settings.bright_max / BRIGHT_SCALE,
                 self.settings.bright_ms,
                 self.settings.bright_steps,
+            )
+            .with_anim_range(
+                self.settings.anim_min / ANIM_SCALE,
+                self.settings.anim_max / ANIM_SCALE,
             )
     }
 

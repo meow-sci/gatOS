@@ -175,7 +175,8 @@ public sealed class SimFsTreeTests
             "vessels/by-id/test-1/solar/0/produced", "vessels/by-id/test-1/solar/0/goal",
             "vessels/by-id/test-1/solar/0/tracker_angle", "vessels/by-id/test-1/solar/0/state",
             "vessels/by-id/test-1/lights/0/on", "vessels/by-id/test-1/lights/0/brightness",
-            "vessels/by-id/test-1/lights/0/color", "vessels/by-id/test-1/lights/0/spread",
+            "vessels/by-id/test-1/lights/0/color", "vessels/by-id/test-1/lights/0/outer_angle",
+            "vessels/by-id/test-1/lights/0/inner_angle",
             // the light part's co-located actuate animation (linked to vessel-level animation 1)
             "vessels/by-id/test-1/lights/0/goal", "vessels/by-id/test-1/lights/0/current",
             "vessels/by-id/test-1/lights/0/state",

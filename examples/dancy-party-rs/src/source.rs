@@ -385,7 +385,9 @@ pub enum FromWorker {
         color: Rgb,
         color_segment: u64,
         anim_segment: u64,
-        goal: u8,
+        /// The goal actuation setpoint (0..1) for this frame, or `None` when the animation is off
+        /// (`anim_min == anim_max`) and the goal is left untouched.
+        goal: Option<f64>,
         targets: usize,
         /// Writes dispatched since this party started, and how many are still in flight right now.
         writes: u64,
@@ -409,8 +411,9 @@ struct RunningParty {
     /// Last color wire-form written **per light** (parallel to `color_paths`). With no color stagger
     /// every entry holds the same value; with stagger they diverge as the wave ripples.
     color_seen: Vec<Option<String>>,
-    /// Last goal written per light (parallel to `goal_paths`).
-    goal_seen: Vec<Option<u8>>,
+    /// Last goal wire-form written per light (parallel to `goal_paths`). `None` until first written;
+    /// once the animation is a noop nothing is ever written, so it stays `None`.
+    goal_seen: Vec<Option<String>>,
     /// Writes dispatched since this party started (color + goal, across all lights).
     writes: u64,
 }
@@ -690,14 +693,31 @@ fn frame_writes(rp: &mut RunningParty, elapsed_ms: f64) -> Vec<(String, String)>
 
     for j in 0..rp.goal_paths.len() {
         let local = elapsed_ms - j as f64 * anim_stagger;
-        let goal = rp.plan.goal_at(local).0;
-        if rp.goal_seen[j] != Some(goal) {
-            out.push((rp.goal_paths[j].clone(), goal.to_string()));
-            rp.goal_seen[j] = Some(goal);
+        // `None` here means the animation is off (`anim_min == anim_max`): skip the goal entirely so a
+        // collapsed range never writes a constant setpoint — the actuation is a true noop.
+        let Some(goal) = rp.plan.goal_at(local).0 else {
+            continue;
+        };
+        let wire = fmt_goal(goal);
+        if rp.goal_seen[j].as_deref() != Some(wire.as_str()) {
+            out.push((rp.goal_paths[j].clone(), wire.clone()));
+            rp.goal_seen[j] = Some(wire);
         }
     }
 
     out
+}
+
+/// The `/sim` wire form of a goal actuation fraction: a 0..1 number trimmed to 4 decimals with no
+/// trailing zeros (`1`, `0`, `0.75`), matching the compact style of the color writes.
+fn fmt_goal(v: f64) -> String {
+    let s = format!("{:.4}", v.clamp(0.0, 1.0));
+    let trimmed = s.trim_end_matches('0').trim_end_matches('.');
+    if trimmed.is_empty() {
+        "0".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Resets every targeted light to white with goal 0 — the "STOP, MY EYES" cleanup. Written

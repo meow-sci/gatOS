@@ -480,7 +480,7 @@ fn render_live_band(f: &mut Frame, app: &App, area: Rect) {
             live.color.to_hex(),
             live.color_segment,
             live.anim_segment,
-            live.goal
+            crate::app::fmt_goal_display(live.goal)
         );
         let bar = "\u{2588}".repeat(area.width as usize);
         f.render_widget(

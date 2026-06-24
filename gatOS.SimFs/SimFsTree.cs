@@ -652,9 +652,9 @@ public static class SimFsTree
                     : null);
 
         /// <summary>
-        ///     One light by index: <c>on</c>/<c>brightness</c>/<c>color</c>/<c>spread</c> always, plus the
-        ///     co-located actuate <c>goal</c>/<c>current</c>/<c>state</c> control when the light part
-        ///     carries a deploy animation (<see cref="LightSnapshot.AnimationIndex"/>). The same
+        ///     One light by index: <c>on</c>/<c>brightness</c>/<c>color</c>/<c>inner_angle</c>/<c>outer_angle</c>
+        ///     always, plus the co-located actuate <c>goal</c>/<c>current</c>/<c>state</c> control when the
+        ///     light part carries a deploy animation (<see cref="LightSnapshot.AnimationIndex"/>). The same
         ///     vessel-level animation is also reachable under <c>animations/&lt;n&gt;/</c>; both route
         ///     the one <c>animation.goal</c> action by its ordinal (mirrors <see cref="SolarPanelDir"/>).
         /// </summary>
@@ -669,8 +669,10 @@ public static class SimFsTree
                     () => Formats.Scalar(Light(vesselId, index).Intensity)),
                 VectorControl($"{q}/color", "color", vesselId, "light.color", index, 3,
                     () => Formats.Vector(Light(vesselId, index).Color)),
-                NumberControl($"{q}/spread", "spread", vesselId, "light.spread", index,
-                    () => Formats.Scalar(Light(vesselId, index).SpreadDeg)),
+                NumberControl($"{q}/outer_angle", "outer_angle", vesselId, "light.outer_angle", index,
+                    () => Formats.Scalar(Light(vesselId, index).OuterAngleDeg)),
+                NumberControl($"{q}/inner_angle", "inner_angle", vesselId, "light.inner_angle", index,
+                    () => Formats.Scalar(Light(vesselId, index).InnerAngleDeg)),
             };
             if (light.AnimationIndex >= 0)
             {

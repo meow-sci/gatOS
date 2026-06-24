@@ -393,7 +393,7 @@ errnos `EBUSY`/`ETIMEDOUT` added.
 ### G4 — Full control surface
 
 **Writes:** `ctl/{throttle,stage,rcs,attitude_mode,attitude_frame,attitude_target,burn}`,
-`engines/<n>/min_throttle`, `rcs/<n>/active`, `lights/<n>/{on,brightness,color,spread}`,
+`engines/<n>/min_throttle`, `rcs/<n>/active`, `lights/<n>/{on,brightness,color,inner_angle,outer_angle}`,
 `decouplers/<n>/fire`, `docking/<n>/undock`, `ctl/focus` (+ `bodies/<id>/focus`), and the
 **`/sim/debug/`** cheat namespace (gated by
 `[control] debug_namespace`: `vessels/<id>/{teleport,refill_fuel,refill_battery}`,

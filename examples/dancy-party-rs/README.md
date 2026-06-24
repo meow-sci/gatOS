@@ -26,8 +26,8 @@ Two screens:
      button next to it (key `g`) that tops every armed vessel's battery back up (`debug.refill_battery`).
    - **Settings (`s`)** — a popup with every display knob, all live (a running party adopts changes at
      once): **frame rate**, **fade steps**, **color time**, **anim time**, **color stagger**,
-     **anim stagger**, and the random **brightness** range / time / steps. See [Settings](#settings)
-     below.
+     **anim stagger**, the random **brightness** range / time / steps, and the deploy **anim min/max**
+     actuation range. See [Settings](#settings) below.
    - **LETS PARTY! / STOP, MY EYES** — the toggle. On, it animates; off, it resets every light to
      white and stops.
    - **Save profile (`w`)** — prompt for a name and write the palette + every setting to a reusable
@@ -38,7 +38,10 @@ Two screens:
 
 While the party runs, the colors **cross-fade** from one palette entry to the next on the **color
 clock**, and the light **deploy animation** pulses on a separate **animation clock** — the `goal`
-flips `1`→`0`→`1` — so the lights physically extend/retract. The two clocks are **independent**: the
+flips between its **extend** and **retract** setpoints (the **anim max**/**anim min** range, `1`→`0`→`1`
+by default) — so the lights physically extend/retract. Collapse the range to a point (**anim min ==
+anim max**) and the animation switches **off**: the goal is never written, leaving the hardware where it
+sits. The two clocks are **independent**: the
 in-game deploy stroke is ~2 s, so the animation clock defaults slower (2500 ms) than the color clock
 (1200 ms), letting each stroke finish instead of being cut off by a fast color change. A live band at
 the bottom mirrors the current interpolated color (and both clocks' segment counters) so you can see a
@@ -55,7 +58,7 @@ Everything is driven through the lights under each vessel (see
 | what                | path                                        | write              |
 | ------------------- | ------------------------------------------- | ------------------ |
 | light color         | `vessels/by-id/<id>/lights/<n>/color`       | `r g b`, each 0..1 |
-| light animation goal| `vessels/by-id/<id>/lights/<n>/goal`        | `0` / `1`          |
+| light animation goal| `vessels/by-id/<id>/lights/<n>/goal`        | `0..1` fraction    |
 | battery charge      | `vessels/by-id/<id>/battery/charge`         | — (read, 0..1)     |
 | battery refill      | `debug/vessels/<id>/refill_battery`         | `1` (needs debug)  |
 | discovery           | `vessels/by-id/` + each `lights/<n>/`       | — (read once)      |
@@ -131,6 +134,8 @@ too coarse or too slow; the value is clamped to that setting's range.
 | **bright max** | `--bright-max <n>` | 10000 (off) | Ceiling of the random brightness range, `0..10000`. **Set `min < max` to enable** the effect: each light drifts between independent random brightness targets drawn from `[min, max]`, dimming the palette color so the rig twinkles. `min == max` disables it (constant brightness = that value ÷ 10000). |
 | **bright time** | `--bright-ms <n>` | 600 | How long each random brightness target holds before drifting to the next, ms. |
 | **bright steps** | `--bright-steps <n>` | 0 (continuous) | Quantize the brightness drift to `<n>` discrete values per segment — same write-volume lever as **fade steps**, but for brightness. |
+| **anim min** | `--anim-min <n>` | 0 (fully retracted) | Floor of the deploy **goal** actuation range, on a `0..10000` scale (= a `0..1` setpoint; the value is divided by 10000). The setpoint the *retract* half of the pulse drives to. Step 50, coarse (Shift) 500. |
+| **anim max** | `--anim-max <n>` | 10000 (fully deployed) | Ceiling of the deploy goal range, `0..10000`. The setpoint the *extend* half drives to. **`min == max` turns the deploy animation off** — the goal is never written, so the lights stay put (the **anim time** row shows `(off)`). A partial range (e.g. 2000..8000) makes the lights bob between half-deployed positions instead of fully extending/retracting. |
 
 The two clocks and their two staggers are fully independent: you can ripple the color while every light
 deploys in lockstep, fade fast while the deploy stays slow enough to finish, or any combination.
@@ -143,6 +148,8 @@ cargo run -- --color-stagger-ms 80              # a colour wave rippling across 
 cargo run -- --anim-stagger-ms 200              # a deploy wave, colour still in lockstep
 cargo run -- --bright-min 2000 --bright-max 10000   # random per-light brightness twinkle (0..10000)
 cargo run -- --bright-min 3000 --bright-max 10000 --bright-ms 200 --bright-steps 4   # snappier, quantized
+cargo run -- --anim-min 2000 --anim-max 8000    # deploy bobs between half positions (never fully in/out)
+cargo run -- --anim-min 5000 --anim-max 5000    # deploy animation OFF — colors only, goal left untouched
 ```
 
 Colors are deduped per light: a light is only rewritten when *its own* quantized color actually
@@ -183,6 +190,8 @@ bright_min: 10000
 bright_max: 10000
 bright_ms: 600
 bright_steps: 0
+anim_min: 0
+anim_max: 10000
 colors:
   - "#ff0000"
   - "#00ff00"

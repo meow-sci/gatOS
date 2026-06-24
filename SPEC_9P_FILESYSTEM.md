@@ -315,7 +315,8 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 | `lights/<n>/on` | **St** | flag | Read = on; **write `0`/`1`** (action `light.on`). |
 | `lights/<n>/brightness` | **St** | number | **Write** intensity (action `light.brightness`). |
 | `lights/<n>/color` | **St** | `r g b` | **Write** RGB, each 0..1 (action `light.color`). |
-| `lights/<n>/spread` | **St** | number | Spotlight beam spread — outer-cone **half-angle in degrees** (action `light.spread`). Larger ⇒ wider/softer beam; stock default 45°. Effective value clamped to ~0..89.94°. Only affects spotlights (point lights carry but ignore it). |
+| `lights/<n>/outer_angle` | **St** | number | Spotlight cone **outer** half-angle in **degrees** — the hard beam edge (action `light.outer_angle`). Larger ⇒ wider beam; stock default 45°. Clamped to ~0..89.94°. Writing it also pulls `inner_angle` down to stay ≤ outer, so narrowing it actually narrows the cone (KSA swaps the two if inner > outer). Only affects spotlights (point lights carry but ignore it). |
+| `lights/<n>/inner_angle` | **St** | number | Spotlight cone **inner** half-angle in **degrees** — the full-brightness core (action `light.inner_angle`). Clamped to `[0, outer]`. Equal to outer ⇒ hard edge; smaller ⇒ softer falloff. Bring it down with `outer_angle` for a narrow pinpoint/laser. Only affects spotlights. |
 | `lights/<n>/goal` | **St** | fraction | Actuate/deploy setpoint 0..1 (action `animation.goal`). **Only present when the light part has an animation.** |
 | `lights/<n>/current` | S | scalar | Actual deploy fraction 0..1 (only with an animation). |
 | `lights/<n>/state` | S | string | Animation deployment state — `Deployed`/`Retracted`/`Deploying`/`Retracting`/`Broken` (only with an animation). |
@@ -487,7 +488,8 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `light.on` | light n | value `0`/`1` | Frame | `lights/<n>/on` | |
 | `light.brightness` | light n | value number | Frame | `lights/<n>/brightness` | |
 | `light.color` | light n | values `[r,g,b]` | Frame | `lights/<n>/color` | |
-| `light.spread` | light n | value number (deg) | Frame | `lights/<n>/spread` | outer-cone half-angle; clamped ~0..89.94° |
+| `light.outer_angle` | light n | value number (deg) | Frame | `lights/<n>/outer_angle` | outer cone half-angle; clamped ~0..89.94°; also lowers inner to ≤ outer |
+| `light.inner_angle` | light n | value number (deg) | Frame | `lights/<n>/inner_angle` | inner cone half-angle; clamped `[0, outer]` |
 | `animation.goal` | anim n | value `0..1` | Frame | `animations/<n>/goal`, `solar/<n>/goal`, `lights/<n>/goal` | one ordinal, three views |
 | `decoupler.fire` | decoupler n | value `1` | Frame | `decouplers/<n>/fire` | one-shot |
 | `docking.undock` | docking n | value `1` | Frame | `docking/<n>/undock` | one-shot |

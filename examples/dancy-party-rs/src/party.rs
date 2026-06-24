@@ -46,6 +46,13 @@ pub struct Plan {
     /// How many discrete brightness values the drift between two targets is quantized to (`0` =
     /// continuous). Like the color `steps`, this bounds the **distinct** brightness writes per segment.
     pub bright_steps: u32,
+    /// Animation actuation floor (0..1) — the `goal` setpoint the *retract* half of the pulse drives to
+    /// (default `0` = fully retracted). When `anim_min == anim_max` the animation is **off**: the goal
+    /// is never written at all (see [`Plan::goal_at`]).
+    pub anim_min: f64,
+    /// Animation actuation ceiling (0..1) — the `goal` setpoint the *extend* half of the pulse drives to
+    /// (default `1` = fully deployed).
+    pub anim_max: f64,
 }
 
 impl Plan {
@@ -62,6 +69,9 @@ impl Plan {
             bright_max: 1.0,
             bright_ms: 600.0,
             bright_steps: 0,
+            // Default: the goal pulses across the full retract..extend range (0..1).
+            anim_min: 0.0,
+            anim_max: 1.0,
         }
     }
 
@@ -85,6 +95,14 @@ impl Plan {
         self.bright_max = max.clamp(0.0, 1.0);
         self.bright_ms = (bright_ms as f64).max(1.0);
         self.bright_steps = bright_steps;
+        self
+    }
+
+    /// Builder: set the animation actuation range (0..1) the goal pulse swings between. `min == max`
+    /// turns the animation **off** — the goal is never written (see [`Plan::goal_at`]).
+    pub fn with_anim_range(mut self, min: f64, max: f64) -> Self {
+        self.anim_min = min.clamp(0.0, 1.0);
+        self.anim_max = max.clamp(0.0, 1.0);
         self
     }
 
@@ -138,12 +156,21 @@ impl Plan {
         (from.lerp(to, t), segment)
     }
 
-    /// The deploy `goal` (0/1) at `elapsed_ms` on the **animation clock**, plus the current animation
-    /// segment index. Starts deployed (1) and flips each `anim_ms`: even segment → 1, odd → 0 (the
-    /// `echo 1 > goal … echo 0 > goal` pulse, beginning with the extend).
-    pub fn goal_at(&self, elapsed_ms: f64) -> (u8, u64) {
+    /// The deploy `goal` (0..1 actuation fraction) at `elapsed_ms` on the **animation clock**, plus the
+    /// current animation segment index. The pulse swings between the [`Plan::anim_min`]/[`Plan::anim_max`]
+    /// range: it starts extended (`anim_max`) and flips each `anim_ms` — even segment → `anim_max`, odd →
+    /// `anim_min` (the `echo <hi> > goal … echo <lo> > goal` pulse, beginning with the extend). When
+    /// `anim_min == anim_max` the animation is a **noop**: `None` (the goal is never written), so a range
+    /// collapsed to a point leaves the hardware wherever it sits instead of writing a constant setpoint.
+    pub fn goal_at(&self, elapsed_ms: f64) -> (Option<f64>, u64) {
+        let lo = self.anim_min.min(self.anim_max).clamp(0.0, 1.0);
+        let hi = self.anim_min.max(self.anim_max).clamp(0.0, 1.0);
         let segment = (elapsed_ms.max(0.0) / self.anim_ms).floor() as u64;
-        (((segment + 1) % 2) as u8, segment)
+        if hi - lo < 1e-9 {
+            return (None, segment);
+        }
+        let value = if segment.is_multiple_of(2) { hi } else { lo };
+        (Some(value), segment)
     }
 }
 
@@ -190,10 +217,10 @@ mod tests {
         let plan = Plan::new(vec![rgb(1.0, 0.0, 0.0), rgb(0.0, 0.0, 1.0)], 200, 2000);
         // Several color segments have elapsed by 1 s, but the goal is still in its first (extend) stroke.
         assert_eq!(plan.color_at(1000.0).1, 5); // 1000/200
-        assert_eq!(plan.goal_at(1000.0), (1, 0)); // still deployed, animation segment 0
+        assert_eq!(plan.goal_at(1000.0), (Some(1.0), 0)); // still deployed, animation segment 0
         // The goal only flips once the 2 s animation clock crosses a boundary.
-        assert_eq!(plan.goal_at(2000.0), (0, 1));
-        assert_eq!(plan.goal_at(4000.0), (1, 2));
+        assert_eq!(plan.goal_at(2000.0), (Some(0.0), 1));
+        assert_eq!(plan.goal_at(4000.0), (Some(1.0), 2));
     }
 
     #[test]
@@ -214,9 +241,9 @@ mod tests {
         let plan = Plan::new(vec![rgb(0.2, 0.4, 0.6)], 500, 500);
         assert_eq!(plan.color_at(0.0).0, rgb(0.2, 0.4, 0.6));
         assert_eq!(plan.color_at(600.0).0, rgb(0.2, 0.4, 0.6)); // from == to, never changes
-        assert_eq!(plan.goal_at(0.0).0, 1);
-        assert_eq!(plan.goal_at(600.0).0, 0);
-        assert_eq!(plan.goal_at(1100.0).0, 1);
+        assert_eq!(plan.goal_at(0.0).0, Some(1.0));
+        assert_eq!(plan.goal_at(600.0).0, Some(0.0));
+        assert_eq!(plan.goal_at(1100.0).0, Some(1.0));
     }
 
     #[test]
@@ -264,6 +291,31 @@ mod tests {
         let seg0 = plan.brightness_at(0, 0.0);
         let seg2 = plan.brightness_at(0, 1000.0); // two 500 ms segments later
         assert!((seg0 - seg2).abs() > 1e-9, "segments should differ");
+    }
+
+    #[test]
+    fn anim_range_swings_the_goal_between_min_and_max() {
+        // A partial actuation range: extend half drives to 0.75, retract half to 0.25.
+        let plan = Plan::new(vec![rgb(1.0, 0.0, 0.0)], 1000, 1000).with_anim_range(0.25, 0.75);
+        assert_eq!(plan.goal_at(0.0).0, Some(0.75)); // even segment -> max (extend)
+        assert_eq!(plan.goal_at(1000.0).0, Some(0.25)); // odd segment -> min (retract)
+        assert_eq!(plan.goal_at(2000.0).0, Some(0.75));
+        // A reversed range still animates (min/max are normalized).
+        let rev = Plan::new(vec![rgb(1.0, 0.0, 0.0)], 1000, 1000).with_anim_range(0.75, 0.25);
+        assert_eq!(rev.goal_at(0.0).0, Some(0.75));
+        assert_eq!(rev.goal_at(1000.0).0, Some(0.25));
+    }
+
+    #[test]
+    fn equal_anim_range_is_a_noop() {
+        // min == max -> no animation at all: the goal is never written (None).
+        let plan = Plan::new(vec![rgb(1.0, 0.0, 0.0)], 1000, 1000).with_anim_range(0.5, 0.5);
+        assert_eq!(plan.goal_at(0.0).0, None);
+        assert_eq!(plan.goal_at(1000.0).0, None);
+        assert_eq!(plan.goal_at(9999.0).0, None);
+        // Even the default-collapsed endpoints (e.g. both 0) are off, not a constant 0 write.
+        let zero = Plan::new(vec![rgb(1.0, 0.0, 0.0)], 1000, 1000).with_anim_range(0.0, 0.0);
+        assert_eq!(zero.goal_at(500.0).0, None);
     }
 
     #[test]

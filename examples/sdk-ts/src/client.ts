@@ -199,9 +199,16 @@ export class LightHandle {
     return this.t.command({ vessel_id: this.id, action: "light.color", ordinal: this.n, values: [r, g, b] });
   }
 
-  /** Spotlight beam spread — outer-cone half-angle in degrees (stock 45°, clamped ~0..89.94°). */
-  setSpread(degrees: number) {
-    return this.t.command({ vessel_id: this.id, action: "light.spread", ordinal: this.n, value: degrees });
+  /** Spotlight cone OUTER half-angle in degrees — the hard beam edge (stock 45°, clamped ~0..89.94°).
+   *  Also pulls the inner angle down to stay ≤ outer, so narrowing this actually narrows the beam. */
+  setOuterAngle(degrees: number) {
+    return this.t.command({ vessel_id: this.id, action: "light.outer_angle", ordinal: this.n, value: degrees });
+  }
+
+  /** Spotlight cone INNER half-angle in degrees — the full-brightness core (clamped to [0, outer]).
+   *  Equal to outer ⇒ hard edge; smaller ⇒ softer falloff. Bring this down with the outer for a laser. */
+  setInnerAngle(degrees: number) {
+    return this.t.command({ vessel_id: this.id, action: "light.inner_angle", ordinal: this.n, value: degrees });
   }
 }
 

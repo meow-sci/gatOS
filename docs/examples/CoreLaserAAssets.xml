@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- ====================================================================================================
+     EXAMPLE PART (renderable assets) — a narrow, laser-like spotlight defined entirely in XML, with the
+     SAME deploy/hinge animation as the stock small spotlight it is cloned from.
+
+     Pair this with CoreLaserAGameData.xml. Together they add a new light part whose beam is a tight
+     ~1.1° cone the moment it spawns — no gatOS runtime support required. See docs/LIGHT_PART_ANALYSIS.md
+     for the full pipeline + why the cone can go this narrow.
+
+     SELF-CONTAINED BY REUSE: this file declares NO new mesh atlas, material, texture, or animation. It
+     reuses the stock Core electrical meshes (the small-spotlight head, hinges, mount), the Core PBR
+     material, and the stock LightSmallA deploy animation GLB — all already loaded by the Core content.
+     The only thing that makes this a "laser" is the <Light> block in the GameData file.
+
+     HOW THE ANIMATION IS RETAINED (important):
+       KSA binds a keyframe animation to subparts by matching each subpart INSTANCE Id against the node
+       NAMES baked into the .glb (KSA/KeyframeAnimationData.cs PartLookup; KeyframeAnimationModule.cs
+       ApplyAnimationTransforms). The stock Animations/CoreElectricalA_Prefab_LightSmallA_Anim.glb drives
+       one joint (LightSmallA_RotaryJoint) whose named child nodes are exactly:
+           CoreElectricalA_Subpart_SpotlightAHinge1 / _SpotlightAHinge2 / _SpotlightA1 / _LightMountA1
+       So to reuse that GLB this part MUST give its subpart instances those exact Ids (instance Ids are
+       scoped per-Part — KSA/PartTemplate.cs — so reusing the same strings as LightSmallA does NOT
+       collide). Non-matching node names are silently ignored, which is why a renamed clone loses its
+       animation. The geometry/transforms below are copied from CoreElectricalA_Prefab_LightSmallA so the
+       animated joint lines up with the meshes.
+
+       Only the HEAD instance's InstanceOf is changed — from the stock spotlight subpart to our laser
+       emitter subpart (which carries the laser <Light> and reuses the same head mesh). The head animates
+       (tilts) on deploy exactly like the original, carrying the laser beam with it.
+
+     HOW TO USE: drop both XML files into a mod's Content folder (the same place KSA loads Core/*.xml
+     from) so they parse alongside the Core content the mesh/material/animation paths resolve against.
+     The part appears under the "Lights" editor tag as CoreLaserA_Prefab_LaserSmallA. In gatOS its deploy
+     animation surfaces as lights/<n>/{goal,current,state} (a light part with an animation co-locates the
+     actuate control — see SPEC_9P_FILESYSTEM.md), alongside on/brightness/color/inner_angle/outer_angle.
+     ==================================================================================================== -->
+<Assets>
+
+    <!-- The laser emitter subpart. A light subpart is a normal MESH subpart (declared here) that ALSO
+         carries a <Light> in the GameData file, keyed by the same Id. We reuse the stock small-spotlight
+         HEAD mesh so the deploy animation (authored for that head) still lines up. -->
+    <SubPart Id="CoreLaserA_Subpart_EmitterA">
+        <PartModel Id="CoreLaserA_Subpart_EmitterA_Model">
+            <Mesh Id="CoreElectricalA_Subpart_SpotlightA" />
+            <Material Id="CoreElectricalA_Material" />
+        </PartModel>
+        <MeshView>
+            <Mesh Id="CoreElectricalA_Subpart_SpotlightA_VM" />
+        </MeshView>
+    </SubPart>
+
+    <!-- The placeable part prefab. Subpart INSTANCE Ids + transforms are copied verbatim from
+         CoreElectricalA_Prefab_LightSmallA so the stock deploy animation GLB binds and aligns. Only the
+         head (CoreElectricalA_Subpart_SpotlightA1) is re-pointed at our laser emitter. -->
+    <Part Id="CoreLaserA_Prefab_LaserSmallA">
+        <Connector Id="_connectorLaserA">
+            <Transform>
+                <Position Z="0.33541" />
+                <Rotation Y="-1.57053" />
+                <Scale X="0.50000" Y="0.50000" Z="0.50000" />
+            </Transform>
+        </Connector>
+        <SubPart Id="CoreElectricalA_Subpart_SpotlightAHinge1" InstanceOf="CoreElectricalA_Subpart_SpotlightAHinge">
+            <Transform>
+                <Position X="-0.06121" Y="-0.11858" />
+            </Transform>
+        </SubPart>
+        <!-- HEAD: same instance Id as LightSmallA (so the animation binds), but our laser emitter. -->
+        <SubPart Id="CoreElectricalA_Subpart_SpotlightA1" InstanceOf="CoreLaserA_Subpart_EmitterA" />
+        <SubPart Id="CoreElectricalA_Subpart_LightMountA1" InstanceOf="CoreElectricalA_Subpart_LightMountA">
+            <Transform>
+                <Position X="0.00323" Z="0.15145" />
+            </Transform>
+        </SubPart>
+        <SubPart Id="CoreElectricalA_Subpart_SpotlightAHinge2" InstanceOf="CoreElectricalA_Subpart_SpotlightAHinge">
+            <Transform>
+                <Position X="-0.06120" Y="0.11860" />
+                <Rotation X="-3.14159" />
+            </Transform>
+        </SubPart>
+    </Part>
+
+</Assets>
