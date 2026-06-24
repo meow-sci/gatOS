@@ -1,0 +1,11 @@
+{
+  "name": "nudge",
+  "version": "0.1.0",
+  "description": "Shift a vessel's CCI position by a fixed delta (keeping its velocity) via the gatOS /sim teleport debug file. Useful for sliding an EVA kitten along the surface.",
+  "type": "module",
+  "module": "index.ts",
+  "bin": { "nudge": "index.ts" },
+  "scripts": {
+    "nudge": "bun run index.ts"
+  }
+}
