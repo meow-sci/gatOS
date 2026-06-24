@@ -64,10 +64,10 @@ pub struct Settings {
     pub bright_ms: u64,
     /// Brightness-drift quantization steps (0 = continuous).
     pub bright_steps: u32,
-    /// Animation actuation floor, on the `0..`[`ANIM_SCALE`] scale — the goal the retract half drives to
-    /// (`anim_min == anim_max` turns the animation off). Divided by [`ANIM_SCALE`] for the 0..1 setpoint.
+    /// Animation actuation floor — the `0..1` goal setpoint the retract half of the pulse drives to
+    /// (`anim_min == anim_max` turns the animation off). A real fraction, typed/stored directly.
     pub anim_min: f64,
-    /// Animation actuation ceiling, on the `0..`[`ANIM_SCALE`] scale — the goal the extend half drives to.
+    /// Animation actuation ceiling — the `0..1` goal setpoint the extend half of the pulse drives to.
     pub anim_max: f64,
 }
 
@@ -85,9 +85,9 @@ impl Default for Settings {
             bright_max: BRIGHT_SCALE,
             bright_ms: 600,
             bright_steps: 0,
-            // Animation pulses across the full retract..extend range by default (0..1 = 0..ANIM_SCALE).
+            // Animation pulses across the full retract..extend range by default.
             anim_min: 0.0,
-            anim_max: ANIM_SCALE,
+            anim_max: 1.0,
         }
     }
 }
@@ -101,9 +101,6 @@ const MAX_STAGGER: f64 = 60_000.0;
 /// The top of the brightness min/max scale (full brightness, = a 1.0 color multiplier). The
 /// configured 0..[`BRIGHT_SCALE`] value is divided by this to get the actual 0..1 multiplier.
 pub const BRIGHT_SCALE: f64 = 10_000.0;
-/// The top of the animation actuation min/max scale (= a fully-extended `1.0` goal). The configured
-/// 0..[`ANIM_SCALE`] value is divided by this to get the actual 0..1 goal setpoint.
-pub const ANIM_SCALE: f64 = 10_000.0;
 
 impl Settings {
     /// Nudges row `row` by `dir` (-1/+1), a coarse step when `big` (Shift), within each knob's range.
@@ -152,12 +149,12 @@ impl Settings {
                 self.bright_steps = (self.bright_steps as i64 + d * step).clamp(0, 1000) as u32;
             }
             10 => {
-                let step = if big { 500.0 } else { 50.0 };
-                self.anim_min = (self.anim_min + dir as f64 * step).clamp(0.0, ANIM_SCALE);
+                let step = if big { 0.25 } else { 0.05 };
+                self.anim_min = (self.anim_min + dir as f64 * step).clamp(0.0, 1.0);
             }
             11 => {
-                let step = if big { 500.0 } else { 50.0 };
-                self.anim_max = (self.anim_max + dir as f64 * step).clamp(0.0, ANIM_SCALE);
+                let step = if big { 0.25 } else { 0.05 };
+                self.anim_max = (self.anim_max + dir as f64 * step).clamp(0.0, 1.0);
             }
             _ => {}
         }
@@ -195,7 +192,7 @@ impl Settings {
             }
             2 => format!("{} ms", self.color_ms),
             3 => {
-                if self.anim_min == self.anim_max {
+                if self.anim_is_off() {
                     format!("{} ms (off)", self.anim_ms)
                 } else {
                     format!("{} ms", self.anim_ms)
@@ -219,14 +216,15 @@ impl Settings {
                     format!("{} steps", self.bright_steps)
                 }
             }
-            10 => format!("{}", self.anim_min as u64),
-            11 => format!("{}", self.anim_max as u64),
+            10 => fmt_frac(self.anim_min),
+            11 => fmt_frac(self.anim_max),
             _ => String::new(),
         }
     }
 
-    /// The current value of a row as a bare integer string — what the manual-input popup prefills (so
-    /// the user edits from the live value rather than an empty field).
+    /// The current value of a row as a bare string — what the manual-input popup prefills (so the user
+    /// edits from the live value rather than an empty field). Integer rows render whole; the `0..1`
+    /// fraction rows (anim min/max) render as a decimal so a typed value round-trips.
     pub fn row_input_value(&self, row: usize) -> String {
         match row {
             0 => format!("{}", self.hz.round() as u64),
@@ -239,32 +237,59 @@ impl Settings {
             7 => format!("{}", self.bright_max as u64),
             8 => self.bright_ms.to_string(),
             9 => self.bright_steps.to_string(),
-            10 => format!("{}", self.anim_min as u64),
-            11 => format!("{}", self.anim_max as u64),
+            10 => fmt_frac(self.anim_min),
+            11 => fmt_frac(self.anim_max),
             _ => String::new(),
         }
     }
 
-    /// Applies a manually-typed whole number `v` to row `row`, clamped to that row's valid range. The
-    /// input is unconstrained (0 or higher); the clamp keeps the setting usable (e.g. frame rate can't
-    /// be 0, durations have a floor).
-    pub fn set_from_input(&mut self, row: usize, v: u64) {
-        let vf = v as f64;
+    /// True when the deploy animation is disabled — its actuation range has collapsed to a point
+    /// (`anim_min == anim_max`), so the goal is never written. Uses an epsilon so float stepping that
+    /// lands the two on the same value still reads as off (matches [`crate::party::Plan::goal_at`]).
+    pub fn anim_is_off(&self) -> bool {
+        (self.anim_min - self.anim_max).abs() < 1e-9
+    }
+
+    /// Whether a settings row holds a `0..1` decimal fraction (anim min/max) rather than a whole number,
+    /// so the manual-entry popup accepts a decimal point and parses it as a float.
+    pub fn row_is_fraction(row: usize) -> bool {
+        matches!(row, 10 | 11)
+    }
+
+    /// Applies a manually-typed number `v` to row `row`, clamped to that row's valid range. The input is
+    /// unconstrained (0 or higher); the clamp keeps the setting usable (e.g. frame rate can't be 0,
+    /// durations have a floor). Whole-number rows round `v`; the `0..1` fraction rows (anim min/max) take
+    /// the decimal verbatim, which is why a player can type `0.5` for a half-deploy.
+    pub fn set_from_input(&mut self, row: usize, v: f64) {
+        let v = v.max(0.0);
+        let int = v.round() as u64;
         match row {
-            0 => self.hz = vf.clamp(1.0, 240.0),
-            1 => self.steps = v.min(1000) as u32,
-            2 => self.color_ms = v.clamp(MIN_MS, MAX_MS),
-            3 => self.anim_ms = v.clamp(MIN_MS, MAX_MS),
-            4 => self.color_stagger_ms = vf.clamp(0.0, MAX_STAGGER),
-            5 => self.anim_stagger_ms = vf.clamp(0.0, MAX_STAGGER),
-            6 => self.bright_min = vf.clamp(0.0, BRIGHT_SCALE),
-            7 => self.bright_max = vf.clamp(0.0, BRIGHT_SCALE),
-            8 => self.bright_ms = v.clamp(MIN_MS, MAX_MS),
-            9 => self.bright_steps = v.min(1000) as u32,
-            10 => self.anim_min = vf.clamp(0.0, ANIM_SCALE),
-            11 => self.anim_max = vf.clamp(0.0, ANIM_SCALE),
+            0 => self.hz = v.clamp(1.0, 240.0),
+            1 => self.steps = int.min(1000) as u32,
+            2 => self.color_ms = int.clamp(MIN_MS, MAX_MS),
+            3 => self.anim_ms = int.clamp(MIN_MS, MAX_MS),
+            4 => self.color_stagger_ms = v.clamp(0.0, MAX_STAGGER),
+            5 => self.anim_stagger_ms = v.clamp(0.0, MAX_STAGGER),
+            6 => self.bright_min = v.clamp(0.0, BRIGHT_SCALE),
+            7 => self.bright_max = v.clamp(0.0, BRIGHT_SCALE),
+            8 => self.bright_ms = int.clamp(MIN_MS, MAX_MS),
+            9 => self.bright_steps = int.min(1000) as u32,
+            10 => self.anim_min = v.clamp(0.0, 1.0),
+            11 => self.anim_max = v.clamp(0.0, 1.0),
             _ => {}
         }
+    }
+}
+
+/// Shortest `0..1` rendering for a fraction setting (`1`, `0`, `0.5`, `0.25`) — 2 decimals, trailing
+/// zeros dropped. Used both to display the anim min/max rows and to prefill their manual-entry box.
+fn fmt_frac(v: f64) -> String {
+    let s = format!("{:.2}", v.clamp(0.0, 1.0));
+    let trimmed = s.trim_end_matches('0').trim_end_matches('.');
+    if trimmed.is_empty() {
+        "0".to_string()
+    } else {
+        trimmed.to_string()
     }
 }
 
@@ -621,10 +646,7 @@ impl App {
                 self.settings.bright_ms,
                 self.settings.bright_steps,
             )
-            .with_anim_range(
-                self.settings.anim_min / ANIM_SCALE,
-                self.settings.anim_max / ANIM_SCALE,
-            )
+            .with_anim_range(self.settings.anim_min, self.settings.anim_max)
     }
 
     // ---- keyboard ----------------------------------------------------------------------------
@@ -858,13 +880,16 @@ impl App {
         }
     }
 
-    /// Handles the manual numeric-entry popup for a settings row: digits only, `Enter` applies (clamped
-    /// to the row's range) and returns to the settings list, `Esc` returns without changing anything.
+    /// Handles the manual numeric-entry popup for a settings row: `Enter` applies (clamped to the row's
+    /// range) and returns to the settings list, `Esc` returns without changing anything. Whole-number
+    /// rows accept digits only; the `0..1` fraction rows (anim min/max) also accept a single `.` so a
+    /// decimal like `0.5` can be typed.
     fn on_key_setting_input(&mut self, key: KeyEvent) {
         let row = match &self.modal {
             Modal::SettingInput(m) => m.row,
             _ => return,
         };
+        let fraction = Settings::row_is_fraction(row);
         match key.code {
             KeyCode::Esc => self.reopen_settings(row),
             KeyCode::Enter => {
@@ -872,14 +897,18 @@ impl App {
                     Modal::SettingInput(m) => m.text.trim().to_string(),
                     _ => return,
                 };
-                match text.parse::<u64>() {
+                match text.parse::<f64>() {
                     Ok(v) => {
                         self.settings.set_from_input(row, v);
                         self.republish_plan();
                         self.reopen_settings(row);
                     }
                     Err(_) => {
-                        self.status = "enter a whole number (0 or higher)".into();
+                        self.status = if fraction {
+                            "enter a number 0..1 (e.g. 0.5)".into()
+                        } else {
+                            "enter a whole number (0 or higher)".into()
+                        };
                         self.status_err = true;
                     }
                 }
@@ -887,6 +916,14 @@ impl App {
             KeyCode::Backspace => {
                 if let Modal::SettingInput(m) = &mut self.modal {
                     m.text.pop();
+                }
+            }
+            // A decimal point is allowed once, and only on the fraction rows.
+            KeyCode::Char('.') if fraction => {
+                if let Modal::SettingInput(m) = &mut self.modal {
+                    if !m.text.contains('.') {
+                        m.text.push('.');
+                    }
                 }
             }
             KeyCode::Char(c) if c.is_ascii_digit() => {
@@ -1626,16 +1663,55 @@ mod tests {
     #[test]
     fn manual_input_clamps_to_the_row_range() {
         let mut s = Settings::default();
-        s.set_from_input(0, 0); // frame rate can't be 0
+        s.set_from_input(0, 0.0); // frame rate can't be 0
         assert_eq!(s.hz, 1.0);
-        s.set_from_input(0, 99_999); // ...nor absurdly high
+        s.set_from_input(0, 99_999.0); // ...nor absurdly high
         assert_eq!(s.hz, 240.0);
-        s.set_from_input(2, 0); // duration floor
+        s.set_from_input(2, 0.0); // duration floor
         assert_eq!(s.color_ms, 50);
-        s.set_from_input(6, 999_999); // brightness scale ceiling
+        s.set_from_input(6, 999_999.0); // brightness scale ceiling
         assert_eq!(s.bright_min, BRIGHT_SCALE);
-        s.set_from_input(1, 7); // fade steps takes the value verbatim
+        s.set_from_input(1, 7.0); // fade steps takes the value verbatim
         assert_eq!(s.steps, 7);
+        // The anim rows take a real 0..1 fraction verbatim and clamp out-of-range input.
+        s.set_from_input(10, 0.5);
+        assert_eq!(s.anim_min, 0.5);
+        s.set_from_input(11, 2.0); // clamps to the 1.0 ceiling
+        assert_eq!(s.anim_max, 1.0);
+    }
+
+    #[test]
+    fn typing_a_decimal_sets_an_anim_fraction() {
+        let mut a = app();
+        a.screen = Screen::Party;
+        a.open_settings();
+        // Walk to "anim min" (row 10) and open the manual-entry popup.
+        for _ in 0..10 {
+            a.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        match &a.modal {
+            Modal::SettingInput(m) => assert_eq!(m.row, 10),
+            _ => panic!("expected SettingInput modal"),
+        }
+        // Clear the prefill and type a decimal — the '.' must be accepted on this fraction row.
+        for _ in 0..8 {
+            a.on_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        }
+        for c in "0.35".chars() {
+            press(&mut a, c);
+        }
+        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!((a.settings.anim_min - 0.35).abs() < 1e-9);
+    }
+
+    #[test]
+    fn anim_off_when_min_equals_max() {
+        let mut s = Settings::default();
+        assert!(!s.anim_is_off()); // default 0..1 range animates
+        s.anim_min = 0.5;
+        s.anim_max = 0.5;
+        assert!(s.anim_is_off());
     }
 
     #[test]

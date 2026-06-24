@@ -119,8 +119,9 @@ second freshness gate, as always, is the in-game `sample_rate_hz` (how fast the 
 
 Press `s` on the party screen. `↑`/`↓` pick a row, `←`/`→` adjust (hold **Shift** for a coarse step),
 `Esc` closes. Scroll over the popup adjusts the highlighted row. Press **`Enter`** on a row for a
-manual-entry popup where you can type an exact whole number (0 or higher) — handy when the stepping is
-too coarse or too slow; the value is clamped to that setting's range.
+manual-entry popup where you can type an exact value — handy when the stepping is too coarse or too
+slow; the value is clamped to that setting's range. Most rows take a whole number; the **anim min/max**
+rows take a `0..1` decimal (e.g. `0.5`).
 
 | setting | seed flag | default | what it does |
 | ------- | --------- | ------- | ------------ |
@@ -134,8 +135,8 @@ too coarse or too slow; the value is clamped to that setting's range.
 | **bright max** | `--bright-max <n>` | 10000 (off) | Ceiling of the random brightness range, `0..10000`. **Set `min < max` to enable** the effect: each light drifts between independent random brightness targets drawn from `[min, max]`, dimming the palette color so the rig twinkles. `min == max` disables it (constant brightness = that value ÷ 10000). |
 | **bright time** | `--bright-ms <n>` | 600 | How long each random brightness target holds before drifting to the next, ms. |
 | **bright steps** | `--bright-steps <n>` | 0 (continuous) | Quantize the brightness drift to `<n>` discrete values per segment — same write-volume lever as **fade steps**, but for brightness. |
-| **anim min** | `--anim-min <n>` | 0 (fully retracted) | Floor of the deploy **goal** actuation range, on a `0..10000` scale (= a `0..1` setpoint; the value is divided by 10000). The setpoint the *retract* half of the pulse drives to. Step 50, coarse (Shift) 500. |
-| **anim max** | `--anim-max <n>` | 10000 (fully deployed) | Ceiling of the deploy goal range, `0..10000`. The setpoint the *extend* half drives to. **`min == max` turns the deploy animation off** — the goal is never written, so the lights stay put (the **anim time** row shows `(off)`). A partial range (e.g. 2000..8000) makes the lights bob between half-deployed positions instead of fully extending/retracting. |
+| **anim min** | `--anim-min <f>` | 0 (fully retracted) | Floor of the deploy **goal** actuation range — a real `0..1` decimal (type `0.5` for a half-deploy). The setpoint the *retract* half of the pulse drives to. ←/→ step 0.05, coarse (Shift) 0.25; `Enter` to type an exact value. |
+| **anim max** | `--anim-max <f>` | 1 (fully deployed) | Ceiling of the deploy goal range, `0..1` decimal. The setpoint the *extend* half drives to. **`min == max` turns the deploy animation off** — the goal is never written, so the lights stay put (the **anim time** row shows `(off)`). A partial range (e.g. 0.2..0.8) makes the lights bob between half-deployed positions instead of fully extending/retracting. |
 
 The two clocks and their two staggers are fully independent: you can ripple the color while every light
 deploys in lockstep, fade fast while the deploy stays slow enough to finish, or any combination.
@@ -148,8 +149,8 @@ cargo run -- --color-stagger-ms 80              # a colour wave rippling across 
 cargo run -- --anim-stagger-ms 200              # a deploy wave, colour still in lockstep
 cargo run -- --bright-min 2000 --bright-max 10000   # random per-light brightness twinkle (0..10000)
 cargo run -- --bright-min 3000 --bright-max 10000 --bright-ms 200 --bright-steps 4   # snappier, quantized
-cargo run -- --anim-min 2000 --anim-max 8000    # deploy bobs between half positions (never fully in/out)
-cargo run -- --anim-min 5000 --anim-max 5000    # deploy animation OFF — colors only, goal left untouched
+cargo run -- --anim-min 0.2 --anim-max 0.8      # deploy bobs between half positions (never fully in/out)
+cargo run -- --anim-min 0.5 --anim-max 0.5      # deploy animation OFF — colors only, goal left untouched
 ```
 
 Colors are deduped per light: a light is only rewritten when *its own* quantized color actually
@@ -191,7 +192,7 @@ bright_max: 10000
 bright_ms: 600
 bright_steps: 0
 anim_min: 0
-anim_max: 10000
+anim_max: 1
 colors:
   - "#ff0000"
   - "#00ff00"

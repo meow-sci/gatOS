@@ -144,12 +144,12 @@ impl Config {
                     _ => return Err("--bright-steps wants a number in 0..1000 (0 = continuous)".into()),
                 },
                 "--anim-min" => match args.next().map(|s| s.parse::<f64>()) {
-                    Some(Ok(v)) if (0.0..=10_000.0).contains(&v) => settings.anim_min = v,
-                    _ => return Err("--anim-min wants a number in 0..10000".into()),
+                    Some(Ok(v)) if (0.0..=1.0).contains(&v) => settings.anim_min = v,
+                    _ => return Err("--anim-min wants a number in 0..1 (e.g. 0.5)".into()),
                 },
                 "--anim-max" => match args.next().map(|s| s.parse::<f64>()) {
-                    Some(Ok(v)) if (0.0..=10_000.0).contains(&v) => settings.anim_max = v,
-                    _ => return Err("--anim-max wants a number in 0..10000".into()),
+                    Some(Ok(v)) if (0.0..=1.0).contains(&v) => settings.anim_max = v,
+                    _ => return Err("--anim-max wants a number in 0..1 (e.g. 0.5)".into()),
                 },
                 "-h" | "--help" => help = true,
                 other => return Err(format!("unknown argument '{other}' (try --help)")),
@@ -216,8 +216,8 @@ fn print_help() {
     println!("  --bright-max <n>        random-brightness ceiling, 0..10000 (default 10000). min<max enables it.");
     println!("  --bright-ms <n>         time between random brightness targets, ms, 50..60000 (default 600)");
     println!("  --bright-steps <n>      quantize the brightness drift to <n> values, 0..1000 (0 = continuous)");
-    println!("  --anim-min <n>          deploy-goal retract setpoint, 0..10000 = 0..1 (default 0 = fully retracted)");
-    println!("  --anim-max <n>          deploy-goal extend setpoint, 0..10000 = 0..1 (default 10000 = fully deployed).");
+    println!("  --anim-min <f>          deploy-goal retract setpoint, 0..1 decimal (default 0 = fully retracted)");
+    println!("  --anim-max <f>          deploy-goal extend setpoint, 0..1 decimal (default 1 = fully deployed).");
     println!("                          min == max disables the deploy animation entirely (no goal writes).");
     println!();
     println!("In the guest, no flags are needed: it reads /sim and drives the selected vessels' lights.");
