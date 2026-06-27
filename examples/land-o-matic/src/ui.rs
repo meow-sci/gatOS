@@ -237,7 +237,11 @@ fn state_lines(app: &App, t: &Telemetry) -> Vec<Line<'static>> {
             Span::styled(format!("{:<9}", "guidance"), Style::default().fg(KEY)),
             Span::styled(ptxt, Style::default().fg(pcol).add_modifier(Modifier::BOLD)),
             Span::styled(
-                format!("   G-limit {:.1} g", app.g_limit),
+                format!(
+                    "   G-limit {:.1} g   brake +{:.0}%",
+                    app.g_limit,
+                    (app.brake_margin - 1.0) * 100.0
+                ),
                 Style::default().fg(VAL),
             ),
         ]));
@@ -270,8 +274,9 @@ fn state_lines(app: &App, t: &Telemetry) -> Vec<Line<'static>> {
         lines.push(kv(
             "guidance",
             &format!(
-                "disarmed   G-limit {:.1} g   press [e] to engage",
-                app.g_limit
+                "disarmed   G-limit {:.1} g   brake +{:.0}%   press [e] to engage",
+                app.g_limit,
+                (app.brake_margin - 1.0) * 100.0
             ),
         ));
     }
@@ -337,7 +342,7 @@ fn state_lines(app: &App, t: &Telemetry) -> Vec<Line<'static>> {
 
 fn keys_line() -> Line<'static> {
     Line::from(Span::styled(
-        "[e] engage  [a] abort  \u{2191}/\u{2193} G-limit  [q] quit",
+        "[e] engage  [a] abort  \u{2191}/\u{2193} G-limit  [/] brake  [q] quit",
         Style::default().fg(KEY),
     ))
 }
