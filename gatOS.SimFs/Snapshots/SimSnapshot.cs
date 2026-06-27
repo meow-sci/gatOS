@@ -123,6 +123,16 @@ public sealed record VesselSnapshot(
     /// <summary>Whether this vessel is the player-controlled one (<c>controlled</c> flag).</summary>
     public bool Controlled { get; init; }
 
+    /// <summary>
+    ///     Whether KSA will accept flight-control + flight-computer commands for this vessel
+    ///     (<c>Vehicle.IsControllable</c>: has a Control Module, or the debug override). A vessel
+    ///     reading <c>0</c> here silently ignores throttle/stage/attitude/burn/RCS/ignite — gatOS
+    ///     does not gate; it relies on KSA's own lockout, so this is the pre-check flag for guests
+    ///     and autopilots. The player-controlled vessel is always controllable. (KSA 2026.6.9.4750,
+    ///     rev 4699.)
+    /// </summary>
+    public bool Controllable { get; init; }
+
     /// <summary>NavBall-derived attitude/performance; null when unavailable.</summary>
     public NavballSnapshot? Navball { get; init; }
 
@@ -148,10 +158,10 @@ public sealed record VesselSnapshot(
     /// <summary>Local physics environment (pressure, density, accelerations); null when unavailable.</summary>
     public EnvironmentSnapshot? Environment { get; init; }
 
-    /// <summary>Total electrical power produced this sample, watts.</summary>
+    /// <summary>Total instantaneous electrical power produced, watts.</summary>
     public double PowerProducedW { get; init; }
 
-    /// <summary>Total electrical power consumed this sample, watts.</summary>
+    /// <summary>Total instantaneous electrical power consumed, watts.</summary>
     public double PowerConsumedW { get; init; }
 
     /// <summary>Battery capacity in joules; null when no battery.</summary>
@@ -249,7 +259,7 @@ public sealed record RcsSnapshot(int Index, bool Active, bool PropellantAvailabl
 
 /// <summary>One solar panel's state.</summary>
 /// <param name="Index">Stable per-vessel solar index.</param>
-/// <param name="ProducedW">Power produced this sample, watts.</param>
+/// <param name="ProducedW">Instantaneous power produced, watts.</param>
 /// <param name="Occluded">Whether the panel is occluded.</param>
 /// <param name="SunAoaDeg">Sun angle-of-attack, degrees.</param>
 /// <param name="Efficiency">Sun efficiency 0..1.</param>
@@ -270,7 +280,7 @@ public sealed record SolarSnapshot(
 /// <summary>One generator's state.</summary>
 /// <param name="Index">Stable per-vessel generator index.</param>
 /// <param name="Active">Whether it is producing.</param>
-/// <param name="ProducedW">Power produced this sample, watts.</param>
+/// <param name="ProducedW">Instantaneous power produced, watts.</param>
 public sealed record GeneratorSnapshot(int Index, bool Active, double ProducedW);
 
 /// <summary>One light's state.</summary>
@@ -319,11 +329,13 @@ public sealed record LightSnapshot(
 public sealed record DockingSnapshot(int Index, bool Docked, string? DockedToPart)
 {
     /// <summary>
-    ///     The separation impulse this port applies when it undocks, in Newtons (the value
-    ///     <c>DockingPort.Undock</c> hands to <c>Vehicle.Split</c>). Seeded from the part's XML
-    ///     (<c>PushoffForce</c>, stock 7000 N) and overwritable live via the debug control.
+    ///     The separation impulse this port applies when it undocks, in newton-seconds (N·s) — the
+    ///     value <c>DockingPort.Undock</c> hands to <c>Vehicle.Split(Connector, splitImpulse)</c>.
+    ///     Seeded from the part's XML (<c>PushoffImpulse</c>, stock 7000 N·s) and overwritable live
+    ///     via the debug control. (KSA 2026.6.9.4750 renamed <c>PushoffForce</c> → <c>PushoffImpulse</c>
+    ///     and changed the quantity from force (N) to impulse (N·s).)
     /// </summary>
-    public double PushoffForceN { get; init; }
+    public double PushoffImpulseNs { get; init; }
 }
 
 /// <summary>One decoupler's state.</summary>

@@ -280,6 +280,7 @@ public static class SimFsTree
                     Line($"{p}/situation", "situation", () => Vessel(vesselId).Situation),
                     Line($"{p}/parent", "parent", () => Vessel(vesselId).ParentBodyName ?? ""),
                     Line($"{p}/controlled", "controlled", () => Formats.Flag(Vessel(vesselId).Controlled)),
+                    Line($"{p}/controllable", "controllable", () => Formats.Flag(Vessel(vesselId).Controllable)),
                     Line($"{p}/com", "com", () => Formats.Vector(Vessel(vesselId).CenterOfMass)),
                     new StaticTextFile("telemetry", Qid($"{p}/telemetry"),
                         () => Formats.VesselTelemetry(_store.Current, Vessel(vesselId)) + "\n"),
@@ -558,10 +559,11 @@ public static class SimFsTree
 
         private VfsDirectory DebugDockingPortDir(string q, string vesselId, int index)
             => DelegateDirectory.Fixed($"{index}", Qid($"{q}/docking/{index}"),
-                // Read shows the live Newton value (stock 7000); write overwrites DockingPort.PushoffForce,
-                // the separation impulse the regular docking/<n>/undock trigger then applies.
-                NumberControl($"{q}/docking/{index}/pushoff_force", "pushoff_force", vesselId,
-                    "debug.docking_pushoff", index, () => Formats.Scalar(Docking(vesselId, index).PushoffForceN)));
+                // Read shows the live impulse value in N·s (stock 7000); write overwrites
+                // DockingPort.PushoffImpulse, the separation impulse the regular docking/<n>/undock
+                // trigger then applies.
+                NumberControl($"{q}/docking/{index}/pushoff_impulse", "pushoff_impulse", vesselId,
+                    "debug.docking_pushoff", index, () => Formats.Scalar(Docking(vesselId, index).PushoffImpulseNs)));
 
         private VfsDirectory AnimationsDir(string p, string vesselId)
         {
@@ -701,8 +703,8 @@ public static class SimFsTree
             {
                 Line($"{q}/docked", "docked", () => Formats.Flag(Docking(vesselId, index).Docked)),
                 Line($"{q}/docked_to", "docked_to", () => Docking(vesselId, index).DockedToPart ?? ""),
-                Line($"{q}/pushoff_force", "pushoff_force",
-                    () => Formats.Scalar(Docking(vesselId, index).PushoffForceN)),
+                Line($"{q}/pushoff_impulse", "pushoff_impulse",
+                    () => Formats.Scalar(Docking(vesselId, index).PushoffImpulseNs)),
             };
             // Undock (G4): a one-shot TRIGGER mirroring decoupler fire — write 1 to separate this
             // docked port. Only present when a command sink is wired.

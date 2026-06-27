@@ -80,6 +80,13 @@ internal sealed class TelemetrySampler
                 Sample();
     }
 
+    [KsaAnchor("Universe.GetElapsedSimTime().Seconds(); Universe.SimulationSpeed; Universe.GetLastSimStep().DeltaTime; "
+            + "Program.ControlledVehicle?.Id; Universe.CurrentSystem.All.UnsafeAsList()",
+        SourceFile = "KSA/Universe.cs / KSA/Program.cs / KSA/CelestialSystem.cs", Verified = "2026-06-27",
+        GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Low,
+        Notes = "Sampler-direct time/warp/system reads (the /sim time/* rows + the vessel enumeration). None "
+            + "changed 4680→4750. Anchored (G4) so the census is complete — a rename errors in the sampler, "
+            + "still caught by the build, just outside the actuator/reader anchor set.")]
     private void Sample()
     {
         var ut = Sanitize.Finite(Universe.GetElapsedSimTime().Seconds());
@@ -150,6 +157,9 @@ internal sealed class TelemetrySampler
         }
     }
 
+    [KsaAnchor("Universe.GetSimulationSpeeds() (SimulationSpeed.Value per warp rung)",
+        SourceFile = "KSA/Universe.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium,
+        Notes = "The fixed warp ladder (time/warp_speeds); cached after the first successful read.")]
     private IReadOnlyList<double> SampleWarpSpeeds()
     {
         // The warp ladder is a fixed per-session list; cache it after the first successful read so
@@ -168,6 +178,9 @@ internal sealed class TelemetrySampler
         return _warpSpeeds;
     }
 
+    [KsaAnchor("Universe.IsAutoWarpActive",
+        SourceFile = "KSA/Universe.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium,
+        Notes = "time/auto_warp active flag.")]
     private static bool SafeAutoWarpActive()
     {
         try
@@ -180,6 +193,9 @@ internal sealed class TelemetrySampler
         }
     }
 
+    [KsaAnchor("Universe.AutoWarpTime?.Seconds()",
+        SourceFile = "KSA/Universe.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium,
+        Notes = "time/auto_warp target UT; nullable when no auto-warp scheduled.")]
     private static double SafeAutoWarpTarget()
     {
         try
@@ -192,6 +208,9 @@ internal sealed class TelemetrySampler
         }
     }
 
+    [KsaAnchor("VersionInfo.Current.VersionString",
+        SourceFile = "KSA/VersionInfo.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Low,
+        Notes = "status/game_version; cached after the first read.")]
     private string GameVersion()
     {
         if (_gameVersion.Length > 0)

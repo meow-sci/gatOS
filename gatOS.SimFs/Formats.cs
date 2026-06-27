@@ -168,6 +168,7 @@ public static class Formats
             json.WriteString("id", v.Id);
             json.WriteString("sit", v.Situation);
             json.WriteBoolean("controlled", v.Controlled);
+            json.WriteBoolean("controllable", v.Controllable);
             if (v.ParentBodyName is { } parent)
                 json.WriteString("parent", parent);
 

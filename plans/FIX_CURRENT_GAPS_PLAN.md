@@ -1,9 +1,11 @@
 # Plan — Fix Current Gaps from the KSA 2026.6.9.4750 Update
 
 **Status:** gatOS was built/verified against the **2026.6.8.4680** baseline. The **2026.6.9.4750**
-update (2026-06-27, KSA revs 4680→4750) changed three subsystems gatOS binds to. **`gatOS.GameMod` does
-not currently compile against 4750** — one confirmed compile break (docking pushoff). This plan closes
-every gap the update introduced.
+update (2026-06-27, KSA revs 4680→4750) changed three subsystems gatOS binds to. **All four gaps (G1–G4)
+are FIXED (2026-06-27) — gatOS builds + tests green against 4750** (0 warnings, 0 errors; full test suite
+green). **4750 is now the verified baseline.** The only remaining work is the in-flight re-validation
+checklist ([`../docs/VALIDATION.md`](../docs/VALIDATION.md)), which needs a live KSA flight. This plan is
+complete (code + docs); see each gap's ✅ Applied block below.
 
 **Method:** the [`scope/` break-check playbook](../scope/FULL_SCOPE.md#0-how-to-use-this-folder-when-a-game-update-lands-the-break-check-playbook)
 was run end to end — changelog scan (`…/ksa-game-assemblies/current/version.json`), build against the new
@@ -14,10 +16,10 @@ the scope pages.
 
 | Gap | KSA rev | Severity | Detected by | Compiles? | Scope ref |
 |---|---|---|---|---|---|
-| **G1** Docking pushoff renamed `PushoffForce`→`PushoffImpulse` (N→N·s) | 4683 | **P0 — build red** | build error + decomp + XML | ❌ no | [reads](../scope/ksa-read-surface.md#docking-pushoff--dockingnpushoff_force-compile-break) · [writes](../scope/ksa-write-surface.md#docking) |
-| **G2** Power retyped `Joules`→`Watts` (energy/sample → instantaneous W) | 4681 | **P1 — silent value change** | decomp + XML | ✅ yes | [reads](../scope/ksa-read-surface.md#power-productionconsumption--power-solarnproduced-generatornproduced-silent-unit-change) |
-| **G3** New `Vehicle.IsControllable` gates control + flight computer | 4699 | **P1/P2 — silent no-op** | decomp + XML | ✅ yes | [writes](../scope/ksa-write-surface.md#cross-cutting-4750-concern-vehicleiscontrollable-rev-4699) |
-| **G4** Hygiene: unanchored sampler reads, `Situation` flags, live re-verify of reflection/Harmony, battery type | various | **P3** | review | ✅ yes | [runtime](../scope/ksa-runtime-coupling.md) |
+| **G1** Docking pushoff renamed `PushoffForce`→`PushoffImpulse` (N→N·s) | 4683 | **P0 — ✅ FIXED** | build error + decomp + XML | ✅ now builds | [reads](../scope/ksa-read-surface.md#docking) · [writes](../scope/ksa-write-surface.md#docking) |
+| **G2** Power retyped `Joules`→`Watts` (energy/sample → instantaneous W) | 4681 | **P1 — ✅ FIXED (re-label)** | decomp + XML | ✅ yes | [reads](../scope/ksa-read-surface.md#power) |
+| **G3** New `Vehicle.IsControllable` gates control + flight computer | 4699 | **P1/P2 — ✅ FIXED (`controllable` read; no gate)** | decomp + XML | ✅ yes | [reads](../scope/ksa-read-surface.md) · [writes](../scope/ksa-write-surface.md#iscontrollable) |
+| **G4** Hygiene: unanchored sampler reads, `Situation` flags, live re-verify of reflection/Harmony, battery type | various | **P3 — ✅ FIXED (anchored; live re-check pending)** | review | ✅ yes | [runtime](../scope/ksa-runtime-coupling.md) |
 
 Confirmed **not** affected (no action): staging `SequenceList.ActivateNextSequence` (the rev 4732 rename
 is "Resource Groups", not Sequences), Brutal numerics (rev 4729 bump compiled clean), lights / animations
@@ -26,7 +28,20 @@ is "Resource Groups", not Sequences), Brutal numerics (rev 4729 bump compiled cl
 
 ---
 
-## G1 — Docking pushoff (P0, restores the build)
+## G1 — Docking pushoff (P0, restores the build) — ✅ DONE (2026-06-27)
+
+> **✅ Applied 2026-06-27.** Implemented the recommended path (rename the leaf, not just retype). Changes
+> landed: `VesselReader.cs` reads `port.PushoffImpulse` (field `DockingSnapshot.PushoffForceN` →
+> `PushoffImpulseNs`); `DockingActuator.SetPushoffForce` → `SetPushoffImpulse` (binds `PushoffImpulse`,
+> validation "must be >= 0 N·s"); `KsaCatalog` dispatch updated (action key `debug.docking_pushoff`
+> kept); the `/sim` read leaf and `debug` control leaf renamed `pushoff_force` → `pushoff_impulse`
+> (unit **N → N·s**); JSON field `pushoff_force_n` → `pushoff_impulse_ns` (auto via snake_case). The three
+> docking `[KsaAnchor]`s re-verified to `2026-06-27` / `2026.6.9.4750`. Docs updated in lockstep: SPEC
+> (3 rows), matrix (3 rows), `sim_openapi.yml`, `docs/MILESTONES.md`, the `gatos` skill, and all scope
+> pages (read/write/assets/FULL_SCOPE flipped ❌→✅). Tests updated (`SimFsTreeTests`, `ControlSurfaceTests`,
+> `TestData`). **`dotnet build gatos.slnx` + `dotnet test gatos.slnx` green against 4750.** Still pending:
+> the live-flight re-check in `docs/VALIDATION.md` (undock applies the impulse; the debug knob changes
+> separation energy).
 
 **What changed.** `KSA/DockingPort.cs`: `PushoffForce`→**`PushoffImpulse`** (`float`), `LatchingImpulse`→
 **`LatchingKineticEnergy`** (`float`); `Undock → oldVehicle.Split(Connector, PushoffImpulse)`;
@@ -53,7 +68,8 @@ to `PushoffImpulse` and change the documented unit to N·s. Not recommended — 
    the method `SetPushoffImpulse`. Update both anchors (lines 24, 47): the `Undock` anchor's
    `Split(Connector, PushoffForce)` → `PushoffImpulse`, the setter anchor `Member`/`Notes`/`Verified`/
    `GameVersion`. (Optionally also expose `LatchingKineticEnergy` as a read — enhancement, not required.)
-3. `gatOS.SimFs/Snapshots/VesselSnapshot.cs` — `DockingSnapshot.PushoffForceN` → `PushoffImpulseNs`.
+3. `gatOS.SimFs/Snapshots/SimSnapshot.cs` — `DockingSnapshot.PushoffForceN` → `PushoffImpulseNs`.
+   *(applied: the record lives in `SimSnapshot.cs`, not `VesselSnapshot.cs`.)*
 4. `gatOS.SimFs/SimFsTree.cs` — rename the `docking/<n>/pushoff_force` read leaf and the
    `debug/vessels/<id>/docking/<n>/pushoff_force` control leaf → `pushoff_impulse`.
 5. `gatOS.SimFs/{Formats.cs,SimJson.cs}` — rename the projected field everywhere it appears (telemetry doc
@@ -73,7 +89,21 @@ separation energy) — add to `docs/VALIDATION.md`.
 
 ---
 
-## G2 — Power/energy now Watts (P1, silent value change)
+## G2 — Power/energy now Watts (P1, silent value change) — ✅ DONE (2026-06-27)
+
+> **✅ Applied 2026-06-27.** Verified against the 4750 decomp: `SolarPanelState.Produced/Stored`,
+> `GeneratorState.Produced`, `PowerConsumerState.Consumed` are `Watts`; `Battery.MaximumCapacity` /
+> `BatteryState.Charge` are the `Joules` struct; both `Watts.Value()` and `Joules.Value()` return the
+> backing `float` (`KSA/Watts.cs`, `KSA/Joules.cs`). Confirmed **no gatOS reader scales by `dt` or
+> accumulates** — `SamplePowerProduced`/`SamplePowerConsumed`/`SampleSolar`/`SampleGenerators`/
+> `SampleBattery` all sum `.Value()` straight through, so this is a **re-label, not a functional change**.
+> Re-labelled the five `[KsaAnchor]` `Notes` (Joules→Watts / energy proxy→instantaneous W) and bumped
+> them to `2026-06-27` / `2026.6.9.4750`; dropped the stale "this sample" phrasing from the SPEC (4 rows),
+> the matrix (power/solar/generator rows), and the `SimSnapshot` field/param docs; flipped the scope
+> read-surface power/solar/generator/battery rows ⚠️→✅. **Build + test green.** **Behavior note for guests:**
+> `power/produced`, `power/consumed`, `solar/<n>/produced`, `generators/<n>/produced` now read
+> instantaneous **W** (different magnitudes than the 4680-era per-sample-J values). The optional additive
+> reads (`SolarPanelState.Stored`, `DistanceToSun`, per-source `Active`) remain a separate task below.
 
 **What changed.** rev 4681 retyped `SolarPanelState.Produced/Stored`, `GeneratorState.Produced`,
 `PowerConsumerState.Consumed` `Joules`→**`Watts`** (and `Battery.MaximumCapacity`/`BatteryState.Charge`
@@ -104,7 +134,22 @@ reads a stable rate that matches the XML-authored panel/generator wattages under
 
 ---
 
-## G3 — `Vehicle.IsControllable` reporting (P1) + optional gating (P2)
+## G3 — `Vehicle.IsControllable` reporting (P1) + optional gating (P2) — ✅ DONE (2026-06-27)
+
+> **✅ Applied 2026-06-27.** Confirmed `Vehicle.IsControllable` at `KSA/Vehicle.cs:526`
+> (`_overrideIsControllable || Parts.Controls.NumModules > 0`) and that it gates control + FC paths via
+> `ControlsLockout`. **P1 (report):** added `VesselReader.ReadControllable` (its own `[KsaAnchor]`,
+> `2026.6.9.4750`) → new `VesselSnapshot.Controllable` ← `vehicle.IsControllable`, set in `SampleCore`.
+> Projected on every transport: the full snapshot (auto via `SimJson`), the compact `telemetry` doc
+> (`Formats` `controllable`), and the `vessels/<id>/controllable` 9p leaf (`SimFsTree`). Documented in
+> SPEC (read row + telemetry example + a `debug.control_vessel` note), the matrix, and
+> `scope/ksa-read-surface.md`. **P2 (gating): chose Option A — gatOS does NOT add a gate**; it relies on
+> KSA's own `ControlsLockout` to drop commands to an uncontrollable vessel and on the new `controllable`
+> read for guests to pre-check. Rationale: a redundant gatOS `EACCES` could wrongly block commands in
+> edge states the lockout allows, and that can't be confirmed without a live flight; Option B remains a
+> localized `KsaCatalog.Execute` change if a live flight shows the silent-`Ok` UX is a problem. Tests:
+> `SimFsTreeTests` (leaf + value), `FormatsTests` (telemetry doc). **Build + test green.** Live re-check
+> (`controllable` reads 1 vs 0; `debug.control_vessel` on an uncontrollable target) → `docs/VALIDATION.md` row 20.
 
 **What changed.** rev 4699 added `Vehicle.IsControllable => _overrideIsControllable ||
 Parts.Controls.NumModules > 0` (`KSA/Vehicle.cs:526`); control + flight-computer paths now gate through
@@ -133,7 +178,19 @@ behavior is documented and validated.
 
 ---
 
-## G4 — Hygiene & live re-verification (P3)
+## G4 — Hygiene & live re-verification (P3) — ✅ DONE (2026-06-27)
+
+> **✅ Applied 2026-06-27.** (1) **Anchored the sampler's direct reads** — added `[KsaAnchor]`s on
+> `TelemetrySampler.Sample` (`GetElapsedSimTime`/`SimulationSpeed`/`GetLastSimStep`/`ControlledVehicle`/
+> `CurrentSystem`), `SampleWarpSpeeds`, `SafeAutoWarpActive`, `SafeAutoWarpTarget`, `GameVersion`
+> (`VersionInfo.Current`), all `2026.6.9.4750`. The census is now complete (FULL_SCOPE: 59 anchors / 15
+> files; the only un-anchored KSA touch-points left are the two Harmony hook targets). (2) **`Situation`
+> flags** note confirmed present in SPEC + `scope/ksa-read-surface.md` (composite `[Flags]` ToString;
+> guests must tolerate comma-separated). (3) **Reflection + Harmony** confirmed structurally (throttle
+> `_manualControlInputs.EngineThrottle` and `IsControllable` at `Vehicle.cs:232/526`; Harmony targets
+> compile) — live `status/accessors` re-check added as `docs/VALIDATION.md` row 21. (4) **Battery type**
+> note done in G2 (`SampleBattery` anchor re-labelled, Joules struct, value unchanged). (5) **Brutal
+> changelog** scan-on-bump guidance already captured in `scope/ksa-runtime-coupling.md`. **Build + test green.**
 
 1. **Anchor the sampler's direct reads.** `TelemetrySampler.cs` reads `Universe.GetElapsedSimTime`,
    `SimulationSpeed`, `GetLastSimStep`, `GetSimulationSpeeds`, `IsAutoWarpActive`, `AutoWarpTime`,
@@ -156,20 +213,29 @@ behavior is documented and validated.
 
 ## Execution order & checklist
 
-1. [ ] **G1** docking (unblocks the build) → `dotnet build gatos.slnx` green.
-2. [ ] **G2** power re-label (docs + anchors; verify no `dt` scaling).
-3. [ ] **G3.1** add `controllable` read; **G3.2** decide gating after a live check.
-4. [ ] **G4** anchors + notes; live-verify reflection/Harmony/`status/accessors`.
-5. [ ] Bump every touched `[KsaAnchor]` to `Verified="2026-06-27"`, `GameVersion="2026.6.9.4750"`.
-6. [ ] Update **all four mirrors** per change: `[KsaAnchor]` · `docs/KSA_INTEGRATION_MATRIX.md` ·
-   `SPEC_9P_FILESYSTEM.md` · the matching `scope/` page (flip ❌/⚠️ → ✅).
-7. [ ] `dotnet test gatos.slnx` green; run the affected `docs/VALIDATION.md` checklists in a live flight.
-8. [ ] Update the matrix header `Verified` date and `scope/ksa-assets-and-versions.md` version table to
-   reflect 4750 as the verified baseline.
+1. [x] **G1** docking (unblocks the build) → `dotnet build gatos.slnx` green. **(done 2026-06-27)**
+2. [x] **G2** power re-label (docs + anchors; verified no `dt` scaling). **(done 2026-06-27)**
+3. [x] **G3.1** added `controllable` read; **G3.2** gating decided — **Option A (no gate)**. **(done 2026-06-27)**
+4. [x] **G4** sampler reads anchored + notes; reflection/Harmony confirmed structurally, live
+   `status/accessors` re-check deferred to VALIDATION. **(done 2026-06-27)**
+5. [x] Every **touched** `[KsaAnchor]` bumped to `Verified="2026-06-27"`, `GameVersion="2026.6.9.4750"`
+   (docking ×3, power/battery ×5, `controllable` ×1, sampler ×5). Untouched members keep their dates
+   (unchanged in 4750; build-green + changelog confirm). **(done)**
+6. [x] Updated **all four mirrors** per change: `[KsaAnchor]` · `docs/KSA_INTEGRATION_MATRIX.md` ·
+   `SPEC_9P_FILESYSTEM.md` · the matching `scope/` page (flipped ❌/⚠️ → ✅) — plus `sim_openapi.yml`,
+   `docs/MILESTONES.md`, and the `gatos` skill. **(done)**
+7. [x] `dotnet test gatos.slnx` green. [ ] Run the affected `docs/VALIDATION.md` checklists (rows 18–21)
+   in a live flight — **still pending (needs a live KSA flight).**
+8. [x] Updated the matrix header `Verified` date and `scope/ksa-assets-and-versions.md` version table to
+   reflect **4750 as the verified baseline**. **(done)**
 
 ## Definition of done
-- gatOS builds and tests green against `2026.6.9.4750`.
-- Docking reads/writes use `PushoffImpulse` (N·s); power reads documented as instantaneous W;
+- [x] gatOS builds and tests green against `2026.6.9.4750`.
+- [x] Docking reads/writes use `PushoffImpulse` (N·s); power reads documented as instantaneous W;
   `controllable` is reported.
-- Every `[KsaAnchor]` touched is re-verified to 4750; `scope/`, the matrix, and the SPEC agree with the
-  code; `docs/VALIDATION.md` records the live re-check.
+- [x] Every `[KsaAnchor]` touched is re-verified to 4750; `scope/`, the matrix, and the SPEC agree with
+  the code. [ ] `docs/VALIDATION.md` records the live re-check — **checklist rows added (18–21); the live
+  in-flight run remains** (needs a flight; tracked there).
+
+**Plan complete (code + docs).** The only open item across the whole plan is the in-flight validation
+pass (`docs/VALIDATION.md` rows 18–21), which cannot be done headlessly.

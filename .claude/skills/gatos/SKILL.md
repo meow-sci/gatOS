@@ -81,7 +81,7 @@ system/{name,home,sun}
 bodies/<id>/{id,class,parent,children,mass,radius,mu,soi,rotation_rate,
              position/ecl, velocity/ecl, orbit/*, atmosphere/*, ocean/*, focus}
 vessels/active/…  (alias of the controlled vessel)   vessels/by-id/<id>/
-    id name situation parent controlled com telemetry stream
+    id name situation parent controlled controllable com telemetry stream
     position/{cci,ecl,lat,lon}  velocity/{orbital,surface,inertial,cci}
     attitude/{quat,rates}  altitude/{barometric,radar}  mass/{total,dry,propellant}
     orbit/*  navball/*  environment/*  battery/*  power/*
@@ -92,7 +92,7 @@ vessels/active/…  (alias of the controlled vessel)   vessels/by-id/<id>/
 events
 status/{game_version,sampler,accessors,transports}
 debug/                                  (only when debug_namespace=true)
-    vessels/<id>/{teleport,refill_fuel,refill_battery,docking/<n>/pushoff_force}
+    vessels/<id>/{teleport,refill_fuel,refill_battery,docking/<n>/pushoff_impulse}
     time/warp   focus   control_vessel
 ```
 

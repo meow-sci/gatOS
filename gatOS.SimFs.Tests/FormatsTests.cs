@@ -38,7 +38,7 @@ public sealed class FormatsTests
     [Test]
     public void VesselTelemetry_IsOneAtomicJsonObject()
     {
-        var vessel = TestData.Vessel() with { Controlled = true };
+        var vessel = TestData.Vessel() with { Controlled = true, Controllable = true };
         var snapshot = TestData.Snapshot(7, vessel);
         var doc = Formats.VesselTelemetry(snapshot, vessel);
         using var json = JsonDocument.Parse(doc);
@@ -48,6 +48,7 @@ public sealed class FormatsTests
             Assert.That(root.GetProperty("seq").GetInt64(), Is.EqualTo(7));
             Assert.That(root.GetProperty("id").GetString(), Is.EqualTo("test-1"));
             Assert.That(root.GetProperty("controlled").GetBoolean(), Is.True);
+            Assert.That(root.GetProperty("controllable").GetBoolean(), Is.True);
             Assert.That(root.GetProperty("mass").GetProperty("t").GetDouble(), Is.EqualTo(12000));
             Assert.That(root.GetProperty("orbit").GetProperty("ap").GetDouble(), Is.EqualTo(250000));
             Assert.That(root.TryGetProperty("vel", out _), Is.True);

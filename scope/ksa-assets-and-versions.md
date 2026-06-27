@@ -27,12 +27,14 @@ Two checkouts are kept side by side for diffing:
 
 | Checkout dir | Build | Date | Revisions | Role |
 |---|---|---|---|---|
-| `…/ksa-game-assemblies` | **2026.6.9.4750** | 2026-06-27 | 4680 → 4750 | **current / new** (the major update) — `KSAFolder` default resolves here |
-| `…/ksa-game-assemblies_2026.6.8.4680` | 2026.6.8.4680 | 2026-06-19 | 4631 → 4680 | **previous baseline** gatOS was built/verified against |
+| `…/ksa-game-assemblies` | **2026.6.9.4750** | 2026-06-27 | 4680 → 4750 | **current / verified baseline** — gatOS builds + tests green against it after the G1–G4 fix-pass (2026-06-27); `KSAFolder` default resolves here |
+| `…/ksa-game-assemblies_2026.6.8.4680` | 2026.6.8.4680 | 2026-06-19 | 4631 → 4680 | **prior baseline** (what gatOS was originally built against, pre-4750-update) |
 
-gatOS's `[KsaAnchor]` `Verified` dates span 2026-06-12…2026-06-23, i.e. the work was done against the
-4680-era sources. The diff that matters for "did the update break us" is therefore **4680 → 4750**, whose
-commit log is embedded in `…/ksa-game-assemblies/current/version.json`.
+gatOS was originally built against the 4680-era sources (most `[KsaAnchor]` `Verified` dates span
+2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27 (commit log in
+`…/ksa-game-assemblies/current/version.json`); the touched anchors now carry `GameVersion="2026.6.9.4750"`,
+and the whole surface is build-green + changelog-clean against 4750 (see
+[`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)). 4750 is now the verified baseline.
 
 > The ksa skill (`.claude/skills/ksa/`) also points at decompiled sources under `decomp/ksa/` (and a
 > working copy lives at `…/unscience/decomp/ksa`). Any of these decomp trees is readable; for
@@ -87,8 +89,8 @@ When a changelog line mentions a subsystem, open these. (Decomp paths relative t
 | Time / warp / universe / solver hook | `KSA/Universe.cs` | — | reads, runtime |
 | Engines | `KSA/EngineController.cs`, `KSA/EngineControllerState.cs` | `Core/CorePropulsion*GameData.xml` | reads, writes |
 | Tanks / resources | `KSA/Tank.cs`, `KSA/Mole.cs` | `Core/…` | reads |
-| **Electrical (power/battery/solar/gen)** | `KSA/Battery.cs`, `KSA/SolarPanel*.cs`, `KSA/Generator*.cs`, `KSA/PowerConsumerState.cs`, **`KSA/Joules.cs`, `KSA/Watts.cs`, `KSA/EnergyReference.cs`, `KSA/PowerReference.cs`** | `Core/CoreElectricalAGameData.xml` | reads ⚠️ |
-| **Docking** | `KSA/DockingPort.cs`, `KSA/InputEvents.cs` | `Core/CoreCouplingAGameData.xml` | reads ❌, writes ❌ |
+| **Electrical (power/battery/solar/gen)** | `KSA/Battery.cs`, `KSA/SolarPanel*.cs`, `KSA/Generator*.cs`, `KSA/PowerConsumerState.cs`, **`KSA/Joules.cs`, `KSA/Watts.cs`, `KSA/EnergyReference.cs`, `KSA/PowerReference.cs`** | `Core/CoreElectricalAGameData.xml` | reads ✅ (G2: now W) |
+| **Docking** | `KSA/DockingPort.cs`, `KSA/InputEvents.cs` | `Core/CoreCouplingAGameData.xml` | reads ✅, writes ✅ (G1 fixed) |
 | Flight computer / attitude / burn | `KSA/FlightComputer.cs`, `KSA/BurnTarget.cs`, `KSA/NavBallData.cs` | — | writes |
 | Staging / sequences | `KSA/SequenceList.cs` | `Core/…` | writes |
 | Lights | `KSA/LightModule.cs`, `KSA/Light.cs`, `KSA/FloatReference.cs`, `KSA/ColorRgbReference.cs` | `Core/CoreElectricalAGameData.xml` | reads, writes |

@@ -104,7 +104,7 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels) : ICommandEx
         "debug.teleport" => DebugActuator.Teleport(vehicle, c.Values ?? []),
         "debug.refill_fuel" => DebugActuator.RefillFuel(vehicle),
         "debug.refill_battery" => DebugActuator.RefillBattery(vehicle),
-        "debug.docking_pushoff" => DockingActuator.SetPushoffForce(vehicle, c.Ordinal, c.Value),
+        "debug.docking_pushoff" => DockingActuator.SetPushoffImpulse(vehicle, c.Ordinal, c.Value),
 
         _ => new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'"),
     };

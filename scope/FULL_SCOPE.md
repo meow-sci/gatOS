@@ -67,8 +67,11 @@ update's blast radius is small and discoverable. The procedure:
 
 > **Current applied result of this playbook:** the 2026.6.8.4680 → 2026.6.9.4750 update has been run
 > through it. Findings and the remediation plan are in
-> [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md). **gatOS.GameMod does not
-> currently compile against 4750** (one confirmed break — docking pushoff). See that plan.
+> [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md). **All four gaps are fixed
+> (2026-06-27) — gatOS builds + tests green against 4750:** G1 docking (`PushoffImpulse`, N·s), G2 power
+> (`Joules`→`Watts`, instantaneous W), G3 a `controllable` read (gatOS doesn't gate — relies on KSA's own
+> lockout), G4 the sampler's `Universe`/`VersionInfo` reads anchored. Only the in-flight re-validation
+> checklist (`docs/VALIDATION.md`) remains.
 
 ---
 
@@ -117,7 +120,7 @@ KSA game update have any chance of breaking it.
 | W | Engine ignite/shutdown, per-engine active/min-throttle, manual throttle | **Yes** | [`ksa-write-surface.md`](ksa-write-surface.md) |
 | W | Staging, RCS, flight-computer attitude/frame/target/burn | **Yes** (Solver phase) | [`ksa-write-surface.md`](ksa-write-surface.md) |
 | W | Lights (master/on/brightness/colour/cone angles), animations/solar/light deploy | **Yes** (High: template) | [`ksa-write-surface.md`](ksa-write-surface.md) |
-| W | Decouplers, docking undock + pushoff | **Yes** (changed in 4750) | [`ksa-write-surface.md`](ksa-write-surface.md#docking) |
+| W | Decouplers, docking undock + pushoff | **Yes** (4750: `PushoffImpulse`, N·s — G1 fixed) | [`ksa-write-surface.md`](ksa-write-surface.md#docking) |
 | W | Camera focus (vessel + body) | **Yes** | [`ksa-write-surface.md`](ksa-write-surface.md) |
 | W | `/sim/debug` cheats: teleport, refill fuel/battery, warp set, control-vessel, pushoff | **Yes** | [`ksa-write-surface.md`](ksa-write-surface.md#debug) |
 | **Runtime coupling** | | | |
@@ -142,18 +145,19 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 
 | Location | KSA touch | Guarded by |
 |---|---|---|
-| `Game/Ksa/Readers/VesselReader.cs` | 20 `[KsaAnchor]` reads (the bulk of telemetry) | per-accessor try/catch → `KsaHealth`; `Enrich` whole-pass guard |
+| `Game/Ksa/Readers/VesselReader.cs` | 21 `[KsaAnchor]` reads (the bulk of telemetry; +`ReadControllable`, G3) | per-accessor try/catch → `KsaHealth`; `Enrich` whole-pass guard |
 | `Game/Ksa/Readers/BodyReader.cs` | 3 `[KsaAnchor]` reads (celestial catalog) | sampler-level guard |
 | `Game/Ksa/Actuators/*.cs` (11 files) | 26 `[KsaAnchor]` writes (all controls + debug) | `KsaCatalog` try/catch per command |
 | `Game/Ksa/KsaCatalog.cs` | 2 `[KsaAnchor]` (vehicle/astronomical resolution) | self |
 | `Game/Ksa/{KsaAnchor,KsaHealth}.cs` | churn machinery (no KSA types in KsaHealth) | — |
-| `Game/TelemetrySampler.cs` | `Universe.*` time/warp/system reads (un-attributed; matrix `time/*` rows) | sampler `_samplerDead` guard |
+| `Game/TelemetrySampler.cs` | 5 `[KsaAnchor]` reads (G4: `Universe.*` time/warp/system + `VersionInfo.Current`) | per-vehicle + per-call try/catch |
 | `Game/Mod.Game.cs` | Harmony targets `Universe.ExecuteNextVehicleSolvers`, `Program.DrawProgramMenusHook`; `Program.MainViewport`, `ModLibrary.Find` | `AccessTools` null-check + try/catch → feature disabled, not crash |
 | `Game/BrutalModLogger.cs` | `Brutal.Logging` sink | try/catch at install |
 | `Mod.cs`, `ModAssets.cs` | StarMap.API attributes, purrTTY contract — **no KSA game types** | n/a (mod-ecosystem ABI, not KSA) |
 
-Detail and per-member break-impact: the four `ksa-*.md` pages. Total `[KsaAnchor]` sites: **53**
-(across 14 files), plus the sampler's un-anchored `Universe` reads and the two Harmony hook targets.
+Detail and per-member break-impact: the four `ksa-*.md` pages. Total `[KsaAnchor]` sites: **59**
+(across 15 files) — the sampler's `Universe`/`VersionInfo` reads were anchored in the 4750 fix-pass (G4),
+so the only remaining un-anchored KSA touch-points are the two Harmony hook targets.
 
 ---
 

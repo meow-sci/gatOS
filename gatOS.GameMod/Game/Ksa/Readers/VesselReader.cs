@@ -113,6 +113,7 @@ internal static class VesselReader
             Animations: SampleAnimations(vehicle))
         {
             Controlled = activeVesselId is not null && vehicle.Id == activeVesselId,
+            Controllable = ReadControllable(vehicle),
             EngineOn = ReadEngineOn(vehicle),
         };
     }
@@ -122,6 +123,14 @@ internal static class VesselReader
         Notes = "The live ignition master ctl/ignite (MainIgnite) and ctl/shutdown (MainShutdown) toggle; "
             + "the same state the game's ignite button reads. NOT per-engine IsActive (allowed-to-fire).")]
     private static bool ReadEngineOn(Vehicle vehicle) => vehicle.IsSet(VehicleEngine.MainIgnite, false);
+
+    [KsaAnchor("Vehicle.IsControllable => _overrideIsControllable || Parts.Controls.NumModules > 0",
+        SourceFile = "KSA/Vehicle.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium,
+        Notes = "4750/rev 4699: a vessel with no Control Module (Parts.Controls.NumModules==0) cannot be "
+            + "controlled by the player or the flight computer (control + FC paths gate via ControlsLockout). "
+            + "Reported as vessels/<id>/controllable so guests/autopilots can pre-check; gatOS itself does not "
+            + "gate (relies on KSA's lockout). The player-controlled vessel always has a Control Module.")]
+    private static bool ReadControllable(Vehicle vehicle) => vehicle.IsControllable;
 
     // ---- G3 read-surface extensions (KSA_GAME_INTEGRATION_PLAN §4.5/§4.6) -----------------
 
@@ -328,8 +337,8 @@ internal static class VesselReader
     // ---- battery / power ------------------------------------------------------------------
 
     [KsaAnchor("vehicle.Parts.Batteries.GetState(b).Charge, b.MaximumCapacity",
-        SourceFile = "KSA/Battery.cs", Verified = "2026-06-12", Risk = ChurnRisk.Low,
-        Notes = "Charge fraction + capacity summed across all batteries; null when the vehicle has none.")]
+        SourceFile = "KSA/Battery.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Low,
+        Notes = "Charge fraction + capacity (Joules) summed across all batteries; null when none. 4750/rev 4681: Charge/MaximumCapacity are now the Joules struct (.Value() float, magnitude unchanged).")]
     private static (double? Fraction, double? CapacityJoules) SampleBattery(Vehicle vehicle)
     {
         var batteries = vehicle.Parts.Batteries;
@@ -345,9 +354,9 @@ internal static class VesselReader
             : (null, null);
     }
 
-    [KsaAnchor("SolarPanelState.Produced + GeneratorState.Produced (Joules per sample)",
-        SourceFile = "KSA/SolarPanelState.cs / KSA/GeneratorState.cs", Verified = "2026-06-12",
-        Risk = ChurnRisk.Medium, Notes = "Per-sample produced energy proxy; summed over panels + generators.")]
+    [KsaAnchor("SolarPanelState.Produced + GeneratorState.Produced (Watts; .Value() float)",
+        SourceFile = "KSA/SolarPanelState.cs / KSA/GeneratorState.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750",
+        Risk = ChurnRisk.Medium, Notes = "Instantaneous watts (W); summed over panels + generators. 4750/rev 4681: Joules→Watts (was per-sample energy proxy).")]
     private static double SamplePowerProduced(Vehicle vehicle)
     {
         double total = 0;
@@ -360,8 +369,8 @@ internal static class VesselReader
         return Sanitize.Finite(total);
     }
 
-    [KsaAnchor("vehicle.Parts.PowerConsumers.GetState(c).Consumed (Joules per sample)",
-        SourceFile = "KSA/PowerConsumerState.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium)]
+    [KsaAnchor("vehicle.Parts.PowerConsumers.GetState(c).Consumed (Watts; .Value() float)",
+        SourceFile = "KSA/PowerConsumerState.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium, Notes = "Instantaneous watts (W); 4750/rev 4681 Joules→Watts.")]
     private static double SamplePowerConsumed(Vehicle vehicle)
     {
         double total = 0;
@@ -404,9 +413,9 @@ internal static class VesselReader
 
     [KsaAnchor("vehicle.Parts.Modules.Get<SolarPanel>(); SolarPanelState{Produced,IsOccluded,SunAoA,SunEfficiency}; "
                + "SolarTrackerState.CurrentAngle; SolarPanel.KeyframeAnimationModule",
-        SourceFile = "KSA/SolarPanel.cs / KSA/SolarTracker.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium,
-        Notes = "AnimationIndex links the panel's deploy animation to the vessel-level animation ordinal; "
-                + "tracker correlated 1:1 by index when SolarTracker count matches panel count.")]
+        SourceFile = "KSA/SolarPanel.cs / KSA/SolarTracker.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium,
+        Notes = "Produced is instantaneous watts (W) (4750/rev 4681 Joules→Watts). AnimationIndex links the "
+                + "panel's deploy animation to the vessel-level animation ordinal; tracker 1:1 by index when counts match.")]
     private static IReadOnlyList<SolarSnapshot> SampleSolar(Vehicle vehicle)
     {
         var panels = vehicle.Parts.Modules.Get<SolarPanel>();
@@ -462,8 +471,8 @@ internal static class VesselReader
         return SolarSnapshot.NoAnimation;
     }
 
-    [KsaAnchor("vehicle.Parts.Modules.Get<Generator>(); GeneratorState{Active,Produced}",
-        SourceFile = "KSA/Generator.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium)]
+    [KsaAnchor("vehicle.Parts.Modules.Get<Generator>(); GeneratorState{Active,Produced (Watts)}",
+        SourceFile = "KSA/Generator.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium, Notes = "Produced is instantaneous watts (W); 4750/rev 4681 Joules→Watts.")]
     private static IReadOnlyList<GeneratorSnapshot> SampleGenerators(Vehicle vehicle)
     {
         var modules = vehicle.Parts.Modules.Get<Generator>();
@@ -521,10 +530,13 @@ internal static class VesselReader
         return span.Length > 0 ? span[0] : null;
     }
 
-    [KsaAnchor("vehicle.Parts.Modules.Get<DockingPort>(); .Docked, .DockedToPart.Id, .PushoffForce",
-        SourceFile = "KSA/DockingPort.cs", Verified = "2026-06-16", Risk = ChurnRisk.Medium,
-        Notes = "PushoffForce is a public mutable float (Newtons) seeded from the part XML; the undock "
-            + "separation impulse Vehicle.Split uses. Read here so the debug control reads it back.")]
+    [KsaAnchor("vehicle.Parts.Modules.Get<DockingPort>(); .Docked, .DockedToPart.Id, .PushoffImpulse",
+        SourceFile = "KSA/DockingPort.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750",
+        Risk = ChurnRisk.Medium,
+        Notes = "PushoffImpulse is a public required float (newton-seconds, N·s) seeded from "
+            + "DockingPortTemplate.PushoffImpulse (stock 7000 N·s); the undock separation impulse "
+            + "Vehicle.Split(Connector, splitImpulse) applies. Read here so the debug control reads it "
+            + "back. 4750 (rev 4683) renamed PushoffForce→PushoffImpulse, force (N)→impulse (N·s).")]
     private static IReadOnlyList<DockingSnapshot> SampleDocking(Vehicle vehicle)
     {
         var modules = vehicle.Parts.Modules.Get<DockingPort>();
@@ -536,7 +548,7 @@ internal static class VesselReader
             var port = modules[i];
             result.Add(new DockingSnapshot(i, port.Docked, port.DockedToPart?.Id)
             {
-                PushoffForceN = Sanitize.Finite(port.PushoffForce),
+                PushoffImpulseNs = Sanitize.Finite(port.PushoffImpulse),
             });
         }
 

@@ -187,9 +187,10 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 |---|---|---|---|
 | `id` | S | string | Stable vehicle id (== name). |
 | `name` | S | string | Display name (KSA: equals the id). |
-| `situation` | S | string | `Prelaunch`, `Landed`, `Freefall`, `Flying`, … |
+| `situation` | S | string | `Prelaunch`, `Landed`, `Freefall`, `Flying`, … A `[Flags]` enum → values can be **composite** (comma-separated, e.g. `Landed, …`); parse accordingly. |
 | `parent` | S | string | **Parent body id** the CCI frame is centered on. |
 | `controlled` | S | flag | `1` when this is the player-controlled vessel. |
+| `controllable` | S | flag | `1` when KSA will accept flight-control + flight-computer commands (`Vehicle.IsControllable`: the vessel has a Control Module). A vessel reading `0` here **silently ignores** throttle/stage/attitude/burn/RCS/ignite — gatOS does not gate, it relies on KSA's own lockout, so pre-check this. The controlled vessel is always `1`. (KSA 2026.6.9.4750.) |
 | `com` | S | vector | Center of mass in the assembly frame, meters. |
 | `telemetry` | S | JSON | The **atomic** per-vessel document (see §4). One `read()` = one self-consistent snapshot. |
 | `position/cci` | S | vector | Position in **CCI** (Celestial-Centered Inertial about `parent`), meters. |
@@ -255,8 +256,8 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 
 | Path | A | Format | Meaning / units |
 |---|---|---|---|
-| `power/produced` | S | scalar | Total electrical power produced this sample, W. |
-| `power/consumed` | S | scalar | Total electrical power consumed this sample, W. |
+| `power/produced` | S | scalar | Total instantaneous electrical power produced, W. |
+| `power/consumed` | S | scalar | Total instantaneous electrical power consumed, W. |
 | `battery/charge` | S | scalar | Battery charge fraction 0..1. |
 | `battery/fraction` | S | scalar | Same as `charge` (alias). |
 | `battery/capacity` | S | scalar | Battery capacity, joules. |
@@ -292,7 +293,7 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 
 | Path | A | Format | Meaning |
 |---|---|---|---|
-| `solar/<n>/produced` | S | scalar | Power produced this sample, W. |
+| `solar/<n>/produced` | S | scalar | Instantaneous power produced, W. |
 | `solar/<n>/occluded` | S | flag | Occluded from the sun. |
 | `solar/<n>/sun_aoa` | S | scalar | Sun angle of attack, degrees. |
 | `solar/<n>/efficiency` | S | scalar | Sun efficiency 0..1. |
@@ -306,7 +307,7 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 | Path | A | Format | Meaning |
 |---|---|---|---|
 | `generators/<n>/active` | S | flag | Producing. |
-| `generators/<n>/produced` | S | scalar | Power produced this sample, W. |
+| `generators/<n>/produced` | S | scalar | Instantaneous power produced, W. |
 
 #### 3.4.11 Lights *(present when fitted)* — `…/lights/<n>/`
 
@@ -333,7 +334,7 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 |---|---|---|---|
 | `docking/<n>/docked` | S | flag | Docked. |
 | `docking/<n>/docked_to` | S | string | Part id docked to, or empty. |
-| `docking/<n>/pushoff_force` | S | scalar | Separation impulse on undock, N. |
+| `docking/<n>/pushoff_impulse` | S | scalar | Separation impulse applied on undock, N·s (newton-seconds). |
 | `docking/<n>/undock` | T | write `1` | Undock this port (action `docking.undock`; `EBUSY` if not docked). |
 
 #### 3.4.13 Decouplers *(present when fitted)* — `…/decouplers/<n>/`
@@ -412,10 +413,10 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/vessels/<id>/teleport` | **St** | `px py pz vx vy vz` | `debug.teleport` | Frame | Set the vessel's **CCI state vector** (position m, velocity m/s) about its **current parent body**. See §6. |
 | `debug/vessels/<id>/refill_fuel` | T | `1` | `debug.refill_fuel` | **Solver** | Refill all consumables. |
 | `debug/vessels/<id>/refill_battery` | T | `1` | `debug.refill_battery` | **Solver** | Refill all batteries. |
-| `debug/vessels/<id>/docking/<n>/pushoff_force` | **St** | number (N≥0) | `debug.docking_pushoff` | Frame | Override a docking port's undock separation impulse. |
+| `debug/vessels/<id>/docking/<n>/pushoff_impulse` | **St** | number (N·s ≥0) | `debug.docking_pushoff` | Frame | Override a docking port's undock separation impulse (`DockingPort.PushoffImpulse`). |
 | `debug/time/warp` | **St** | factor | `debug.warp` | Frame | Set the time-warp factor directly (`Universe.SetSimulationSpeed`). |
 | `debug/focus` | **St** | vehicle/body id | `camera.focus` | Frame | Move the camera to any astronomical by id (view-only). |
-| `debug/control_vessel` | **St** | vehicle id | `debug.control_vessel` | Frame | Focus **and** take control of a vehicle by id. |
+| `debug/control_vessel` | **St** | vehicle id | `debug.control_vessel` | Frame | Focus **and** take control of a vehicle by id. (4750: KSA may refuse a target that isn't `controllable` — pre-check the `controllable` read; outcome to be confirmed in a live flight.) |
 
 ---
 
@@ -433,6 +434,7 @@ recommended single read for a control loop (self-consistent, no stitching). Fiel
   "id": "Hunter",
   "sit": "Freefall",      // situation
   "controlled": true,
+  "controllable": true,   // KSA accepts control commands (has a Control Module)
   "parent": "Earth",      // parent body id (the CCI center)
   "pos_cci": [x, y, z],   // position in CCI, m
   "pos_ecl": [x, y, z],   // position in parent ecliptic, m
@@ -498,7 +500,7 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `debug.teleport` | — | values `[px,py,pz,vx,vy,vz]` | Frame | `debug/vessels/<id>/teleport` | CCI about current parent |
 | `debug.refill_fuel` | — | value `1` | **Solver** | `debug/vessels/<id>/refill_fuel` | |
 | `debug.refill_battery` | — | value `1` | **Solver** | `debug/vessels/<id>/refill_battery` | |
-| `debug.docking_pushoff` | docking n | value N | Frame | `debug/vessels/<id>/docking/<n>/pushoff_force` | |
+| `debug.docking_pushoff` | docking n | value N·s | Frame | `debug/vessels/<id>/docking/<n>/pushoff_impulse` | |
 | `debug.warp` | — | value factor | Frame | `debug/time/warp` | vessel-agnostic (`vessel_id` ignored) |
 
 ### 5.2 Writing over each transport

@@ -39,7 +39,7 @@ public sealed class ControlSurfaceTests
             rcs: [new RcsSnapshot(0, false, true, "None")],
             // The light carries an actuate animation linked to vessel-level ordinal 1.
             lights: [new LightSnapshot(0, false, 1, new double3Snap(1, 1, 1), AnimationIndex: 1) { OuterAngleDeg = 45, InnerAngleDeg = 22.5 }],
-            docking: [new DockingSnapshot(0, true, "part-2") { PushoffForceN = 7000 }])));
+            docking: [new DockingSnapshot(0, true, "part-2") { PushoffImpulseNs = 7000 }])));
         _server = new NinePServer(root);
         await _server.StartAsync();
         _client = await NinePTestClient.ConnectAsync(_server.Port);
@@ -233,9 +233,9 @@ public sealed class ControlSurfaceTests
     [Test]
     public async Task DockingUndock_FiresTrigger()
     {
-        // Read the docked + pushoff_force telemetry, then undock with the one-shot trigger.
+        // Read the docked + pushoff_impulse telemetry, then undock with the one-shot trigger.
         Assert.That(await ReadAsync("vessels", "by-id", "test-1", "docking", "0", "docked"), Is.EqualTo("1\n"));
-        Assert.That(await ReadAsync("vessels", "by-id", "test-1", "docking", "0", "pushoff_force"),
+        Assert.That(await ReadAsync("vessels", "by-id", "test-1", "docking", "0", "pushoff_impulse"),
             Is.EqualTo("7000\n"));
         await WriteAsync("1\n", "vessels", "by-id", "test-1", "docking", "0", "undock");
         Assert.That(_sink.Last, Is.EqualTo(new SimCommand("test-1", "docking.undock", 0, 1)));
@@ -243,12 +243,12 @@ public sealed class ControlSurfaceTests
     }
 
     [Test]
-    public async Task DebugDockingPushoff_ReadsLiveValue_AndWritesNewtons()
+    public async Task DebugDockingPushoff_ReadsLiveValue_AndWritesImpulse()
     {
-        // The debug knob reads back the live PushoffForce and writes a new Newton value.
-        Assert.That(await ReadAsync("debug", "vessels", "test-1", "docking", "0", "pushoff_force"),
+        // The debug knob reads back the live PushoffImpulse and writes a new impulse value (N·s).
+        Assert.That(await ReadAsync("debug", "vessels", "test-1", "docking", "0", "pushoff_impulse"),
             Is.EqualTo("7000\n"));
-        await WriteAsync("12000\n", "debug", "vessels", "test-1", "docking", "0", "pushoff_force");
+        await WriteAsync("12000\n", "debug", "vessels", "test-1", "docking", "0", "pushoff_impulse");
         Assert.That(_sink.Last, Is.EqualTo(new SimCommand("test-1", "debug.docking_pushoff", 0, 12000)));
     }
 
