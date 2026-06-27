@@ -123,6 +123,13 @@ docs/ARCHITECTURE.md            runtime architecture, port allocation, telemetry
 docs/KSA_INTEGRATION_MATRIX.md per-point KSA API reference (G1–G4 + documented deferrals)
 docs/VALIDATION.md              in-game validation record (T6.6/T6.7 checklists + results)
 docs/KSA_CELESTIAL_COORDINATE_FRAMES.md details on the KSA games coordinate frame systems for frames of reference 
+scope/                          game-integration scope catalog (scope/FULL_SCOPE.md entrypoint + the
+                                ksa-*/non-ksa-surface pages): EVERY gatOS feature ↔ its KSA binding,
+                                with decompiled-source + Content-asset paths and the game-update
+                                break-check playbook. THE reference for "will a game update break
+                                gatOS, and where?" Kept in lockstep with the code (see the mandate).
+plans/                          active execution plans (e.g. FIX_CURRENT_GAPS_PLAN.md — the gaps a
+                                game update introduced and how to close them)
 LICENSE                         MIT (the mod's own code)
 THIRD-PARTY-NOTICES.md          QEMU GPLv2, Alpine, SSH.NET, Tomlyn, …
 vendor/purrTTY/                 pinned contract DLLs (committed) — see its README for the pin
@@ -190,7 +197,9 @@ client), plus `gatOS.Vm`/`gatOS.Ssh` for its in-VM integration fixture.
 > `gatOS.GameMod/Game/Ksa/`** (`Readers/`, `Actuators/`, `KsaCatalog`, annotated with
 > `[KsaAnchor]`). Transports (9p/HTTP/serial), the `/sim` tree, formats and the command pipeline
 > never see one — they speak `SimSnapshot` (reads) and `SimCommand`/`ICommandExecutor` (writes).
-> When a decomp drop breaks the build, the diff is confined to that folder + `docs/KSA_INTEGRATION_MATRIX.md`.
+> When a decomp drop breaks the build, the diff is confined to that folder + `docs/KSA_INTEGRATION_MATRIX.md`,
+> and you MUST also update the matching [`scope/`](scope/FULL_SCOPE.md) page — the break-impact catalog
+> and the game-update version-diff playbook (`scope/FULL_SCOPE.md` §0).
 >
 > **THE transport-parity rule (binding):** the 9p `/sim` tree, the HTTP `/v1` API and the MQTT
 > `gatos/` topics must expose the **same** surface — every datum's granularity, every control point,
@@ -340,9 +349,29 @@ are written.
 Whenever you make meaningful repository changes, you MUST evaluate and update **this file and the
 relevant `docs/` page** in the same work item if it affects: project structure/dependencies, the
 host↔guest seam, build/test/deploy commands, the threading rules, **the `/sim` API surface (update
-`SPEC_9P_FILESYSTEM.md` — see the constitution above)**, or **milestone/feature status**.
+`SPEC_9P_FILESYSTEM.md` — see the constitution above)**, **any gatOS feature or its KSA integration
+binding (update the matching `scope/` page — see below)**, or **milestone/feature status**.
 As each milestone lands, update the status table above and add full detail to
 [`docs/MILESTONES.md`](docs/MILESTONES.md) — prefer verified code paths over the plan when
 documenting behavior. Update [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) when the runtime
 shape, port allocation, or telemetry pipeline changes. Remove defunct guidance immediately. Do not
 document planned-but-unbuilt code as if it exists.
+
+**`scope/` is binding (MUST).** [`scope/`](scope/FULL_SCOPE.md) is the catalog of every gatOS feature
+and exactly how it couples to the KSA game — the reference used to decide whether a game update breaks
+gatOS, and where. Keep it in lockstep with the code, in the **same work item**, whenever you:
+- add / remove / rename a gatOS feature, a `/sim` node, a transport endpoint, or a config gate → update
+  [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) (the inventory) **and** the relevant `scope/*` page;
+- add / move / retype / change-the-semantics-of any KSA binding (a `[KsaAnchor]`, a reader/actuator, a
+  Harmony hook target, a reflection accessor, a frame/numerics use) → update the matching row **and its
+  game-version status** in [`scope/ksa-read-surface.md`](scope/ksa-read-surface.md) /
+  [`scope/ksa-write-surface.md`](scope/ksa-write-surface.md) /
+  [`scope/ksa-runtime-coupling.md`](scope/ksa-runtime-coupling.md), alongside the `[KsaAnchor]` and
+  [`docs/KSA_INTEGRATION_MATRIX.md`](docs/KSA_INTEGRATION_MATRIX.md);
+- bump the KSA build or run the version-diff playbook → record decomp/asset/version findings in
+  [`scope/ksa-assets-and-versions.md`](scope/ksa-assets-and-versions.md), and capture any resulting gaps
+  in a `plans/` plan.
+
+The `[KsaAnchor]` attributes remain the source of truth; `scope/` is the human, cross-referenced mirror
+and break-impact view — they must never disagree (the same lockstep discipline the `/sim` SPEC constitution
+imposes).
