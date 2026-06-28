@@ -55,6 +55,18 @@ public sealed record SimSnapshot(
 
     /// <summary>The current star-system summary (<c>/sim/system</c>); null until sampled.</summary>
     public SystemSnapshot? System { get; init; }
+
+    /// <summary>
+    ///     Active welds (the <c>/sim/debug/welds</c> cheat): each is a source vessel rigidly tracking a
+    ///     part on a target vessel. Empty when none; only ever populated when the debug namespace is on.
+    /// </summary>
+    public IReadOnlyList<WeldSnapshot> Welds { get; init; } = [];
+
+    /// <summary>
+    ///     Whether the global "always render IVA" cheat is on (<c>/sim/debug/always_render_iva</c>):
+    ///     interior part meshes render outside the IVA camera. A render hack, off by default.
+    /// </summary>
+    public bool AlwaysRenderIva { get; init; }
 }
 
 /// <summary>One vessel's telemetry.</summary>
@@ -187,6 +199,14 @@ public sealed record VesselSnapshot(
 
     /// <summary>Upcoming encounters / closest approaches on the current patch.</summary>
     public IReadOnlyList<EncounterSnapshot> Encounters { get; init; } = [];
+
+    /// <summary>
+    ///     Top-level parts (<c>Vehicle.Parts.Parts</c>), surfaced under <c>parts/&lt;n&gt;/</c> so guests
+    ///     can discover a part to anchor a weld to. Subparts are not exposed. Empty when the parts
+    ///     stream is gated off (<c>telemetry_vessel_parts</c>); the reader caches it per vehicle and
+    ///     rebuilds on part-count change (or every 10 s).
+    /// </summary>
+    public IReadOnlyList<PartSnapshot> Parts { get; init; } = [];
 }
 
 /// <summary>Orbit elements (altitudes, not radii — the sampler converts).</summary>
@@ -348,6 +368,45 @@ public sealed record DecouplerSnapshot(int Index, bool Fired);
 /// <param name="Ut">Sim time of closest approach.</param>
 /// <param name="DistanceMeters">Closest-approach distance, meters.</param>
 public sealed record EncounterSnapshot(string Body, double Ut, double DistanceMeters);
+
+/// <summary>
+///     One top-level part (<c>Vehicle.Parts.Parts</c>) — the anchor picker for the welds feature
+///     (<c>/sim/vessels/by-id/&lt;id&gt;/parts/&lt;n&gt;/</c>). Subparts are deliberately not surfaced.
+/// </summary>
+/// <param name="Index">
+///     Per-vessel part index in PartTree enumeration order — the friendly directory name. <b>Not</b>
+///     stable across vehicle edits; the stable handle is <see cref="InstanceId"/>.
+/// </param>
+/// <param name="InstanceId">
+///     Runtime-unique part id (<c>Part.InstanceId</c>) — the stable handle a weld anchors to. Pass it
+///     to <c>debug/vessels/&lt;id&gt;/weld</c>.
+/// </param>
+/// <param name="Id">The part id string (<c>Part.Id</c>); can collide across instances of one template.</param>
+/// <param name="DisplayName">Human-readable name (<c>Part.DisplayName</c>).</param>
+/// <param name="Template">The part template id (<c>Part.Template.Id</c>).</param>
+/// <param name="IsRoot">Whether this is the root part (<c>Part.PartParent == null</c>).</param>
+/// <param name="SubpartCount">Number of subparts (informational; subparts are not exposed as nodes).</param>
+/// <param name="PositionVehicleAsmb">Part position in the vehicle assembly frame, meters.</param>
+public sealed record PartSnapshot(
+    int Index, uint InstanceId, string Id, string DisplayName, string Template,
+    bool IsRoot, int SubpartCount, double3Snap PositionVehicleAsmb);
+
+/// <summary>
+///     One active weld (<c>/sim/debug/welds</c>): a source vessel rigidly tracking a part on a target
+///     vessel. A pure runtime cheat; never persisted.
+/// </summary>
+/// <param name="SourceId">The welded (following) vessel id.</param>
+/// <param name="TargetId">The anchor vessel id.</param>
+/// <param name="PartInstanceId">
+///     The anchor part's <c>InstanceId</c>, or <c>0</c> when anchored to the target's body/CoM frame.
+/// </param>
+/// <param name="Offset">Position offset expressed in the anchor frame, meters.</param>
+/// <param name="Rotation">Orientation offset relative to the anchor, Euler pitch/yaw/roll degrees.</param>
+/// <param name="LockRotation">true ⇒ orientation locked to the anchor; false ⇒ only position held.</param>
+/// <param name="Enabled">false ⇒ suspended (kept in the registry, no physics applied).</param>
+public sealed record WeldSnapshot(
+    string SourceId, string TargetId, uint PartInstanceId, double3Snap Offset, double3Snap Rotation,
+    bool LockRotation, bool Enabled);
 
 /// <summary>NavBall-derived attitude and performance figures.</summary>
 /// <param name="PitchDeg">Pitch, degrees.</param>

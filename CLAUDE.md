@@ -37,8 +37,9 @@ and the decisions locked in (Part 1).
 > Full per-milestone detail, class names, and as-built notes → **[`docs/MILESTONES.md`](docs/MILESTONES.md)**
 
 **All milestones through M9, plus G1–G7 (HTTP/serial/TypeScript SDK), the embedded MQTT
-transport, and host folder mounts (`/mnt/<name>`), are code-complete.** The only pending work is
-a set of in-game passes (T6.6/T9.3/G1–G4) that require a live KSA flight; checklists are in
+transport, host folder mounts (`/mnt/<name>`), and the welds / `always_render_iva` / parts-listing
+cheats ported from `unscience`, are code-complete.** The only pending work is a set of in-game passes
+(T6.6/T9.3/G1–G4, plus the welds/IVA/parts checklist) that require a live KSA flight; checklists are in
 [`docs/VALIDATION.md`](docs/VALIDATION.md). The purrTTY tip release is now cut.
 
 | Milestone | Status | Key entry points |
@@ -59,6 +60,7 @@ a set of in-game passes (T6.6/T9.3/G1–G4) that require a live KSA flight; chec
 | G7 — serial/bus | DONE | `gatOS.Bus/` |
 | MQTT transport | DONE | `gatOS.Mqtt/` |
 | Host folder mounts | DONE | `NineP/Vfs/HostDirectory.cs`, `HostFile.cs` |
+| Welds + `always_render_iva` + parts (ex-`unscience`) | Code DONE; in-game pending | `Game/Ksa/Welds/`, `Game/Ksa/Render/IvaForceRender.cs`, `Game/Ksa/Readers/PartsReader.cs` |
 | T11.1 — QEMU win-x64 | DONE | `tools/fetch-qemu.*`, `vendor/qemu/win-x64/` |
 | M10+ | **Not yet implemented** | — |
 
@@ -261,7 +263,12 @@ host.
    outside that capture and is overwritten by the in-flight solve (the value flashes on, then reverts
    to manual). Which phase an action uses is **derived from the action key** by `SimCommand.Phase`
    (the `SimCommand.SolverActions` set is the single source of truth — every transport gets it by
-   construction); never pass a phase at a construction site.
+   construction); never pass a phase at a construction site. **A third game-thread mutation site** is the
+   welds per-frame driver (`Mod.DriveWelds`, run in `[StarMapAfterGui] OnAfterUi` after
+   `JobSystems.VehicleSolvers.Wait()`) — it teleports each welded source onto its anchor and self-gates to
+   a no-op when no welds exist, so it needs **no** Harmony patch. The `always_render_iva` cheat installs its
+   own dynamic `Harmony("gatos.iva")` patches **only while the toggle is on** (removed on disable/unload).
+   Both are torn down by `Mod.TeardownGameCheats` at `Unload`.
 2. **9p server threads never touch game state** — they read the latest published snapshot, and for
    writes they only *enqueue* an immutable `SimCommand` and await its result (never executing it).
 3. SSH I/O runs on SSH.NET's threads; `OutputReceived` may fire on any thread (purrTTY tolerates
@@ -278,13 +285,14 @@ host.
 
 The data feed has **one master cadence** (`sample_rate_hz`, default 10, clamped 1–120) and
 **per-stream gates** (`telemetry_enabled` master + `telemetry_vessel_detail` /
-`telemetry_bodies` / `telemetry_events`), all tunable from config and live in-game via the
-Telemetry submenu and status window slider. Gating **at the sampler** is deliberate — a disabled
-stream skips its KSA reads *and* shrinks the published snapshot, so every transport serves less by
-construction (transport-parity stays structural). `telemetry_vessel_detail` is the big lever: off
-drops the entire G3 enrich pass, leaving only core flight telemetry. The status window's Telemetry
-block shows `PerfStat` readouts (sample-time avg/max/last, command-drain avg/max, MQTT publish
-avg/max) recorded allocation-free.
+`telemetry_vessel_parts` / `telemetry_bodies` / `telemetry_events`), all tunable from config and live
+in-game via the Telemetry submenu and status window slider. Gating **at the sampler** is deliberate — a
+disabled stream skips its KSA reads *and* shrinks the published snapshot, so every transport serves less
+by construction (transport-parity stays structural). `telemetry_vessel_detail` is the big lever: off
+drops the entire G3 enrich pass, leaving only core flight telemetry. `telemetry_vessel_parts` gates the
+per-vessel top-level `parts/` list (the welds anchor picker; cached per vehicle, rebuilt on part-count
+change or every 10 s). The status window's Telemetry block shows `PerfStat` readouts (sample-time
+avg/max/last, command-drain avg/max, MQTT publish avg/max) recorded allocation-free.
 
 ## Conventions (decided — do not re-litigate; see OS_PLAN.md Part 1)
 

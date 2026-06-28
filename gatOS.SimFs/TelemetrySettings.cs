@@ -30,20 +30,23 @@ public sealed class TelemetrySettings
     private volatile bool _vesselDetail;
     private volatile bool _bodies;
     private volatile bool _events;
+    private volatile bool _vesselParts;
 
     /// <param name="sampleRateHz">Initial sample cadence in Hz (already clamped by the config).</param>
     /// <param name="enabled">Master gate — when false the sampler idles entirely.</param>
     /// <param name="vesselDetail">Sample the per-vessel G3 detail (navball, environment, per-module).</param>
     /// <param name="bodies">Sample the celestial-body catalog and the system summary.</param>
     /// <param name="events">Diff snapshots into <c>/sim/events</c> entries.</param>
+    /// <param name="vesselParts">Sample the per-vessel top-level parts list (the welds anchor picker).</param>
     public TelemetrySettings(int sampleRateHz = 10, bool enabled = true,
-        bool vesselDetail = true, bool bodies = true, bool events = true)
+        bool vesselDetail = true, bool bodies = true, bool events = true, bool vesselParts = true)
     {
         _sampleRateHz = Clamp(sampleRateHz);
         _enabled = enabled;
         _vesselDetail = vesselDetail;
         _bodies = bodies;
         _events = events;
+        _vesselParts = vesselParts;
     }
 
     /// <summary>Sample cadence in Hz; setting clamps to <see cref="MinRateHz"/>..<see cref="MaxRateHz"/>.</summary>
@@ -83,6 +86,17 @@ public sealed class TelemetrySettings
     {
         get => _events;
         set => _events = value;
+    }
+
+    /// <summary>
+    ///     Sample the per-vessel top-level parts list (<c>/sim/vessels/by-id/&lt;id&gt;/parts</c>) — the
+    ///     anchor picker for the welds cheat. Cheap (cached per vehicle, rebuilt on part-count change or
+    ///     every 10 s), but big craft carry many parts; off skips the read and removes the subtree.
+    /// </summary>
+    public bool VesselParts
+    {
+        get => _vesselParts;
+        set => _vesselParts = value;
     }
 
     private static int Clamp(int rate) => Math.Clamp(rate, MinRateHz, MaxRateHz);

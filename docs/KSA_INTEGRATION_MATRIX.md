@@ -145,6 +145,17 @@ core telemetry and the extension dirs vanish (logged once) rather than the sampl
 New `/sim/events` types (snapshot diff in `EventDiffer`): `engine-state`, `flameout`, `docked`,
 `undocked`, `decoupled`, `animation-complete`, `battery-depleted`, `battery-charged`.
 
+## Read surface — parts (welds anchor picker; gated by `telemetry_vessel_parts`)
+
+Anchor in `Game/Ksa/Readers/PartsReader.cs`. **Top-level parts only** (subparts not surfaced); the
+welds anchor picker. Cached per vehicle (`ConditionalWeakTable<Vehicle,…>`), rebuilt on
+`Vehicle.Parts.Count` change or every 10 s (sim seconds). `<n>` is a 0-based index; `instance_id` is
+the **stable** handle a weld uses.
+
+| Path | A | KSA anchor | Risk |
+|---|---|---|---|
+| `vessels/by-id/<id>/parts/<n>/{instance_id,id,display_name,template,is_root,subpart_count,position}` | S | `Vehicle.Parts.{Parts,Count}`; `Part.{InstanceId,Id,DisplayName,Template.Id,PartParent,SubParts,PositionVehicleAsmb}` | Low |
+
 ## Control surface — G4 expansion
 
 Anchors in `Game/Ksa/Actuators/**`; routed by `KsaCatalog`. Frame phase unless noted.
@@ -195,6 +206,27 @@ the game's ignite button reads). This is distinct from the per-engine `engines/<
 | `debug/time/warp` | St | factor | `Universe.SetSimulationSpeed(double, alert:false)` (public) | M | Frame |
 | `debug/focus` | St | vehicle/body id | `camera.focus` by id (view-only; same action as `ctl/focus`) | M | Frame |
 | `debug/control_vessel` | St | vehicle id | `Program.GetMainCamera().SetFollow(vehicle)` + `Program.ControlledVehicle = vehicle` (focus **and** control) | M | Frame |
+| `debug/always_render_iva` | St | `0`/`1` | `IvaActuator`→`IvaForceRender.SetEnabled`: flips `PartModelModule.Template.Internal=false` over `PartModel.Instances`; installs/removes its own `gatos.iva` Harmony patches (`PartModel..ctor`/`AddInstance` postfixes) only while on (vessel-agnostic) | M (dynamic Harmony) | Frame |
+| `debug/vessels/<id>/weld` | St | `<target> <piid> x y z pitch yaw roll lock` | `WeldManager.Create`→`WeldEngine.UpdateWeld`: `Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,BodyRates,CenterOfMassAsmb,Parent,Orbit,Teleport,UpdatePerFrameData}`, `Orbit.CreateFromStateCci`, `IParentBody.GetCci2Cce`, `Universe.GetJobSimStep(double).NextTime`, `Program.GetPlayerDeltaTime`, `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` | H | Frame |
+| `debug/vessels/<id>/weld_here` | St | `<target> <piid> [lock]` | `WeldManager.CreateAtCurrentPose`→`WeldEngine.CapturePose` (inverse transform of the above) | M | Frame |
+| `debug/vessels/<id>/unweld` | T | `1` | `WeldManager.Remove(vehicle.Id)` (registry op — no KSA) | L | Frame |
+| `debug/welds/clear` | T | `1` | `WeldManager.Clear` (vessel-agnostic) | L | Frame |
+| `debug/welds/<source>/enabled` | St | `0`/`1` | `WeldManager.SetEnabled` (suspend/resume; keeps the entry) | L | Frame |
+
+The `debug/welds/<source>/{target,part,offset,rotation,lock_rotation}` registry view is a **game-free
+projection** of `WeldManager.Snapshot()` (`WeldSnapshot` records — no KSA read).
+
+**Render & weld cheats (ported from `unscience`, exposed only on gatOS surfaces — no ImGui).**
+`debug.always_render_iva` toggles `IvaForceRender`, which installs **two Harmony patches on its own
+`Harmony("gatos.iva")` instance only while enabled** (a `PartModel..ctor(PartModelModule.Template)`
+postfix + an editor-only `PartModel.AddInstance` postfix) and bulk-flips
+`PartModelModule.Template.Internal=false` over `PartModel.Instances`; disable restores the flags and
+unpatches. The **welds** registry (`WeldManager`) drives a per-frame `Vehicle.Teleport` of each source
+onto its anchor in `OnAfterUi` (`Mod.DriveWelds`, game thread, after `JobSystems.VehicleSolvers.Wait()`)
+— a **third game-thread mutation site** beside the Frame and Solver drains; it self-gates to a no-op
+when no welds exist, so it needs **no** Harmony patch. Both tear down on unload
+(`Mod.TeardownGameCheats`). All weld create/remove/enable/clear and the IVA toggle are **Frame-phase**.
+Anchors verified `2026-06-28` against `2026.6.9.4750`.
 
 Solver-phase commands drain in a Harmony `Priority.First` prefix on
 `Universe.ExecuteNextVehicleSolvers` (`Mod.DrainSolverCommands`), which runs **immediately before** the

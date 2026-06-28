@@ -87,18 +87,30 @@ vessels/active/…  (alias of the controlled vessel)   vessels/by-id/<id>/
     orbit/*  navball/*  environment/*  battery/*  power/*
     engines/<n>/*  tanks/<r>/*  rcs/<n>/*  solar/<n>/*  generators/<n>/*
     lights/<n>/*  docking/<n>/*  decouplers/<n>/*  animations/<n>/*  encounters
+    parts/<n>/{instance_id,id,display_name,template,is_root,subpart_count,position}
+                                        (top-level parts; welds anchor picker; telemetry_vessel_parts)
     ctl/{ignite,shutdown,engine,stage,throttle,lights,rcs,
          attitude_mode,attitude_frame,attitude_target,burn,focus}
 events
 status/{game_version,sampler,accessors,transports}
 debug/                                  (only when debug_namespace=true)
-    vessels/<id>/{teleport,refill_fuel,refill_battery,docking/<n>/pushoff_impulse}
-    time/warp   focus   control_vessel
+    vessels/<id>/{teleport,refill_fuel,refill_battery,docking/<n>/pushoff_impulse,
+                  weld,weld_here,unweld}
+    welds/{clear,count,<source>/{target,part,offset,rotation,lock_rotation,enabled}}
+    always_render_iva   time/warp   focus   control_vessel
 ```
 
 Each leaf's format, units, archetype (read-only vs control vs trigger), and backing command action
 are in [`SPEC_9P_FILESYSTEM.md`](../../../SPEC_9P_FILESYSTEM.md). Per-module dirs appear only when the
 vessel actually has that module; `bodies`/detail dirs depend on telemetry config gates.
+
+**Cheats (`/sim/debug`, ported from the sibling `unscience` mod):** `always_render_iva` forces interior
+(IVA) meshes to render outside the IVA camera; **welds** rigidly attach one vessel to another vessel's
+part (`weld` = explicit pose, `weld_here` = capture the current relative pose, `unweld`; the registry +
+`clear`/`enabled` live under `welds/`). Discover the anchor part from the target's
+`parts/<n>/instance_id` (pass `0` to anchor to the target's body/CoM frame). Full arg shapes, action
+keys, and errnos are in [SPEC §3.7](../../../SPEC_9P_FILESYSTEM.md); a worked `weld_here` example is in
+[`recipes.md` §9](recipes.md).
 
 ## Gotchas that cause silent failures
 

@@ -1,5 +1,7 @@
 using gatOS.GameMod.Game.Ksa;
 using gatOS.GameMod.Game.Ksa.Readers;
+using gatOS.GameMod.Game.Ksa.Render;
+using gatOS.GameMod.Game.Ksa.Welds;
 using gatOS.Logging;
 using gatOS.SimFs;
 using gatOS.SimFs.Snapshots;
@@ -29,6 +31,7 @@ internal sealed class TelemetrySampler
     private readonly KsaHealth _health;
     private readonly TelemetrySettings _settings;
     private readonly PerfStat _sampleStats;
+    private readonly WeldManager _welds;
     private int _appliedRateHz;
     private IReadOnlyList<double> _warpSpeeds = [];
     private SimSnapshot? _previous;
@@ -44,7 +47,9 @@ internal sealed class TelemetrySampler
     /// </param>
     /// <param name="health">Accessor-health latches, shared with the command executor.</param>
     /// <param name="sampleStats">Timing accumulator for one <see cref="Sample"/> (the status window reads it).</param>
-    internal TelemetrySampler(SnapshotStore store, TelemetrySettings settings, KsaHealth health, PerfStat sampleStats)
+    /// <param name="welds">The weld registry — projected into the snapshot for the <c>/sim/debug/welds</c> view.</param>
+    internal TelemetrySampler(SnapshotStore store, TelemetrySettings settings, KsaHealth health,
+        PerfStat sampleStats, WeldManager welds)
     {
         _store = store;
         _settings = settings;
@@ -52,6 +57,7 @@ internal sealed class TelemetrySampler
         _clock = new SampleClock(_appliedRateHz);
         _health = health;
         _sampleStats = sampleStats;
+        _welds = welds;
     }
 
     /// <summary>
@@ -105,7 +111,12 @@ internal sealed class TelemetrySampler
                     continue;
                 try
                 {
-                    vessels.Add(VesselReader.Sample(vehicle, activeId, ut, detail));
+                    var vessel = VesselReader.Sample(vehicle, activeId, ut, detail);
+                    // The parts list is its own gate + cache (the welds anchor picker), separate from
+                    // the G3 detail pass so it can be enabled without the heavier per-module reads.
+                    if (_settings.VesselParts)
+                        vessel = vessel with { Parts = PartsReader.Sample(vehicle, ut) };
+                    vessels.Add(vessel);
                 }
                 catch (Exception ex)
                 {
@@ -134,6 +145,8 @@ internal sealed class TelemetrySampler
             AutoWarpTargetUt = SafeAutoWarpTarget(),
             Bodies = bodies,
             System = systemSummary,
+            Welds = _welds.Snapshot(),
+            AlwaysRenderIva = IvaForceRender.Enabled,
         };
         _previous = snapshot;
         _store.Publish(snapshot);

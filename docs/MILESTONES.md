@@ -593,6 +593,56 @@ The full `GATOS_IT=1` suite was verified green on the Windows 11 game machine ag
 
 ---
 
+## Welds + `always_render_iva` + parts listing (ex-`unscience`): Code DONE; in-game pass pending
+
+Three additions ported from the sibling `unscience` mod, exposed **only** on the gatOS surfaces (9p
+`/sim` debug + HTTP `/v1` + MQTT — **no ImGui**). KSA-coupled code is confined to
+`gatOS.GameMod/Game/Ksa/` per the G2 rule; the snapshot/command plumbing is game-free. KSA bindings
+verified against decomp `2026.6.9.4750` (anchors `2026-06-28`).
+
+**Parts listing** — `vessels/by-id/<id>/parts/<n>/` (**top-level parts only**, no subparts), gated by a
+new `telemetry_vessel_parts` config key (default true). Leaves: `instance_id` (uint — the **stable** weld
+anchor handle), `id`, `display_name`, `template`, `is_root`, `subpart_count`, `position`.
+`Game/Ksa/Readers/PartsReader.cs` builds `PartSnapshot[]` from `Vehicle.Parts.Parts`, cached per vehicle
+in a `ConditionalWeakTable<Vehicle,…>` and rebuilt on a `Vehicle.Parts.Count` change or every 10 s (sim
+seconds). The sampler projects it per vessel when the gate is on.
+
+**`always_render_iva`** — global render cheat at `/sim/debug/always_render_iva` (`debug.always_render_iva`,
+Frame, vessel-agnostic) that forces interior (IVA) part meshes to render outside the IVA camera by flipping
+`PartModelModule.Template.Internal=false`. `Game/Ksa/Render/IvaForceRender.cs` installs two Harmony patches
+on its **own** `Harmony("gatos.iva")` instance **only while enabled** (a `PartModel(PartModelModule.Template)`
+ctor postfix + an editor-only `PartModel.AddInstance` postfix) and bulk-flips/tracks the internal templates
+over `PartModel.Instances`; disable restores the tracked templates and unpatches. `Actuators/IvaActuator.cs`
+is the thin actuator.
+
+**Welds** — rigidly attach a source vessel to a target vessel's part (a game hack).
+`Game/Ksa/Welds/{WeldEntry,WeldEngine,WeldManager}.cs`: `WeldManager` is the game-thread registry +
+per-frame driver, `WeldEngine` the stateless teleport math ported verbatim from `unscience` (orientation
+stored as an authoritative `doubleQuat`, Euler display-only; `weld_here` capture is the inverse transform;
+the orbit is stamped with `Universe.GetJobSimStep(Program.GetPlayerDeltaTime()).NextTime`). Per-source
+controls under `/sim/debug/vessels/<id>/`: `weld` (explicit pose), `weld_here` (capture the current
+relative pose), `unweld`; registry view + ops under `/sim/debug/welds/`: `clear`, `count`, and
+`<source>/{target,part,offset,rotation,lock_rotation,enabled}`. Action keys `debug.weld_{create,here,
+remove,enable,clear}` (all Frame). The driver runs in `OnAfterUi` (`Mod.DriveWelds`) after
+`JobSystems.VehicleSolvers.Wait()` — the **third game-thread mutation site**, beside the Frame and Solver
+drains; self-gated to a no-op when empty, so **no** Harmony patch and zero cost when unused.
+
+**Wiring:** game-free `gatOS.SimFs/Commands/LineControlFile.cs` (a new whole-line-parsed control archetype,
+backs `weld`/`weld_here`); `SimSnapshot` gains `PartSnapshot`/`WeldSnapshot` records (`VesselSnapshot.Parts`,
+`SimSnapshot.{Welds,AlwaysRenderIva}`); `Formats` gains `UInt`/`WeldSpec`; `TelemetrySettings` gains the
+`VesselParts` gate. `KsaCatalog` (now an instance dispatcher) gains a `WeldManager` ctor param + the 6 new
+actions (IVA + `weld_clear` handled vessel-agnostically before vehicle resolution; weld create/here resolve
+the target from the command `Token`). `Mod.Game.cs` lazily creates `_weldManager` (game thread), drives it
+via the `DriveWelds(dt)` partial from `OnAfterUi`, tears both cheats down via `TeardownGameCheats`, and adds
+a "Vessel parts" telemetry menu toggle. `gatOS.GameMod.csproj` gained a `Brutal.Concurrency` reference (for
+`JobSystems.VehicleSolvers.Wait()`).
+
+Full catalog: **`SPEC_9P_FILESYSTEM.md`** §3.4.16 (parts) + §3.7 (`debug/welds/**`, `always_render_iva`);
+anchors mirrored in `docs/KSA_INTEGRATION_MATRIX.md` and `scope/`. **Pending: the in-game pass**
+(checklist in `docs/VALIDATION.md`).
+
+---
+
 ## Suite totals and pending work
 
 **Full non-IT suite**: green, zero warnings.
@@ -601,8 +651,9 @@ The full `GATOS_IT=1` suite was verified green on the Windows 11 game machine ag
 (including the 43 additional tests from the 2026-06-13 hardening review). The
 `HostMountIntegrationTests` fixture requires guest v10 to be published.
 
-**Still pending: the in-game passes** — T6.6/T9.3/G1–G4 checklists in `docs/VALIDATION.md` are
-runnable now that the purrTTY tip release is cut, but need a live KSA flight to complete.
+**Still pending: the in-game passes** — T6.6/T9.3/G1–G4 and the welds/IVA/parts checklists in
+`docs/VALIDATION.md` are runnable now that the purrTTY tip release is cut, but need a live KSA flight
+to complete.
 
 **Next**: M10 (persistence & savegame shape). Everything past M9 is not yet implemented, with
 the single exception of T11.1 (QEMU win-x64 bundle) which was pulled forward and is done.

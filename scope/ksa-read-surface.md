@@ -117,6 +117,32 @@ vessel keeps its core telemetry and the extension dirs vanish (logged once).
 
 ---
 
+## Parts — `PartsReader` (gated by `telemetry_vessel_parts`) {#parts}
+
+`gatOS.GameMod/Game/Ksa/Readers/PartsReader.cs`. Surfaces a vehicle's **top-level** parts (subparts
+are deliberately not surfaced) at `vessels/by-id/<id>/parts/<n>/` — the anchor picker for the **welds**
+write surface ([`ksa-write-surface.md#welds`](ksa-write-surface.md#welds)). Cached per vehicle in a
+`ConditionalWeakTable<Vehicle,…>` (collected with the vehicle, no leak, game-thread only); rebuilt only
+on a `Vehicle.Parts.Count` change (the cheap "vehicle was edited" signal — KSA exposes no part-tree
+version/dirty flag) or every 10 s of sim time. Hot path = one `Parts.Count` read per vehicle per tick.
+Anchor: `PartsReader.cs:28`.
+
+| `/sim` path (under `…/parts/<n>/`) | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4750 |
+|---|---|---|---|---|---|---|
+| `instance_id` | `PartsReader.cs:57` | `Part.InstanceId` | `KSA/Part.cs` | uint (the **stable** weld handle) | Low | ✅ |
+| `id` | `:57` | `Part.Id` | `KSA/Part.cs` | string (can collide across instances) | Low | ✅ |
+| `display_name` | `:57` | `Part.DisplayName` | `KSA/Part.cs` | string | Low | ✅ |
+| `template` | `:57` | `Part.Template.Id` | `KSA/Part.cs` | string | Low | ✅ |
+| `is_root` | `:58` | `Part.PartParent is null` | `KSA/Part.cs` | flag | Low | ✅ |
+| `subpart_count` | `:58` | `Part.SubParts.Length` | `KSA/Part.cs` | int | Low | ✅ |
+| `position` | `:55,59` | `Part.PositionVehicleAsmb` | `KSA/Part.cs` | `x y z` m (vehicle assembly frame) | Low | ✅ |
+| (enumeration) | `:37,50` | `Vehicle.Parts.{Count,Parts}` | `KSA/Vehicle.cs`, `KSA/PartTree.cs` | span of `Part` | Low | ✅ |
+
+Verified `2026-06-28` against `2026.6.9.4750` (new feature; compiled clean — none of these
+`Part`/`PartTree` members appear in the 4680→4750 changelog).
+
+---
+
 ## ✅ 4750 read-surface findings (detail)
 
 ### ✅ Docking pushoff — `docking/<n>/pushoff_impulse` (G1 FIXED, 2026-06-27) {#docking}

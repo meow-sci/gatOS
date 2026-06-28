@@ -1,6 +1,8 @@
 using Brutal.ImGuiApi;
 using gatOS.GameMod.Game;
 using gatOS.GameMod.Game.Ksa;
+using gatOS.GameMod.Game.Ksa.Render;
+using gatOS.GameMod.Game.Ksa.Welds;
 using gatOS.Logging;
 using gatOS.SimFs;
 using gatOS.SimFs.Commands;
@@ -60,6 +62,12 @@ public sealed partial class Mod
     private KsaHealth? _health;
     private KsaCatalog? _catalog;
     private bool _commandsDead;
+
+    // The welds cheat registry + per-frame driver (Game/Ksa/Welds). Created lazily on the game thread,
+    // shared by the sampler (projects it into /sim/debug/welds) and the executor (mutates it). The
+    // driver runs in OnAfterUi (DriveWelds) and self-gates to nothing when empty — no Harmony patch.
+    private WeldManager? _weldManager;
+    private bool _weldsDead;
 
     // The Harmony patch draining solver-phase commands (G4). Installed in OnFullyLoaded, removed at
     // Unload; null when the solver hook could not be installed (solver commands then never drain).
@@ -155,7 +163,8 @@ public sealed partial class Mod
         try
         {
             _health ??= new KsaHealth();
-            _telemetry ??= new TelemetrySampler(store, _telemetrySettings, _health, _sampleStats);
+            _weldManager ??= new WeldManager();
+            _telemetry ??= new TelemetrySampler(store, _telemetrySettings, _health, _sampleStats, _weldManager);
             // Sample only while something can actually read /sim: the VM is up, or a host-side
             // transport client is connected (9p / HTTP / MQTT). Otherwise the sampler idles for free.
             var state = CurrentVmStatus.State;
@@ -199,7 +208,56 @@ public sealed partial class Mod
     private void EnsureControlObjects()
     {
         _health ??= new KsaHealth();
-        _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels);
+        _weldManager ??= new WeldManager();
+        _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels, _weldManager);
+    }
+
+    /// <summary>
+    ///     Drives active welds on the game thread from <c>OnAfterUi</c> — after the vehicle-solver
+    ///     workers have finished during the render (the manager drains them before mutating state).
+    ///     Self-gates to nothing when no welds exist, so the cheat costs nothing when unused and needs
+    ///     no Harmony patch. A failure disables welds for the session (one error log).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void DriveWelds(double dt)
+    {
+        if (_weldsDead || _weldManager is not { } welds || welds.IsEmpty)
+            return;
+        try
+        {
+            welds.Update(dt);
+        }
+        catch (Exception ex)
+        {
+            _weldsDead = true;
+            ModLog.Log.Error($"gatOS welds disabled after an update error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    ///     Tears down the runtime cheats at unload: clears every weld and restores IVA (which also
+    ///     unpatches the IVA Harmony hooks). Game-coupled, so it is elided without the KSA assemblies.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void TeardownGameCheats()
+    {
+        try
+        {
+            _weldManager?.Clear();
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS weld teardown error: {ex.Message}");
+        }
+
+        try
+        {
+            IvaForceRender.SetEnabled(false);
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS IVA teardown error: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -381,6 +439,13 @@ public sealed partial class Mod
         {
             t.VesselDetail = !t.VesselDetail;
             _config.TelemetryVesselDetail = t.VesselDetail;
+            PersistConfig();
+        }
+
+        if (ImGui.MenuItem("Vessel parts", default, t.VesselParts, t.Enabled))
+        {
+            t.VesselParts = !t.VesselParts;
+            _config.TelemetryVesselParts = t.VesselParts;
             PersistConfig();
         }
 

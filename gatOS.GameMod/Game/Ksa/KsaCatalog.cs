@@ -1,4 +1,6 @@
+using Brutal.Numerics;
 using gatOS.GameMod.Game.Ksa.Actuators;
+using gatOS.GameMod.Game.Ksa.Welds;
 using gatOS.SimFs.Commands;
 using KSA;
 
@@ -12,7 +14,7 @@ namespace gatOS.GameMod.Game.Ksa;
 ///     thrown KSA call into a degraded sensor (EOPNOTSUPP) instead of a crash. Always invoked on
 ///     the game thread by <see cref="CommandQueue.Drain"/>; never throws (faults are returned).
 /// </summary>
-internal sealed class KsaCatalog(KsaHealth health, bool allVessels) : ICommandExecutor
+internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager welds) : ICommandExecutor
 {
     /// <inheritdoc />
     public CommandResult Execute(SimCommand command)
@@ -28,6 +30,14 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels) : ICommandEx
             // Vessel-agnostic debug actions (no target vehicle to resolve).
             if (command.Action == "debug.warp")
                 return Finish(accessor, DebugActuator.SetWarp(command.Value));
+
+            // Global render cheat: force interior (IVA) meshes visible.
+            if (command.Action == "debug.always_render_iva")
+                return Finish(accessor, IvaActuator.SetAlwaysRender(command.Value > 0.5));
+
+            // Remove every weld (the per-source create/remove resolve vehicles below).
+            if (command.Action == "debug.weld_clear")
+                return Finish(accessor, welds.Clear());
 
             // camera.focus targets ANY astronomical (vessel or celestial) named by id and only moves
             // the view — no vessel mutation, so it bypasses the vehicle-only resolution and the
@@ -69,7 +79,7 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels) : ICommandEx
         return result;
     }
 
-    private static CommandResult Dispatch(Vehicle vehicle, SimCommand c) => c.Action switch
+    private CommandResult Dispatch(Vehicle vehicle, SimCommand c) => c.Action switch
     {
         // Engines / vessel-level (G1)
         "vessel.ignite" => EngineActuator.Ignite(vehicle),
@@ -106,8 +116,35 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels) : ICommandEx
         "debug.refill_battery" => DebugActuator.RefillBattery(vehicle),
         "debug.docking_pushoff" => DockingActuator.SetPushoffImpulse(vehicle, c.Ordinal, c.Value),
 
+        // Welds cheat (vehicle = the source; the target rides in Token; part_iid + offsets in Values).
+        "debug.weld_create" => WeldCreate(vehicle, c),
+        "debug.weld_here" => WeldHere(vehicle, c),
+        "debug.weld_remove" => welds.Remove(vehicle.Id),
+        "debug.weld_enable" => welds.SetEnabled(vehicle.Id, c.Value > 0.5),
+
         _ => new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'"),
     };
+
+    private CommandResult WeldCreate(Vehicle source, SimCommand c)
+    {
+        if (ResolveVehicle(c.Token ?? "") is not { } target)
+            return new CommandResult(CommandOutcome.NotFound, $"target '{c.Token}' is gone");
+        var v = c.Values ?? [];
+        if (v.Count != 8) // part_iid x y z pitch yaw roll lock
+            return new CommandResult(CommandOutcome.Invalid, "weld expects 'part x y z pitch yaw roll lock'");
+        return welds.Create(source, target, (uint)v[0],
+            new double3(v[1], v[2], v[3]), new double3(v[4], v[5], v[6]), v[7] > 0.5);
+    }
+
+    private CommandResult WeldHere(Vehicle source, SimCommand c)
+    {
+        if (ResolveVehicle(c.Token ?? "") is not { } target)
+            return new CommandResult(CommandOutcome.NotFound, $"target '{c.Token}' is gone");
+        var v = c.Values ?? [];
+        if (v.Count != 2) // part_iid lock
+            return new CommandResult(CommandOutcome.Invalid, "weld_here expects 'part lock'");
+        return welds.CreateAtCurrentPose(source, target, (uint)v[0], v[1] > 0.5);
+    }
 
     [KsaAnchor("Universe.CurrentSystem.All.UnsafeAsList(); Vehicle.Id", SourceFile = "KSA/Universe.cs",
         Verified = "2026-06-12", Risk = ChurnRisk.Low,

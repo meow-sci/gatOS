@@ -116,6 +116,7 @@ KSA game update have any chance of breaking it.
 | R | Celestial bodies + system catalog (orbits, atmosphere, ocean, frames) | **Yes** | [`ksa-read-surface.md`](ksa-read-surface.md) |
 | R | Time / warp / auto-warp / sim-step | **Yes** (sampler-direct) | [`ksa-read-surface.md`](ksa-read-surface.md#sampler-direct-reads) |
 | R | Events (snapshot-diff: engine/flameout/dock/undock/decouple/animation/battery) | Indirect (diff over reads) | [`ksa-read-surface.md`](ksa-read-surface.md#events) |
+| R | Vessel parts list (top-level only; the welds anchor picker; gated by `telemetry_vessel_parts`) | **Yes** | [`ksa-read-surface.md`](ksa-read-surface.md#parts) |
 | **Writes (controls)** | | | |
 | W | Engine ignite/shutdown, per-engine active/min-throttle, manual throttle | **Yes** | [`ksa-write-surface.md`](ksa-write-surface.md) |
 | W | Staging, RCS, flight-computer attitude/frame/target/burn | **Yes** (Solver phase) | [`ksa-write-surface.md`](ksa-write-surface.md) |
@@ -123,6 +124,7 @@ KSA game update have any chance of breaking it.
 | W | Decouplers, docking undock + pushoff | **Yes** (4750: `PushoffImpulse`, N·s — G1 fixed) | [`ksa-write-surface.md`](ksa-write-surface.md#docking) |
 | W | Camera focus (vessel + body) | **Yes** | [`ksa-write-surface.md`](ksa-write-surface.md) |
 | W | `/sim/debug` cheats: teleport, refill fuel/battery, warp set, control-vessel, pushoff | **Yes** | [`ksa-write-surface.md`](ksa-write-surface.md#debug) |
+| W | `/sim/debug` welds (weld/weld_here/unweld/enable/clear) + `always_render_iva` render cheat (ported from `unscience`) | **Yes** (High: per-frame `Teleport`; dynamic `gatos.iva` Harmony) | [`ksa-write-surface.md`](ksa-write-surface.md#welds) |
 | **Runtime coupling** | | | |
 | C | StarMap lifecycle, Harmony patches (solver-drain, menu fallback), ModMenu entry, status UI | **Yes** (hook targets) | [`ksa-runtime-coupling.md`](ksa-runtime-coupling.md) |
 | C | Threading phases (Frame vs Solver), command-drain timing, churn machinery (`[KsaAnchor]`/`KsaHealth`) | **Yes** | [`ksa-runtime-coupling.md`](ksa-runtime-coupling.md) |
@@ -147,7 +149,10 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 |---|---|---|
 | `Game/Ksa/Readers/VesselReader.cs` | 21 `[KsaAnchor]` reads (the bulk of telemetry; +`ReadControllable`, G3) | per-accessor try/catch → `KsaHealth`; `Enrich` whole-pass guard |
 | `Game/Ksa/Readers/BodyReader.cs` | 3 `[KsaAnchor]` reads (celestial catalog) | sampler-level guard |
-| `Game/Ksa/Actuators/*.cs` (11 files) | 26 `[KsaAnchor]` writes (all controls + debug) | `KsaCatalog` try/catch per command |
+| `Game/Ksa/Readers/PartsReader.cs` | 1 `[KsaAnchor]` read (top-level parts; welds anchor picker) | per-call try/catch; `VesselParts` sampler gate |
+| `Game/Ksa/Actuators/*.cs` (11 anchored files; `IvaActuator.cs` delegates to `Render/IvaForceRender.cs`, no anchor) | 26 `[KsaAnchor]` writes (all controls + debug) | `KsaCatalog` try/catch per command |
+| `Game/Ksa/Render/IvaForceRender.cs` | 1 `[KsaAnchor]` (`always_render_iva` cheat; own dynamic `gatos.iva` Harmony) | per-postfix try/catch; restored + unpatched on disable/unload |
+| `Game/Ksa/Welds/{WeldEngine,WeldManager}.cs` | 4 `[KsaAnchor]` (per-frame `Teleport` driver + registry/liveness) | per-weld try/catch in the driver; `_weldsDead` session latch |
 | `Game/Ksa/KsaCatalog.cs` | 2 `[KsaAnchor]` (vehicle/astronomical resolution) | self |
 | `Game/Ksa/{KsaAnchor,KsaHealth}.cs` | churn machinery (no KSA types in KsaHealth) | — |
 | `Game/TelemetrySampler.cs` | 5 `[KsaAnchor]` reads (G4: `Universe.*` time/warp/system + `VersionInfo.Current`) | per-vehicle + per-call try/catch |
@@ -155,9 +160,11 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/BrutalModLogger.cs` | `Brutal.Logging` sink | try/catch at install |
 | `Mod.cs`, `ModAssets.cs` | StarMap.API attributes, purrTTY contract — **no KSA game types** | n/a (mod-ecosystem ABI, not KSA) |
 
-Detail and per-member break-impact: the four `ksa-*.md` pages. Total `[KsaAnchor]` sites: **59**
-(across 15 files) — the sampler's `Universe`/`VersionInfo` reads were anchored in the 4750 fix-pass (G4),
-so the only remaining un-anchored KSA touch-points are the two Harmony hook targets.
+Detail and per-member break-impact: the four `ksa-*.md` pages. Total `[KsaAnchor]` sites: **65**
+(across 19 files) — the sampler's `Universe`/`VersionInfo` reads were anchored in the 4750 fix-pass (G4)
+and the `unscience`-ported welds/IVA/parts feature added 6 more (PartsReader, IvaForceRender, WeldEngine×2,
+WeldManager×2), so the only remaining un-anchored KSA touch-points are the two `Mod.Game.cs` Harmony hook
+targets (the `gatos.iva` patch targets and the weld driver's `VehicleSolvers.Wait()` are themselves anchored).
 
 ---
 

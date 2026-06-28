@@ -217,3 +217,50 @@ composable shape is `tee`, which takes the files as args and the value on stdin:
 `tee`* that does exactly this — `echo 1 | kecho /sim/vessels/by-id/*/lights/*/on` turns on every light of
 every vessel in one tick. Use it (or the same concurrent-dispatch pattern) for any glob fan-out over
 control files: lights, RCS, throttles, etc.
+
+---
+
+## 9. Weld one vessel rigidly to another (the `weld_here` cheat)
+
+**Task:** *attach `Polaris` to a part of `Hunter` at their current relative pose, so Polaris rides along
+through maneuvers and time-warp.* Cheat-tier — needs `debug_namespace` + `telemetry_vessel_parts` (both
+default on). The two vessels must orbit the **same body**. (Ported from the `unscience` mod; see
+[SPEC §3.7](../../../SPEC_9P_FILESYSTEM.md).)
+
+```ts
+// weld-here.ts  —  run with:  bun weld-here.ts
+import { command } from "./gatos.ts";
+const BASE = process.env.GATOS_HTTP ?? "http://127.0.0.1:4242/v1";
+const source = "Polaris", target = "Hunter";
+
+// 1. Pick a STABLE anchor part id from the target's top-level parts (0 ⇒ the target's body/CoM frame).
+//    The field-level fs endpoint returns one leaf's raw text value.
+const r = await fetch(`${BASE}/fs/vessels/${target}/parts/0/instance_id`);
+const piid = r.ok ? Number((await r.text()).trim()) : 0;
+
+// 2. Capture the CURRENT relative pose and weld. token = target id; values = [part_iid, lock(1=lock attitude)].
+await command({ vessel_id: source, action: "debug.weld_here", token: target, values: [piid, 1] });
+
+// later: suspend (keep the entry) or remove
+// await command({ vessel_id: source, action: "debug.weld_enable", value: 0 }); // suspend
+// await command({ vessel_id: source, action: "debug.weld_remove", value: 1 }); // unweld
+```
+
+Shell twins (in-guest, against the `/sim` mount):
+```sh
+piid=$(cat /sim/vessels/Hunter/parts/0/instance_id)
+echo "Hunter $piid" > /sim/debug/vessels/Polaris/weld_here   # weld at the current pose (lock defaults to 1)
+cat  /sim/debug/welds/count                                  # -> 1
+echo 0 > /sim/debug/welds/Polaris/enabled                    # suspend tracking (entry kept)
+echo 1 > /sim/debug/vessels/Polaris/unweld                   # remove this weld
+echo 1 > /sim/debug/welds/clear                              # remove ALL welds
+```
+
+Notes:
+- **`weld` vs `weld_here`:** `weld` takes an **explicit** pose
+  `<target> <part_iid> <x y z> <pitch yaw roll> <lock>`; `weld_here` captures the current pose for you (the
+  practical path — computing offsets by hand is hard).
+- Errnos: `EBUSY` (source==target, or the two orbit different bodies), `ENOENT` (target/part gone),
+  `EINVAL` (bad arity/values).
+- Welds are **runtime-only** (never persisted) and cleared on mod unload. A source may anchor at most one
+  weld; many sources may anchor to one target.

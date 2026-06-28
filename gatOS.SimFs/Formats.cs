@@ -37,6 +37,20 @@ public static class Formats
     /// <summary>Formats a quaternion as <c>x y z w</c>.</summary>
     public static string Quat(QuatSnap q) => $"{Scalar(q.X)} {Scalar(q.Y)} {Scalar(q.Z)} {Scalar(q.W)}";
 
+    /// <summary>Formats an unsigned integer (e.g. a part <c>InstanceId</c>), invariant culture.</summary>
+    public static string UInt(uint value) => value.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>
+    ///     The canonical welds spec line — both the read-back of
+    ///     <c>/sim/debug/vessels/&lt;id&gt;/weld</c> and the exact form its write accepts:
+    ///     <c>target part_iid x y z pitch yaw roll lock</c>. Symmetric so a read can be echoed straight
+    ///     back to re-create the weld.
+    /// </summary>
+    public static string WeldSpec(WeldSnapshot w)
+        => $"{w.TargetId} {UInt(w.PartInstanceId)} "
+           + $"{Scalar(w.Offset.X)} {Scalar(w.Offset.Y)} {Scalar(w.Offset.Z)} "
+           + $"{Scalar(w.Rotation.X)} {Scalar(w.Rotation.Y)} {Scalar(w.Rotation.Z)} {Flag(w.LockRotation)}";
+
     /// <summary>
     ///     One NDJSON stream line for a vessel (OS_PLAN.md T8.3 shape), UTF-8 with a trailing
     ///     LF: <c>{"seq":…,"ut":…,"sit":…,"alt":{…},"vel":{…},"att":{…},"mass":{…}}</c>.

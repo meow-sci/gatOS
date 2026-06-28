@@ -157,6 +157,11 @@
             <HintPath>$(KSAFolder)/Brutal.Core.Strings.dll</HintPath>
             <Private>false</Private>
         </Reference>
+        <!-- JobScheduler (Universe.JobSystems.VehicleSolvers.Wait) — the welds driver drains it. -->
+        <Reference Include="Brutal.Concurrency" Condition="Exists('$(KSAFolder)/Brutal.Concurrency.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Concurrency.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
         <Reference Include="Brutal.ImGui" Condition="Exists('$(KSAFolder)/Brutal.ImGui.dll')">
             <HintPath>$(KSAFolder)/Brutal.ImGui.dll</HintPath>
             <Private>false</Private>

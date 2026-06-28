@@ -148,6 +148,39 @@ debug_namespace`. Authority-exempt (own opt-in).
 
 ---
 
+## Render & weld cheats — `IvaActuator` + `WeldManager`/`WeldEngine` (Frame phase) {#welds}
+
+Ported from the sibling `unscience` mod, exposed **only** on gatOS surfaces (9p `/sim` + HTTP + MQTT —
+no ImGui). Part of the `debug.*` namespace (`[control] debug_namespace`); authority-exempt like the
+rest of `/sim/debug`. `Game/Ksa/Actuators/IvaActuator.cs` (→ `Game/Ksa/Render/IvaForceRender.cs`),
+`Game/Ksa/Welds/{WeldManager,WeldEngine}.cs`. `KsaCatalog.Dispatch` (now an instance method) routes the
+per-source weld actions after vehicle resolution; `always_render_iva` and `weld_clear` are handled
+**vessel-agnostically before** resolution; `weld_create`/`weld_here` resolve the **target** from the
+command `Token` (the source is the command's `vessel_id`).
+
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4750 |
+|---|---|---|---|---|---|---|
+| `debug/always_render_iva` | `debug.always_render_iva` | `IvaActuator.SetAlwaysRender`→`IvaForceRender.SetEnabled` | `PartModel.Instances`; `PartModel..ctor(PartModelModule.Template)`; `PartModel.AddInstance(PerInstanceData,Viewport,int)`; `PartModel.ViewportData.Get(...).InstanceList`; `PartModelModule.Template.{Internal,RayTracing}`; `PartModelModule.RaytracingMode.ShadowProxy`; `Program.{Editor,MainViewport}`; `Viewport.Mode`; `CameraMode.IVA` (render gate `PartModel.cs:387`) | `KSA/PartModel.cs`, `KSA/PartModelModule.cs`, `KSA/Viewport.cs` | Medium (dynamic `gatos.iva` Harmony — recheck live) | ✅ |
+| `debug/vessels/<id>/weld` | `debug.weld_create` | `WeldManager.Create`→`WeldEngine.UpdateWeld` | `Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,BodyRates,CenterOfMassAsmb,Parent,Orbit,Teleport,UpdatePerFrameData}`; `Orbit.{OrbitLineColor,CreateFromStateCci}`; `IParentBody.GetCci2Cce`; `Universe.GetJobSimStep(double).NextTime`; `Program.GetPlayerDeltaTime`; `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` | `KSA/Vehicle.cs`, `KSA/Orbit.cs`, `KSA/Universe.cs`, `KSA/Part.cs` | **High** (per-frame `Teleport`) | ✅ |
+| `debug/vessels/<id>/weld_here` | `debug.weld_here` | `WeldManager.CreateAtCurrentPose`→`WeldEngine.CapturePose` | inverse transform: `Vehicle.{GetPositionCci,GetBody2Cci,CenterOfMassAsmb}`; `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` | `KSA/Vehicle.cs`, `KSA/Part.cs` | Medium | ✅ |
+| `debug/vessels/<id>/unweld` | `debug.weld_remove` | `WeldManager.Remove(vehicle.Id)` | (registry op — no KSA) | — | Low | ✅ |
+| `debug/welds/<source>/enabled` | `debug.weld_enable` | `WeldManager.SetEnabled` | (registry op — no KSA) | — | Low | ✅ |
+| `debug/welds/clear` | `debug.weld_clear` | `WeldManager.Clear` (vessel-agnostic) | (registry op — no KSA) | — | Low | ✅ |
+
+The orientation offset is stored as an authoritative `doubleQuat` (Euler is display-only); `weld_here`
+captures the current source↔anchor pose (the inverse of the per-frame transform). The teleport math is
+ported verbatim from `unscience` (stamped with `Universe.GetJobSimStep(Program.GetPlayerDeltaTime()).NextTime`
+so the body time aligns with the queued solver tick). The **per-frame weld driver** itself
+(`WeldManager.Update`, anchoring `JobSystems.VehicleSolvers.Wait()`) is **runtime coupling**, not a write
+command — see [`ksa-runtime-coupling.md#welds-driver`](ksa-runtime-coupling.md#welds-driver). The
+`debug/welds/<source>/{target,part,offset,rotation,lock_rotation}` registry view is a game-free projection
+(`WeldManager.Snapshot()` → `WeldSnapshot`). Welds are **runtime-only** (never persisted); both cheats tear
+down on unload (`Mod.TeardownGameCheats`). Errnos: `EBUSY` (source==target, or the two orbit different
+bodies), `ENOENT` (target/part gone), `EINVAL` (bad arity/values). Anchors verified `2026-06-28` against
+`2026.6.9.4750`.
+
+---
+
 ## ✅ Docking pushoff (G1 FIXED, 2026-06-27) {#docking}
 
 **Was a compile break.** `DockingActuator.cs` did `ports[ordinal].PushoffForce = (float)newtons;` and the

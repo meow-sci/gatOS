@@ -102,6 +102,7 @@ listing order; empty/`.`/`..` become `_`/`_.`/`_..`. In KSA a vessel's **name *i
 |---|---|---|
 | `telemetry_enabled` | `true` | master read feed; `false` freezes `/sim` data |
 | `telemetry_vessel_detail` | `true` | per-vessel detail (navball/environment/per-module, orbit extras); off ⇒ core only |
+| `telemetry_vessel_parts` | `true` | per-vessel `parts/` list (the welds anchor picker; cached); off ⇒ the subtree vanishes |
 | `telemetry_bodies` | `true` | `/sim/bodies` + `/sim/system` |
 | `telemetry_events` | `true` | `/sim/events` diffs |
 | `control_enabled` | `true` | master write switch; `false` ⇒ every control write `EACCES` |
@@ -356,7 +357,23 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 
 NDJSON, one line per predicted closest approach: `{"body":<id>,"ut":<t>,"distance":<m>}`.
 
-#### 3.4.16 Control surface — `…/ctl/` *(present only when a command sink is wired)*
+#### 3.4.16 Parts *(present when `telemetry_vessel_parts` is on)* — `…/parts/<n>/` (n = part index)
+
+Top-level parts only (subparts are not surfaced); the **welds** anchor picker (§3.7). The list is
+cached per vehicle and rebuilt on part-count change or every 10 s. `<n>` is a 0-based index (friendly
+to enumerate) but **not** stable across vehicle edits — `instance_id` is the stable handle a weld uses.
+
+| Path | A | Type | Meaning |
+|---|---|---|---|
+| `parts/<n>/instance_id` | S | uint | Stable part id (`Part.InstanceId`) — pass as `<part_iid>` to a weld. |
+| `parts/<n>/id` | S | string | `Part.Id` (can collide across instances of one template). |
+| `parts/<n>/display_name` | S | string | Human-readable name. |
+| `parts/<n>/template` | S | string | Part template id (`Part.Template.Id`). |
+| `parts/<n>/is_root` | S | flag | Whether this is the root part. |
+| `parts/<n>/subpart_count` | S | int | Number of subparts (informational). |
+| `parts/<n>/position` | S | `x y z` | Part position in the vehicle assembly frame, m. |
+
+#### 3.4.17 Control surface — `…/ctl/` *(present only when a command sink is wired)*
 
 | Path | A | Write | Action key | Phase | Meaning |
 |---|---|---|---|---|---|
@@ -367,8 +384,8 @@ NDJSON, one line per predicted closest approach: `{"body":<id>,"ut":<t>,"distanc
 | `ctl/throttle` | **St** | `0..1` | `vessel.throttle` | Frame | Manual throttle fraction; read = current setpoint. |
 | `ctl/lights` | **St** | `0`/`1` | `vessel.lights` | Frame | Master lights. |
 | `ctl/rcs` | **St** | `0`/`1` | `vessel.rcs` | Frame | Master RCS. |
-| `ctl/attitude_mode` | **St** | token | `vessel.attitude_mode` | **Solver** | `manual`, or an auto track-target (see §3.4.17). |
-| `ctl/attitude_frame` | **St** | token | `vessel.attitude_frame` | **Solver** | Reference frame for the named modes (see §3.4.17). |
+| `ctl/attitude_mode` | **St** | token | `vessel.attitude_mode` | **Solver** | `manual`, or an auto track-target (see §3.4.18). |
+| `ctl/attitude_frame` | **St** | token | `vessel.attitude_frame` | **Solver** | Reference frame for the named modes (see §3.4.18). |
 | `ctl/attitude_target` | **St** | `x y z w` | `vessel.attitude_target` | **Solver** | Custom **Body→CCI** quaternion; the autopilot points body **+X** along it. |
 | `ctl/burn` | **St** | `ut dvx dvy dvz` | `vessel.burn` | **Solver** | Schedule an impulsive burn at `ut` with a CCI Δv vector. |
 | `ctl/focus` | T | `1` | `camera.focus` | Frame | Move the camera to this vessel (view-only; no control change). |
@@ -380,7 +397,7 @@ NDJSON, one line per predicted closest approach: `{"body":<id>,"ut":<t>,"distanc
 > just write the file — but expect these to take effect on the **next solver step** (~10 Hz), not
 > instantly.
 
-#### 3.4.17 Attitude tokens (accepted values)
+#### 3.4.18 Attitude tokens (accepted values)
 
 `ctl/attitude_mode` (case-insensitive): `manual`, `Prograde`, `Retrograde`, `Normal`, `AntiNormal`,
 `RadialOut`, `RadialIn`, `Toward`, `Away`, `Antivel`, `Align`, `Forward`, `Backward`, `Up`, `Down`,
@@ -417,6 +434,28 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/time/warp` | **St** | factor | `debug.warp` | Frame | Set the time-warp factor directly (`Universe.SetSimulationSpeed`). |
 | `debug/focus` | **St** | vehicle/body id | `camera.focus` | Frame | Move the camera to any astronomical by id (view-only). |
 | `debug/control_vessel` | **St** | vehicle id | `debug.control_vessel` | Frame | Focus **and** take control of a vehicle by id. (4750: KSA may refuse a target that isn't `controllable` — pre-check the `controllable` read; outcome to be confirmed in a live flight.) |
+| `debug/always_render_iva` | **St** | `0`/`1` | `debug.always_render_iva` | Frame | Global render cheat: force interior (IVA) part meshes to render outside the IVA camera. Vessel-agnostic. |
+| `debug/vessels/<id>/weld` | **St** | `<target> <part_iid> <x> <y> <z> <pitch> <yaw> <roll> <lock>` | `debug.weld_create` | Frame | Weld this vessel (source) to a target part with an explicit pose. See **welds** below. Read = the current spec for this source, or empty. |
+| `debug/vessels/<id>/weld_here` | **St** | `<target> <part_iid> [<lock>]` | `debug.weld_here` | Frame | Weld at the **current** relative pose (captured now). `lock` defaults to `1`. |
+| `debug/vessels/<id>/unweld` | T | `1` | `debug.weld_remove` | Frame | Remove this source's weld. |
+| `debug/welds/clear` | T | `1` | `debug.weld_clear` | Frame | Remove **all** welds. Vessel-agnostic. |
+| `debug/welds/count` | S | int | — | — | Number of active welds. |
+| `debug/welds/<source>/target` | S | string | — | — | The anchor vessel id. |
+| `debug/welds/<source>/part` | S | uint | — | — | Anchor part `instance_id` (`0` = target body frame). |
+| `debug/welds/<source>/offset` | S | `x y z` | — | — | Position offset in the anchor frame (m). |
+| `debug/welds/<source>/rotation` | S | `pitch yaw roll` | — | — | Orientation offset (deg; display — the weld is driven by an exact quaternion). |
+| `debug/welds/<source>/lock_rotation` | S | `0`/`1` | — | — | Whether orientation is locked to the anchor. |
+| `debug/welds/<source>/enabled` | **St** | `0`/`1` | `debug.weld_enable` | Frame | Suspend/resume this weld (keeps the entry). |
+
+**welds** (the "weld one vessel rigidly to another, anchored to a part" cheat — a game hack):
+- Discover anchor parts under `vessels/by-id/<target>/parts/<n>/` (§3.4); each part's `instance_id` is the
+  stable handle you pass as `<part_iid>` (`0` ⇒ anchor to the target's body/CoM frame). A vessel may be the
+  **source** of at most one weld (re-writing `weld` replaces it); many sources may anchor to one target.
+- `weld` takes an explicit pose; `weld_here` captures the current source↔anchor pose so the source stays put
+  and then tracks rigidly — the practical path (computing offsets by hand is hard).
+- The source is repositioned every frame on the game thread (after the vehicle solvers). Errnos: `EBUSY`
+  (source==target, or the two orbit different bodies), `ENOENT` (target/part gone), `EINVAL` (bad arity/values).
+- Welds are **runtime-only** (never persisted) and cleared on mod unload.
 
 ---
 
@@ -480,8 +519,8 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `vessel.throttle` | — | value `0..1` | Frame | `ctl/throttle` | |
 | `vessel.lights` | — | value `0`/`1` | Frame | `ctl/lights` | |
 | `vessel.rcs` | — | value `0`/`1` | Frame | `ctl/rcs` | |
-| `vessel.attitude_mode` | — | token | **Solver** | `ctl/attitude_mode` | §3.4.17 |
-| `vessel.attitude_frame` | — | token | **Solver** | `ctl/attitude_frame` | §3.4.17 |
+| `vessel.attitude_mode` | — | token | **Solver** | `ctl/attitude_mode` | §3.4.18 |
+| `vessel.attitude_frame` | — | token | **Solver** | `ctl/attitude_frame` | §3.4.18 |
 | `vessel.attitude_target` | — | values `[x,y,z,w]` | **Solver** | `ctl/attitude_target` | Body→CCI quaternion |
 | `vessel.burn` | — | values `[ut,dvx,dvy,dvz]` | **Solver** | `ctl/burn` | CCI Δv |
 | `engine.active` | engine n | value `0`/`1` | Frame | `engines/<n>/active` | |
@@ -502,6 +541,12 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `debug.refill_battery` | — | value `1` | **Solver** | `debug/vessels/<id>/refill_battery` | |
 | `debug.docking_pushoff` | docking n | value N·s | Frame | `debug/vessels/<id>/docking/<n>/pushoff_impulse` | |
 | `debug.warp` | — | value factor | Frame | `debug/time/warp` | vessel-agnostic (`vessel_id` ignored) |
+| `debug.always_render_iva` | — | value `0`/`1` | Frame | `debug/always_render_iva` | vessel-agnostic render cheat |
+| `debug.weld_create` | — | token = target id; values `[part_iid,x,y,z,pitch,yaw,roll,lock]` | Frame | `debug/vessels/<id>/weld` | `vessel_id` = source; explicit pose |
+| `debug.weld_here` | — | token = target id; values `[part_iid,lock]` | Frame | `debug/vessels/<id>/weld_here` | `vessel_id` = source; captures current pose |
+| `debug.weld_remove` | — | value `1` | Frame | `debug/vessels/<id>/unweld` | `vessel_id` = source |
+| `debug.weld_enable` | — | value `0`/`1` | Frame | `debug/welds/<source>/enabled` | suspend/resume |
+| `debug.weld_clear` | — | — | Frame | `debug/welds/clear` | vessel-agnostic; removes all welds |
 
 ### 5.2 Writing over each transport
 

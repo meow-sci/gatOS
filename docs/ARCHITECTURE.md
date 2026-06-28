@@ -75,6 +75,7 @@ KSA game thread (OnBeforeGui)
        ├─ TelemetrySettings: reads volatile fields (rate, gates)
        ├─ VesselReader (core reads always)
        ├─ VesselReader.Enrich (guarded, only if vessel_detail gate is on)
+       ├─ PartsReader (per vehicle, only if vessel_parts gate is on; cached per vehicle)
        ├─ BodyReader (only if bodies gate is on)
        └─ SnapshotStore.Publish(snapshot)  ← single volatile reference swap
 
@@ -101,6 +102,7 @@ All default on; `telemetry_enabled` is the master gate:
 | Config key | What it gates | Cost when off |
 |---|---|---|
 | `telemetry_vessel_detail` | G3 enrich pass (navball, environment, every per-module `StateList` read, `with`-clone alloc) | Drops all module-level events (flameout/dock/decouple) the differ can no longer see |
+| `telemetry_vessel_parts` | `PartsReader` per-vessel top-level parts list (the welds anchor picker); cached per vehicle, rebuilt on `Vehicle.Parts.Count` change or every 10 s | Drops `/sim/vessels/<id>/parts/` |
 | `telemetry_bodies` | `BodyReader` celestial catalog reads | Drops `/sim/bodies/` + `system` |
 | `telemetry_events` | `EventDiffer` + `EventsFile` | Drops `/sim/events` blocking reads |
 
@@ -133,12 +135,36 @@ button clears all accumulators.
 
 ---
 
+## Game-thread cheats (welds + IVA render)
+
+Two cheats ported from the sibling `unscience` mod are exposed **only** on gatOS surfaces (9p `/sim`
+debug + HTTP `/v1` + MQTT — no ImGui), both mutating game state on the game thread:
+
+- **Welds** (`gatOS.GameMod/Game/Ksa/Welds/`): a registry (`WeldManager`) whose per-frame driver
+  teleports each welded source vessel onto its target/part anchor. It runs in `OnAfterUi`
+  (`Mod.DriveWelds`, `[StarMapAfterGui]`) **after** the vehicle-solver workers (it calls
+  `JobSystems.VehicleSolvers.Wait()` first) — a **third game-thread mutation site** beside the
+  Frame-phase command drain (`OnBeforeUi`) and the Solver-phase prefix on
+  `Universe.ExecuteNextVehicleSolvers`. It self-gates to a no-op when no welds exist, so it adds zero
+  per-frame cost when unused and needs **no** Harmony patch.
+- **`always_render_iva`** (`Game/Ksa/Render/IvaForceRender.cs`): forces interior (IVA) part meshes to
+  render outside the IVA camera. It installs **two Harmony patches on its own dynamic
+  `Harmony("gatos.iva")` instance only while enabled** (a `PartModel` ctor postfix + an editor-only
+  `AddInstance` postfix) and bulk-flips the internal-template flag over `PartModel.Instances`; disabling
+  restores the templates and unpatches. Default-off ⇒ zero patches.
+
+Both create/remove via Frame-phase `/sim/debug` commands and tear down on unload
+(`Mod.TeardownGameCheats`). The anchor picker for welds is the per-vessel `parts/` list
+(`telemetry_vessel_parts`).
+
+---
+
 ## Config sections reference
 
 | Section | Key knobs |
 |---|---|
 | `[common]` | `sample_rate_hz`, `disk_size_gb`, `cpu_model` |
-| `[telemetry]` | `telemetry_enabled`, `telemetry_vessel_detail`, `telemetry_bodies`, `telemetry_events` |
+| `[telemetry]` | `telemetry_enabled`, `telemetry_vessel_detail`, `telemetry_vessel_parts`, `telemetry_bodies`, `telemetry_events` |
 | `[control]` | `control_enabled`, `control_all_vessels`, `debug_namespace`, `command_timeout_ms`, `max_commands_per_frame` |
 | `[http]` | `enabled`, `preferred_port` (4242), `http_field_endpoints` |
 | `[mqtt]` | `enabled`, `preferred_port` (1883), `mqtt_field_topics`, `field_feed_hz` |
