@@ -67,6 +67,13 @@ public sealed record SimSnapshot(
     ///     interior part meshes render outside the IVA camera. A render hack, off by default.
     /// </summary>
     public bool AlwaysRenderIva { get; init; }
+
+    /// <summary>
+    ///     Active thug-life sunglasses quads (the <c>/sim/debug/thug_life</c> cheat): each is a textured
+    ///     meme quad anchored to a part on a vessel, drawn into the scene each frame. Empty when none;
+    ///     only ever populated when the debug namespace is on. A pure cosmetic runtime cheat; never persisted.
+    /// </summary>
+    public IReadOnlyList<ThugLifeSnapshot> ThugLife { get; init; } = [];
 }
 
 /// <summary>One vessel's telemetry.</summary>
@@ -407,6 +414,25 @@ public sealed record PartSnapshot(
 public sealed record WeldSnapshot(
     string SourceId, string TargetId, uint PartInstanceId, double3Snap Offset, double3Snap Rotation,
     bool LockRotation, bool Enabled);
+
+/// <summary>
+///     One active thug-life sunglasses quad (<c>/sim/debug/thug_life/&lt;id&gt;</c>): a textured meme
+///     quad anchored to a part on a vessel, rebuilt and drawn each frame. A pure cosmetic cheat; never
+///     persisted.
+/// </summary>
+/// <param name="Id">The integer handle (the smallest free slot at create; reused after remove/clear) — the directory name.</param>
+/// <param name="VesselId">The anchor vessel id.</param>
+/// <param name="PartInstanceId">
+///     The anchor part's <c>InstanceId</c>, or <c>0</c> when anchored to the vessel's body/assembly frame.
+/// </param>
+/// <param name="Position">Position offset in the anchor part's local frame, meters.</param>
+/// <param name="Rotation">Orientation offset in the part's local frame, Euler pitch/yaw/roll degrees.</param>
+/// <param name="Width">Quad width, meters.</param>
+/// <param name="Height">Quad height, meters.</param>
+/// <param name="Visible">false ⇒ the entry is kept but skipped while drawing.</param>
+public sealed record ThugLifeSnapshot(
+    int Id, string VesselId, uint PartInstanceId, double3Snap Position, double3Snap Rotation,
+    double Width, double Height, bool Visible);
 
 /// <summary>NavBall-derived attitude and performance figures.</summary>
 /// <param name="PitchDeg">Pitch, degrees.</param>

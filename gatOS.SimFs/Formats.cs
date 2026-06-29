@@ -52,6 +52,18 @@ public static class Formats
            + $"{Scalar(w.Rotation.X)} {Scalar(w.Rotation.Y)} {Scalar(w.Rotation.Z)} {Flag(w.LockRotation)}";
 
     /// <summary>
+    ///     The canonical thug-life spec line — the read-back of
+    ///     <c>/sim/debug/thug_life/&lt;id&gt;/spec</c> and the 10-token form
+    ///     <c>/sim/debug/thug_life/add</c> accepts: <c>vessel part_iid x y z pitch yaw roll width height</c>.
+    ///     Symmetric, so a read can be echoed straight to <c>add</c> to recreate the quad (as a new id).
+    /// </summary>
+    public static string ThugLifeSpec(ThugLifeSnapshot t)
+        => $"{t.VesselId} {UInt(t.PartInstanceId)} "
+           + $"{Scalar(t.Position.X)} {Scalar(t.Position.Y)} {Scalar(t.Position.Z)} "
+           + $"{Scalar(t.Rotation.X)} {Scalar(t.Rotation.Y)} {Scalar(t.Rotation.Z)} "
+           + $"{Scalar(t.Width)} {Scalar(t.Height)}";
+
+    /// <summary>
     ///     One NDJSON stream line for a vessel (OS_PLAN.md T8.3 shape), UTF-8 with a trailing
     ///     LF: <c>{"seq":…,"ut":…,"sit":…,"alt":{…},"vel":{…},"att":{…},"mass":{…}}</c>.
     /// </summary>

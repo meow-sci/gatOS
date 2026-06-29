@@ -264,3 +264,61 @@ Notes:
   `EINVAL` (bad arity/values).
 - Welds are **runtime-only** (never persisted) and cleared on mod unload. A source may anchor at most one
   weld; many sources may anchor to one target.
+
+---
+
+## 10. Stick "thug life" sunglasses on a part (the `thug_life` cheat)
+
+**Task:** *anchor a flat, world-space sunglasses quad to a part of `Hunter` and tune it live.* Cheat-tier
+— needs `debug_namespace` + `telemetry_vessel_parts` (both default on). Tip: `cat /sim/debug/thug_life/help`
+prints a console-friendly readme (all the commands + worked examples on `Hunter`/`Polaris`/`Banjo`). This is
+gatOS's **first custom GPU rendering**: the quad is drawn into KSA's scene and tracks the part each frame (it's depth-tested, so it's
+occluded by geometry in front of it). The render hook + GPU resources install **lazily on the first
+entry** and are freed when the last one is removed. (Ported from the `unscience` mod; see
+[SPEC §3.7](../../../SPEC_9P_FILESYSTEM.md), and the **ksa skill's `quad.md`** for the render internals.)
+
+```ts
+// thug-life.ts  —  run with:  bun thug-life.ts
+import { command } from "./gatos.ts";
+const BASE = process.env.GATOS_HTTP ?? "http://127.0.0.1:4242/v1";
+const vessel = "Hunter";
+
+// 1. Discover a STABLE anchor part id from the vessel's top-level parts (0 ⇒ the vehicle body frame).
+const r = await fetch(`${BASE}/fs/vessels/${vessel}/parts/0/instance_id`);
+const piid = r.ok ? Number((await r.text()).trim()) : 0;
+
+// 2. Add the quad. token = anchor vessel; values = [part_iid] (pose/size default) or the full
+//    [part_iid, x, y, z, pitch, yaw, roll, w, h].
+await command({ vessel_id: vessel, action: "debug.thug_life_add", token: vessel, values: [piid] });
+// The new entry takes the lowest free id (reused after remove/clear); the first add is id 0.
+
+// 3. Tune it live (id travels in `ordinal`).
+await command({ vessel_id: vessel, action: "debug.thug_life_position", ordinal: 0, values: [0, 0.5, 0] });
+await command({ vessel_id: vessel, action: "debug.thug_life_rotation", ordinal: 0, values: [0, 0, 0] });
+await command({ vessel_id: vessel, action: "debug.thug_life_size",     ordinal: 0, values: [1.2, 0.4] });
+await command({ vessel_id: vessel, action: "debug.thug_life_visible",  ordinal: 0, value: 1 });
+
+// later: remove one, or clear all
+// await command({ vessel_id: vessel, action: "debug.thug_life_remove", ordinal: 0, value: 1 });
+// await command({ vessel_id: vessel, action: "debug.thug_life_clear",  value: 1 });
+```
+
+Shell twins (in-guest, against the `/sim` mount):
+```sh
+piid=$(cat /sim/vessels/Hunter/parts/0/instance_id)
+echo "Hunter $piid" > /sim/debug/thug_life/add          # anchor at the default pose/size (id 0)
+cat  /sim/debug/thug_life/count                          # -> 1
+echo "0 0.5 0"  > /sim/debug/thug_life/0/position        # nudge it up
+echo "1.2 0.4"  > /sim/debug/thug_life/0/size            # width height
+echo 0 > /sim/debug/thug_life/0/visible                  # hide; 1 to show
+cat  /sim/debug/thug_life/0/spec                          # the 10-token spec (echo back to add)
+echo 1 > /sim/debug/thug_life/0/remove                   # remove this entry
+echo 1 > /sim/debug/thug_life/clear                       # remove ALL quads (frees the GPU + unpatches)
+```
+
+Notes:
+- Anchor a **top-level part by `instance_id`** (from `parts/<n>/instance_id`) or pass `0` for the vehicle
+  **body frame**. No subparts in v1.
+- Errnos: `ENOENT` (vessel/part/id gone), `EINVAL` (bad arity/values), `EIO` (renderer unavailable).
+- Entries are **runtime-only** (never persisted); cleared on mod unload. With no entries the render hook is
+  removed entirely (zero per-frame cost).

@@ -143,6 +143,33 @@ Verified `2026-06-28` against `2026.6.9.4750` (new feature; compiled clean — n
 
 ---
 
+## thug_life anchor math — `ThugLifeQuadRenderer` (per-frame, render thread) {#thug-life}
+
+`gatOS.GameMod/Game/Ksa/ThugLife/ThugLifeQuadRenderer.cs` (`TryComputeModelEgo`) + `ThugLifeManager.cs`.
+These are **render-frame transform reads** performed each frame inside the `gatos.thug_life` render postfix
+(on the **main thread**) to place the quad on its anchor part — *not* sampler reads, so they do **not** go
+through `SimSnapshot`. They are the read half of gatOS's **highest-churn KSA coupling** (render-pipeline
+internals; see [`ksa-runtime-coupling.md#thug-life-patch`](ksa-runtime-coupling.md#thug-life-patch) and the
+write side [`ksa-write-surface.md#thug-life`](ksa-write-surface.md#thug-life)). A rename **does** fail the
+build at the `[KsaAnchor]` site (these are non-reflective), so they are caught at compile time — but
+frame-math is the classic *silent* drift, so re-verify the quad's pose in a live flight after any update.
+
+| read | gatOS site | KSA / Brutal member | Decomp file | Risk | 4750 |
+|---|---|---|---|---|---|
+| camera view-projection | `ThugLifeQuadRenderer.TryComputeModelEgo` | `Program.GetMainCamera()`; `Camera.MVP.viewProjection`; `Program.SetViewport` | `KSA/Program.cs`, `KSA/Camera.cs` | **High** | ✅ |
+| vehicle ego transform | same | `Vehicle.GetMatrixAsmb2Ego(Camera)`; `Vehicle.Asmb2Ego` | `KSA/Vehicle.cs` | **High** | ✅ |
+| part ego pose (anchor) | same | `Part.PositionEgo(in double4x4)`; `Part.Asmb2Ego(doubleQuat)`; `double3.Transform` | `KSA/Part.cs`, `Brutal.Core.Numerics/` | **High** | ✅ |
+| live-entry validation | `ThugLifeManager.{Update,IsLive}` | `Universe.CurrentSystem.All.UnsafeAsList()`; `Vehicle.Parts.Parts`; `Part.InstanceId` | `KSA/Universe.cs`, `KSA/Vehicle.cs`, `KSA/Part.cs` | Low | ✅ |
+
+The `debug/thug_life/count`, `…/<id>/{vessel,part,spec}` reads under `/sim` are **not** KSA reads — they
+are a game-free projection of `ThugLifeManager.Snapshot()` (`ThugLifeSnapshot` records), which
+`TelemetrySampler` copies into `SimSnapshot.ThugLife = _thugLife.Snapshot()`. Verified `2026-06-28` against
+`2026.6.9.4750` (new feature; compiled clean — none of these `Vehicle`/`Part`/`Camera`/`Program` members
+appear in the 4680→4750 changelog, though render internals are not changelog-covered as reliably as the
+gameplay APIs).
+
+---
+
 ## ✅ 4750 read-surface findings (detail)
 
 ### ✅ Docking pushoff — `docking/<n>/pushoff_impulse` (G1 FIXED, 2026-06-27) {#docking}

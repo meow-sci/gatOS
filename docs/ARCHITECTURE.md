@@ -135,10 +135,10 @@ button clears all accumulators.
 
 ---
 
-## Game-thread cheats (welds + IVA render)
+## Game-thread cheats (welds + IVA render + thug_life)
 
-Two cheats ported from the sibling `unscience` mod are exposed **only** on gatOS surfaces (9p `/sim`
-debug + HTTP `/v1` + MQTT — no ImGui), both mutating game state on the game thread:
+Three cheats ported from the sibling `unscience` mod are exposed **only** on gatOS surfaces (9p `/sim`
+debug + HTTP `/v1` + MQTT — no ImGui), all mutating game state on the game thread:
 
 - **Welds** (`gatOS.GameMod/Game/Ksa/Welds/`): a registry (`WeldManager`) whose per-frame driver
   teleports each welded source vessel onto its target/part anchor. It runs in `OnAfterUi`
@@ -152,10 +152,24 @@ debug + HTTP `/v1` + MQTT — no ImGui), both mutating game state on the game th
   `Harmony("gatos.iva")` instance only while enabled** (a `PartModel` ctor postfix + an editor-only
   `AddInstance` postfix) and bulk-flips the internal-template flag over `PartModel.Instances`; disabling
   restores the templates and unpatches. Default-off ⇒ zero patches.
+- **`thug_life`** (`Game/Ksa/ThugLife/`): gatOS's **first custom GPU rendering** — anchors a flat,
+  world-space textured quad (the "thug life" sunglasses meme) to a part on a vehicle, tracked each frame.
+  This is a **render-thread draw injection**: `ThugLifeRenderPatches` installs a dynamic
+  `Harmony("gatos.thug_life")` **postfix on `SuperMeshRenderSystem.RenderMainPass(CommandBuffer)`** (the
+  one injection point for a world-space draw). The Vulkan pipeline/texture/buffers (`ThugLifeQuadRenderer`
+  + `ThugLifeTextureFactory`, via `Program.GetRenderer()`) and the patch install **lazily on the first
+  entry** and tear down with the last entry / at unload, so default-off ⇒ **zero patches and zero GPU
+  resources**. KSA runs `RenderMainPass` on the **main thread** (same as the GUI hooks + command drain),
+  so the render postfix, the command drain, and entry edits are all one thread — no cross-thread
+  game-state access. This adds a **fourth game-thread work site**: `UpdateThugLife()` in `OnBeforeUi`
+  (`[StarMapBeforeGui]`) revalidates / re-resolves each entry's anchor part per frame (a staged anchor part
+  falls back to the vehicle body frame rather than dropping). The manager publishes an immutable
+  `ThugLifeEntry[]` (swapped on add/remove) that the postfix reads, and self-disables (`Active=false`) on
+  any GPU fault. Teardown dispose order: clear `Active` → unpatch → dispose GPU (safe because same-thread).
 
-Both create/remove via Frame-phase `/sim/debug` commands and tear down on unload
-(`Mod.TeardownGameCheats`). The anchor picker for welds is the per-vessel `parts/` list
-(`telemetry_vessel_parts`).
+All three create/remove via Frame-phase `/sim/debug` commands and tear down on unload
+(`Mod.TeardownGameCheats`). The anchor picker for welds **and `thug_life`** is the per-vessel `parts/` list
+(`telemetry_vessel_parts`; `thug_life` also accepts `0` = the vehicle body frame).
 
 ---
 

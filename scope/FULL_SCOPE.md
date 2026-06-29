@@ -31,8 +31,13 @@ update's blast radius is small and discoverable. The procedure:
    - Previous build: `…/ksa-game-assemblies_<old-version>/current/version.json`
    Scan the commit messages for anything touching a subsystem listed in this folder's inventory
    (electrical, docking, flight computer, staging/sequences, parts/modules, numerics/Brutal, Situation,
-   Vehicle control). See [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md) for how versions and
-   the decomp/dll/Content layout are organized.
+   Vehicle control, **and render internals** — `SuperMeshRenderSystem`, `Program.OffScreenPass`/the render
+   pass, the Vulkan/`Planet.Render.Core` surface, or the `UnlitMesh` shaders, which back the `thug_life`
+   quad and are gatOS's **highest-churn** coupling; render internals churn faster than the gameplay APIs
+   and are not as reliably changelog-covered, so re-verify the `thug_life` quad in a live flight on any
+   update — see [`ksa-assets-and-versions.md#render-refs`](ksa-assets-and-versions.md#render-refs)). See
+   [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md) for how versions and the decomp/dll/Content
+   layout are organized.
 
 2. **Build against the new assemblies — this is the alarm system.** gatOS resolves the KSA reference
    DLLs through `KSAFolder` (default: the sibling `../ksa-game-assemblies/current/dll/`), so a plain
@@ -125,6 +130,7 @@ KSA game update have any chance of breaking it.
 | W | Camera focus (vessel + body) | **Yes** | [`ksa-write-surface.md`](ksa-write-surface.md) |
 | W | `/sim/debug` cheats: teleport, refill fuel/battery, warp set, control-vessel, pushoff | **Yes** | [`ksa-write-surface.md`](ksa-write-surface.md#debug) |
 | W | `/sim/debug` welds (weld/weld_here/unweld/enable/clear) + `always_render_iva` render cheat (ported from `unscience`) | **Yes** (High: per-frame `Teleport`; dynamic `gatos.iva` Harmony) | [`ksa-write-surface.md`](ksa-write-surface.md#welds) |
+| W | `/sim/debug/thug_life` world-space quad cheat (add/clear/per-entry position/rotation/size/visible/remove; ported from `unscience`) — gatOS's **first custom GPU rendering** | **Yes** (⚠️ **highest-churn**: render-pipeline internals + Vulkan; dynamic `gatos.thug_life` Harmony postfix on `SuperMeshRenderSystem.RenderMainPass`) | [`ksa-write-surface.md`](ksa-write-surface.md#thug-life) |
 | **Runtime coupling** | | | |
 | C | StarMap lifecycle, Harmony patches (solver-drain, menu fallback), ModMenu entry, status UI | **Yes** (hook targets) | [`ksa-runtime-coupling.md`](ksa-runtime-coupling.md) |
 | C | Threading phases (Frame vs Solver), command-drain timing, churn machinery (`[KsaAnchor]`/`KsaHealth`) | **Yes** | [`ksa-runtime-coupling.md`](ksa-runtime-coupling.md) |
@@ -153,6 +159,7 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/Ksa/Actuators/*.cs` (11 anchored files; `IvaActuator.cs` delegates to `Render/IvaForceRender.cs`, no anchor) | 26 `[KsaAnchor]` writes (all controls + debug) | `KsaCatalog` try/catch per command |
 | `Game/Ksa/Render/IvaForceRender.cs` | 1 `[KsaAnchor]` (`always_render_iva` cheat; own dynamic `gatos.iva` Harmony) | per-postfix try/catch; restored + unpatched on disable/unload |
 | `Game/Ksa/Welds/{WeldEngine,WeldManager}.cs` | 4 `[KsaAnchor]` (per-frame `Teleport` driver + registry/liveness) | per-weld try/catch in the driver; `_weldsDead` session latch |
+| `Game/Ksa/ThugLife/*.cs` (`ThugLifeTextureFactory`, `ThugLifeQuadRenderer`, `ThugLifeRenderPatches`, `ThugLifeManager`; `ThugLifeEntry`/`ThugLifeTexturePattern` have none) | `[KsaAnchor]` render-internals set (`thug_life` cheat: Vulkan GPU build, per-frame anchor math, dynamic `gatos.thug_life` Harmony postfix on `SuperMeshRenderSystem.RenderMainPass`) — **deepest / highest-churn coupling** | per-frame try/catch; self-disables (`Active=false`) on any GPU fault; unpatched + GPU freed on disable/unload |
 | `Game/Ksa/KsaCatalog.cs` | 2 `[KsaAnchor]` (vehicle/astronomical resolution) | self |
 | `Game/Ksa/{KsaAnchor,KsaHealth}.cs` | churn machinery (no KSA types in KsaHealth) | — |
 | `Game/TelemetrySampler.cs` | 5 `[KsaAnchor]` reads (G4: `Universe.*` time/warp/system + `VersionInfo.Current`) | per-vehicle + per-call try/catch |
@@ -160,11 +167,15 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/BrutalModLogger.cs` | `Brutal.Logging` sink | try/catch at install |
 | `Mod.cs`, `ModAssets.cs` | StarMap.API attributes, purrTTY contract — **no KSA game types** | n/a (mod-ecosystem ABI, not KSA) |
 
-Detail and per-member break-impact: the four `ksa-*.md` pages. Total `[KsaAnchor]` sites: **65**
-(across 19 files) — the sampler's `Universe`/`VersionInfo` reads were anchored in the 4750 fix-pass (G4)
-and the `unscience`-ported welds/IVA/parts feature added 6 more (PartsReader, IvaForceRender, WeldEngine×2,
-WeldManager×2), so the only remaining un-anchored KSA touch-points are the two `Mod.Game.cs` Harmony hook
-targets (the `gatos.iva` patch targets and the weld driver's `VehicleSolvers.Wait()` are themselves anchored).
+Detail and per-member break-impact: the four `ksa-*.md` pages. The `[KsaAnchor]` census grew with each
+ported cheat: the sampler's `Universe`/`VersionInfo` reads were anchored in the 4750 fix-pass (G4); the
+`unscience`-ported welds/IVA/parts feature added 6 (PartsReader, IvaForceRender, WeldEngine×2,
+WeldManager×2); and the `thug_life` render cheat added the new `Game/Ksa/ThugLife/` render-internals
+anchors (`ThugLifeTextureFactory.UploadPixels`, `ThugLifeQuadRenderer.{BuildPipeline,TryComputeModelEgo}`,
+`ThugLifeRenderPatches.Apply`, `ThugLifeManager.{Update,IsLive,EnsureGpu}`). So the only remaining
+un-anchored KSA touch-points are the two `Mod.Game.cs` Harmony hook targets (the
+`gatos.iva`/`gatos.thug_life` patch targets and the weld driver's `VehicleSolvers.Wait()` are themselves
+anchored).
 
 ---
 

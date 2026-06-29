@@ -446,6 +446,18 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/welds/<source>/rotation` | S | `pitch yaw roll` | — | — | Orientation offset (deg; display — the weld is driven by an exact quaternion). |
 | `debug/welds/<source>/lock_rotation` | S | `0`/`1` | — | — | Whether orientation is locked to the anchor. |
 | `debug/welds/<source>/enabled` | **St** | `0`/`1` | `debug.weld_enable` | Frame | Suspend/resume this weld (keeps the entry). |
+| `debug/thug_life/help` | S | text | — | — | Console-friendly usage readme + worked examples (EVA Kittens `Hunter`/`Polaris`/`Banjo`). `cat` it. |
+| `debug/thug_life/add` | **St** | `<vessel> <part_iid>` or `<vessel> <part_iid> <x> <y> <z> <pitch> <yaw> <roll> <w> <h>` | `debug.thug_life_add` | Frame | Anchor a "thug life" sunglasses quad to a part. 2-token form defaults the transform; 10-token form is explicit. Read = empty. See **thug-life** below. |
+| `debug/thug_life/clear` | T | `1` | `debug.thug_life_clear` | Frame | Remove **all** sunglasses. Vessel-agnostic. |
+| `debug/thug_life/count` | S | int | — | — | Number of active sunglasses entries. |
+| `debug/thug_life/<id>/vessel` | S | string | — | — | The anchor vessel id. |
+| `debug/thug_life/<id>/part` | S | uint | — | — | Anchor part `instance_id` (`0` = vehicle body frame). |
+| `debug/thug_life/<id>/position` | **St** | `x y z` | `debug.thug_life_position` | Frame | Offset in the part's local frame (m). |
+| `debug/thug_life/<id>/rotation` | **St** | `pitch yaw roll` | `debug.thug_life_rotation` | Frame | Orientation offset in the part's local frame (deg). |
+| `debug/thug_life/<id>/size` | **St** | `width height` | `debug.thug_life_size` | Frame | Quad size (m). |
+| `debug/thug_life/<id>/visible` | **St** | `0`/`1` | `debug.thug_life_visible` | Frame | Show/hide (keeps the entry). |
+| `debug/thug_life/<id>/remove` | T | `1` | `debug.thug_life_remove` | Frame | Remove this entry. |
+| `debug/thug_life/<id>/spec` | S | spec line | — | — | The write-compatible 10-token spec (echo to `add` to recreate as a new id). |
 
 **welds** (the "weld one vessel rigidly to another, anchored to a part" cheat — a game hack):
 - Discover anchor parts under `vessels/by-id/<target>/parts/<n>/` (§3.4); each part's `instance_id` is the
@@ -456,6 +468,18 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 - The source is repositioned every frame on the game thread (after the vehicle solvers). Errnos: `EBUSY`
   (source==target, or the two orbit different bodies), `ENOENT` (target/part gone), `EINVAL` (bad arity/values).
 - Welds are **runtime-only** (never persisted) and cleared on mod unload.
+
+**thug-life** (the "anchor a flat sunglasses-meme quad to a part" cosmetic cheat — a pure visual hack):
+- Each `add` creates a new entry with an integer **id** — the **smallest free slot** (reused after
+  `remove`/`clear`, so the numbering tracks the live set rather than growing unbounded) — that appears as
+  `debug/thug_life/<id>/`. Many entries may share a vessel/part. Discover anchor parts under
+  `vessels/by-id/<vessel>/parts/<n>/` (§3.4); pass a part's `instance_id` (`0` ⇒ the vehicle body frame).
+- The quad is a procedurally-generated `26×5` sunglasses texture drawn each frame in world space, tracking
+  the anchor part. `position`/`rotation` are in the part's local frame; `width`/`height` size it (defaults
+  `0.975`/`0.1875` m keep the texture aspect). `visible 0` keeps the entry but skips drawing.
+- The render hook + GPU resources are installed **lazily on the first entry** and torn down when the last
+  entry is removed (and at unload) — zero cost when unused. Entries are **runtime-only** (never persisted).
+  Errnos: `ENOENT` (vessel/part/id gone), `EINVAL` (bad arity/values), `EIO` (renderer unavailable).
 
 ---
 
@@ -547,6 +571,13 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `debug.weld_remove` | — | value `1` | Frame | `debug/vessels/<id>/unweld` | `vessel_id` = source |
 | `debug.weld_enable` | — | value `0`/`1` | Frame | `debug/welds/<source>/enabled` | suspend/resume |
 | `debug.weld_clear` | — | — | Frame | `debug/welds/clear` | vessel-agnostic; removes all welds |
+| `debug.thug_life_add` | — | token = vessel id; values `[part_iid]` (transform defaulted) or `[part_iid,x,y,z,pitch,yaw,roll,w,h]` | Frame | `debug/thug_life/add` | vessel-agnostic; creates a new sunglasses entry (lowest free id) |
+| `debug.thug_life_remove` | entry id | value `1` | Frame | `debug/thug_life/<id>/remove` | vessel-agnostic; id in `ordinal` |
+| `debug.thug_life_clear` | — | — | Frame | `debug/thug_life/clear` | vessel-agnostic; removes all |
+| `debug.thug_life_position` | entry id | values `[x,y,z]` | Frame | `debug/thug_life/<id>/position` | id in `ordinal` |
+| `debug.thug_life_rotation` | entry id | values `[pitch,yaw,roll]` | Frame | `debug/thug_life/<id>/rotation` | id in `ordinal` |
+| `debug.thug_life_size` | entry id | values `[width,height]` | Frame | `debug/thug_life/<id>/size` | id in `ordinal` |
+| `debug.thug_life_visible` | entry id | value `0`/`1` | Frame | `debug/thug_life/<id>/visible` | id in `ordinal` |
 
 ### 5.2 Writing over each transport
 

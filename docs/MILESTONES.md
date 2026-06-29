@@ -593,9 +593,9 @@ The full `GATOS_IT=1` suite was verified green on the Windows 11 game machine ag
 
 ---
 
-## Welds + `always_render_iva` + parts listing (ex-`unscience`): Code DONE; in-game pass pending
+## Welds + `always_render_iva` + parts listing + `thug_life` (ex-`unscience`): Code DONE; in-game pass pending
 
-Three additions ported from the sibling `unscience` mod, exposed **only** on the gatOS surfaces (9p
+Four additions ported from the sibling `unscience` mod, exposed **only** on the gatOS surfaces (9p
 `/sim` debug + HTTP `/v1` + MQTT — **no ImGui**). KSA-coupled code is confined to
 `gatOS.GameMod/Game/Ksa/` per the G2 rule; the snapshot/command plumbing is game-free. KSA bindings
 verified against decomp `2026.6.9.4750` (anchors `2026-06-28`).
@@ -627,18 +627,46 @@ remove,enable,clear}` (all Frame). The driver runs in `OnAfterUi` (`Mod.DriveWel
 `JobSystems.VehicleSolvers.Wait()` — the **third game-thread mutation site**, beside the Frame and Solver
 drains; self-gated to a no-op when empty, so **no** Harmony patch and zero cost when unused.
 
-**Wiring:** game-free `gatOS.SimFs/Commands/LineControlFile.cs` (a new whole-line-parsed control archetype,
-backs `weld`/`weld_here`); `SimSnapshot` gains `PartSnapshot`/`WeldSnapshot` records (`VesselSnapshot.Parts`,
-`SimSnapshot.{Welds,AlwaysRenderIva}`); `Formats` gains `UInt`/`WeldSpec`; `TelemetrySettings` gains the
-`VesselParts` gate. `KsaCatalog` (now an instance dispatcher) gains a `WeldManager` ctor param + the 6 new
-actions (IVA + `weld_clear` handled vessel-agnostically before vehicle resolution; weld create/here resolve
-the target from the command `Token`). `Mod.Game.cs` lazily creates `_weldManager` (game thread), drives it
-via the `DriveWelds(dt)` partial from `OnAfterUi`, tears both cheats down via `TeardownGameCheats`, and adds
-a "Vessel parts" telemetry menu toggle. `gatOS.GameMod.csproj` gained a `Brutal.Concurrency` reference (for
-`JobSystems.VehicleSolvers.Wait()`).
+**`thug_life`** — gatOS's **first custom GPU rendering**: anchors a flat, world-space textured quad (the
+"thug life" sunglasses meme) to a part on a vehicle, tracked each frame, exposed **only** via
+`/sim/debug/thug_life/` (add/clear + per-entry `position`/`rotation`/`size`/`visible`/`remove`/`spec`/
+`vessel`/`part`, plus `count`). `Game/Ksa/ThugLife/`: `ThugLifeTexturePattern` (a static 26×5 char grid for
+the sunglasses, no KSA API) → `ThugLifeTextureFactory` (builds an **`R8G8B8A8UNorm`** texture + sampler via
+`SimpleVkTexture`/`VkUtils.UploadBufferToImage`/`DeviceEx.CreateSampler`); `ThugLifeQuadRenderer` (`unsafe`)
+holds the GPU pipeline/descriptor/buffers (`BuildPipeline` reuses KSA's `"UnlitMeshVert"`/`"UnlitMeshFrag"`
+shaders, the `Program.OffScreenPass` render pass + **reverse-Z** depth) and does the per-frame anchor math
+(`TryComputeModelEgo`: camera `MVP.viewProjection`, `Vehicle.GetMatrixAsmb2Ego`/`Asmb2Ego`,
+`Part.PositionEgo`/`Asmb2Ego`); `ThugLifeRenderPatches` installs a dynamic `Harmony("gatos.thug_life")`
+**postfix on `SuperMeshRenderSystem.RenderMainPass`** (the one injection point for a world-space draw);
+`ThugLifeEntry` is the data model; `ThugLifeManager` is the registry + GPU lifecycle + dynamic-patch +
+`RecordDraws`/`Snapshot`/`Update`. Key as-built decisions: the render postfix + Vulkan resources install
+**lazily on the first entry** and tear down with the last / at unload (off by default = **zero patches and
+zero GPU**, the welds/IVA discipline); the anchor is a **top-level part by `instance_id`** (reuses the welds
+`parts/` listing) **or `0` = the vehicle body frame** (no subparts in v1); KSA runs `RenderMainPass` on the
+**main thread**, so the draw, the command drain, and entry edits are all one thread (no cross-thread access);
+the manager publishes an immutable `ThugLifeEntry[]` and **self-disables on any GPU fault**. Entries are
+**runtime-only** (never persisted). A new game-thread work site `UpdateThugLife()` (in `OnBeforeUi`)
+revalidates/re-resolves each entry per frame; `_thugLife?.Clear()` in `TeardownGameCheats` tears it down.
 
-Full catalog: **`SPEC_9P_FILESYSTEM.md`** §3.4.16 (parts) + §3.7 (`debug/welds/**`, `always_render_iva`);
-anchors mirrored in `docs/KSA_INTEGRATION_MATRIX.md` and `scope/`. **Pending: the in-game pass**
+**Wiring:** game-free `gatOS.SimFs/Commands/LineControlFile.cs` (a new whole-line-parsed control archetype,
+backs `weld`/`weld_here` and `thug_life/add`); `SimSnapshot` gains `PartSnapshot`/`WeldSnapshot`/
+`ThugLifeSnapshot` records (`VesselSnapshot.Parts`, `SimSnapshot.{Welds,AlwaysRenderIva,ThugLife}`);
+`Formats` gains `UInt`/`WeldSpec`/`ThugLifeSpec`; `SimFsTree` gains `ThugLifeDir`/`ThugLifeEntryDir`/
+`ParseThugLifeAdd`/`ThugLife(id)` under `DebugDir`; `TelemetrySettings` gains the `VesselParts` gate.
+`KsaCatalog` (now an instance dispatcher) gains `WeldManager`/`ThugLifeManager` ctor params + the new actions
+(IVA + `weld_clear` + the 7 `thug_life` actions handled vessel-agnostically — `thug_life_add` resolves the
+anchor vehicle via `ResolveVehicle` from the command `Token`, the entry id travels in `ordinal`).
+`Mod.Game.cs` lazily creates `_weldManager`/`_thugLife` (game thread), drives welds via `DriveWelds(dt)` from
+`OnAfterUi` and thug_life via `UpdateThugLife()` from `OnBeforeUi`, tears all cheats down via
+`TeardownGameCheats`, and adds a "Vessel parts" telemetry menu toggle; `TelemetrySampler` projects
+`ThugLife = _thugLife.Snapshot()`. `gatOS.GameMod.csproj` gained `Brutal.Concurrency` (for
+`JobSystems.VehicleSolvers.Wait()`) and the `thug_life` render refs `Brutal.Core.Memory`/`Brutal.Vulkan`/
+`Brutal.Vulkan.Abstractions`/`Brutal.Vulkan.Vma`/`Planet.Render.Core` (all `<Private>false</Private>`,
+KSA-guarded), and set `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>`.
+
+Full catalog: **`SPEC_9P_FILESYSTEM.md`** §3.4.16 (parts) + §3.7 (`debug/welds/**`, `always_render_iva`,
+`debug/thug_life/**`); anchors mirrored in `docs/KSA_INTEGRATION_MATRIX.md` and `scope/` (the `thug_life`
+render set is flagged the **deepest / highest-churn** KSA coupling). **Pending: the in-game pass**
 (checklist in `docs/VALIDATION.md`).
 
 ---

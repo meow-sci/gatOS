@@ -1,6 +1,7 @@
 using gatOS.GameMod.Game.Ksa;
 using gatOS.GameMod.Game.Ksa.Readers;
 using gatOS.GameMod.Game.Ksa.Render;
+using gatOS.GameMod.Game.Ksa.ThugLife;
 using gatOS.GameMod.Game.Ksa.Welds;
 using gatOS.Logging;
 using gatOS.SimFs;
@@ -32,6 +33,7 @@ internal sealed class TelemetrySampler
     private readonly TelemetrySettings _settings;
     private readonly PerfStat _sampleStats;
     private readonly WeldManager _welds;
+    private readonly ThugLifeManager _thugLife;
     private int _appliedRateHz;
     private IReadOnlyList<double> _warpSpeeds = [];
     private SimSnapshot? _previous;
@@ -48,8 +50,9 @@ internal sealed class TelemetrySampler
     /// <param name="health">Accessor-health latches, shared with the command executor.</param>
     /// <param name="sampleStats">Timing accumulator for one <see cref="Sample"/> (the status window reads it).</param>
     /// <param name="welds">The weld registry — projected into the snapshot for the <c>/sim/debug/welds</c> view.</param>
+    /// <param name="thugLife">The thug-life registry — projected for the <c>/sim/debug/thug_life</c> view.</param>
     internal TelemetrySampler(SnapshotStore store, TelemetrySettings settings, KsaHealth health,
-        PerfStat sampleStats, WeldManager welds)
+        PerfStat sampleStats, WeldManager welds, ThugLifeManager thugLife)
     {
         _store = store;
         _settings = settings;
@@ -58,6 +61,7 @@ internal sealed class TelemetrySampler
         _health = health;
         _sampleStats = sampleStats;
         _welds = welds;
+        _thugLife = thugLife;
     }
 
     /// <summary>
@@ -147,6 +151,7 @@ internal sealed class TelemetrySampler
             System = systemSummary,
             Welds = _welds.Snapshot(),
             AlwaysRenderIva = IvaForceRender.Enabled,
+            ThugLife = _thugLife.Snapshot(),
         };
         _previous = snapshot;
         _store.Publish(snapshot);

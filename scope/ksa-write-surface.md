@@ -181,6 +181,42 @@ bodies), `ENOENT` (target/part gone), `EINVAL` (bad arity/values). Anchors verif
 
 ---
 
+## Render quad cheat — `thug_life` (Frame phase) {#thug-life}
+
+Ported from the sibling `unscience` mod, exposed **only** on gatOS surfaces (9p `/sim/debug/thug_life/`
++ HTTP + MQTT — no ImGui). Part of the `debug.*` namespace (`[control] debug_namespace`); authority-exempt
+like the rest of `/sim/debug`. Anchors all under `gatOS.GameMod/Game/Ksa/ThugLife/`; `KsaCatalog.ThugLife`
+(a private dispatch method, taking a `ThugLifeManager thugLife` ctor param) routes the seven actions
+**vessel-agnostically** — the entry id travels in `ordinal`, and `add` resolves the anchor vehicle from the
+command `Token` via the existing `ResolveVehicle`. **This is gatOS's first custom GPU rendering and its
+highest-churn KSA coupling** — the *write* path below is small (it only edits the entry registry); the deep
+coupling is the per-frame GPU draw + anchor math, which is **runtime coupling**, not a write command — see
+[`ksa-runtime-coupling.md#thug-life-patch`](ksa-runtime-coupling.md#thug-life-patch).
+
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4750 |
+|---|---|---|---|---|---|---|
+| `debug/thug_life/add` | `debug.thug_life_add` | `ThugLifeManager.Create` (resolves the anchor vehicle from `Token`) | `Universe.CurrentSystem.All.UnsafeAsList()`; `Vehicle.Parts.Parts`; `Part.InstanceId` (anchor pick; `0` = vehicle body frame); lazy GPU build (see runtime page) | `KSA/Vehicle.cs`, `KSA/Part.cs`, `KSA/SuperMeshRenderSystem.cs` | **High** (render) | ✅ |
+| `debug/thug_life/clear` | `debug.thug_life_clear` | `ThugLifeManager.Clear` (vessel-agnostic; tears down the render postfix + GPU when last) | (registry + GPU lifecycle — no KSA *write*) | — | Low | ✅ |
+| `debug/thug_life/<id>/position` | `debug.thug_life_position` | `ThugLifeManager.SetPosition` (id in `ordinal`) | `ThugLifeEntry.Position` (consumed by the per-frame anchor math) | — | Low | ✅ |
+| `debug/thug_life/<id>/rotation` | `debug.thug_life_rotation` | `ThugLifeManager.SetRotation` (id in `ordinal`) | `ThugLifeEntry.Rotation` | — | Low | ✅ |
+| `debug/thug_life/<id>/size` | `debug.thug_life_size` | `ThugLifeManager.SetSize` (id in `ordinal`) | `ThugLifeEntry.{Width,Height}` | — | Low | ✅ |
+| `debug/thug_life/<id>/visible` | `debug.thug_life_visible` | `ThugLifeManager.SetVisible` (id in `ordinal`) | `ThugLifeEntry.Visible` | — | Low | ✅ |
+| `debug/thug_life/<id>/remove` | `debug.thug_life_remove` | `ThugLifeManager.Remove(id)` (id in `ordinal`) | (registry op — no KSA) | — | Low | ✅ |
+
+`add` takes `<vessel> <part_iid>` (defaults for pose/size) or the full
+`<vessel> <part_iid> x y z pitch yaw roll w h`; the anchor is a **top-level part by `instance_id`** (reuses
+the welds `parts/` listing) or `0` = the vehicle body frame. No subparts in v1. The render hook + GPU
+resources install **lazily on the first entry**, tear down on the last and at unload (off by default =
+zero patches/GPU — the welds/IVA "only active when toggled on" discipline). All seven actions are
+**Frame-phase**. The `debug/thug_life/count`, `…/<id>/{vessel,part,spec}` reads are a **game-free
+projection** of `ThugLifeManager.Snapshot()` (`ThugLifeSnapshot` records — no KSA read; `TelemetrySampler`
+projects it into `SimSnapshot.ThugLife`). Errnos: `ENOENT` (vessel/part/id gone), `EINVAL` (bad
+arity/values), `EIO` (renderer unavailable). Entries are **runtime-only** (never persisted); torn down on
+unload (`Mod.TeardownGameCheats`). Anchors verified `2026-06-28` against `2026.6.9.4750`. Pipeline
+assumptions + the new render-DLL references: [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md).
+
+---
+
 ## ✅ Docking pushoff (G1 FIXED, 2026-06-27) {#docking}
 
 **Was a compile break.** `DockingActuator.cs` did `ports[ordinal].PushoffForce = (float)newtons;` and the

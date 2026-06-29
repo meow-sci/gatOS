@@ -212,9 +212,19 @@ the game's ignite button reads). This is distinct from the per-engine `engines/<
 | `debug/vessels/<id>/unweld` | T | `1` | `WeldManager.Remove(vehicle.Id)` (registry op — no KSA) | L | Frame |
 | `debug/welds/clear` | T | `1` | `WeldManager.Clear` (vessel-agnostic) | L | Frame |
 | `debug/welds/<source>/enabled` | St | `0`/`1` | `WeldManager.SetEnabled` (suspend/resume; keeps the entry) | L | Frame |
+| `debug/thug_life/add` | St | `<vessel> <piid>` or `<vessel> <piid> x y z pitch yaw roll w h` | `ThugLifeManager.Create` → lazy GPU build + per-frame world-space quad draw (see the render set below); anchor vehicle resolved from `Token` via `ResolveVehicle` (vessel-agnostic) | **H** (render) | Frame |
+| `debug/thug_life/clear` | T | `1` | `ThugLifeManager.Clear` (vessel-agnostic; tears down the render postfix + GPU resources when the last entry goes) | L | Frame |
+| `debug/thug_life/<id>/position` | St | `x y z` | `ThugLifeEntry.Position` (id in `ordinal`; consumed by the per-frame anchor math) | **H** (render) | Frame |
+| `debug/thug_life/<id>/rotation` | St | `pitch yaw roll` | `ThugLifeEntry.Rotation` (id in `ordinal`) | **H** (render) | Frame |
+| `debug/thug_life/<id>/size` | St | `w h` | `ThugLifeEntry.{Width,Height}` (id in `ordinal`) | L | Frame |
+| `debug/thug_life/<id>/visible` | St | `0`/`1` | `ThugLifeEntry.Visible` (id in `ordinal`) | L | Frame |
+| `debug/thug_life/<id>/remove` | T | `1` | `ThugLifeManager.Remove(id)` (id in `ordinal`) | L | Frame |
 
 The `debug/welds/<source>/{target,part,offset,rotation,lock_rotation}` registry view is a **game-free
-projection** of `WeldManager.Snapshot()` (`WeldSnapshot` records — no KSA read).
+projection** of `WeldManager.Snapshot()` (`WeldSnapshot` records — no KSA read). Likewise the
+`debug/thug_life/count`, `…/<id>/{vessel,part,spec}` reads are a **game-free projection** of
+`ThugLifeManager.Snapshot()` (`ThugLifeSnapshot` records); only the per-frame anchor math + GPU draw
+touch KSA (the render set below).
 
 **Render & weld cheats (ported from `unscience`, exposed only on gatOS surfaces — no ImGui).**
 `debug.always_render_iva` toggles `IvaForceRender`, which installs **two Harmony patches on its own
@@ -227,6 +237,37 @@ onto its anchor in `OnAfterUi` (`Mod.DriveWelds`, game thread, after `JobSystems
 when no welds exist, so it needs **no** Harmony patch. Both tear down on unload
 (`Mod.TeardownGameCheats`). All weld create/remove/enable/clear and the IVA toggle are **Frame-phase**.
 Anchors verified `2026-06-28` against `2026.6.9.4750`.
+
+**`thug_life` — gatOS's first custom GPU rendering (⚠️ HIGHEST-CHURN KSA COUPLING).** The
+`debug.thug_life_*` actions (ported from `unscience`, exposed only on gatOS surfaces) anchor a flat,
+world-space textured quad — the "thug life" sunglasses meme — to a part on a vehicle, tracking it each
+frame. It is the **deepest coupling gatOS has into KSA's render-pipeline internals**: a Vulkan textured
+quad built and recorded directly into KSA's scene. All anchors live under
+`gatOS.GameMod/Game/Ksa/ThugLife/` and are **Risk High** unless noted. The render set is the **one set
+most likely to break on any game update** (render internals churn far faster than the gameplay APIs the
+rest of the matrix binds), and unlike the reflective accessors a render-API rename **does** fail the
+build at the `[KsaAnchor]` site.
+
+| Anchor site | KSA / Brutal members | Assemblies | Risk |
+|---|---|---|---|
+| `ThugLifeRenderPatches.Apply` | dynamic Harmony **postfix on `SuperMeshRenderSystem.RenderMainPass(CommandBuffer)`** (`KSA/SuperMeshRenderSystem.cs:329`) — the only injection point for a world-space draw; installed lazily on the first entry, removed with the last/at unload | KSA | **H** |
+| `ThugLifeQuadRenderer.BuildPipeline` (`unsafe`) | `Program.OffScreenPass.{Pass,SampleCount}`; `ModLibrary.Get<ShaderReference>("UnlitMeshVert"/"UnlitMeshFrag")`; `RenderTechnique.CreateShaderStages`; `Presets`/`RenderingPresets`; `Renderer.{Device,Allocator,DynamicStateInfo,ViewportState,Graphics}`; `VkUtils.StageAndUploadToBuffer` | Planet.Render.Core, Brutal.Vulkan(.Abstractions) | **H** |
+| `ThugLifeQuadRenderer.RecordDraw` (per-frame draw + ego-space anchor math, in `TryComputeModelEgo`) | `Program.GetMainCamera()`/`Camera.MVP.viewProjection`; `Vehicle.GetMatrixAsmb2Ego(Camera)`; `Vehicle.Asmb2Ego`; `Part.PositionEgo(in double4x4)`; `Part.Asmb2Ego(doubleQuat)`; `double3.Transform`; `Program.SetViewport` | KSA, Brutal numerics | **H** |
+| `ThugLifeTextureFactory.UploadPixels` | `SimpleVkTexture` ctor; `Renderer.Allocator.CreateStagingPool`/`AddStagingBuffer`; `VkUtils.UploadBufferToImage`; `DeviceEx.CreateSampler` (builds an `R8G8B8A8UNorm` texture + sampler) | Planet.Render.Core, Brutal.Vulkan(.Abstractions) | **H** |
+| `ThugLifeManager.{Update,IsLive}` | `Universe.CurrentSystem.All.UnsafeAsList()`; `Vehicle.Parts.Parts`; `Part.InstanceId` (per-frame validation / anchor re-resolve) | KSA | **L** |
+| `ThugLifeManager.EnsureGpu` | `Program.GetRenderer()` (lazy GPU lifecycle) | Planet.Render.Core | M |
+
+The render postfix, the command drain, and entry edits all run on the **main thread**
+(`SuperMeshRenderSystem.RenderMainPass` runs there — see the ksa skill's `quad.md`), so there is no
+cross-thread game-state access; the manager publishes an immutable `ThugLifeEntry[]` (swapped on
+add/remove) that the postfix reads. The whole feature is **off by default = zero patches/GPU** (the
+welds/IVA "only active while toggled on" discipline) and **runtime-only** (never persisted); a GPU fault
+self-disables it (`Active=false`). `UpdateThugLife()` (game thread, `OnBeforeUi`) revalidates/re-resolves
+each entry per frame; `_thugLife?.Clear()` in `Mod.TeardownGameCheats` tears it down at unload. Pipeline
+assumptions (the `"UnlitMeshVert"/"UnlitMeshFrag"` shader keys, `R8G8B8A8UNorm`, reverse-Z depth,
+`Program.OffScreenPass` MSAA sample count) and the new render-DLL references are catalogued in
+[`../scope/ksa-assets-and-versions.md`](../scope/ksa-assets-and-versions.md). Anchors verified
+`2026-06-28` against `2026.6.9.4750`.
 
 Solver-phase commands drain in a Harmony `Priority.First` prefix on
 `Universe.ExecuteNextVehicleSolvers` (`Mod.DrainSolverCommands`), which runs **immediately before** the

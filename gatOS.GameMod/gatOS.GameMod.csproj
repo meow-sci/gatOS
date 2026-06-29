@@ -10,7 +10,10 @@
         <Copyright>Copyright © meow sci</Copyright>
         <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
         <ModNamespace>gatOS.GameMod</ModNamespace>
-        <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+        <!-- Enabled for the thug-life GPU quad renderer (Game/Ksa/ThugLife): the Brutal.Vulkan
+             abstractions take pointers to Vk* create-info structs. The unsafe code is confined to
+             ThugLifeQuadRenderer/ThugLifeTextureFactory; the rest of GameMod is plain managed code. -->
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <GenerateDocumentationFile>false</GenerateDocumentationFile>
         <DistDir>$(SelectedDistModDir)gatOS\</DistDir>
         <!-- The Game/ sources (ImGui status window, ModMenu entry, Brutal-backed logger) compile
@@ -168,6 +171,30 @@
         </Reference>
         <Reference Include="Brutal.ImGui.Abstractions" Condition="Exists('$(KSAFolder)/Brutal.ImGui.Abstractions.dll')">
             <HintPath>$(KSAFolder)/Brutal.ImGui.Abstractions.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <!-- GPU quad renderer (Game/Ksa/ThugLife): the Vulkan abstraction surface + the Planet render
+             core (Renderer/RenderPassState/SimpleVkTexture/RenderTechnique/VkUtils live in
+             Planet.Render.Core; ByteSize/pointer extensions in Brutal.Core.Memory). Game-provided
+             (Private=false) and condition-guarded like the rest. -->
+        <Reference Include="Brutal.Core.Memory" Condition="Exists('$(KSAFolder)/Brutal.Core.Memory.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Core.Memory.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Brutal.Vulkan" Condition="Exists('$(KSAFolder)/Brutal.Vulkan.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Vulkan.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Brutal.Vulkan.Abstractions" Condition="Exists('$(KSAFolder)/Brutal.Vulkan.Abstractions.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Vulkan.Abstractions.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Brutal.Vulkan.Vma" Condition="Exists('$(KSAFolder)/Brutal.Vulkan.Vma.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Vulkan.Vma.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Planet.Render.Core" Condition="Exists('$(KSAFolder)/Planet.Render.Core.dll')">
+            <HintPath>$(KSAFolder)/Planet.Render.Core.dll</HintPath>
             <Private>false</Private>
         </Reference>
         <Reference Include="KSA" Condition="Exists('$(KSAFolder)/KSA.dll')">

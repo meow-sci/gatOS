@@ -234,6 +234,7 @@ public sealed partial class Mod
     {
         SampleTelemetry(dt);
         DrainCommands();
+        UpdateThugLife(); // validate/re-resolve thug-life anchors on the game thread, before the scene renders
     }
 
     /// <summary>
@@ -792,6 +793,7 @@ public sealed partial class Mod
     partial void SampleTelemetry(double dt);
     partial void DrainCommands();
     partial void DriveWelds(double dt);
+    partial void UpdateThugLife();
     partial void TeardownGameCheats();
     partial void InstallSolverHook();
     partial void RemoveSolverHook();

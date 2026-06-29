@@ -32,8 +32,9 @@ caller — the whole solution still builds without the game DLLs (CLAUDE.md depe
 
 gatOS installs **two permanent** Harmony patches, both in `Game/Mod.Game.cs`, both via
 `AccessTools.Method(...)` with a null-check and try/catch so a missing/renamed target **disables that one
-feature with a logged warning instead of crashing** (a **third**, dynamic instance — `gatos.iva`, for the
-IVA cheat — is installed only while that toggle is on; see below):
+feature with a logged warning instead of crashing** (two further dynamic instances — `gatos.iva` for the
+IVA cheat and `gatos.thug_life` for the world-space quad cheat — are each installed only while their
+feature is active; see below):
 
 | Patch | KSA target | Decomp file | Purpose | If target moves |
 |---|---|---|---|---|
@@ -72,6 +73,34 @@ prefix on `Universe.ExecuteNextVehicleSolvers`); it **self-gates to a no-op when
 fault disables welds for the session (`_weldsDead` latch, one error log). The weld *control* writes and the
 IVA toggle are ordinary Frame-phase commands; see [`ksa-write-surface.md#welds`](ksa-write-surface.md#welds).
 
+### Dynamic thug_life render patch (`gatos.thug_life`) — render-thread draw injection {#thug-life-patch}
+
+The `thug_life` cheat (`Game/Ksa/ThugLife/`, ported from `unscience`) is gatOS's **first custom GPU
+rendering** and its **highest-churn KSA coupling** (render-pipeline internals churn far faster than the
+gameplay APIs). It draws a flat, world-space textured quad (the "thug life" sunglasses meme) anchored to a
+part, tracked each frame. `ThugLifeRenderPatches.Apply` installs a **dynamic Harmony postfix on
+`SuperMeshRenderSystem.RenderMainPass(CommandBuffer)`** (`KSA/SuperMeshRenderSystem.cs:329`) on its **own**
+`Harmony("gatos.thug_life")` instance — the only injection point for a world-space draw. It is installed
+**lazily on the first entry** (along with the Vulkan pipeline/texture/buffers — `ThugLifeQuadRenderer` +
+`ThugLifeTextureFactory`, via `Program.GetRenderer()`) and **removed with the last entry / at unload**, so
+the default-off state carries **zero** patches and **zero** GPU resources. The patch targets + the GPU
+build are `[KsaAnchor]`-documented in `ThugLifeRenderPatches`/`ThugLifeQuadRenderer`/`ThugLifeTextureFactory`
+(Risk **High**; verified `2026-06-28` / `2026.6.9.4750`); a `RenderMainPass`/pipeline signature change
+surfaces at install time (caught, logged, feature self-disables).
+
+KSA runs `SuperMeshRenderSystem.RenderMainPass` on the **main thread** (the same thread as the GUI hooks
+and the command drain — per the ksa skill `quad.md`), so the render postfix, the command drain, and entry
+edits are **all one thread** — no cross-thread game-state access. The manager publishes an immutable
+`ThugLifeEntry[]` (swapped on add/remove) that the postfix reads, and **self-disables (`Active=false`) on
+any GPU fault**. This is also a **fourth game-thread work site**: `UpdateThugLife()` runs from `OnBeforeUi`
+(`[StarMapBeforeGui]`, game thread) to revalidate / re-resolve each entry's anchor part per frame (a staged
+anchor part falls back to the vehicle body frame rather than dropping). Dispose order on teardown
+(`Mod.TeardownGameCheats`, `_thugLife?.Clear()`): clear `Active` → unpatch → dispose GPU (safe because
+same-thread). The per-frame anchor math and GPU surface are **runtime coupling**, not write commands; the
+seven `debug.thug_life_*` control writes are ordinary Frame-phase commands — see
+[`ksa-write-surface.md#thug-life`](ksa-write-surface.md#thug-life). Welds, IVA, and thug_life are all
+**runtime-only** (never persisted).
+
 ### Threading phases (binding)
 - **Frame phase** — `OnBeforeUi` → `CommandQueue.Drain(CommandPhase.Frame, …)`. Most actions (incl. the
   weld create/remove/enable/clear and `always_render_iva` toggle).
@@ -83,6 +112,10 @@ IVA toggle are ordinary Frame-phase commands; see [`ksa-write-surface.md#welds`]
   [`ksa-write-surface.md`](ksa-write-surface.md#vessel-control-surface-g4).
 - **Weld driver** — *not* a `CommandQueue` phase: a separate per-frame `Vehicle.Teleport` in `OnAfterUi`
   (the third mutation site, [`#welds-driver`](#welds-driver) above).
+- **thug_life draw + validation** — *not* a `CommandQueue` phase: a per-frame draw recorded in the
+  `gatos.thug_life` render postfix on `SuperMeshRenderSystem.RenderMainPass`, plus a per-frame
+  `UpdateThugLife()` anchor-revalidation in `OnBeforeUi` (the fourth game-thread work site,
+  [`#thug-life-patch`](#thug-life-patch) above). All on the main thread.
 
 Threading rules 1–5 (CLAUDE.md): game state read+mutated **only** on the game thread; 9p/HTTP/MQTT
 threads only enqueue `SimCommand` and read the last published snapshot; `VmHost` is one-semaphore async;

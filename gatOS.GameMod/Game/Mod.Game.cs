@@ -2,6 +2,7 @@ using Brutal.ImGuiApi;
 using gatOS.GameMod.Game;
 using gatOS.GameMod.Game.Ksa;
 using gatOS.GameMod.Game.Ksa.Render;
+using gatOS.GameMod.Game.Ksa.ThugLife;
 using gatOS.GameMod.Game.Ksa.Welds;
 using gatOS.Logging;
 using gatOS.SimFs;
@@ -68,6 +69,13 @@ public sealed partial class Mod
     // driver runs in OnAfterUi (DriveWelds) and self-gates to nothing when empty — no Harmony patch.
     private WeldManager? _weldManager;
     private bool _weldsDead;
+
+    // The thug-life cheat registry + GPU renderer (Game/Ksa/ThugLife). Created lazily on the game thread,
+    // shared by the sampler (projects it into /sim/debug/thug_life) and the executor (mutates it). The
+    // render postfix + GPU resources are installed lazily on the first entry and torn down on the last;
+    // UpdateThugLife (OnBeforeUi) validates entries each frame and self-gates to nothing when empty.
+    private ThugLifeManager? _thugLife;
+    private bool _thugLifeDead;
 
     // The Harmony patch draining solver-phase commands (G4). Installed in OnFullyLoaded, removed at
     // Unload; null when the solver hook could not be installed (solver commands then never drain).
@@ -164,7 +172,9 @@ public sealed partial class Mod
         {
             _health ??= new KsaHealth();
             _weldManager ??= new WeldManager();
-            _telemetry ??= new TelemetrySampler(store, _telemetrySettings, _health, _sampleStats, _weldManager);
+            _thugLife ??= new ThugLifeManager();
+            _telemetry ??= new TelemetrySampler(store, _telemetrySettings, _health, _sampleStats,
+                _weldManager, _thugLife);
             // Sample only while something can actually read /sim: the VM is up, or a host-side
             // transport client is connected (9p / HTTP / MQTT). Otherwise the sampler idles for free.
             var state = CurrentVmStatus.State;
@@ -209,7 +219,8 @@ public sealed partial class Mod
     {
         _health ??= new KsaHealth();
         _weldManager ??= new WeldManager();
-        _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels, _weldManager);
+        _thugLife ??= new ThugLifeManager();
+        _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels, _weldManager, _thugLife);
     }
 
     /// <summary>
@@ -235,8 +246,30 @@ public sealed partial class Mod
     }
 
     /// <summary>
-    ///     Tears down the runtime cheats at unload: clears every weld and restores IVA (which also
-    ///     unpatches the IVA Harmony hooks). Game-coupled, so it is elided without the KSA assemblies.
+    ///     Validates thug-life entries on the game thread before the scene renders this frame: drops
+    ///     entries whose vehicle is gone and re-resolves each anchor part by InstanceId (robust to
+    ///     staging). Self-gates to nothing when empty; a failure disables the feature for the session.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void UpdateThugLife()
+    {
+        if (_thugLifeDead || _thugLife is not { } thugLife || thugLife.IsEmpty)
+            return;
+        try
+        {
+            thugLife.Update();
+        }
+        catch (Exception ex)
+        {
+            _thugLifeDead = true;
+            ModLog.Log.Error($"gatOS thug-life disabled after an update error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    ///     Tears down the runtime cheats at unload: clears every weld, removes the thug-life quads (which
+    ///     also unpatches the render hook + frees its GPU resources), and restores IVA (which unpatches the
+    ///     IVA Harmony hooks). Game-coupled, so it is elided without the KSA assemblies.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     partial void TeardownGameCheats()
@@ -248,6 +281,15 @@ public sealed partial class Mod
         catch (Exception ex)
         {
             ModLog.Log.Debug($"gatOS weld teardown error: {ex.Message}");
+        }
+
+        try
+        {
+            _thugLife?.Clear();
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS thug-life teardown error: {ex.Message}");
         }
 
         try

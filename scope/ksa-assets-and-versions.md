@@ -74,6 +74,42 @@ and the fastest way to confirm a 4750 rename actually landed. Concrete files (cu
 | Control authority (`IsControllable`) | `Core/CoreCommandAGameData.xml` | `CoreCommandA_Prefab_MediumCapsuleVariantA` has `<Control />` | rev 4699: the new Control Module is on the capsule in XML; vehicles without `<Control />` are not controllable. |
 | Engines / tanks / lights / RCS / decouplers / animations | `Core/Core*GameData.xml` (Propulsion, Electrical, Coupling, …) | `<EngineController>`, `<Tank>`/`<Mole>`, `<LightModule>`, `<ThrusterController>`, `<Decoupler>`, `<KeyframeAnimation>` | the module element names the readers/actuators bind to; no 4750 changes. |
 | Part template ids (dynamic add) | `Core/Core*GameData.xml` `PartGameData Id="…"` | e.g. `CoreCouplingA_Prefab_DockingPort1WA` | the string ids `ModLibrary.Get<PartTemplate>(id)` resolves (not used by `/sim` reads; reference). |
+| **`thug_life` quad shaders** | `Core/Shaders/Mesh/UnlitMesh.{vert,frag}` | the `"UnlitMeshVert"`/`"UnlitMeshFrag"` `ShaderReference` keys `ThugLifeQuadRenderer.BuildPipeline` resolves via `ModLibrary.Get<ShaderReference>(...)` | the world-space quad reuses KSA's stock unlit-mesh shaders; if these keys/assets are renamed/removed the pipeline build fails (caught, feature self-disables). |
+
+---
+
+## Render-internals references — `thug_life` (the deepest, highest-churn coupling) {#render-refs}
+
+The `thug_life` cheat (`Game/Ksa/ThugLife/`, ported from `unscience`) is gatOS's **first custom GPU
+rendering** and its **deepest coupling into KSA's render-pipeline internals** — render internals churn far
+faster than the gameplay APIs the rest of the surface binds, so this set is **High churn** and the one most
+worth re-verifying on any game update. It pulled in **new reference DLLs** and a project-level flag:
+
+| Added to `gatOS.GameMod.csproj` | Why | Notes |
+|---|---|---|
+| `Brutal.Vulkan`, `Brutal.Vulkan.Abstractions`, `Brutal.Vulkan.Vma` | the Vulkan pipeline/descriptor/buffer/staging surface (`SimpleVkTexture`, `VkUtils.{UploadBufferToImage,StageAndUploadToBuffer}`, `DeviceEx.CreateSampler`, allocator/VMA staging pools) | `<Private>false</Private>`, condition-guarded on `$(KSAFolder)` like the other KSA refs |
+| `Planet.Render.Core` | `Renderer` (Device/Allocator/DynamicStateInfo/ViewportState/Graphics), `RenderTechnique.CreateShaderStages`, `Presets`/`RenderingPresets`, `Program.{GetRenderer,OffScreenPass,SetViewport}` | `<Private>false</Private>`, guarded |
+| `Brutal.Core.Memory` | unmanaged buffer/staging helpers for the GPU upload path | `<Private>false</Private>`, guarded |
+| `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` | `ThugLifeQuadRenderer` is `unsafe` (raw pointer work for the Vulkan buffer uploads / descriptor writes) | first use of `unsafe` in gatOS |
+
+**Pipeline assumptions baked into `ThugLifeQuadRenderer.BuildPipeline`** (any of these moving silently
+breaks the draw — re-verify live):
+- Reuses KSA's stock unlit-mesh shaders via the `"UnlitMeshVert"`/`"UnlitMeshFrag"` `ShaderReference` keys
+  (assets `Content/Core/Shaders/Mesh/UnlitMesh.{vert,frag}` — see the asset table above).
+- Texture format `R8G8B8A8UNorm` (the sunglasses texture, built from a static 26×5 char grid in
+  `ThugLifeTexturePattern` → `ThugLifeTextureFactory`).
+- **Reverse-Z** depth convention and the **`Program.OffScreenPass.{Pass,SampleCount}`** render-pass /
+  MSAA sample count (the quad must be depth-tested and MSAA-resolved consistently with the scene).
+- Draw injected via a Harmony postfix on `SuperMeshRenderSystem.RenderMainPass(CommandBuffer)`
+  (`KSA/SuperMeshRenderSystem.cs:329`) — the runtime coupling, see
+  [`ksa-runtime-coupling.md#thug-life-patch`](ksa-runtime-coupling.md#thug-life-patch).
+
+Full anchor list: [`ksa-read-surface.md#thug-life`](ksa-read-surface.md#thug-life) (anchor math),
+[`ksa-write-surface.md#thug-life`](ksa-write-surface.md#thug-life) (the seven actions),
+[`../docs/KSA_INTEGRATION_MATRIX.md`](../docs/KSA_INTEGRATION_MATRIX.md) (render set). **Current build
+verified `2026-06-28` against `2026.6.9.4750`** (compiled clean against the new render DLLs; render
+internals are not as reliably changelog-covered as the gameplay APIs, so this set leans on the
+build-as-alarm + live re-verification).
 
 ---
 
@@ -98,6 +134,7 @@ When a changelog line mentions a subsystem, open these. (Decomp paths relative t
 | Decouplers | `KSA/Decoupler.cs` | `Core/CoreCouplingAGameData.xml` | reads, writes |
 | Animations / solar deploy | `KSA/KeyframeAnimationModule.cs`, `KSA/SolarTracker.cs` | `Core/…` | reads, writes |
 | Camera / menu hooks | `KSA/Program.cs`, `KSA/Camera.cs` | — | writes, runtime |
+| **Render internals (`thug_life` quad)** | `KSA/SuperMeshRenderSystem.cs`, `KSA/Program.cs` (`GetRenderer`/`OffScreenPass`/`SetViewport`), `KSA/Camera.cs`, `KSA/Part.cs` (ego transforms); **Planet.Render.Core**, **Brutal.Vulkan(.Abstractions/.Vma)**, **Brutal.Core.Memory** | `Core/Shaders/Mesh/UnlitMesh.{vert,frag}` | reads (anchor math), writes (actions), runtime (render postfix) — **deepest / highest-churn coupling**; see [render refs](#render-refs) |
 | Numerics | `Brutal.Core.Numerics/` (decomp), `Brutal.Core.Numerics.dll` | — | runtime |
 
 ---

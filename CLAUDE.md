@@ -61,6 +61,7 @@ cheats ported from `unscience`, are code-complete.** The only pending work is a 
 | MQTT transport | DONE | `gatOS.Mqtt/` |
 | Host folder mounts | DONE | `NineP/Vfs/HostDirectory.cs`, `HostFile.cs` |
 | Welds + `always_render_iva` + parts (ex-`unscience`) | Code DONE; in-game pending | `Game/Ksa/Welds/`, `Game/Ksa/Render/IvaForceRender.cs`, `Game/Ksa/Readers/PartsReader.cs` |
+| `thug_life` sunglasses quad (ex-`unscience`) | Code DONE; in-game pending | `Game/Ksa/ThugLife/` (GPU quad renderer + dynamic render postfix), `SimFs` `debug/thug_life` |
 | T11.1 — QEMU win-x64 | DONE | `tools/fetch-qemu.*`, `vendor/qemu/win-x64/` |
 | M10+ | **Not yet implemented** | — |
 
@@ -180,6 +181,8 @@ gatOS.Vm       → Logging, Tomlyn                      QEMU lifecycle, disks, p
 gatOS.Ssh      → Vm, Logging, vendor/purrTTY, SSH.NET SshShellSession : ICustomShell (M4, built)
 gatOS.GameMod  → Ssh, SimFs, Http, Mqtt, Bus, Vm, Logging, vendor/purrTTY,
                   KSA DLLs, StarMap.API, Lib.Harmony, ModMenu.Attributes, Tomlyn   the KSA mod (M6, built)
+                  (+ the Brutal.Vulkan(.Abstractions/.Vma) + Planet.Render.Core + Brutal.Core.Memory game
+                   DLLs and AllowUnsafeBlocks, for the Game/Ksa/ThugLife GPU quad renderer only)
 ```
 `examples/sdk-ts/` is a standalone TypeScript/Bun example SDK (G6, built — not part of the .NET
 solution); it talks to either transport behind one typed API.
@@ -196,8 +199,8 @@ client), plus `gatOS.Vm`/`gatOS.Ssh` for its in-VM integration fixture.
 > `GameMod` included — still builds when the assemblies are absent.
 >
 > **Stronger form for KSA integration (G2):** a KSA type name may appear **only under
-> `gatOS.GameMod/Game/Ksa/`** (`Readers/`, `Actuators/`, `KsaCatalog`, annotated with
-> `[KsaAnchor]`). Transports (9p/HTTP/serial), the `/sim` tree, formats and the command pipeline
+> `gatOS.GameMod/Game/Ksa/`** (`Readers/`, `Actuators/`, `Welds/`, `Render/`, `ThugLife/`, `KsaCatalog`,
+> annotated with `[KsaAnchor]`). Transports (9p/HTTP/serial), the `/sim` tree, formats and the command pipeline
 > never see one — they speak `SimSnapshot` (reads) and `SimCommand`/`ICommandExecutor` (writes).
 > When a decomp drop breaks the build, the diff is confined to that folder + `docs/KSA_INTEGRATION_MATRIX.md`,
 > and you MUST also update the matching [`scope/`](scope/FULL_SCOPE.md) page — the break-impact catalog
@@ -268,7 +271,13 @@ host.
    `JobSystems.VehicleSolvers.Wait()`) — it teleports each welded source onto its anchor and self-gates to
    a no-op when no welds exist, so it needs **no** Harmony patch. The `always_render_iva` cheat installs its
    own dynamic `Harmony("gatos.iva")` patches **only while the toggle is on** (removed on disable/unload).
-   Both are torn down by `Mod.TeardownGameCheats` at `Unload`.
+   The **`thug_life` cheat** (`Game/Ksa/ThugLife/`) adds gatOS's only **render-thread draw injection**: a
+   dynamic `Harmony("gatos.thug_life")` postfix on `SuperMeshRenderSystem.RenderMainPass` (which KSA runs on
+   the *main* thread — the same thread as the GUI hooks and the command drain, per `.claude/skills/ksa/quad.md`)
+   that records a textured-quad draw per entry; it + its Vulkan GPU resources are installed lazily on the
+   first entry and torn down on the last. A fourth game-thread work site, `Mod.UpdateThugLife` (run in
+   `OnBeforeUi`), validates/re-resolves entry anchors before the scene renders, self-gating to a no-op when
+   empty. All cheats are torn down by `Mod.TeardownGameCheats` at `Unload`.
 2. **9p server threads never touch game state** — they read the latest published snapshot, and for
    writes they only *enqueue* an immutable `SimCommand` and await its result (never executing it).
 3. SSH I/O runs on SSH.NET's threads; `OutputReceived` may fire on any thread (purrTTY tolerates
