@@ -127,28 +127,37 @@ async function findOrCreateThugLifeInstance(
     // Write to /sim/debug/thug_life/add with all initialization params
     await Bun.write("/sim/debug/thug_life/add", addCommand);
 
-    // Wait a bit for the filesystem to process
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Busywait for the newly created instance to appear on the filesystem
+    const maxWaitMs = 5000; // 5 second timeout
+    const startTime = Date.now();
 
-    // Search for the newly created instance
-    const entries = await readdir(thugLifeDir);
-    for (const entry of entries) {
-      if (entry === "add") continue;
-
-      const vesselFile = join(thugLifeDir, entry, "vessel");
+    while (Date.now() - startTime < maxWaitMs) {
       try {
-        const content = await readFile(vesselFile, "utf-8");
-        if (content.trim() === vesselId) {
-          console.error(`Created thug_life instance: ${entry}`);
-          return entry;
+        const entries = await readdir(thugLifeDir);
+        for (const entry of entries) {
+          if (entry === "add") continue;
+
+          const vesselFile = join(thugLifeDir, entry, "vessel");
+          try {
+            const content = await readFile(vesselFile, "utf-8");
+            if (content.trim() === vesselId) {
+              console.error(`Created thug_life instance: ${entry}`);
+              return entry;
+            }
+          } catch {
+            // File doesn't exist or can't read, continue
+          }
         }
       } catch {
-        // Continue
+        // Directory read failed, retry
       }
+
+      // Sleep 1ms before retrying
+      await new Promise((resolve) => setTimeout(resolve, 1));
     }
 
     throw new Error(
-      `Failed to find newly created instance after write to /sim/debug/thug_life/add`
+      `Timeout waiting for thug_life instance to appear after write to /sim/debug/thug_life/add`
     );
   } catch (e) {
     console.error(`Error creating thug_life instance: ${e}`);
