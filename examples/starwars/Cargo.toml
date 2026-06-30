@@ -1,0 +1,24 @@
+[package]
+name = "starwars"
+version = "0.1.0"
+edition = "2021"
+description = "Smooth braille-rendered bottom-to-top scrolling crawl, reading text from stdin"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "starwars"
+path = "src/main.rs"
+
+[dependencies]
+# ratatui re-exports crossterm, so we use ratatui::crossterm for events + backend — the event and
+# backend crate versions then can never drift.
+ratatui = "0.29"
+# Pure-Rust TTF rasterizer (no system font/freetype dependency) — used to turn the vendored Star
+# Jedi font into a coverage bitmap that we then downsample into braille dots. See src/canvas.rs.
+fontdue = "0.9"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
