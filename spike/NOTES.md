@@ -95,6 +95,16 @@ kill → guest EIO, clean `umount`, remount after restart works. Mount used:
      on the blocked read. Track "zeros owed" per fid.
    → M8's `/sim/.../stream` should be the growing-log model (ring buffer with byte offsets);
    `/sim/events` the blocking-event model. The M7 VFS abstraction must let a node choose.
+
+   **Corollary — the "continuous" third model (verified in-game 2026-07-01, /sim/display/stream):**
+   a file that claims a huge i_size and never answers 0 bytes (so `cat` never EOFs) *does* deliver
+   an endless ordered byte stream — but by rule 2 each guest `read()` completes only when the
+   **full user buffer** has been filled across however many blocking Treads that takes. There are
+   no partial-read wakeups. Measured: `dd bs=512 count=1` on a ~54 B/s feed returned exactly 512
+   bytes after ~9.5 s (= 512/54); GNU `cat` (≥128 KiB buffers) at that rate shows nothing for ~40
+   min while working perfectly. Consumer-side latency ≡ read-buffer-size ÷ data-rate: fine for a
+   ~1–3 MB/s video feed through `cat` (~40–130 ms), hopeless for low-rate lines — low-rate
+   consumers must read in small chunks (`dd bs=64`, or exact-size read() loops).
 4. `cache=none` confirmed fully live: every stat is a Tgetattr, every open re-reads (two
    consecutive `cat /ticks` returned different values 7 ms apart).
 5. Fixed-width stream lines (`tick=%010d\n`, 16 B) made offset↔line mapping trivial for the

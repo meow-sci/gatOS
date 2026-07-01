@@ -502,7 +502,7 @@ capture costs nothing until a client writes `1` to `enabled` *and* opens `stream
 | `display/height` | **St** | pixels (clamped 16..1920) | Downscale target height. |
 | `display/encoding` | **St** | `rgba-zlib` \| `rgba` | Frame wire format (zlib-deflated RGBA, or raw RGBA). Unknown ⇒ `EINVAL`. |
 | `display/format` | S | `WxH@fps enc` | Read-only discovery of the live parameters. |
-| `display/stream` | **Smb** | — (read) | The binary Kitty frame feed. A **continuous** stream: a single `cat /sim/display/stream` blocks for each next frame and renders it forever (never EOF; Ctrl-C to stop). Each frame is a complete, self-contained, LF-free Kitty unit; a slow reader skips to the latest (drop-old); multiple readers fan out. |
+| `display/stream` | **Smb** | — (read) | The binary Kitty frame feed. A **continuous** stream: a single `cat /sim/display/stream` blocks for each next frame and renders it forever (never EOF; Ctrl-C to stop). Each frame is a complete, self-contained, LF-free Kitty unit; a slow reader skips to the latest (drop-old); multiple readers fan out. **Delivery granularity:** a guest `read()` completes only once its full buffer fills (kernel 9p semantics — no partial-read wakeups), so consumer latency = read-buffer ÷ data-rate. `cat` is fine at video rates; to consume a *low-rate* feed use small reads (`dd if=/sim/display/stream bs=64`). |
 
 Out-of-range writes to the numeric controls **clamp** (and succeed), matching the config's clamp-don't-reject rule.
 

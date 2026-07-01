@@ -376,15 +376,25 @@ next tier builds on it:
 
 | Tier | Validates | Method | Status |
 |---|---|---|---|
-| **1** | Capture → readback → HDR convert → downscale produce real rasterized pixels | **Host-side PNG dump (ACTIVE):** `DisplaySurface.PngDumpDirectory` (wired in `Mod.cs`) bypasses `KittyEncoder` — while `enabled=1` **and** a reader holds `stream` open, at most one PNG/s lands in `<data dir>/.tmp-screencaps/screencap-<ISO 8601 UTC>.png` (`PngEncoder`, game-free, unit-tested); the reader gets one ASCII `wrote …` line per file (incidentally proving the 9p stream path with trivially verifiable bytes). Open the PNGs in any viewer. | **built; awaiting in-game run** |
-| 2 | Kitty encode is byte-correct | Feed a **known-good** PNG-verified frame (or synthetic test card) through `KittyEncoder`; decode the APC payload offline (parse `ESC_G` keys, un-base64, un-zlib) and diff pixels vs the input. Headless. | pending |
-| 3 | Delivery: 9p → SSH PTY → terminal input is byte-clean | `cat /sim/display/stream > /tmp/dump` in the guest; compare hashes host-side vs guest-side; then the same through the PTY (`cat` to a tty with logging). | pending |
+| **1** | Capture → readback → HDR convert → downscale produce real rasterized pixels | **Host-side PNG dump (ACTIVE):** `DisplaySurface.PngDumpDirectory` (wired in `Mod.cs`) bypasses `KittyEncoder` — while `enabled=1` **and** a reader holds `stream` open, at most one PNG/s lands in `<data dir>/.tmp-screencaps/screencap-<ISO 8601 UTC>.png` (`PngEncoder`, game-free, unit-tested); the reader gets one ASCII `wrote …` line per file (incidentally proving the 9p stream path with trivially verifiable bytes). Open the PNGs in any viewer. | **PASSED 2026-07-01** (PNGs valid in a stock viewer) |
+| 2 | Kitty encode is byte-correct | Feed a **known-good** PNG-verified frame (or synthetic test card) through `KittyEncoder`; decode the APC payload offline (parse `ESC_G` keys, un-base64, un-zlib) and diff pixels vs the input. Headless. | pending — **next up** |
+| 3 | Delivery: 9p → SSH PTY → terminal input is byte-clean | `cat /sim/display/stream > /tmp/dump` in the guest; compare hashes host-side vs guest-side; then the same through the PTY (`cat` to a tty with logging). | **9p leg PASSED 2026-07-01** (`dd` returned the debug lines byte-exact, ordered, complete); PTY leg folds into tier 4 |
 | 4 | purrTTY renders a static Kitty unit correctly | Print one captured-and-verified Kitty frame (from tier 2) in a purrTTY tab (e.g. `printf` from a file); also cross-check in an external kitty/Ghostty terminal — if externals render it and purrTTY doesn't, the bug is purrTTY's decoder/renderer. | pending |
 | 5 | The animated case (fixed-id re-transmit, chunking, in-place overwrite) | Loop tier-4 frames; then re-enable the live `KittyEncoder` path (unset `PngDumpDirectory`). | pending |
 
 While tier 1 is active the `stream` file intentionally does **not** carry Kitty bytes (SPEC §3.8 carries
 a matching DEBUG-MODE note). The tier-1 machinery (`PngEncoder`, `PngDumpDirectory`, the tests) is kept
 after the fix — it is the standing debug harness for any future capture regression.
+
+**Finding (2026-07-01, in-game):** `cat /sim/display/stream` printed nothing in tier-1 mode while
+`dd bs=512 count=1` returned exactly 512 clean bytes after ~9.5 s — i.e. 512 ÷ ~54 B/s. This confirmed
+spike/NOTES.md rule 2 applies to the continuous model: a guest `read()` completes only when its **full
+buffer** fills (no partial-read wakeups; only a 0-byte reply ends a read early, which this file never
+sends). `cat`'s ≥128 KiB buffer at 54 B/s ⇒ first output after ~40 min; at real video rates (~1–3 MB/s)
+the same buffer fills in ~40–130 ms, which is why the original (misrendered) stream visibly flowed.
+Consequences: **delivery is byte-correct** — the historical misrender is *not* a transport bug, narrowing
+the remaining suspects to the Kitty encoding (tier 2) and purrTTY decode/draw (tiers 4–5); low-rate
+consumption needs small reads (`dd bs=64`); see the corollary added to spike/NOTES.md §"THE BIG ONE".
 
 ---
 

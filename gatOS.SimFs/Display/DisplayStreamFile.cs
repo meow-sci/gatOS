@@ -15,9 +15,14 @@ namespace gatOS.SimFs.Display;
 ///     <para>Because a 0-byte read inside the claimed <c>i_size</c> becomes userspace ENODATA on ≥6.11
 ///     kernels (spike/NOTES.md rule 1), and a never-blocking frontier would let the read complete with
 ///     EOF, the file reports a very large <see cref="Size"/> and the handle simply blocks for the next
-///     frame instead of ever returning empty. The large size never causes over-reads: under
-///     <c>cache=none</c> the kernel issues one demand Tread per <c>read()</c> bounded by the user
-///     buffer, and we always answer with frame bytes (or park).</para>
+///     frame instead of ever returning empty.</para>
+///     <para><b>Delivery granularity (spike rule 2 — verified in-game 2026-07-01):</b> a short Rread
+///     never completes a guest <c>read()</c>; the kernel keeps issuing continuation Treads until the
+///     <b>full user buffer</b> is filled (only a 0-byte reply — which this file never sends — ends a
+///     read early). So the consumer sees data in read-buffer-sized chunks: consumer latency ≡
+///     buffer-size ÷ data-rate. At video rates (~1–3 MB/s) plain <c>cat</c> (≥128 KiB buffers) delivers
+///     with ~40–130 ms latency; a <b>low-rate</b> feed (e.g. the tier-1 PNG-dump debug lines) must be
+///     read in small chunks (<c>dd bs=64</c>) or <c>cat</c> shows nothing for minutes while working.</para>
 ///     <para>Each open handle is an independent subscriber to <see cref="DisplaySurface"/>'s
 ///     latest-frame feed, so multiple terminals can watch at once; a reader that falls behind skips to
 ///     the latest frame (drop-old — a live view wants <i>current</i>, not a backlog). Marked
