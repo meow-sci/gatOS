@@ -1,6 +1,7 @@
 # STREAM_PLAN.md — Live game video as a `/sim` stream, rendered via Kitty graphics
 
-**Status:** **Code-complete (S0–S5 + the S7 no-stall readback); in-game validation pending (S6/S9);
+**Status:** **Code-complete (S0–S5 + the S7 no-stall readback), but the in-game stream misrendered —
+now in a tiered debug pass (§11, tier 1: host-side PNG dump ACTIVE); in-game validation pending (S6/S9);
 S8 deferred.** This document is the research record and execution plan for exposing a downscaled,
 frame-rate-limited render of the KSA viewport **as a `/sim` file**, encoded as the **Kitty terminal
 graphics protocol**, so any SSH client whose terminal supports Kitty — purrTTY in-game tabs *and*
@@ -361,6 +362,29 @@ terminals supported.
   **mandatory, in lockstep**); `CLAUDE.md` status table + project map; `docs/ARCHITECTURE.md` (pipeline +
   `[display]`); `docs/KSA_INTEGRATION_MATRIX.md` (the `FrameCapture` anchor); the `gatos` skill +
   `examples/` (the consumer recipe).
+
+---
+
+## 11. Debugging the encoded stream (tiered validation — 2026-07-01)
+
+The first in-game runs produced a corrupt/misrendered image in the terminal, after significant
+whack-a-mole effort against the whole pipeline at once (the `fix(display)` commit tail). The pipeline
+has many independently fallible stages — capture, readback timing, HDR→BGRA convert, downscale, Kitty
+encode, 9p delivery, SSH PTY transit, purrTTY Kitty decode+draw — so the reset is to **validate one
+stage at a time, bottom-up**, each tier producing an artifact checkable with standard tools before the
+next tier builds on it:
+
+| Tier | Validates | Method | Status |
+|---|---|---|---|
+| **1** | Capture → readback → HDR convert → downscale produce real rasterized pixels | **Host-side PNG dump (ACTIVE):** `DisplaySurface.PngDumpDirectory` (wired in `Mod.cs`) bypasses `KittyEncoder` — while `enabled=1` **and** a reader holds `stream` open, at most one PNG/s lands in `<data dir>/.tmp-screencaps/screencap-<ISO 8601 UTC>.png` (`PngEncoder`, game-free, unit-tested); the reader gets one ASCII `wrote …` line per file (incidentally proving the 9p stream path with trivially verifiable bytes). Open the PNGs in any viewer. | **built; awaiting in-game run** |
+| 2 | Kitty encode is byte-correct | Feed a **known-good** PNG-verified frame (or synthetic test card) through `KittyEncoder`; decode the APC payload offline (parse `ESC_G` keys, un-base64, un-zlib) and diff pixels vs the input. Headless. | pending |
+| 3 | Delivery: 9p → SSH PTY → terminal input is byte-clean | `cat /sim/display/stream > /tmp/dump` in the guest; compare hashes host-side vs guest-side; then the same through the PTY (`cat` to a tty with logging). | pending |
+| 4 | purrTTY renders a static Kitty unit correctly | Print one captured-and-verified Kitty frame (from tier 2) in a purrTTY tab (e.g. `printf` from a file); also cross-check in an external kitty/Ghostty terminal — if externals render it and purrTTY doesn't, the bug is purrTTY's decoder/renderer. | pending |
+| 5 | The animated case (fixed-id re-transmit, chunking, in-place overwrite) | Loop tier-4 frames; then re-enable the live `KittyEncoder` path (unset `PngDumpDirectory`). | pending |
+
+While tier 1 is active the `stream` file intentionally does **not** carry Kitty bytes (SPEC §3.8 carries
+a matching DEBUG-MODE note). The tier-1 machinery (`PngEncoder`, `PngDumpDirectory`, the tests) is kept
+after the fix — it is the standing debug harness for any future capture regression.
 
 ---
 

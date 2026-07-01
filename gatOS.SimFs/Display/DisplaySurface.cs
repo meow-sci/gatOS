@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text;
 using gatOS.Logging;
 
 namespace gatOS.SimFs.Display;
@@ -46,6 +48,9 @@ public sealed class DisplaySurface : IDisposable
     private int _readers;
     private Task? _worker;
 
+    private volatile string? _pngDumpDirectory;
+    private long _lastPngWriteTs; // worker-thread only (the 1 Hz dump throttle)
+
     /// <param name="settings">The live, runtime-mutable stream parameters (shared with the control files).</param>
     public DisplaySurface(DisplaySettings settings) => Settings = settings;
 
@@ -66,6 +71,21 @@ public sealed class DisplaySurface : IDisposable
 
     /// <summary>The most recently encoded frame (never null bytes; starts at <see cref="EncodedFrame.None"/>).</summary>
     public EncodedFrame Current => _current;
+
+    /// <summary>
+    ///     Tier-1 debug mode (STREAM_PLAN.md "Debugging the encoded stream"): when set, the encode
+    ///     worker <b>bypasses the Kitty encoder entirely</b> and instead writes at most one PNG per
+    ///     second into this directory (<c>screencap-&lt;ISO 8601 UTC&gt;.png</c>, via
+    ///     <see cref="PngEncoder"/>), publishing a one-line ASCII note per file on the stream feed so
+    ///     an attached reader (<c>cat /sim/display/stream</c>) sees per-file progress. Capture gating
+    ///     is unchanged — frames only flow while <see cref="DisplaySettings.Enabled"/> is set and a
+    ///     reader has the stream open. Null (the default) restores normal Kitty encoding.
+    /// </summary>
+    public string? PngDumpDirectory
+    {
+        get => _pngDumpDirectory;
+        set => _pngDumpDirectory = value;
+    }
 
     /// <summary>Starts the encode worker. Idempotent.</summary>
     public void Start() => _worker ??= Task.Run(EncodeLoopAsync);
@@ -182,6 +202,12 @@ public sealed class DisplaySurface : IDisposable
 
             try
             {
+                if (_pngDumpDirectory is { } pngDir)
+                {
+                    DumpPng(pngDir, width, height, work.AsSpan(0, length));
+                    continue;
+                }
+
                 // One fixed image id, deleted + re-transmitted each frame (the terminal updates a single
                 // image in place — see KittyEncoder). A fresh id per frame would churn the terminal's
                 // GPU image cache.
@@ -195,6 +221,29 @@ public sealed class DisplaySurface : IDisposable
                 ModLog.Log.Debug($"display: frame encode failed ({ex.Message}); dropping frame.");
             }
         }
+    }
+
+    /// <summary>
+    ///     The tier-1 debug sink (see <see cref="PngDumpDirectory"/>): at most once per second, PNG-encode
+    ///     the frame, write it to disk with an ISO 8601 UTC basic-format timestamp (colon-free, so
+    ///     Windows-safe), and publish a plain-text progress line on the stream feed in place of the
+    ///     Kitty bytes. Frames inside the 1 s window are dropped, decoupling the dump rate from the
+    ///     capture cadence.
+    /// </summary>
+    private void DumpPng(string dir, int width, int height, ReadOnlySpan<byte> bgra)
+    {
+        var now = Stopwatch.GetTimestamp();
+        if (_lastPngWriteTs != 0 && now - _lastPngWriteTs < Stopwatch.Frequency)
+            return;
+        _lastPngWriteTs = now;
+
+        byte[] png;
+        using (EncodeStat.Measure())
+            png = PngEncoder.EncodeBgra(width, height, bgra);
+        Directory.CreateDirectory(dir);
+        var name = $"screencap-{DateTime.UtcNow:yyyyMMdd'T'HHmmss'.'fff'Z'}.png";
+        File.WriteAllBytes(Path.Combine(dir, name), png);
+        Publish(Encoding.ASCII.GetBytes($"wrote {name} ({width}x{height}, {png.Length} B)\r\n"));
     }
 
     private void Publish(byte[] bytes)

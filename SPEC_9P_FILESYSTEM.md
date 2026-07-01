@@ -506,6 +506,13 @@ capture costs nothing until a client writes `1` to `enabled` *and* opens `stream
 
 Out-of-range writes to the numeric controls **clamp** (and succeed), matching the config's clamp-don't-reject rule.
 
+> **DEBUG MODE ACTIVE (temporary, this branch):** the Kitty encoding is being validated bottom-up
+> (STREAM_PLAN.md "Debugging the encoded stream"). While `DisplaySurface.PngDumpDirectory` is wired
+> (see `Mod.cs`), `stream` does **not** emit Kitty bytes: each captured frame is instead written on the
+> **host** as `<data dir>/.tmp-screencaps/screencap-<ISO 8601 UTC>.png` (at most 1/s), and `stream`
+> carries one plain-text `wrote <file> (<WxH>, <bytes> B)` line per file. All other semantics
+> (gating, controls, blocking reads) are unchanged. This note is removed when Kitty encoding returns.
+
 ---
 
 ## 4. The atomic `telemetry` document

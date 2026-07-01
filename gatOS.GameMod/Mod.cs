@@ -181,6 +181,11 @@ public sealed partial class Mod
             _displaySurface = new DisplaySurface(new DisplaySettings(
                 _config.DisplayEnabled, _config.DisplayFps, _config.DisplayWidth, _config.DisplayHeight,
                 DisplayEncodings.Parse(_config.DisplayEncoding) ?? DisplayEncoding.RgbaZlib));
+            // TIER-1 DEBUG (STREAM_PLAN.md "Debugging the encoded stream"): the Kitty encoding of the
+            // stream misrendered and is being validated bottom-up. While this is set, enabling the
+            // stream + opening /sim/display/stream dumps 1 PNG/s here instead of emitting Kitty bytes
+            // (the reader gets one plain-text line per file). Remove to restore Kitty encoding.
+            _displaySurface.PngDumpDirectory = Path.Combine(GatOsPaths.DataDir, ".tmp-screencaps");
             _displaySurface.Start();
             _simRoot = SimFsTree.Build(_simStore, _commandQueue, SimTransportsStatus, _displaySurface);
             StartSimServer(port: 0);
