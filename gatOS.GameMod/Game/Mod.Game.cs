@@ -1,6 +1,9 @@
 using Brutal.ImGuiApi;
 using gatOS.GameMod.Game;
 using gatOS.GameMod.Game.Ksa;
+using gatOS.GameMod.Game.Ksa.Render;
+using gatOS.GameMod.Game.Ksa.ThugLife;
+using gatOS.GameMod.Game.Ksa.Welds;
 using gatOS.Logging;
 using gatOS.SimFs;
 using gatOS.SimFs.Commands;
@@ -70,6 +73,19 @@ public sealed partial class Mod
     // The Harmony patch injecting the screen-stream capture into Program.RenderGame (STREAM_PLAN.md).
     // Installed in OnFullyLoaded, removed at unload; null when the render hook could not be installed.
     private Harmony? _displayHarmony;
+
+    // The welds cheat registry + per-frame driver (Game/Ksa/Welds). Created lazily on the game thread,
+    // shared by the sampler (projects it into /sim/debug/welds) and the executor (mutates it). The
+    // driver runs in OnAfterUi (DriveWelds) and self-gates to nothing when empty — no Harmony patch.
+    private WeldManager? _weldManager;
+    private bool _weldsDead;
+
+    // The thug-life cheat registry + GPU renderer (Game/Ksa/ThugLife). Created lazily on the game thread,
+    // shared by the sampler (projects it into /sim/debug/thug_life) and the executor (mutates it). The
+    // render postfix + GPU resources are installed lazily on the first entry and torn down on the last;
+    // UpdateThugLife (OnBeforeUi) validates entries each frame and self-gates to nothing when empty.
+    private ThugLifeManager? _thugLife;
+    private bool _thugLifeDead;
 
     // The Harmony patch draining solver-phase commands (G4). Installed in OnFullyLoaded, removed at
     // Unload; null when the solver hook could not be installed (solver commands then never drain).
@@ -165,7 +181,10 @@ public sealed partial class Mod
         try
         {
             _health ??= new KsaHealth();
-            _telemetry ??= new TelemetrySampler(store, _telemetrySettings, _health, _sampleStats);
+            _weldManager ??= new WeldManager();
+            _thugLife ??= new ThugLifeManager();
+            _telemetry ??= new TelemetrySampler(store, _telemetrySettings, _health, _sampleStats,
+                _weldManager, _thugLife);
             // Sample only while something can actually read /sim: the VM is up, or a host-side
             // transport client is connected (9p / HTTP / MQTT). Otherwise the sampler idles for free.
             var state = CurrentVmStatus.State;
@@ -209,7 +228,88 @@ public sealed partial class Mod
     private void EnsureControlObjects()
     {
         _health ??= new KsaHealth();
-        _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels);
+        _weldManager ??= new WeldManager();
+        _thugLife ??= new ThugLifeManager();
+        _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels, _weldManager, _thugLife);
+    }
+
+    /// <summary>
+    ///     Drives active welds on the game thread from <c>OnAfterUi</c> — after the vehicle-solver
+    ///     workers have finished during the render (the manager drains them before mutating state).
+    ///     Self-gates to nothing when no welds exist, so the cheat costs nothing when unused and needs
+    ///     no Harmony patch. A failure disables welds for the session (one error log).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void DriveWelds(double dt)
+    {
+        if (_weldsDead || _weldManager is not { } welds || welds.IsEmpty)
+            return;
+        try
+        {
+            welds.Update(dt);
+        }
+        catch (Exception ex)
+        {
+            _weldsDead = true;
+            ModLog.Log.Error($"gatOS welds disabled after an update error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    ///     Validates thug-life entries on the game thread before the scene renders this frame: drops
+    ///     entries whose vehicle is gone and re-resolves each anchor part by InstanceId (robust to
+    ///     staging). Self-gates to nothing when empty; a failure disables the feature for the session.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void UpdateThugLife()
+    {
+        if (_thugLifeDead || _thugLife is not { } thugLife || thugLife.IsEmpty)
+            return;
+        try
+        {
+            thugLife.Update();
+        }
+        catch (Exception ex)
+        {
+            _thugLifeDead = true;
+            ModLog.Log.Error($"gatOS thug-life disabled after an update error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    ///     Tears down the runtime cheats at unload: clears every weld, removes the thug-life quads (which
+    ///     also unpatches the render hook + frees its GPU resources), and restores IVA (which unpatches the
+    ///     IVA Harmony hooks). Game-coupled, so it is elided without the KSA assemblies.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void TeardownGameCheats()
+    {
+        try
+        {
+            _weldManager?.Clear();
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS weld teardown error: {ex.Message}");
+        }
+
+        try
+        {
+            _thugLife?.Clear();
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS thug-life teardown error: {ex.Message}");
+        }
+
+        try
+        {
+            IvaForceRender.SetEnabled(false);
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS IVA teardown error: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -453,6 +553,13 @@ public sealed partial class Mod
         {
             t.VesselDetail = !t.VesselDetail;
             _config.TelemetryVesselDetail = t.VesselDetail;
+            PersistConfig();
+        }
+
+        if (ImGui.MenuItem("Vessel parts", default, t.VesselParts, t.Enabled))
+        {
+            t.VesselParts = !t.VesselParts;
+            _config.TelemetryVesselParts = t.VesselParts;
             PersistConfig();
         }
 

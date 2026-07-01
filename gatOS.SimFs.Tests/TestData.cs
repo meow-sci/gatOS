@@ -61,14 +61,16 @@ internal static class TestData
                 solar: [new SolarSnapshot(0, 120, false, 12, 0.95, HasTracker: true, 30, AnimationIndex: 0)],
                 decouplers: [new DecouplerSnapshot(0, false)],
                 rcs: [new RcsSnapshot(0, true, true, "Pitch|Yaw")],
-                lights: [new LightSnapshot(0, true, 1.0, new double3Snap(1, 1, 1))])
+                // The light carries an actuate animation linked to vessel-level ordinal 1 (the non-solar
+                // animation above), so its co-located goal/current/state control surfaces.
+                lights: [new LightSnapshot(0, true, 1.0, new double3Snap(1, 1, 1), AnimationIndex: 1) { OuterAngleDeg = 45, InnerAngleDeg = 22.5 }])
             with
             {
                 Navball = new NavballSnapshot(10, 20, 30, 1.5, 3400, "Lvlh", 7670),
                 Environment = new EnvironmentSnapshot(101325, 1.2, 500, 0, 6_371_000,
                     new double3Snap(0, 0, 9.8), new double3Snap(0, 0, 0), 1.0),
                 Generators = [new GeneratorSnapshot(0, true, 50)],
-                Docking = [new DockingSnapshot(0, true, "part-7") { PushoffForceN = 7000 }],
+                Docking = [new DockingSnapshot(0, true, "part-7") { PushoffImpulseNs = 7000 }],
                 Encounters = [new EncounterSnapshot("Mun", 5000, 120000)],
                 BatteryCapacityJoules = 9000,
             };

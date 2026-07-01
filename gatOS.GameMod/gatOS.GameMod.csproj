@@ -10,7 +10,10 @@
         <Copyright>Copyright © meow sci</Copyright>
         <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
         <ModNamespace>gatOS.GameMod</ModNamespace>
-        <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+        <!-- Enabled for the thug-life GPU quad renderer (Game/Ksa/ThugLife): the Brutal.Vulkan
+             abstractions take pointers to Vk* create-info structs. The unsafe code is confined to
+             ThugLifeQuadRenderer/ThugLifeTextureFactory; the rest of GameMod is plain managed code. -->
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <GenerateDocumentationFile>false</GenerateDocumentationFile>
         <DistDir>$(SelectedDistModDir)gatOS\</DistDir>
         <!-- The Game/ sources (ImGui status window, ModMenu entry, Brutal-backed logger) compile
@@ -157,6 +160,11 @@
             <HintPath>$(KSAFolder)/Brutal.Core.Strings.dll</HintPath>
             <Private>false</Private>
         </Reference>
+        <!-- JobScheduler (Universe.JobSystems.VehicleSolvers.Wait) — the welds driver drains it. -->
+        <Reference Include="Brutal.Concurrency" Condition="Exists('$(KSAFolder)/Brutal.Concurrency.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Concurrency.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
         <Reference Include="Brutal.ImGui" Condition="Exists('$(KSAFolder)/Brutal.ImGui.dll')">
             <HintPath>$(KSAFolder)/Brutal.ImGui.dll</HintPath>
             <Private>false</Private>
@@ -165,8 +173,15 @@
             <HintPath>$(KSAFolder)/Brutal.ImGui.Abstractions.dll</HintPath>
             <Private>false</Private>
         </Reference>
-        <!-- Vulkan: the screen-stream capture (Game/Ksa/FrameCapture) reads back the offscreen
-             viewport via the Brutal Vulkan wrappers (CommandBuffer, BufferEx/ImageEx, StagingPool). -->
+        <!-- Vulkan + Planet render core, shared by the screen-stream capture (Game/Ksa/FrameCapture:
+             CommandBuffer, BufferEx/ImageEx readback) and the GPU quad renderer (Game/Ksa/ThugLife:
+             Renderer/RenderPassState/SimpleVkTexture/RenderTechnique/VkUtils in Planet.Render.Core;
+             ByteSize/pointer extensions in Brutal.Core.Memory). Game-provided (Private=false) and
+             condition-guarded like the rest. -->
+        <Reference Include="Brutal.Core.Memory" Condition="Exists('$(KSAFolder)/Brutal.Core.Memory.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Core.Memory.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
         <Reference Include="Brutal.Vulkan" Condition="Exists('$(KSAFolder)/Brutal.Vulkan.dll')">
             <HintPath>$(KSAFolder)/Brutal.Vulkan.dll</HintPath>
             <Private>false</Private>
@@ -179,11 +194,6 @@
             <HintPath>$(KSAFolder)/Brutal.Vulkan.Vma.dll</HintPath>
             <Private>false</Private>
         </Reference>
-        <Reference Include="Brutal.Core.Memory" Condition="Exists('$(KSAFolder)/Brutal.Core.Memory.dll')">
-            <HintPath>$(KSAFolder)/Brutal.Core.Memory.dll</HintPath>
-            <Private>false</Private>
-        </Reference>
-        <!-- Core.Renderer (the device context the capture submits through) lives here. -->
         <Reference Include="Planet.Render.Core" Condition="Exists('$(KSAFolder)/Planet.Render.Core.dll')">
             <HintPath>$(KSAFolder)/Planet.Render.Core.dll</HintPath>
             <Private>false</Private>

@@ -121,8 +121,9 @@ fn format_record(
             spec.thrust_max, spec.isp, spec.throttle_min, a_thrust / G0
         ));
     out.push_str(&format!(
-            "limits g_limit={:.2}g (a_cap={a_cap:.2}m/s²)  glide={:.0}°  point={:.0}°  v_max={:.0}  n={}\n",
-            inputs.g_limit, inputs.glide_slope_deg, inputs.pointing_deg, inputs.v_max, inputs.n
+            "limits g_limit={:.2}g (a_cap={a_cap:.2}m/s²)  glide={:.0}°  point={:.0}°  v_max={:.0}  brake=+{:.0}%  n={}\n",
+            inputs.g_limit, inputs.glide_slope_deg, inputs.pointing_deg, inputs.v_max,
+            (inputs.brake_margin - 1.0) * 100.0, inputs.n
         ));
 
     // ---- solver trace (only meaningful when a G-FOLD solve ran this tick) ----

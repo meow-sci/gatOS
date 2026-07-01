@@ -121,7 +121,7 @@ configure_rootfs() {
     log "applying rootfs-overlay + system config"
     while IFS= read -r -d '' f; do
         local rel="${f#"$OVERLAY"/}" mode=0644
-        case "$rel" in sbin/*|usr/sbin/*|bin/*|usr/bin/*) mode=0755 ;; esac
+        case "$rel" in sbin/*|usr/sbin/*|bin/*|usr/bin/*|usr/local/sbin/*|usr/local/bin/*) mode=0755 ;; esac
         install -D -m "$mode" -o root -g root "$f" "$ROOTFS/$rel"
     done < <(find "$OVERLAY" -type f -print0)
 

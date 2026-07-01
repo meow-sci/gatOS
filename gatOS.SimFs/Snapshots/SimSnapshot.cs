@@ -55,6 +55,25 @@ public sealed record SimSnapshot(
 
     /// <summary>The current star-system summary (<c>/sim/system</c>); null until sampled.</summary>
     public SystemSnapshot? System { get; init; }
+
+    /// <summary>
+    ///     Active welds (the <c>/sim/debug/welds</c> cheat): each is a source vessel rigidly tracking a
+    ///     part on a target vessel. Empty when none; only ever populated when the debug namespace is on.
+    /// </summary>
+    public IReadOnlyList<WeldSnapshot> Welds { get; init; } = [];
+
+    /// <summary>
+    ///     Whether the global "always render IVA" cheat is on (<c>/sim/debug/always_render_iva</c>):
+    ///     interior part meshes render outside the IVA camera. A render hack, off by default.
+    /// </summary>
+    public bool AlwaysRenderIva { get; init; }
+
+    /// <summary>
+    ///     Active thug-life sunglasses quads (the <c>/sim/debug/thug_life</c> cheat): each is a textured
+    ///     meme quad anchored to a part on a vessel, drawn into the scene each frame. Empty when none;
+    ///     only ever populated when the debug namespace is on. A pure cosmetic runtime cheat; never persisted.
+    /// </summary>
+    public IReadOnlyList<ThugLifeSnapshot> ThugLife { get; init; } = [];
 }
 
 /// <summary>One vessel's telemetry.</summary>
@@ -123,6 +142,16 @@ public sealed record VesselSnapshot(
     /// <summary>Whether this vessel is the player-controlled one (<c>controlled</c> flag).</summary>
     public bool Controlled { get; init; }
 
+    /// <summary>
+    ///     Whether KSA will accept flight-control + flight-computer commands for this vessel
+    ///     (<c>Vehicle.IsControllable</c>: has a Control Module, or the debug override). A vessel
+    ///     reading <c>0</c> here silently ignores throttle/stage/attitude/burn/RCS/ignite — gatOS
+    ///     does not gate; it relies on KSA's own lockout, so this is the pre-check flag for guests
+    ///     and autopilots. The player-controlled vessel is always controllable. (KSA 2026.6.9.4750,
+    ///     rev 4699.)
+    /// </summary>
+    public bool Controllable { get; init; }
+
     /// <summary>NavBall-derived attitude/performance; null when unavailable.</summary>
     public NavballSnapshot? Navball { get; init; }
 
@@ -148,10 +177,10 @@ public sealed record VesselSnapshot(
     /// <summary>Local physics environment (pressure, density, accelerations); null when unavailable.</summary>
     public EnvironmentSnapshot? Environment { get; init; }
 
-    /// <summary>Total electrical power produced this sample, watts.</summary>
+    /// <summary>Total instantaneous electrical power produced, watts.</summary>
     public double PowerProducedW { get; init; }
 
-    /// <summary>Total electrical power consumed this sample, watts.</summary>
+    /// <summary>Total instantaneous electrical power consumed, watts.</summary>
     public double PowerConsumedW { get; init; }
 
     /// <summary>Battery capacity in joules; null when no battery.</summary>
@@ -177,6 +206,14 @@ public sealed record VesselSnapshot(
 
     /// <summary>Upcoming encounters / closest approaches on the current patch.</summary>
     public IReadOnlyList<EncounterSnapshot> Encounters { get; init; } = [];
+
+    /// <summary>
+    ///     Top-level parts (<c>Vehicle.Parts.Parts</c>), surfaced under <c>parts/&lt;n&gt;/</c> so guests
+    ///     can discover a part to anchor a weld to. Subparts are not exposed. Empty when the parts
+    ///     stream is gated off (<c>telemetry_vessel_parts</c>); the reader caches it per vehicle and
+    ///     rebuilds on part-count change (or every 10 s).
+    /// </summary>
+    public IReadOnlyList<PartSnapshot> Parts { get; init; } = [];
 }
 
 /// <summary>Orbit elements (altitudes, not radii — the sampler converts).</summary>
@@ -249,7 +286,7 @@ public sealed record RcsSnapshot(int Index, bool Active, bool PropellantAvailabl
 
 /// <summary>One solar panel's state.</summary>
 /// <param name="Index">Stable per-vessel solar index.</param>
-/// <param name="ProducedW">Power produced this sample, watts.</param>
+/// <param name="ProducedW">Instantaneous power produced, watts.</param>
 /// <param name="Occluded">Whether the panel is occluded.</param>
 /// <param name="SunAoaDeg">Sun angle-of-attack, degrees.</param>
 /// <param name="Efficiency">Sun efficiency 0..1.</param>
@@ -270,7 +307,7 @@ public sealed record SolarSnapshot(
 /// <summary>One generator's state.</summary>
 /// <param name="Index">Stable per-vessel generator index.</param>
 /// <param name="Active">Whether it is producing.</param>
-/// <param name="ProducedW">Power produced this sample, watts.</param>
+/// <param name="ProducedW">Instantaneous power produced, watts.</param>
 public sealed record GeneratorSnapshot(int Index, bool Active, double ProducedW);
 
 /// <summary>One light's state.</summary>
@@ -278,7 +315,39 @@ public sealed record GeneratorSnapshot(int Index, bool Active, double ProducedW)
 /// <param name="On">Whether the light is on.</param>
 /// <param name="Intensity">Light intensity (template units).</param>
 /// <param name="Color">RGB color, each 0..1.</param>
-public sealed record LightSnapshot(int Index, bool On, double Intensity, double3Snap Color);
+/// <param name="AnimationIndex">
+///     The vessel-level animation ordinal of this light part's actuate/deploy animation, or
+///     <see cref="NoAnimation"/> when the light part has none. The tree co-locates the deploy
+///     <c>goal</c>/<c>current</c>/<c>state</c> control onto <c>lights/&lt;n&gt;/</c> when set — the
+///     same animation also reachable under <c>animations/&lt;n&gt;/</c> (mirrors <see cref="SolarSnapshot"/>).
+/// </param>
+public sealed record LightSnapshot(
+    int Index, bool On, double Intensity, double3Snap Color,
+    int AnimationIndex = LightSnapshot.NoAnimation)
+{
+    /// <summary>Sentinel <see cref="AnimationIndex"/> for a light with no actuate animation.</summary>
+    public const int NoAnimation = -1;
+
+    /// <summary>
+    ///     The spotlight cone <b>outer</b> half-angle in degrees (<c>LightModule.Template.OuterAngle</c>,
+    ///     stored in radians by KSA). The hard edge of the beam — beyond it the cone contributes
+    ///     nothing. Larger ⇒ wider beam; the stock default is 45°. Writable via
+    ///     <c>lights/&lt;n&gt;/outer_angle</c> (action <c>light.outer_angle</c>); KSA clamps the
+    ///     effective value to ~0..89.94°. Only affects spotlights — point lights carry it but ignore
+    ///     it when rendering.
+    /// </summary>
+    public double OuterAngleDeg { get; init; }
+
+    /// <summary>
+    ///     The spotlight cone <b>inner</b> half-angle in degrees (<c>LightModule.Template.InnerAngle</c>,
+    ///     stored in radians by KSA). Inside it the beam is at full brightness; between inner and outer
+    ///     it falls off. Smaller relative to <see cref="OuterAngleDeg"/> ⇒ softer edge; equal ⇒ a hard
+    ///     edge. To make a narrow pinpoint/laser the inner angle must come down with the outer (KSA
+    ///     swaps the two if inner &gt; outer). Writable via <c>lights/&lt;n&gt;/inner_angle</c> (action
+    ///     <c>light.inner_angle</c>); KSA clamps it to <c>[0, outer]</c>.
+    /// </summary>
+    public double InnerAngleDeg { get; init; }
+}
 
 /// <summary>One docking port's state.</summary>
 /// <param name="Index">Stable per-vessel docking-port index.</param>
@@ -287,11 +356,13 @@ public sealed record LightSnapshot(int Index, bool On, double Intensity, double3
 public sealed record DockingSnapshot(int Index, bool Docked, string? DockedToPart)
 {
     /// <summary>
-    ///     The separation impulse this port applies when it undocks, in Newtons (the value
-    ///     <c>DockingPort.Undock</c> hands to <c>Vehicle.Split</c>). Seeded from the part's XML
-    ///     (<c>PushoffForce</c>, stock 7000 N) and overwritable live via the debug control.
+    ///     The separation impulse this port applies when it undocks, in newton-seconds (N·s) — the
+    ///     value <c>DockingPort.Undock</c> hands to <c>Vehicle.Split(Connector, splitImpulse)</c>.
+    ///     Seeded from the part's XML (<c>PushoffImpulse</c>, stock 7000 N·s) and overwritable live
+    ///     via the debug control. (KSA 2026.6.9.4750 renamed <c>PushoffForce</c> → <c>PushoffImpulse</c>
+    ///     and changed the quantity from force (N) to impulse (N·s).)
     /// </summary>
-    public double PushoffForceN { get; init; }
+    public double PushoffImpulseNs { get; init; }
 }
 
 /// <summary>One decoupler's state.</summary>
@@ -304,6 +375,64 @@ public sealed record DecouplerSnapshot(int Index, bool Fired);
 /// <param name="Ut">Sim time of closest approach.</param>
 /// <param name="DistanceMeters">Closest-approach distance, meters.</param>
 public sealed record EncounterSnapshot(string Body, double Ut, double DistanceMeters);
+
+/// <summary>
+///     One top-level part (<c>Vehicle.Parts.Parts</c>) — the anchor picker for the welds feature
+///     (<c>/sim/vessels/by-id/&lt;id&gt;/parts/&lt;n&gt;/</c>). Subparts are deliberately not surfaced.
+/// </summary>
+/// <param name="Index">
+///     Per-vessel part index in PartTree enumeration order — the friendly directory name. <b>Not</b>
+///     stable across vehicle edits; the stable handle is <see cref="InstanceId"/>.
+/// </param>
+/// <param name="InstanceId">
+///     Runtime-unique part id (<c>Part.InstanceId</c>) — the stable handle a weld anchors to. Pass it
+///     to <c>debug/vessels/&lt;id&gt;/weld</c>.
+/// </param>
+/// <param name="Id">The part id string (<c>Part.Id</c>); can collide across instances of one template.</param>
+/// <param name="DisplayName">Human-readable name (<c>Part.DisplayName</c>).</param>
+/// <param name="Template">The part template id (<c>Part.Template.Id</c>).</param>
+/// <param name="IsRoot">Whether this is the root part (<c>Part.PartParent == null</c>).</param>
+/// <param name="SubpartCount">Number of subparts (informational; subparts are not exposed as nodes).</param>
+/// <param name="PositionVehicleAsmb">Part position in the vehicle assembly frame, meters.</param>
+public sealed record PartSnapshot(
+    int Index, uint InstanceId, string Id, string DisplayName, string Template,
+    bool IsRoot, int SubpartCount, double3Snap PositionVehicleAsmb);
+
+/// <summary>
+///     One active weld (<c>/sim/debug/welds</c>): a source vessel rigidly tracking a part on a target
+///     vessel. A pure runtime cheat; never persisted.
+/// </summary>
+/// <param name="SourceId">The welded (following) vessel id.</param>
+/// <param name="TargetId">The anchor vessel id.</param>
+/// <param name="PartInstanceId">
+///     The anchor part's <c>InstanceId</c>, or <c>0</c> when anchored to the target's body/CoM frame.
+/// </param>
+/// <param name="Offset">Position offset expressed in the anchor frame, meters.</param>
+/// <param name="Rotation">Orientation offset relative to the anchor, Euler pitch/yaw/roll degrees.</param>
+/// <param name="LockRotation">true ⇒ orientation locked to the anchor; false ⇒ only position held.</param>
+/// <param name="Enabled">false ⇒ suspended (kept in the registry, no physics applied).</param>
+public sealed record WeldSnapshot(
+    string SourceId, string TargetId, uint PartInstanceId, double3Snap Offset, double3Snap Rotation,
+    bool LockRotation, bool Enabled);
+
+/// <summary>
+///     One active thug-life sunglasses quad (<c>/sim/debug/thug_life/&lt;id&gt;</c>): a textured meme
+///     quad anchored to a part on a vessel, rebuilt and drawn each frame. A pure cosmetic cheat; never
+///     persisted.
+/// </summary>
+/// <param name="Id">The integer handle (the smallest free slot at create; reused after remove/clear) — the directory name.</param>
+/// <param name="VesselId">The anchor vessel id.</param>
+/// <param name="PartInstanceId">
+///     The anchor part's <c>InstanceId</c>, or <c>0</c> when anchored to the vessel's body/assembly frame.
+/// </param>
+/// <param name="Position">Position offset in the anchor part's local frame, meters.</param>
+/// <param name="Rotation">Orientation offset in the part's local frame, Euler pitch/yaw/roll degrees.</param>
+/// <param name="Width">Quad width, meters.</param>
+/// <param name="Height">Quad height, meters.</param>
+/// <param name="Visible">false ⇒ the entry is kept but skipped while drawing.</param>
+public sealed record ThugLifeSnapshot(
+    int Id, string VesselId, uint PartInstanceId, double3Snap Position, double3Snap Rotation,
+    double Width, double Height, bool Visible);
 
 /// <summary>NavBall-derived attitude and performance figures.</summary>
 /// <param name="PitchDeg">Pitch, degrees.</param>

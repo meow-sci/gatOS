@@ -403,7 +403,7 @@ game thread (or solver phase), synchronous result. Per **G-D1** any vessel is ad
 
 | Path | Archetype | Write format | KSA anchor |
 |---|---|---|---|
-| `debug/vessels/<id>/teleport` | TRIGGER | `px py pz vx vy vz` (CCI) | `Orbit.CreateFromStateCci` + `Vehicle.Teleport(orbit, body2cce, rates)` + `UpdatePerFrameData()` (garrys-torch pattern, NaN-guarded) |
+| `debug/vessels/<id>/teleport` | TRIGGER | `px py pz vx vy vz` (CCI) | `Orbit.CreateFromStateCci` + `Vehicle.Teleport(orbit, body2cce, rates)` + `UpdatePerFrameData()` (physics-bypass teleport pattern, NaN-guarded) |
 | `debug/vessels/<id>/refill_fuel` | TRIGGER | `1` | `Vehicle.RefillConsumables()` |
 | `debug/vessels/<id>/refill_battery` | TRIGGER | `1` | `Battery.Refill(ref state)` — **solver phase** (eternal-flame pattern) |
 | `debug/time/warp` | STATE | factor | `Universe.SetSimulationSpeed` (private; reflection) |

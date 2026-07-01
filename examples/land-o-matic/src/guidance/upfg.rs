@@ -282,9 +282,17 @@ pub fn terminal_throttle(
     g_limit: f64,
     throttle_min: f64,
     throttle_max: f64,
+    margin: f64,
 ) -> f64 {
-    // Thrust acceleration = (decel to reach v_target over `dist`) + (gravity support).
-    let decel = ((speed * speed - v_target * v_target) / (2.0 * dist.max(1.0))).max(0.0);
+    // Thrust acceleration = (decel to reach v_target over `dist`) + (gravity support). The braking
+    // safety margin scales *only* the deceleration term (never the gravity support), so the burn
+    // brakes `margin`× harder and reaches v_target before `dist` runs out — i.e. it is stopped a
+    // fraction (1 − 1/margin) of the way early, arriving slow with altitude to spare. `margin` = 1.0
+    // is the minimal suicide profile (unchanged). Floored at 1.0 so the knob can only add safety,
+    // never under-brake. The G-limit cap below still bounds the result, so on an engine already
+    // braking at its g-limit the margin simply has no spare authority to use (correct).
+    let decel =
+        ((speed * speed - v_target * v_target) / (2.0 * dist.max(1.0))).max(0.0) * margin.max(1.0);
     let needed = mass * (decel + g) / thrust_max;
     let cap = mass * g_limit * G0 / thrust_max; // the G-limit deceleration cap
     let upper = cap.min(throttle_max).max(throttle_min);
@@ -518,6 +526,7 @@ mod tests {
                 g_limit,
                 throttle_min,
                 throttle_max,
+                1.0, // no extra braking margin in this baseline proof
             );
             let thrust_force = throttle * thrust_max;
             let g_load = thrust_force / mass;
@@ -548,5 +557,27 @@ mod tests {
         // In range: m·g·g₀/F.
         let th = g_limit_throttle(2000.0, 60_000.0, 1.0, 0.05, 1.0);
         assert!((th - 2000.0 * G0 / 60_000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn terminal_throttle_margin_brakes_harder() {
+        // A sub-cap regime so the margin has spare authority to use (g-limit 6 g, gentle engine).
+        // 40 m/s to be killed over 100 m on a 1000 kg vehicle under 3 m/s² gravity, big engine.
+        let base = terminal_throttle(1000.0, 200_000.0, 40.0, 1.5, 100.0, 3.0, 6.0, 0.05, 1.0, 1.0);
+        let margined =
+            terminal_throttle(1000.0, 200_000.0, 40.0, 1.5, 100.0, 3.0, 6.0, 0.05, 1.0, 1.3);
+        // The margin scales only the deceleration term: needed = m·(decel·margin + g)/F.
+        let decel = (40.0 * 40.0 - 1.5 * 1.5) / (2.0 * 100.0);
+        let expect_base = 1000.0 * (decel + 3.0) / 200_000.0;
+        let expect_margined = 1000.0 * (decel * 1.3 + 3.0) / 200_000.0;
+        assert!((base - expect_base).abs() < 1e-9);
+        assert!((margined - expect_margined).abs() < 1e-9);
+        assert!(margined > base, "margin must command more braking");
+
+        // margin = 1.0 is exactly the pre-tunable behavior, and a < 1.0 value cannot under-brake
+        // (floored to 1.0) — the knob only ever adds safety.
+        let floored =
+            terminal_throttle(1000.0, 200_000.0, 40.0, 1.5, 100.0, 3.0, 6.0, 0.05, 1.0, 0.5);
+        assert_eq!(floored, base);
     }
 }

@@ -70,6 +70,12 @@ pub struct Inputs {
     pub touchdown_alt: f64,
     /// Altitude at/under which G-FOLD braking hands off to UPFG terminal guidance, m (plan §7).
     pub handoff_alt: f64,
+    /// Terminal-phase braking safety margin (live, `[`/`]` keys): scales the UPFG suicide-burn
+    /// deceleration so the vehicle brakes harder and arrives slow with altitude to spare. 1.0 = the
+    /// minimal suicide profile (default — no margin, identical to the pre-tunable behavior); e.g. 1.2
+    /// brakes 20 % harder ≈ "be stopped ~17 % above the target". Floored at 1.0 (the knob only adds
+    /// safety; it can never under-brake).
+    pub brake_margin: f64,
     /// Include the exact Coriolis/centrifugal terms in the G-FOLD braking dynamics (plan §5.7). Off by
     /// default — for slow bodies the closed-loop re-solve absorbs the rotation; enable for fast spinners.
     pub rotating_dynamics: bool,
@@ -90,6 +96,7 @@ impl Default for Inputs {
             v_touchdown: 3.0,
             touchdown_alt: 8.0,
             handoff_alt: 300.0,
+            brake_margin: 1.0,
             rotating_dynamics: false,
             drag_area: 0.0,
             n: 20,
@@ -382,6 +389,7 @@ impl Autopilot {
             self.inputs.g_limit,
             spec.throttle_min,
             spec.throttle_max,
+            self.inputs.brake_margin,
         );
         let att = ksa_quat::compute_burn_body2cci(up, g.i_f);
         let peak_g = throttle * spec.thrust_max / state.mass / G0;

@@ -1,3 +1,10 @@
 # Shell scripts run via sh on Linux/CI (and Git Bash on Windows dev machines) and must
 # stay LF in every working copy — CRLF breaks them ("\r: command not found").
 *.sh text eol=lf
+
+# The guest rootfs-overlay also ships extensionless sh scripts — the busybox-supervised
+# helpers under sbin/ and the userland shims under usr/local/{bin,sbin}/ (e.g. the `tail`
+# poll-mode shim). They are shell scripts too and must stay LF on every checkout.
+guest/rootfs-overlay/sbin/* text eol=lf
+guest/rootfs-overlay/usr/local/bin/* text eol=lf
+guest/rootfs-overlay/usr/local/sbin/* text eol=lf

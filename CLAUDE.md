@@ -37,15 +37,16 @@ and the decisions locked in (Part 1).
 > Full per-milestone detail, class names, and as-built notes → **[`docs/MILESTONES.md`](docs/MILESTONES.md)**
 
 **All milestones through M9, plus G1–G7 (HTTP/serial/TypeScript SDK), the embedded MQTT
-transport, and host folder mounts (`/mnt/<name>`), are code-complete.** The only pending work is
-a set of in-game passes (T6.6/T9.3/G1–G4) that require a live KSA flight; checklists are in
+transport, host folder mounts (`/mnt/<name>`), and the welds / `always_render_iva` / parts-listing
+cheats ported from `unscience`, are code-complete.** The only pending work is a set of in-game passes
+(T6.6/T9.3/G1–G4, plus the welds/IVA/parts checklist) that require a live KSA flight; checklists are in
 [`docs/VALIDATION.md`](docs/VALIDATION.md). The purrTTY tip release is now cut.
 
 | Milestone | Status | Key entry points |
 |---|---|---|
 | M0 — scaffold | DONE | `gatos.slnx`, `Directory.Build.props`, `GatOsPaths` |
 | M1 — spike | DONE | `spike/NOTES.md` (**required reading** before M3/M4/M7/M8) |
-| M2 — guest image | DONE | `guest/build-image.sh`, `guest/fetch-guest.*`, `GUEST_VERSION`=10 |
+| M2 — guest image | DONE | `guest/build-image.sh`, `guest/fetch-guest.*`, `GUEST_VERSION`=14 |
 | M3 — gatOS.Vm | DONE | `VmHost.cs`, `QemuCommandBuilder`, `DiskManager`, `PortAllocator` |
 | M4 — gatOS.Ssh | DONE | `SshShellSession.cs`, `VmConnectionBroker.cs` |
 | M5 — purrTTY upstream | DONE (tip release cut) | purrtty commits `9fb5e13`/`a56966a` |
@@ -58,13 +59,19 @@ a set of in-game passes (T6.6/T9.3/G1–G4) that require a live KSA flight; chec
 | G6 — TypeScript SDK | DONE | `examples/sdk-ts/` |
 | G7 — serial/bus | DONE | `gatOS.Bus/` |
 | MQTT transport | DONE | `gatOS.Mqtt/` |
-| Host folder mounts | DONE (needs guest v10 published) | `NineP/Vfs/HostDirectory.cs`, `HostFile.cs` |
-| Screen stream (`/sim/display`) | Code DONE; in-game pending | `SimFs/Display/`, `Game/Ksa/FrameCapture.cs` + `DisplayRenderPatch.cs` (in-band render-hook capture), `STREAM_PLAN.md` |
+| Host folder mounts | DONE | `NineP/Vfs/HostDirectory.cs`, `HostFile.cs` |
+| Welds + `always_render_iva` + parts (ex-`unscience`) | Code DONE; in-game pending | `Game/Ksa/Welds/`, `Game/Ksa/Render/IvaForceRender.cs`, `Game/Ksa/Readers/PartsReader.cs` |
+| `thug_life` sunglasses quad (ex-`unscience`) | Code DONE; in-game pending | `Game/Ksa/ThugLife/` (GPU quad renderer + dynamic render postfix), `SimFs` `debug/thug_life` |
+| Screen stream (`/sim/display`) | Code DONE; **debugging** (PNG tier-1 validation in progress) | `SimFs/Display/`, `Game/Ksa/FrameCapture.cs` + `DisplayRenderPatch.cs` (in-band render-hook capture), `STREAM_PLAN.md` |
 | T11.1 — QEMU win-x64 | DONE | `tools/fetch-qemu.*`, `vendor/qemu/win-x64/` |
 | M10+ | **Not yet implemented** | — |
 
 The full `GATOS_IT=1` integration suite ran 321/321 green (Windows/TCG, guest v3, 2026-06-13).
-`HostMountIntegrationTests` needs guest v10 published. **M10 (persistence & savegame) is next.**
+Since then guest v10 added the `coreutils` package, whose GNU `tail` shadowed busybox `tail` in
+PATH and broke `tail -f` on the 9p `/sim` mount (GNU `tail -f` follows via inotify, which v9fs
+never delivers for the host-side appends that grow `stream`/`events`/`alarm`) — failing
+`SimMountIntegrationTests`; fixed in guest **v14** by the `usr/local/bin/tail` poll-mode shim
+(verified against a live mount, Windows/TCG, 2026-06-20). **M10 (persistence & savegame) is next.**
 
 > **`spike/NOTES.md` is REQUIRED READING before any M3/M4/M7/M8 work** — notably: `i_size`
 > must be truthful on ≥6.11 kernels; two distinct file models exist (growing-log `tail -f` vs
@@ -120,6 +127,13 @@ docs/ARCHITECTURE.md            runtime architecture, port allocation, telemetry
 docs/KSA_INTEGRATION_MATRIX.md per-point KSA API reference (G1–G4 + documented deferrals)
 docs/VALIDATION.md              in-game validation record (T6.6/T6.7 checklists + results)
 docs/KSA_CELESTIAL_COORDINATE_FRAMES.md details on the KSA games coordinate frame systems for frames of reference 
+scope/                          game-integration scope catalog (scope/FULL_SCOPE.md entrypoint + the
+                                ksa-*/non-ksa-surface pages): EVERY gatOS feature ↔ its KSA binding,
+                                with decompiled-source + Content-asset paths and the game-update
+                                break-check playbook. THE reference for "will a game update break
+                                gatOS, and where?" Kept in lockstep with the code (see the mandate).
+plans/                          active execution plans (e.g. FIX_CURRENT_GAPS_PLAN.md — the gaps a
+                                game update introduced and how to close them)
 LICENSE                         MIT (the mod's own code)
 THIRD-PARTY-NOTICES.md          QEMU GPLv2, Alpine, SSH.NET, Tomlyn, …
 vendor/purrTTY/                 pinned contract DLLs (committed) — see its README for the pin
@@ -170,8 +184,10 @@ gatOS.Mqtt     → SimFs, Logging, MQTTnet              embedded MQTT broker ove
 gatOS.Vm       → Logging, Tomlyn                      QEMU lifecycle, disks, ports, GatOsPaths (M3, built)
 gatOS.Ssh      → Vm, Logging, vendor/purrTTY, SSH.NET SshShellSession : ICustomShell (M4, built)
 gatOS.GameMod  → Ssh, SimFs, Http, Mqtt, Bus, Vm, Logging, vendor/purrTTY,
-                  KSA DLLs (incl. Brutal.Vulkan* for Game/Ksa/FrameCapture — the screen-stream readback),
-                  StarMap.API, Lib.Harmony, ModMenu.Attributes, Tomlyn   the KSA mod (M6, built)
+                  KSA DLLs, StarMap.API, Lib.Harmony, ModMenu.Attributes, Tomlyn   the KSA mod (M6, built)
+                  (+ the Brutal.Vulkan(.Abstractions/.Vma) + Planet.Render.Core + Brutal.Core.Memory game
+                   DLLs and AllowUnsafeBlocks, for the Game/Ksa/ThugLife GPU quad renderer and the
+                   Game/Ksa/FrameCapture screen-stream readback)
 ```
 `examples/sdk-ts/` is a standalone TypeScript/Bun example SDK (G6, built — not part of the .NET
 solution); it talks to either transport behind one typed API.
@@ -188,10 +204,12 @@ client), plus `gatOS.Vm`/`gatOS.Ssh` for its in-VM integration fixture.
 > `GameMod` included — still builds when the assemblies are absent.
 >
 > **Stronger form for KSA integration (G2):** a KSA type name may appear **only under
-> `gatOS.GameMod/Game/Ksa/`** (`Readers/`, `Actuators/`, `KsaCatalog`, annotated with
-> `[KsaAnchor]`). Transports (9p/HTTP/serial), the `/sim` tree, formats and the command pipeline
+> `gatOS.GameMod/Game/Ksa/`** (`Readers/`, `Actuators/`, `Welds/`, `Render/`, `ThugLife/`, `KsaCatalog`,
+> annotated with `[KsaAnchor]`). Transports (9p/HTTP/serial), the `/sim` tree, formats and the command pipeline
 > never see one — they speak `SimSnapshot` (reads) and `SimCommand`/`ICommandExecutor` (writes).
-> When a decomp drop breaks the build, the diff is confined to that folder + `docs/KSA_INTEGRATION_MATRIX.md`.
+> When a decomp drop breaks the build, the diff is confined to that folder + `docs/KSA_INTEGRATION_MATRIX.md`,
+> and you MUST also update the matching [`scope/`](scope/FULL_SCOPE.md) page — the break-impact catalog
+> and the game-update version-diff playbook (`scope/FULL_SCOPE.md` §0).
 >
 > **THE transport-parity rule (binding):** the 9p `/sim` tree, the HTTP `/v1` API and the MQTT
 > `gatos/` topics must expose the **same** surface — every datum's granularity, every control point,
@@ -253,7 +271,18 @@ host.
    outside that capture and is overwritten by the in-flight solve (the value flashes on, then reverts
    to manual). Which phase an action uses is **derived from the action key** by `SimCommand.Phase`
    (the `SimCommand.SolverActions` set is the single source of truth — every transport gets it by
-   construction); never pass a phase at a construction site.
+   construction); never pass a phase at a construction site. **A third game-thread mutation site** is the
+   welds per-frame driver (`Mod.DriveWelds`, run in `[StarMapAfterGui] OnAfterUi` after
+   `JobSystems.VehicleSolvers.Wait()`) — it teleports each welded source onto its anchor and self-gates to
+   a no-op when no welds exist, so it needs **no** Harmony patch. The `always_render_iva` cheat installs its
+   own dynamic `Harmony("gatos.iva")` patches **only while the toggle is on** (removed on disable/unload).
+   The **`thug_life` cheat** (`Game/Ksa/ThugLife/`) adds gatOS's only **render-thread draw injection**: a
+   dynamic `Harmony("gatos.thug_life")` postfix on `SuperMeshRenderSystem.RenderMainPass` (which KSA runs on
+   the *main* thread — the same thread as the GUI hooks and the command drain, per `.claude/skills/ksa/quad.md`)
+   that records a textured-quad draw per entry; it + its Vulkan GPU resources are installed lazily on the
+   first entry and torn down on the last. A fourth game-thread work site, `Mod.UpdateThugLife` (run in
+   `OnBeforeUi`), validates/re-resolves entry anchors before the scene renders, self-gating to a no-op when
+   empty. All cheats are torn down by `Mod.TeardownGameCheats` at `Unload`.
 2. **9p server threads never touch game state** — they read the latest published snapshot, and for
    writes they only *enqueue* an immutable `SimCommand` and await its result (never executing it).
 3. SSH I/O runs on SSH.NET's threads; `OutputReceived` may fire on any thread (purrTTY tolerates
@@ -270,13 +299,14 @@ host.
 
 The data feed has **one master cadence** (`sample_rate_hz`, default 10, clamped 1–120) and
 **per-stream gates** (`telemetry_enabled` master + `telemetry_vessel_detail` /
-`telemetry_bodies` / `telemetry_events`), all tunable from config and live in-game via the
-Telemetry submenu and status window slider. Gating **at the sampler** is deliberate — a disabled
-stream skips its KSA reads *and* shrinks the published snapshot, so every transport serves less by
-construction (transport-parity stays structural). `telemetry_vessel_detail` is the big lever: off
-drops the entire G3 enrich pass, leaving only core flight telemetry. The status window's Telemetry
-block shows `PerfStat` readouts (sample-time avg/max/last, command-drain avg/max, MQTT publish
-avg/max) recorded allocation-free.
+`telemetry_vessel_parts` / `telemetry_bodies` / `telemetry_events`), all tunable from config and live
+in-game via the Telemetry submenu and status window slider. Gating **at the sampler** is deliberate — a
+disabled stream skips its KSA reads *and* shrinks the published snapshot, so every transport serves less
+by construction (transport-parity stays structural). `telemetry_vessel_detail` is the big lever: off
+drops the entire G3 enrich pass, leaving only core flight telemetry. `telemetry_vessel_parts` gates the
+per-vessel top-level `parts/` list (the welds anchor picker; cached per vehicle, rebuilt on part-count
+change or every 10 s). The status window's Telemetry block shows `PerfStat` readouts (sample-time
+avg/max/last, command-drain avg/max, MQTT publish avg/max) recorded allocation-free.
 
 ## Conventions (decided — do not re-litigate; see OS_PLAN.md Part 1)
 
@@ -341,9 +371,29 @@ are written.
 Whenever you make meaningful repository changes, you MUST evaluate and update **this file and the
 relevant `docs/` page** in the same work item if it affects: project structure/dependencies, the
 host↔guest seam, build/test/deploy commands, the threading rules, **the `/sim` API surface (update
-`SPEC_9P_FILESYSTEM.md` — see the constitution above)**, or **milestone/feature status**.
+`SPEC_9P_FILESYSTEM.md` — see the constitution above)**, **any gatOS feature or its KSA integration
+binding (update the matching `scope/` page — see below)**, or **milestone/feature status**.
 As each milestone lands, update the status table above and add full detail to
 [`docs/MILESTONES.md`](docs/MILESTONES.md) — prefer verified code paths over the plan when
 documenting behavior. Update [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) when the runtime
 shape, port allocation, or telemetry pipeline changes. Remove defunct guidance immediately. Do not
 document planned-but-unbuilt code as if it exists.
+
+**`scope/` is binding (MUST).** [`scope/`](scope/FULL_SCOPE.md) is the catalog of every gatOS feature
+and exactly how it couples to the KSA game — the reference used to decide whether a game update breaks
+gatOS, and where. Keep it in lockstep with the code, in the **same work item**, whenever you:
+- add / remove / rename a gatOS feature, a `/sim` node, a transport endpoint, or a config gate → update
+  [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) (the inventory) **and** the relevant `scope/*` page;
+- add / move / retype / change-the-semantics-of any KSA binding (a `[KsaAnchor]`, a reader/actuator, a
+  Harmony hook target, a reflection accessor, a frame/numerics use) → update the matching row **and its
+  game-version status** in [`scope/ksa-read-surface.md`](scope/ksa-read-surface.md) /
+  [`scope/ksa-write-surface.md`](scope/ksa-write-surface.md) /
+  [`scope/ksa-runtime-coupling.md`](scope/ksa-runtime-coupling.md), alongside the `[KsaAnchor]` and
+  [`docs/KSA_INTEGRATION_MATRIX.md`](docs/KSA_INTEGRATION_MATRIX.md);
+- bump the KSA build or run the version-diff playbook → record decomp/asset/version findings in
+  [`scope/ksa-assets-and-versions.md`](scope/ksa-assets-and-versions.md), and capture any resulting gaps
+  in a `plans/` plan.
+
+The `[KsaAnchor]` attributes remain the source of truth; `scope/` is the human, cross-referenced mirror
+and break-impact view — they must never disagree (the same lockstep discipline the `/sim` SPEC constitution
+imposes).

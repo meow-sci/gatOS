@@ -16,6 +16,8 @@ use crate::sim::{Body, Telemetry, Tick};
 pub enum ToWorker {
     /// Set the max-deceleration lever (g₀), re-planning live.
     SetGLimit(f64),
+    /// Set the terminal braking safety margin (≥ 1.0; 1.0 = no margin).
+    SetBrakeMargin(f64),
     /// Arm the autopilot (begin powered-descent guidance to the point below).
     Engage,
     /// Abort: cut throttle, release attitude to manual.
@@ -67,6 +69,8 @@ pub struct App {
 
     // ---- pilot levers (mirrors of the worker's autopilot inputs, for display + adjustment) ----
     pub g_limit: f64,
+    /// Terminal braking safety margin (≥ 1.0; 1.0 = no extra braking). Tuned live with `[`/`]`.
+    pub brake_margin: f64,
 
     pub status: String,
     pub status_err: bool,
@@ -86,6 +90,7 @@ impl App {
             hold: None,
             plan: None,
             g_limit: crate::guidance::autopilot::Inputs::default().g_limit,
+            brake_margin: crate::guidance::autopilot::Inputs::default().brake_margin,
             status: "connecting\u{2026}".to_string(),
             status_err: false,
         }
@@ -137,6 +142,8 @@ impl App {
             }
             KeyCode::Up | KeyCode::Char('=') | KeyCode::Char('+') => self.nudge_g_limit(0.5),
             KeyCode::Down | KeyCode::Char('-') | KeyCode::Char('_') => self.nudge_g_limit(-0.5),
+            KeyCode::Char(']') => self.nudge_brake_margin(0.05),
+            KeyCode::Char('[') => self.nudge_brake_margin(-0.05),
             _ => {}
         }
     }
@@ -145,6 +152,17 @@ impl App {
         self.g_limit = (self.g_limit + delta).clamp(1.0, 8.0);
         let _ = self.tx.send(ToWorker::SetGLimit(self.g_limit));
         self.set_status(&format!("G-limit \u{2192} {:.1} g", self.g_limit), false);
+    }
+
+    /// Adjust the terminal braking safety margin. Floored at 1.0 (no margin = the default behavior),
+    /// capped at 2.0 (brake twice as hard); `[` eases off toward the default, `]` adds safety.
+    fn nudge_brake_margin(&mut self, delta: f64) {
+        self.brake_margin = (self.brake_margin + delta).clamp(1.0, 2.0);
+        let _ = self.tx.send(ToWorker::SetBrakeMargin(self.brake_margin));
+        self.set_status(
+            &format!("brake margin \u{2192} +{:.0}%", (self.brake_margin - 1.0) * 100.0),
+            false,
+        );
     }
 
     fn set_status(&mut self, message: &str, is_error: bool) {
@@ -273,6 +291,15 @@ mod tests {
         a.on_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
         assert!(a.g_limit > g0);
         assert!(matches!(rx.try_recv(), Ok(ToWorker::SetGLimit(_))));
+
+        // Brake-margin hotkeys: `]` adds margin (and sends it), `[` eases back, floored at 1.0.
+        assert_eq!(a.brake_margin, 1.0);
+        a.on_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+        assert!(a.brake_margin > 1.0);
+        assert!(matches!(rx.try_recv(), Ok(ToWorker::SetBrakeMargin(_))));
+        a.on_key(KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE));
+        a.on_key(KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE));
+        assert_eq!(a.brake_margin, 1.0, "margin floors at 1.0 (the default)");
     }
 
     #[test]

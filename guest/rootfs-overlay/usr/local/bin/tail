@@ -1,0 +1,25 @@
+#!/bin/sh
+# gatOS tail shim — make `tail -f` follow the 9p /sim mount.
+#
+# GNU coreutils `tail -f` follows via inotify. The /sim files grow *server-side*
+# (the host C# StreamFile/EventsFile append per published snapshot), and the Linux
+# 9p (v9fs) client never delivers inotify events for those host-side appends — so a
+# plain `tail -f /sim/vessels/active/stream` prints only the first line and then hangs
+# on a watch that never fires. coreutils `tail` lives at /usr/bin/tail and otherwise
+# shadows busybox; /usr/local/bin precedes /usr/bin in PATH (interactive *and*
+# non-interactive `ssh host cmd`), so this shim shadows it instead.
+#
+# Fix: when follow mode is requested, force GNU tail's poll fallback
+# (---disable-inotify, the same stat-poll busybox tail uses); pass everything else
+# through unchanged so all of coreutils tail's features remain available. If GNU tail
+# is somehow absent, busybox tail already polls and needs no help.
+[ -x /usr/bin/tail ] || exec busybox tail "$@"
+for arg in "$@"; do
+    case "$arg" in
+        --)                   break ;;                                   # end of options
+        --follow|--follow=*)  exec /usr/bin/tail ---disable-inotify "$@" ;;
+        --*)                  : ;;                                       # other long option
+        -*[fF]*)              exec /usr/bin/tail ---disable-inotify "$@" ;;  # short cluster w/ -f/-F
+    esac
+done
+exec /usr/bin/tail "$@"

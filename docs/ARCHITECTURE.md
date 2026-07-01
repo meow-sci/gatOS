@@ -75,6 +75,7 @@ KSA game thread (OnBeforeGui)
        ├─ TelemetrySettings: reads volatile fields (rate, gates)
        ├─ VesselReader (core reads always)
        ├─ VesselReader.Enrich (guarded, only if vessel_detail gate is on)
+       ├─ PartsReader (per vehicle, only if vessel_parts gate is on; cached per vehicle)
        ├─ BodyReader (only if bodies gate is on)
        └─ SnapshotStore.Publish(snapshot)  ← single volatile reference swap
 
@@ -101,6 +102,7 @@ All default on; `telemetry_enabled` is the master gate:
 | Config key | What it gates | Cost when off |
 |---|---|---|
 | `telemetry_vessel_detail` | G3 enrich pass (navball, environment, every per-module `StateList` read, `with`-clone alloc) | Drops all module-level events (flameout/dock/decouple) the differ can no longer see |
+| `telemetry_vessel_parts` | `PartsReader` per-vessel top-level parts list (the welds anchor picker); cached per vehicle, rebuilt on `Vehicle.Parts.Count` change or every 10 s | Drops `/sim/vessels/<id>/parts/` |
 | `telemetry_bodies` | `BodyReader` celestial catalog reads | Drops `/sim/bodies/` + `system` |
 | `telemetry_events` | `EventDiffer` + `EventsFile` | Drops `/sim/events` blocking reads |
 
@@ -146,11 +148,12 @@ render thread (GameMod/Game/Ksa)                          background (gatOS.SimF
   FrameCapture.MaybeRecord(program, cb, surface)  (throttled to fps; only if enabled & a reader open)
     Program.MainViewport.OffscreenTarget.ColorImage   (public, post-resolve, no UI)
     records into the engine's OWN command buffer (no out-of-band submit, no WaitIdle):
-      vkCmdBlitImage  → small R16G16B16A16_SFLOAT scratch (linear, same-format GPU downscale)
-      CopyImageToBuffer → host-visible staging buffer in a ResourceFrameIndex ring slot
+      barrier offscreen → TransferSrc (engine's own sync2 TransitionImages2 presets)
+      CopyImageToBuffer → FULL-frame host-visible staging buffer in a ResourceFrameIndex ring slot
       barrier the offscreen back to ShaderReadOnlyOptimal (restore)
-    deferred readback: next visit to a slot maps it (its copy is complete by the frames-in-flight
-      contract — no fence wait), converts HDR half-float → BGRA8 on the CPU, SubmitFrame(BGRA)
+    deferred readback: next visit to a slot reads its persistent mapping (its copy is complete by the
+      frames-in-flight contract — no fence wait), nearest-neighbour downscales + converts the HDR
+      half-float pixels → BGRA8 on the CPU, SubmitFrame(BGRA)
                                                   │
                                   DisplaySurface encode worker: swizzle + zlib + Kitty APC framing
                                                   │ latest-frame feed (drop-old, mirrors SnapshotStore)
@@ -172,12 +175,50 @@ render thread (GameMod/Game/Ksa)                          background (gatOS.SimF
 
 ---
 
+## Game-thread cheats (welds + IVA render + thug_life)
+
+Three cheats ported from the sibling `unscience` mod are exposed **only** on gatOS surfaces (9p `/sim`
+debug + HTTP `/v1` + MQTT — no ImGui), all mutating game state on the game thread:
+
+- **Welds** (`gatOS.GameMod/Game/Ksa/Welds/`): a registry (`WeldManager`) whose per-frame driver
+  teleports each welded source vessel onto its target/part anchor. It runs in `OnAfterUi`
+  (`Mod.DriveWelds`, `[StarMapAfterGui]`) **after** the vehicle-solver workers (it calls
+  `JobSystems.VehicleSolvers.Wait()` first) — a **third game-thread mutation site** beside the
+  Frame-phase command drain (`OnBeforeUi`) and the Solver-phase prefix on
+  `Universe.ExecuteNextVehicleSolvers`. It self-gates to a no-op when no welds exist, so it adds zero
+  per-frame cost when unused and needs **no** Harmony patch.
+- **`always_render_iva`** (`Game/Ksa/Render/IvaForceRender.cs`): forces interior (IVA) part meshes to
+  render outside the IVA camera. It installs **two Harmony patches on its own dynamic
+  `Harmony("gatos.iva")` instance only while enabled** (a `PartModel` ctor postfix + an editor-only
+  `AddInstance` postfix) and bulk-flips the internal-template flag over `PartModel.Instances`; disabling
+  restores the templates and unpatches. Default-off ⇒ zero patches.
+- **`thug_life`** (`Game/Ksa/ThugLife/`): gatOS's **first custom GPU rendering** — anchors a flat,
+  world-space textured quad (the "thug life" sunglasses meme) to a part on a vehicle, tracked each frame.
+  This is a **render-thread draw injection**: `ThugLifeRenderPatches` installs a dynamic
+  `Harmony("gatos.thug_life")` **postfix on `SuperMeshRenderSystem.RenderMainPass(CommandBuffer)`** (the
+  one injection point for a world-space draw). The Vulkan pipeline/texture/buffers (`ThugLifeQuadRenderer`
+  + `ThugLifeTextureFactory`, via `Program.GetRenderer()`) and the patch install **lazily on the first
+  entry** and tear down with the last entry / at unload, so default-off ⇒ **zero patches and zero GPU
+  resources**. KSA runs `RenderMainPass` on the **main thread** (same as the GUI hooks + command drain),
+  so the render postfix, the command drain, and entry edits are all one thread — no cross-thread
+  game-state access. This adds a **fourth game-thread work site**: `UpdateThugLife()` in `OnBeforeUi`
+  (`[StarMapBeforeGui]`) revalidates / re-resolves each entry's anchor part per frame (a staged anchor part
+  falls back to the vehicle body frame rather than dropping). The manager publishes an immutable
+  `ThugLifeEntry[]` (swapped on add/remove) that the postfix reads, and self-disables (`Active=false`) on
+  any GPU fault. Teardown dispose order: clear `Active` → unpatch → dispose GPU (safe because same-thread).
+
+All three create/remove via Frame-phase `/sim/debug` commands and tear down on unload
+(`Mod.TeardownGameCheats`). The anchor picker for welds **and `thug_life`** is the per-vessel `parts/` list
+(`telemetry_vessel_parts`; `thug_life` also accepts `0` = the vehicle body frame).
+
+---
+
 ## Config sections reference
 
 | Section | Key knobs |
 |---|---|
 | `[common]` | `sample_rate_hz`, `disk_size_gb`, `cpu_model` |
-| `[telemetry]` | `telemetry_enabled`, `telemetry_vessel_detail`, `telemetry_bodies`, `telemetry_events` |
+| `[telemetry]` | `telemetry_enabled`, `telemetry_vessel_detail`, `telemetry_vessel_parts`, `telemetry_bodies`, `telemetry_events` |
 | `[control]` | `control_enabled`, `control_all_vessels`, `debug_namespace`, `command_timeout_ms`, `max_commands_per_frame` |
 | `[http]` | `enabled`, `preferred_port` (4242), `http_field_endpoints` |
 | `[mqtt]` | `enabled`, `preferred_port` (1883), `mqtt_field_topics`, `field_feed_hz` |

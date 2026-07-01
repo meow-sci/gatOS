@@ -34,7 +34,7 @@ internal static class DebugActuator
         return CommandResult.Ok;
     }
 
-    [KsaAnchor("Orbit.CreateFromStateCci + Vehicle.Teleport + Vehicle.UpdatePerFrameData (garrys-torch pattern)",
+    [KsaAnchor("Orbit.CreateFromStateCci + Vehicle.Teleport + Vehicle.UpdatePerFrameData (physics-bypass teleport pattern)",
         SourceFile = "KSA/Orbit.cs / KSA/Vehicle.cs", Verified = "2026-06-12", Risk = ChurnRisk.High,
         Notes = "Sets a CCI state vector about the current parent; UpdatePerFrameData syncs caches.")]
     internal static CommandResult Teleport(Vehicle vehicle, IReadOnlyList<double> state)

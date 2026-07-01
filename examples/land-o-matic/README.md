@@ -87,6 +87,10 @@ Tuning flags: `--drag-area <Cd·A m²>` turns on the atmospheric drag model (def
 - `e` — **ENGAGE** (arm guidance; targets the point directly below and starts the powered descent)
 - `a` — **ABORT** (cut throttle, release attitude to manual)
 - `↑`/`↓` (or `-`/`=`) — adjust the **G-limit** live (watch it re-plan)
+- `[`/`]` — adjust the **terminal braking safety margin** live (`]` brakes harder so it arrives slow with
+  altitude to spare; `[` eases back toward the default). Default `+0 %` = the minimal suicide profile;
+  raise it if the vehicle touches down too hard. Scales only the final braking, so it's engine-agnostic
+  (a low-TWR stage already at its g-limit simply has no spare thrust for the margin to use).
 - `q` / `Esc` — quit
 
 > ⚠️ ENGAGE fires your engine and steers the vessel. Watch it; `a` aborts to manual.

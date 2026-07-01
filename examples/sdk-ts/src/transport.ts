@@ -206,6 +206,10 @@ function fileCommand(c: Command): { path: string; payload: string } {
       return { path: `${v}/lights/${ord}/brightness`, payload: num };
     case "light.color":
       return { path: `${v}/lights/${ord}/color`, payload: vec };
+    case "light.outer_angle":
+      return { path: `${v}/lights/${ord}/outer_angle`, payload: num };
+    case "light.inner_angle":
+      return { path: `${v}/lights/${ord}/inner_angle`, payload: num };
     case "animation.goal":
       return { path: `${v}/animations/${ord}/goal`, payload: num };
     case "decoupler.fire":

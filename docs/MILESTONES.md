@@ -393,11 +393,11 @@ errnos `EBUSY`/`ETIMEDOUT` added.
 ### G4 — Full control surface
 
 **Writes:** `ctl/{throttle,stage,rcs,attitude_mode,attitude_frame,attitude_target,burn}`,
-`engines/<n>/min_throttle`, `rcs/<n>/active`, `lights/<n>/{on,brightness,color}`,
+`engines/<n>/min_throttle`, `rcs/<n>/active`, `lights/<n>/{on,brightness,color,inner_angle,outer_angle}`,
 `decouplers/<n>/fire`, `docking/<n>/undock`, `ctl/focus` (+ `bodies/<id>/focus`), and the
 **`/sim/debug/`** cheat namespace (gated by
 `[control] debug_namespace`: `vessels/<id>/{teleport,refill_fuel,refill_battery}`,
-`vessels/<id>/docking/<n>/pushoff_force`, `time/warp`, `focus` (camera-by-id, vehicle/body),
+`vessels/<id>/docking/<n>/pushoff_impulse`, `time/warp`, `focus` (camera-by-id, vehicle/body),
 `control_vessel` (focus + control)).
 
 **New command archetypes:** `ControlFile.Number`, `VectorControlFile`, `EnumControlFile`,
@@ -407,8 +407,9 @@ errnos `EBUSY`/`ETIMEDOUT` added.
 `Actuators/{Engine,Light(+per-instance clone),Animation,Staging,Throttle(reflection),Rcs,
 Decoupler,Docking,Camera,FlightComputer,Debug}Actuator`; `KsaCatalog` dispatches all actions
 (debug-namespace exempt from the authority gate). `DockingActuator.Undock` enqueues the game's own
-`InputEvents.VehicleDockingInputData{Undock=true}` (→ `Vehicle.Split` using the port's `PushoffForce`);
-`SetPushoffForce` overwrites that live separation impulse (the debug knob). `CameraActuator.Focus`
+`InputEvents.VehicleDockingInputData{Undock=true}` (→ `Vehicle.Split` using the port's `PushoffImpulse`,
+N·s — 4750/rev 4683 renamed it from `PushoffForce`, N); `SetPushoffImpulse` overwrites that live
+separation impulse (the debug knob). `CameraActuator.Focus`
 moves the main-viewport camera to any `Astronomical` (vessel **or** celestial — the `camera.focus`
 action resolves the target via `CurrentSystem.Get(id)`, bypassing the vehicle-only path/authority gate
 since it only moves the view).
@@ -592,6 +593,84 @@ The full `GATOS_IT=1` suite was verified green on the Windows 11 game machine ag
 
 ---
 
+## Welds + `always_render_iva` + parts listing + `thug_life` (ex-`unscience`): Code DONE; in-game pass pending
+
+Four additions ported from the sibling `unscience` mod, exposed **only** on the gatOS surfaces (9p
+`/sim` debug + HTTP `/v1` + MQTT — **no ImGui**). KSA-coupled code is confined to
+`gatOS.GameMod/Game/Ksa/` per the G2 rule; the snapshot/command plumbing is game-free. KSA bindings
+verified against decomp `2026.6.9.4750` (anchors `2026-06-28`).
+
+**Parts listing** — `vessels/by-id/<id>/parts/<n>/` (**top-level parts only**, no subparts), gated by a
+new `telemetry_vessel_parts` config key (default true). Leaves: `instance_id` (uint — the **stable** weld
+anchor handle), `id`, `display_name`, `template`, `is_root`, `subpart_count`, `position`.
+`Game/Ksa/Readers/PartsReader.cs` builds `PartSnapshot[]` from `Vehicle.Parts.Parts`, cached per vehicle
+in a `ConditionalWeakTable<Vehicle,…>` and rebuilt on a `Vehicle.Parts.Count` change or every 10 s (sim
+seconds). The sampler projects it per vessel when the gate is on.
+
+**`always_render_iva`** — global render cheat at `/sim/debug/always_render_iva` (`debug.always_render_iva`,
+Frame, vessel-agnostic) that forces interior (IVA) part meshes to render outside the IVA camera by flipping
+`PartModelModule.Template.Internal=false`. `Game/Ksa/Render/IvaForceRender.cs` installs two Harmony patches
+on its **own** `Harmony("gatos.iva")` instance **only while enabled** (a `PartModel(PartModelModule.Template)`
+ctor postfix + an editor-only `PartModel.AddInstance` postfix) and bulk-flips/tracks the internal templates
+over `PartModel.Instances`; disable restores the tracked templates and unpatches. `Actuators/IvaActuator.cs`
+is the thin actuator.
+
+**Welds** — rigidly attach a source vessel to a target vessel's part (a game hack).
+`Game/Ksa/Welds/{WeldEntry,WeldEngine,WeldManager}.cs`: `WeldManager` is the game-thread registry +
+per-frame driver, `WeldEngine` the stateless teleport math ported verbatim from `unscience` (orientation
+stored as an authoritative `doubleQuat`, Euler display-only; `weld_here` capture is the inverse transform;
+the orbit is stamped with `Universe.GetJobSimStep(Program.GetPlayerDeltaTime()).NextTime`). Per-source
+controls under `/sim/debug/vessels/<id>/`: `weld` (explicit pose), `weld_here` (capture the current
+relative pose), `unweld`; registry view + ops under `/sim/debug/welds/`: `clear`, `count`, and
+`<source>/{target,part,offset,rotation,lock_rotation,enabled}`. Action keys `debug.weld_{create,here,
+remove,enable,clear}` (all Frame). The driver runs in `OnAfterUi` (`Mod.DriveWelds`) after
+`JobSystems.VehicleSolvers.Wait()` — the **third game-thread mutation site**, beside the Frame and Solver
+drains; self-gated to a no-op when empty, so **no** Harmony patch and zero cost when unused.
+
+**`thug_life`** — gatOS's **first custom GPU rendering**: anchors a flat, world-space textured quad (the
+"thug life" sunglasses meme) to a part on a vehicle, tracked each frame, exposed **only** via
+`/sim/debug/thug_life/` (add/clear + per-entry `position`/`rotation`/`size`/`visible`/`remove`/`spec`/
+`vessel`/`part`, plus `count`). `Game/Ksa/ThugLife/`: `ThugLifeTexturePattern` (a static 26×5 char grid for
+the sunglasses, no KSA API) → `ThugLifeTextureFactory` (builds an **`R8G8B8A8UNorm`** texture + sampler via
+`SimpleVkTexture`/`VkUtils.UploadBufferToImage`/`DeviceEx.CreateSampler`); `ThugLifeQuadRenderer` (`unsafe`)
+holds the GPU pipeline/descriptor/buffers (`BuildPipeline` reuses KSA's `"UnlitMeshVert"`/`"UnlitMeshFrag"`
+shaders, the `Program.OffScreenPass` render pass + **reverse-Z** depth) and does the per-frame anchor math
+(`TryComputeModelEgo`: camera `MVP.viewProjection`, `Vehicle.GetMatrixAsmb2Ego`/`Asmb2Ego`,
+`Part.PositionEgo`/`Asmb2Ego`); `ThugLifeRenderPatches` installs a dynamic `Harmony("gatos.thug_life")`
+**postfix on `SuperMeshRenderSystem.RenderMainPass`** (the one injection point for a world-space draw);
+`ThugLifeEntry` is the data model; `ThugLifeManager` is the registry + GPU lifecycle + dynamic-patch +
+`RecordDraws`/`Snapshot`/`Update`. Key as-built decisions: the render postfix + Vulkan resources install
+**lazily on the first entry** and tear down with the last / at unload (off by default = **zero patches and
+zero GPU**, the welds/IVA discipline); the anchor is a **top-level part by `instance_id`** (reuses the welds
+`parts/` listing) **or `0` = the vehicle body frame** (no subparts in v1); KSA runs `RenderMainPass` on the
+**main thread**, so the draw, the command drain, and entry edits are all one thread (no cross-thread access);
+the manager publishes an immutable `ThugLifeEntry[]` and **self-disables on any GPU fault**. Entries are
+**runtime-only** (never persisted). A new game-thread work site `UpdateThugLife()` (in `OnBeforeUi`)
+revalidates/re-resolves each entry per frame; `_thugLife?.Clear()` in `TeardownGameCheats` tears it down.
+
+**Wiring:** game-free `gatOS.SimFs/Commands/LineControlFile.cs` (a new whole-line-parsed control archetype,
+backs `weld`/`weld_here` and `thug_life/add`); `SimSnapshot` gains `PartSnapshot`/`WeldSnapshot`/
+`ThugLifeSnapshot` records (`VesselSnapshot.Parts`, `SimSnapshot.{Welds,AlwaysRenderIva,ThugLife}`);
+`Formats` gains `UInt`/`WeldSpec`/`ThugLifeSpec`; `SimFsTree` gains `ThugLifeDir`/`ThugLifeEntryDir`/
+`ParseThugLifeAdd`/`ThugLife(id)` under `DebugDir`; `TelemetrySettings` gains the `VesselParts` gate.
+`KsaCatalog` (now an instance dispatcher) gains `WeldManager`/`ThugLifeManager` ctor params + the new actions
+(IVA + `weld_clear` + the 7 `thug_life` actions handled vessel-agnostically — `thug_life_add` resolves the
+anchor vehicle via `ResolveVehicle` from the command `Token`, the entry id travels in `ordinal`).
+`Mod.Game.cs` lazily creates `_weldManager`/`_thugLife` (game thread), drives welds via `DriveWelds(dt)` from
+`OnAfterUi` and thug_life via `UpdateThugLife()` from `OnBeforeUi`, tears all cheats down via
+`TeardownGameCheats`, and adds a "Vessel parts" telemetry menu toggle; `TelemetrySampler` projects
+`ThugLife = _thugLife.Snapshot()`. `gatOS.GameMod.csproj` gained `Brutal.Concurrency` (for
+`JobSystems.VehicleSolvers.Wait()`) and the `thug_life` render refs `Brutal.Core.Memory`/`Brutal.Vulkan`/
+`Brutal.Vulkan.Abstractions`/`Brutal.Vulkan.Vma`/`Planet.Render.Core` (all `<Private>false</Private>`,
+KSA-guarded), and set `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>`.
+
+Full catalog: **`SPEC_9P_FILESYSTEM.md`** §3.4.16 (parts) + §3.7 (`debug/welds/**`, `always_render_iva`,
+`debug/thug_life/**`); anchors mirrored in `docs/KSA_INTEGRATION_MATRIX.md` and `scope/` (the `thug_life`
+render set is flagged the **deepest / highest-churn** KSA coupling). **Pending: the in-game pass**
+(checklist in `docs/VALIDATION.md`).
+
+---
+
 ## Suite totals and pending work
 
 **Full non-IT suite**: green, zero warnings.
@@ -600,8 +679,9 @@ The full `GATOS_IT=1` suite was verified green on the Windows 11 game machine ag
 (including the 43 additional tests from the 2026-06-13 hardening review). The
 `HostMountIntegrationTests` fixture requires guest v10 to be published.
 
-**Still pending: the in-game passes** — T6.6/T9.3/G1–G4 checklists in `docs/VALIDATION.md` are
-runnable now that the purrTTY tip release is cut, but need a live KSA flight to complete.
+**Still pending: the in-game passes** — T6.6/T9.3/G1–G4 and the welds/IVA/parts checklists in
+`docs/VALIDATION.md` are runnable now that the purrTTY tip release is cut, but need a live KSA flight
+to complete.
 
 **Next**: M10 (persistence & savegame shape). Everything past M9 is not yet implemented, with
 the single exception of T11.1 (QEMU win-x64 bundle) which was pulled forward and is done.

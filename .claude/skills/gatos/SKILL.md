@@ -81,24 +81,41 @@ system/{name,home,sun}
 bodies/<id>/{id,class,parent,children,mass,radius,mu,soi,rotation_rate,
              position/ecl, velocity/ecl, orbit/*, atmosphere/*, ocean/*, focus}
 vessels/active/…  (alias of the controlled vessel)   vessels/by-id/<id>/
-    id name situation parent controlled com telemetry stream
+    id name situation parent controlled controllable com telemetry stream
     position/{cci,ecl,lat,lon}  velocity/{orbital,surface,inertial,cci}
     attitude/{quat,rates}  altitude/{barometric,radar}  mass/{total,dry,propellant}
     orbit/*  navball/*  environment/*  battery/*  power/*
     engines/<n>/*  tanks/<r>/*  rcs/<n>/*  solar/<n>/*  generators/<n>/*
     lights/<n>/*  docking/<n>/*  decouplers/<n>/*  animations/<n>/*  encounters
+    parts/<n>/{instance_id,id,display_name,template,is_root,subpart_count,position}
+                                        (top-level parts; welds anchor picker; telemetry_vessel_parts)
     ctl/{ignite,shutdown,engine,stage,throttle,lights,rcs,
          attitude_mode,attitude_frame,attitude_target,burn,focus}
 events
 status/{game_version,sampler,accessors,transports}
 debug/                                  (only when debug_namespace=true)
-    vessels/<id>/{teleport,refill_fuel,refill_battery,docking/<n>/pushoff_force}
-    time/warp   focus   control_vessel
+    vessels/<id>/{teleport,refill_fuel,refill_battery,docking/<n>/pushoff_impulse,
+                  weld,weld_here,unweld}
+    welds/{clear,count,<source>/{target,part,offset,rotation,lock_rotation,enabled}}
+    thug_life/{add,clear,count,<id>/{vessel,part,position,rotation,size,visible,remove,spec}}
+    always_render_iva   time/warp   focus   control_vessel
 ```
 
 Each leaf's format, units, archetype (read-only vs control vs trigger), and backing command action
 are in [`SPEC_9P_FILESYSTEM.md`](../../../SPEC_9P_FILESYSTEM.md). Per-module dirs appear only when the
 vessel actually has that module; `bodies`/detail dirs depend on telemetry config gates.
+
+**Cheats (`/sim/debug`, ported from the sibling `unscience` mod):** `always_render_iva` forces interior
+(IVA) meshes to render outside the IVA camera; **welds** rigidly attach one vessel to another vessel's
+part (`weld` = explicit pose, `weld_here` = capture the current relative pose, `unweld`; the registry +
+`clear`/`enabled` live under `welds/`); **`thug_life`** anchors a flat, world-space textured quad (the
+"thug life" sunglasses meme) to a part on a vehicle, tracked each frame (gatOS's first custom GPU render —
+`add`/`clear` + per-entry `position`/`rotation`/`size`/`visible`/`remove`). For welds and `thug_life`,
+discover the anchor part from the target's `parts/<n>/instance_id` (pass `0` to anchor to the body/CoM
+frame). Full arg shapes, action keys, and errnos are in [SPEC §3.7](../../../SPEC_9P_FILESYSTEM.md); a
+worked `weld_here` example is in [`recipes.md` §9](recipes.md) and a `thug_life` example in
+[`recipes.md` §10](recipes.md). The render-side internals (how the quad is drawn into KSA's scene) are
+documented in the **ksa skill's `quad.md`**.
 
 ## Gotchas that cause silent failures
 

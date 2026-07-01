@@ -176,7 +176,7 @@ fn print_help() {
     println!();
     println!("In the guest, no flags are needed: it reads /sim and guides the active vessel.");
     println!(
-        "Keys: e ENGAGE \u{b7} a ABORT \u{b7} \u{2191}/\u{2193} (or -/=) G-limit \u{b7} q quit."
+        "Keys: e ENGAGE \u{b7} a ABORT \u{b7} \u{2191}/\u{2193} (or -/=) G-limit \u{b7} [/] brake margin \u{b7} q quit."
     );
     println!();
     println!("SAFETY: this fires your engine and steers the vessel. Watch it; press a to abort.");
@@ -373,6 +373,7 @@ fn spawn_worker(
 fn apply_input(ap: &mut Autopilot, cmd: ToWorker) {
     match cmd {
         ToWorker::SetGLimit(v) => ap.inputs.g_limit = v,
+        ToWorker::SetBrakeMargin(v) => ap.inputs.brake_margin = v,
         ToWorker::Engage => ap.engage(),
         ToWorker::Abort => ap.abort(),
     }

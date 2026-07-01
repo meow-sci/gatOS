@@ -67,7 +67,7 @@ public sealed class SimFsTreeTests
 
         string[] vesselFiles =
         [
-            "id", "name", "situation", "parent", "controlled", "com", "telemetry",
+            "id", "name", "situation", "parent", "controlled", "controllable", "com", "telemetry",
             "position/cci", "position/ecl", "position/lat", "position/lon",
             "velocity/orbital", "velocity/surface", "velocity/inertial", "velocity/cci",
             "attitude/quat", "attitude/rates",
@@ -120,6 +120,7 @@ public sealed class SimFsTreeTests
             Assert.That(files["vessels/active/altitude/radar"], Is.EqualTo("70950.5\n"),
                 "the active alias serves the same data");
             Assert.That(files["vessels/by-id/test-1/controlled"], Is.EqualTo("0\n"));
+            Assert.That(files["vessels/by-id/test-1/controllable"], Is.EqualTo("0\n"));
             Assert.That(files["vessels/by-id/test-1/power/produced"], Is.EqualTo("0\n"));
             Assert.That(files["vessels/by-id/test-1/engines/0/throttle"], Is.EqualTo("0\n"));
             Assert.That(files["vessels/by-id/test-1/engines/0/min_throttle"], Is.EqualTo("0\n"));
@@ -175,10 +176,14 @@ public sealed class SimFsTreeTests
             "vessels/by-id/test-1/solar/0/produced", "vessels/by-id/test-1/solar/0/goal",
             "vessels/by-id/test-1/solar/0/tracker_angle", "vessels/by-id/test-1/solar/0/state",
             "vessels/by-id/test-1/lights/0/on", "vessels/by-id/test-1/lights/0/brightness",
-            "vessels/by-id/test-1/lights/0/color",
+            "vessels/by-id/test-1/lights/0/color", "vessels/by-id/test-1/lights/0/outer_angle",
+            "vessels/by-id/test-1/lights/0/inner_angle",
+            // the light part's co-located actuate animation (linked to vessel-level animation 1)
+            "vessels/by-id/test-1/lights/0/goal", "vessels/by-id/test-1/lights/0/current",
+            "vessels/by-id/test-1/lights/0/state",
             "vessels/by-id/test-1/generators/0/active", "vessels/by-id/test-1/generators/0/produced",
             "vessels/by-id/test-1/docking/0/docked", "vessels/by-id/test-1/docking/0/docked_to",
-            "vessels/by-id/test-1/docking/0/pushoff_force", "vessels/by-id/test-1/docking/0/undock",
+            "vessels/by-id/test-1/docking/0/pushoff_impulse", "vessels/by-id/test-1/docking/0/undock",
             "vessels/by-id/test-1/decouplers/0/fired", "vessels/by-id/test-1/decouplers/0/fire",
             "vessels/by-id/test-1/animations/1/goal", "vessels/by-id/test-1/animations/1/state",
             "vessels/by-id/test-1/navball/twr", "vessels/by-id/test-1/navball/frame",
@@ -189,7 +194,7 @@ public sealed class SimFsTreeTests
             "bodies/Kerth/atmosphere/height", "bodies/Kerth/ocean/density", "bodies/Kerth/focus",
             // debug namespace
             "debug/vessels/test-1/teleport", "debug/vessels/test-1/refill_fuel",
-            "debug/vessels/test-1/refill_battery", "debug/vessels/test-1/docking/0/pushoff_force",
+            "debug/vessels/test-1/refill_battery", "debug/vessels/test-1/docking/0/pushoff_impulse",
             "debug/time/warp", "debug/focus", "debug/control_vessel",
         ];
 
@@ -200,9 +205,11 @@ public sealed class SimFsTreeTests
             Assert.That(files["vessels/by-id/test-1/rcs/0/map"], Is.EqualTo("Pitch|Yaw\n"));
             Assert.That(files["vessels/by-id/test-1/solar/0/tracker_angle"], Is.EqualTo("30\n"));
             Assert.That(files["vessels/by-id/test-1/lights/0/on"], Is.EqualTo("1\n"));
+            Assert.That(files["vessels/by-id/test-1/lights/0/state"], Is.EqualTo("Retracted\n"),
+                "the light's co-located animation reads vessel-level animation 1's state");
             Assert.That(files["vessels/by-id/test-1/docking/0/docked_to"], Is.EqualTo("part-7\n"));
-            Assert.That(files["vessels/by-id/test-1/docking/0/pushoff_force"], Is.EqualTo("7000\n"));
-            Assert.That(files["debug/vessels/test-1/docking/0/pushoff_force"], Is.EqualTo("7000\n"));
+            Assert.That(files["vessels/by-id/test-1/docking/0/pushoff_impulse"], Is.EqualTo("7000\n"));
+            Assert.That(files["debug/vessels/test-1/docking/0/pushoff_impulse"], Is.EqualTo("7000\n"));
             Assert.That(files["bodies/Kerth/atmosphere/height"], Is.EqualTo("70000\n"));
             // The active alias mirrors the control surface too.
             Assert.That(files.Keys, Does.Contain("vessels/active/ctl/ignite"));

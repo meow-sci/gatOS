@@ -175,7 +175,7 @@ public sealed partial class Mod
             _simStore = new SnapshotStore();
             _telemetrySettings = new TelemetrySettings(
                 _config.SampleRateHz, _config.TelemetryEnabled, _config.TelemetryVesselDetail,
-                _config.TelemetryBodies, _config.TelemetryEvents);
+                _config.TelemetryBodies, _config.TelemetryEvents, _config.TelemetryVesselParts);
             _commandQueue = new CommandQueue(_config.ControlEnabled, _config.DebugNamespace,
                 TimeSpan.FromMilliseconds(_config.CommandTimeoutMs));
             _displaySurface = new DisplaySurface(new DisplaySettings(
@@ -248,6 +248,7 @@ public sealed partial class Mod
     {
         SampleTelemetry(dt);
         DrainCommands();
+        UpdateThugLife(); // validate/re-resolve thug-life anchors on the game thread, before the scene renders
     }
 
     /// <summary>
@@ -266,11 +267,20 @@ public sealed partial class Mod
         return $"9p {ninep}\nhttp {http}\nmqtt {mqtt}\nmnt {mnt}\nserial {serial}\ncontrol {control}";
     }
 
-    /// <summary>Draws the diagnostics UI (T6.4); a no-op when built without the KSA assemblies.</summary>
+    /// <summary>
+    ///     Draws the diagnostics UI (T6.4) and drives active welds (both game-thread, no-ops without the
+    ///     KSA assemblies). The weld drive runs first and independently of the UI so a UI fault never
+    ///     stops welds — and it self-gates to nothing when no welds exist.
+    /// </summary>
     [StarMapAfterGui]
     public void OnAfterUi(double dt)
     {
-        if (_uiDead || !ReferenceEquals(_instance, this))
+        if (!ReferenceEquals(_instance, this))
+            return;
+
+        DriveWelds(dt); // partial; self-gates to a no-op when no welds are active
+
+        if (_uiDead)
             return;
 
         try
@@ -297,6 +307,7 @@ public sealed partial class Mod
         {
             _instance = null;
             IsInitialized = false;
+            TeardownGameCheats(); // partial: clears welds + restores IVA (unpatches the IVA hooks)
             RemoveSolverHook();   // partial: drops out without the KSA assemblies
             RemoveMenuFallback(); // partial: drops out without the KSA assemblies
             DisposeDisplayCapture(); // partial: frees the capture's Vulkan resources (drops out without KSA)
@@ -800,6 +811,9 @@ public sealed partial class Mod
     partial void DrainCommands();
     partial void InstallDisplayHook();
     partial void DisposeDisplayCapture();
+    partial void DriveWelds(double dt);
+    partial void UpdateThugLife();
+    partial void TeardownGameCheats();
     partial void InstallSolverHook();
     partial void RemoveSolverHook();
     partial void InstallMenuFallback();

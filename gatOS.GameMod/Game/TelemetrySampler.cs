@@ -1,5 +1,8 @@
 using gatOS.GameMod.Game.Ksa;
 using gatOS.GameMod.Game.Ksa.Readers;
+using gatOS.GameMod.Game.Ksa.Render;
+using gatOS.GameMod.Game.Ksa.ThugLife;
+using gatOS.GameMod.Game.Ksa.Welds;
 using gatOS.Logging;
 using gatOS.SimFs;
 using gatOS.SimFs.Snapshots;
@@ -29,6 +32,8 @@ internal sealed class TelemetrySampler
     private readonly KsaHealth _health;
     private readonly TelemetrySettings _settings;
     private readonly PerfStat _sampleStats;
+    private readonly WeldManager _welds;
+    private readonly ThugLifeManager _thugLife;
     private int _appliedRateHz;
     private IReadOnlyList<double> _warpSpeeds = [];
     private SimSnapshot? _previous;
@@ -44,7 +49,10 @@ internal sealed class TelemetrySampler
     /// </param>
     /// <param name="health">Accessor-health latches, shared with the command executor.</param>
     /// <param name="sampleStats">Timing accumulator for one <see cref="Sample"/> (the status window reads it).</param>
-    internal TelemetrySampler(SnapshotStore store, TelemetrySettings settings, KsaHealth health, PerfStat sampleStats)
+    /// <param name="welds">The weld registry — projected into the snapshot for the <c>/sim/debug/welds</c> view.</param>
+    /// <param name="thugLife">The thug-life registry — projected for the <c>/sim/debug/thug_life</c> view.</param>
+    internal TelemetrySampler(SnapshotStore store, TelemetrySettings settings, KsaHealth health,
+        PerfStat sampleStats, WeldManager welds, ThugLifeManager thugLife)
     {
         _store = store;
         _settings = settings;
@@ -52,6 +60,8 @@ internal sealed class TelemetrySampler
         _clock = new SampleClock(_appliedRateHz);
         _health = health;
         _sampleStats = sampleStats;
+        _welds = welds;
+        _thugLife = thugLife;
     }
 
     /// <summary>
@@ -80,6 +90,13 @@ internal sealed class TelemetrySampler
                 Sample();
     }
 
+    [KsaAnchor("Universe.GetElapsedSimTime().Seconds(); Universe.SimulationSpeed; Universe.GetLastSimStep().DeltaTime; "
+            + "Program.ControlledVehicle?.Id; Universe.CurrentSystem.All.UnsafeAsList()",
+        SourceFile = "KSA/Universe.cs / KSA/Program.cs / KSA/CelestialSystem.cs", Verified = "2026-06-27",
+        GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Low,
+        Notes = "Sampler-direct time/warp/system reads (the /sim time/* rows + the vessel enumeration). None "
+            + "changed 4680→4750. Anchored (G4) so the census is complete — a rename errors in the sampler, "
+            + "still caught by the build, just outside the actuator/reader anchor set.")]
     private void Sample()
     {
         var ut = Sanitize.Finite(Universe.GetElapsedSimTime().Seconds());
@@ -98,7 +115,12 @@ internal sealed class TelemetrySampler
                     continue;
                 try
                 {
-                    vessels.Add(VesselReader.Sample(vehicle, activeId, ut, detail));
+                    var vessel = VesselReader.Sample(vehicle, activeId, ut, detail);
+                    // The parts list is its own gate + cache (the welds anchor picker), separate from
+                    // the G3 detail pass so it can be enabled without the heavier per-module reads.
+                    if (_settings.VesselParts)
+                        vessel = vessel with { Parts = PartsReader.Sample(vehicle, ut) };
+                    vessels.Add(vessel);
                 }
                 catch (Exception ex)
                 {
@@ -127,6 +149,9 @@ internal sealed class TelemetrySampler
             AutoWarpTargetUt = SafeAutoWarpTarget(),
             Bodies = bodies,
             System = systemSummary,
+            Welds = _welds.Snapshot(),
+            AlwaysRenderIva = IvaForceRender.Enabled,
+            ThugLife = _thugLife.Snapshot(),
         };
         _previous = snapshot;
         _store.Publish(snapshot);
@@ -150,6 +175,9 @@ internal sealed class TelemetrySampler
         }
     }
 
+    [KsaAnchor("Universe.GetSimulationSpeeds() (SimulationSpeed.Value per warp rung)",
+        SourceFile = "KSA/Universe.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium,
+        Notes = "The fixed warp ladder (time/warp_speeds); cached after the first successful read.")]
     private IReadOnlyList<double> SampleWarpSpeeds()
     {
         // The warp ladder is a fixed per-session list; cache it after the first successful read so
@@ -168,6 +196,9 @@ internal sealed class TelemetrySampler
         return _warpSpeeds;
     }
 
+    [KsaAnchor("Universe.IsAutoWarpActive",
+        SourceFile = "KSA/Universe.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium,
+        Notes = "time/auto_warp active flag.")]
     private static bool SafeAutoWarpActive()
     {
         try
@@ -180,6 +211,9 @@ internal sealed class TelemetrySampler
         }
     }
 
+    [KsaAnchor("Universe.AutoWarpTime?.Seconds()",
+        SourceFile = "KSA/Universe.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium,
+        Notes = "time/auto_warp target UT; nullable when no auto-warp scheduled.")]
     private static double SafeAutoWarpTarget()
     {
         try
@@ -192,6 +226,9 @@ internal sealed class TelemetrySampler
         }
     }
 
+    [KsaAnchor("VersionInfo.Current.VersionString",
+        SourceFile = "KSA/VersionInfo.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Low,
+        Notes = "status/game_version; cached after the first read.")]
     private string GameVersion()
     {
         if (_gameVersion.Length > 0)

@@ -15,7 +15,11 @@ new events) and **G4** (full control surface: throttle/staging/attitude/burn, RC
 they add **no** KSA coupling — every transport speaks the same `SnapshotStore` (reads) and
 `ICommandSink`/`SimCommand` (writes), so this matrix (the KSA-touching surface) is unaffected by them.
 
-**Verified:** 2026-06-12, against `thirdparty/ksa` (`VersionInfo.Current` at build time).
+**Verified:** **2026-06-27 against `2026.6.9.4750`** (full solution build green + 4680→4750 changelog scan
++ decomp/XML diff). The anchors touched by the 4750 fix-pass (G1 docking, G2 power, G3 `controllable`,
+G4 sampler reads) were individually re-verified and carry `GameVersion="2026.6.9.4750"`; rows still showing
+an earlier per-member `Verified` date bind to members **unchanged** in 4750 (their compatibility is
+confirmed by the green build + the changelog scan). Live in-flight checklist: `docs/VALIDATION.md`.
 
 ## Transport parity (binding)
 
@@ -99,6 +103,7 @@ feedback. Authority gate (G-D1): `control_all_vessels=false` restricts to the ac
 | `…/engines/<n>/active` | St | `0`/`1` | `EngineController.SetIsActive(vehicle, bool)` | Low | Frame |
 | `…/animations/<n>/goal` | St | `0..1` | `KeyframeAnimationModule.TimeGoal = f × Shared.Duration` | Low | Frame |
 | `…/solar/<n>/goal` | St | `0..1` | same as `animations/<n>/goal` (solar-filtered view, same ordinal) | Low | Frame |
+| `…/lights/<n>/goal` | St | `0..1` | same as `animations/<n>/goal` (light-filtered view, same ordinal; only when the light part has an animation) | Low | Frame |
 
 `vessels/active/…` is an alias for the controlled vessel and accepts the same writes.
 
@@ -120,6 +125,7 @@ core telemetry and the extension dirs vanish (logged once) rather than the sampl
 | `bodies/<id>/ocean/{present,density}` | S | `IParentBody.GetOceanReference().Density` | M |
 | `…/telemetry` | S | whole `VesselSnapshot` as one JSON doc (atomic read) | — |
 | `…/controlled`, `…/com` | S | `Program.ControlledVehicle`; `Vehicle.CenterOfMassAsmb` | L |
+| `…/controllable` | S | `Vehicle.IsControllable` (`_overrideIsControllable \|\| Parts.Controls.NumModules > 0`; 4750/rev 4699) | M |
 | `…/position/ecl`, `…/velocity/cci` | S | `Vehicle.GetPositionEcl()`, `Vehicle.GetVelocityCci()` (vectors) | L |
 | `…/navball/{pitch,yaw,roll,twr,deltav,frame,speed}` | S | `Vehicle.NavBallData` (`AttitudeAngles` int3 deg) | M |
 | `…/environment/{pressure,density,dynamic_pressure,ocean_density,terrain_radius,accel,angular_accel,g_force}` | S | `Vehicle.PhysicsEnvironment`; `PhysicalAtmosphereReference.GetDynamicPressure`; `AccelerationBody`/`AngularAccelerationBody` | L |
@@ -128,15 +134,27 @@ core telemetry and the extension dirs vanish (logged once) rather than the sampl
 | `…/engines/<n>/{throttle,propellant,min_throttle}` | S/St | `EngineControllerState.{CommandThrottle,IsPropellantAvailable}`; `EngineController.MinimumThrottle` | M |
 | `…/tanks/<r>/fraction` | S | `Mole.FilledFraction(state)` | L |
 | `…/battery/{fraction,capacity}` | S | `Battery.MaximumCapacity` (sum); charge/capacity | L |
-| `…/power/{produced,consumed}` | S | Σ `SolarPanelState.Produced`+`GeneratorState.Produced`; Σ `PowerConsumerState.Consumed` (per-sample energy proxy) | M |
-| `…/solar/<n>/{produced,occluded,sun_aoa,efficiency,tracker_angle,state,current,goal}` | S/St | `SolarPanelState.*`; `SolarTrackerState.CurrentAngle` (1:1 by index); deploy via linked `KeyframeAnimationModule` | M |
-| `…/generators/<n>/{active,produced}` | S | `GeneratorState.{Active,Produced}` | M |
-| `…/lights/<n>/{on,brightness,color}` | S/St | `PowerConsumer.LightIsActive`; `LightModule.Template.{Intensity,ColorRgb}` | M (template H) |
-| `…/docking/<n>/{docked,docked_to,pushoff_force}` | S | `DockingPort.Docked`/`DockedToPart.Id`/`PushoffForce` (N) | M |
+| `…/power/{produced,consumed}` | S | Σ `SolarPanelState.Produced`+`GeneratorState.Produced`; Σ `PowerConsumerState.Consumed` (instantaneous **W** — 4750/rev 4681 `Joules`→`Watts`) | M |
+| `…/solar/<n>/{produced,occluded,sun_aoa,efficiency,tracker_angle,state,current,goal}` | S/St | `SolarPanelState.*` (`Produced` = instantaneous **W**, 4750 `Joules`→`Watts`); `SolarTrackerState.CurrentAngle` (1:1 by index); deploy via linked `KeyframeAnimationModule` | M |
+| `…/generators/<n>/{active,produced}` | S | `GeneratorState.{Active,Produced}` (`Produced` = instantaneous **W**, 4750 `Joules`→`Watts`) | M |
+| `…/lights/<n>/{on,brightness,color,inner_angle,outer_angle}` | S/St | `PowerConsumer.LightIsActive`; `LightModule.Template.{Intensity,ColorRgb,InnerAngle,OuterAngle}` (inner/outer_angle = the cone half-angles, `rad→deg`) | M (template H) |
+| `…/lights/<n>/{goal,current,state}` | S/St | actuate animation via linked `KeyframeAnimationModule` (`Parent.FullPart.SubtreeModules.Get<KeyframeAnimationModule>()`, same scan `SolarPanel.OnPartCreated` uses); only when the light part has one | M |
+| `…/docking/<n>/{docked,docked_to,pushoff_impulse}` | S | `DockingPort.Docked`/`DockedToPart.Id`/`PushoffImpulse` (N·s) | M |
 | `…/decouplers/<n>/{fired,fire}` | S/T | `Decoupler.IsActive` | M |
 
 New `/sim/events` types (snapshot diff in `EventDiffer`): `engine-state`, `flameout`, `docked`,
 `undocked`, `decoupled`, `animation-complete`, `battery-depleted`, `battery-charged`.
+
+## Read surface — parts (welds anchor picker; gated by `telemetry_vessel_parts`)
+
+Anchor in `Game/Ksa/Readers/PartsReader.cs`. **Top-level parts only** (subparts not surfaced); the
+welds anchor picker. Cached per vehicle (`ConditionalWeakTable<Vehicle,…>`), rebuilt on
+`Vehicle.Parts.Count` change or every 10 s (sim seconds). `<n>` is a 0-based index; `instance_id` is
+the **stable** handle a weld uses.
+
+| Path | A | KSA anchor | Risk |
+|---|---|---|---|
+| `vessels/by-id/<id>/parts/<n>/{instance_id,id,display_name,template,is_root,subpart_count,position}` | S | `Vehicle.Parts.{Parts,Count}`; `Part.{InstanceId,Id,DisplayName,Template.Id,PartParent,SubParts,PositionVehicleAsmb}` | Low |
 
 ## Control surface — G4 expansion
 
@@ -156,8 +174,10 @@ Anchors in `Game/Ksa/Actuators/**`; routed by `KsaCatalog`. Frame phase unless n
 | `…/lights/<n>/on` | St | `0`/`1` | `PowerConsumer.LightIsActive` | M | Frame |
 | `…/lights/<n>/brightness` | St | number | `Template.Intensity.Value` (per-instance clone) | H | Frame |
 | `…/lights/<n>/color` | St | `r g b` | `Template.ColorRgb.{R,G,B}`+`OnDataLoad` (per-instance clone) | H | Frame |
+| `…/lights/<n>/outer_angle` | St | number (deg) | `Template.OuterAngle.Value` (radians, per-instance clone); write clamped to `Light.CreateSpotLight`'s `[1E-05, 1.5697963]` rad, and lowers `InnerAngle` to ≤ outer (else CreateSpotLight swaps them) | H | Frame |
+| `…/lights/<n>/inner_angle` | St | number (deg) | `Template.InnerAngle.Value` (radians, per-instance clone); write clamped to `[0, OuterAngle]` | H | Frame |
 | `…/decouplers/<n>/fire` | T | `1` | `Decoupler.SetIsActive` (re-fire → EBUSY) | M | Frame |
-| `…/docking/<n>/undock` | T | `1` | `InputEvents.VehicleDockingInputData{Undock=true}` → `DockingPort.Undock` → `Vehicle.Split(Connector, PushoffForce)` (not docked → EBUSY) | M | Frame |
+| `…/docking/<n>/undock` | T | `1` | `InputEvents.VehicleDockingInputData{Undock=true}` → `DockingPort.Undock` → `Vehicle.Split(Connector, PushoffImpulse)` (not docked → EBUSY) | M | Frame |
 | `…/ctl/focus` | T | `1` | `Program.GetMainCamera().SetFollow(vehicle, tidalLocking:true, changeControl:false)` — moves the view only | M | Frame |
 | `bodies/<id>/focus` | T | `1` | same `camera.focus` action on a celestial (`CurrentSystem.Get(id)` → `Astronomical`); view-only, exempt from the authority gate | M | Frame |
 
@@ -182,10 +202,72 @@ the game's ignite button reads). This is distinct from the per-engine `engines/<
 | `debug/vessels/<id>/teleport` | T | `px py pz vx vy vz` | `Orbit.CreateFromStateCci`+`Vehicle.Teleport`+`UpdatePerFrameData` | H | Frame |
 | `debug/vessels/<id>/refill_fuel` | T | `1` | `Vehicle.RefillConsumables()` | M | **Solver** |
 | `debug/vessels/<id>/refill_battery` | T | `1` | `Battery.Refill(ref state)` via `GetModuleAndAllMutableStatesForInitialization` | M | **Solver** |
-| `debug/vessels/<id>/docking/<n>/pushoff_force` | St | N (≥0) | `DockingPort.PushoffForce` (live float; stock 7000 N from XML) | M | Frame |
+| `debug/vessels/<id>/docking/<n>/pushoff_impulse` | St | N·s (≥0) | `DockingPort.PushoffImpulse` (live float; stock 7000 N·s from XML; 4750/rev 4683 rename, was `PushoffForce` N) | M | Frame |
 | `debug/time/warp` | St | factor | `Universe.SetSimulationSpeed(double, alert:false)` (public) | M | Frame |
 | `debug/focus` | St | vehicle/body id | `camera.focus` by id (view-only; same action as `ctl/focus`) | M | Frame |
 | `debug/control_vessel` | St | vehicle id | `Program.GetMainCamera().SetFollow(vehicle)` + `Program.ControlledVehicle = vehicle` (focus **and** control) | M | Frame |
+| `debug/always_render_iva` | St | `0`/`1` | `IvaActuator`→`IvaForceRender.SetEnabled`: flips `PartModelModule.Template.Internal=false` over `PartModel.Instances`; installs/removes its own `gatos.iva` Harmony patches (`PartModel..ctor`/`AddInstance` postfixes) only while on (vessel-agnostic) | M (dynamic Harmony) | Frame |
+| `debug/vessels/<id>/weld` | St | `<target> <piid> x y z pitch yaw roll lock` | `WeldManager.Create`→`WeldEngine.UpdateWeld`: `Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,BodyRates,CenterOfMassAsmb,Parent,Orbit,Teleport,UpdatePerFrameData}`, `Orbit.CreateFromStateCci`, `IParentBody.GetCci2Cce`, `Universe.GetJobSimStep(double).NextTime`, `Program.GetPlayerDeltaTime`, `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` | H | Frame |
+| `debug/vessels/<id>/weld_here` | St | `<target> <piid> [lock]` | `WeldManager.CreateAtCurrentPose`→`WeldEngine.CapturePose` (inverse transform of the above) | M | Frame |
+| `debug/vessels/<id>/unweld` | T | `1` | `WeldManager.Remove(vehicle.Id)` (registry op — no KSA) | L | Frame |
+| `debug/welds/clear` | T | `1` | `WeldManager.Clear` (vessel-agnostic) | L | Frame |
+| `debug/welds/<source>/enabled` | St | `0`/`1` | `WeldManager.SetEnabled` (suspend/resume; keeps the entry) | L | Frame |
+| `debug/thug_life/add` | St | `<vessel> <piid>` or `<vessel> <piid> x y z pitch yaw roll w h` | `ThugLifeManager.Create` → lazy GPU build + per-frame world-space quad draw (see the render set below); anchor vehicle resolved from `Token` via `ResolveVehicle` (vessel-agnostic) | **H** (render) | Frame |
+| `debug/thug_life/clear` | T | `1` | `ThugLifeManager.Clear` (vessel-agnostic; tears down the render postfix + GPU resources when the last entry goes) | L | Frame |
+| `debug/thug_life/<id>/position` | St | `x y z` | `ThugLifeEntry.Position` (id in `ordinal`; consumed by the per-frame anchor math) | **H** (render) | Frame |
+| `debug/thug_life/<id>/rotation` | St | `pitch yaw roll` | `ThugLifeEntry.Rotation` (id in `ordinal`) | **H** (render) | Frame |
+| `debug/thug_life/<id>/size` | St | `w h` | `ThugLifeEntry.{Width,Height}` (id in `ordinal`) | L | Frame |
+| `debug/thug_life/<id>/visible` | St | `0`/`1` | `ThugLifeEntry.Visible` (id in `ordinal`) | L | Frame |
+| `debug/thug_life/<id>/remove` | T | `1` | `ThugLifeManager.Remove(id)` (id in `ordinal`) | L | Frame |
+
+The `debug/welds/<source>/{target,part,offset,rotation,lock_rotation}` registry view is a **game-free
+projection** of `WeldManager.Snapshot()` (`WeldSnapshot` records — no KSA read). Likewise the
+`debug/thug_life/count`, `…/<id>/{vessel,part,spec}` reads are a **game-free projection** of
+`ThugLifeManager.Snapshot()` (`ThugLifeSnapshot` records); only the per-frame anchor math + GPU draw
+touch KSA (the render set below).
+
+**Render & weld cheats (ported from `unscience`, exposed only on gatOS surfaces — no ImGui).**
+`debug.always_render_iva` toggles `IvaForceRender`, which installs **two Harmony patches on its own
+`Harmony("gatos.iva")` instance only while enabled** (a `PartModel..ctor(PartModelModule.Template)`
+postfix + an editor-only `PartModel.AddInstance` postfix) and bulk-flips
+`PartModelModule.Template.Internal=false` over `PartModel.Instances`; disable restores the flags and
+unpatches. The **welds** registry (`WeldManager`) drives a per-frame `Vehicle.Teleport` of each source
+onto its anchor in `OnAfterUi` (`Mod.DriveWelds`, game thread, after `JobSystems.VehicleSolvers.Wait()`)
+— a **third game-thread mutation site** beside the Frame and Solver drains; it self-gates to a no-op
+when no welds exist, so it needs **no** Harmony patch. Both tear down on unload
+(`Mod.TeardownGameCheats`). All weld create/remove/enable/clear and the IVA toggle are **Frame-phase**.
+Anchors verified `2026-06-28` against `2026.6.9.4750`.
+
+**`thug_life` — gatOS's first custom GPU rendering (⚠️ HIGHEST-CHURN KSA COUPLING).** The
+`debug.thug_life_*` actions (ported from `unscience`, exposed only on gatOS surfaces) anchor a flat,
+world-space textured quad — the "thug life" sunglasses meme — to a part on a vehicle, tracking it each
+frame. It is the **deepest coupling gatOS has into KSA's render-pipeline internals**: a Vulkan textured
+quad built and recorded directly into KSA's scene. All anchors live under
+`gatOS.GameMod/Game/Ksa/ThugLife/` and are **Risk High** unless noted. The render set is the **one set
+most likely to break on any game update** (render internals churn far faster than the gameplay APIs the
+rest of the matrix binds), and unlike the reflective accessors a render-API rename **does** fail the
+build at the `[KsaAnchor]` site.
+
+| Anchor site | KSA / Brutal members | Assemblies | Risk |
+|---|---|---|---|
+| `ThugLifeRenderPatches.Apply` | dynamic Harmony **postfix on `SuperMeshRenderSystem.RenderMainPass(CommandBuffer)`** (`KSA/SuperMeshRenderSystem.cs:329`) — the only injection point for a world-space draw; installed lazily on the first entry, removed with the last/at unload | KSA | **H** |
+| `ThugLifeQuadRenderer.BuildPipeline` (`unsafe`) | `Program.OffScreenPass.{Pass,SampleCount}`; `ModLibrary.Get<ShaderReference>("UnlitMeshVert"/"UnlitMeshFrag")`; `RenderTechnique.CreateShaderStages`; `Presets`/`RenderingPresets`; `Renderer.{Device,Allocator,DynamicStateInfo,ViewportState,Graphics}`; `VkUtils.StageAndUploadToBuffer` | Planet.Render.Core, Brutal.Vulkan(.Abstractions) | **H** |
+| `ThugLifeQuadRenderer.RecordDraw` (per-frame draw + ego-space anchor math, in `TryComputeModelEgo`) | `Program.GetMainCamera()`/`Camera.MVP.viewProjection`; `Vehicle.GetMatrixAsmb2Ego(Camera)`; `Vehicle.Asmb2Ego`; `Part.PositionEgo(in double4x4)`; `Part.Asmb2Ego(doubleQuat)`; `double3.Transform`; `Program.SetViewport` | KSA, Brutal numerics | **H** |
+| `ThugLifeTextureFactory.UploadPixels` | `SimpleVkTexture` ctor; `Renderer.Allocator.CreateStagingPool`/`AddStagingBuffer`; `VkUtils.UploadBufferToImage`; `DeviceEx.CreateSampler` (builds an `R8G8B8A8UNorm` texture + sampler) | Planet.Render.Core, Brutal.Vulkan(.Abstractions) | **H** |
+| `ThugLifeManager.{Update,IsLive}` | `Universe.CurrentSystem.All.UnsafeAsList()`; `Vehicle.Parts.Parts`; `Part.InstanceId` (per-frame validation / anchor re-resolve) | KSA | **L** |
+| `ThugLifeManager.EnsureGpu` | `Program.GetRenderer()` (lazy GPU lifecycle) | Planet.Render.Core | M |
+
+The render postfix, the command drain, and entry edits all run on the **main thread**
+(`SuperMeshRenderSystem.RenderMainPass` runs there — see the ksa skill's `quad.md`), so there is no
+cross-thread game-state access; the manager publishes an immutable `ThugLifeEntry[]` (swapped on
+add/remove) that the postfix reads. The whole feature is **off by default = zero patches/GPU** (the
+welds/IVA "only active while toggled on" discipline) and **runtime-only** (never persisted); a GPU fault
+self-disables it (`Active=false`). `UpdateThugLife()` (game thread, `OnBeforeUi`) revalidates/re-resolves
+each entry per frame; `_thugLife?.Clear()` in `Mod.TeardownGameCheats` tears it down at unload. Pipeline
+assumptions (the `"UnlitMeshVert"/"UnlitMeshFrag"` shader keys, `R8G8B8A8UNorm`, reverse-Z depth,
+`Program.OffScreenPass` MSAA sample count) and the new render-DLL references are catalogued in
+[`../scope/ksa-assets-and-versions.md`](../scope/ksa-assets-and-versions.md). Anchors verified
+`2026-06-28` against `2026.6.9.4750`.
 
 Solver-phase commands drain in a Harmony `Priority.First` prefix on
 `Universe.ExecuteNextVehicleSolvers` (`Mod.DrainSolverCommands`), which runs **immediately before** the

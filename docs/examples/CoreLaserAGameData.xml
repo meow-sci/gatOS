@@ -1,0 +1,71 @@
+<?xml version='1.0' encoding='utf-8' ?>
+<!-- ====================================================================================================
+     EXAMPLE PART (gameplay / sim data) — the laser emitter. Pair with CoreLaserAAssets.xml.
+
+     The whole "laser" effect lives in the <Light> block below. KSA stores the spot cone HALF-ANGLES in
+     RADIANS (KSA/LightModule.cs -> Light.CreateSpotLight). To get a pinpoint beam:
+
+       * BOTH InnerAngle AND OuterAngle must be small. KSA's CreateSpotLight does `if (inner > outer)
+         swap`, so a small Outer with a default-wide Inner (the stock 22.5°) would just swap back to a
+         wide cone. Setting both small is what actually narrows the rendered beam.
+
+       * Stay at/above the shader's brightness floor of ~0.0141 rad (~0.81° half-angle). The spot
+         falloff divides by max(cos(inner) - cos(outer), 1e-4); below ~0.81° the whole cone shrinks
+         under that epsilon and the beam dims toward black. The values below (0.020 / 0.010 rad) sit just
+         above it, so the beam stays bright AND tight (~1.15° outer / ~0.57° inner half-angle).
+
+       * KSA hard-clamps Outer to [1e-5, 1.5697963] rad and Inner to [0, Outer]; these values are well
+         inside that.
+
+       * High Intensity + long Range push the bright dot out to distant surfaces (range attenuation is
+         ~1/dist^2). Note: KSA spotlights only LIGHT SURFACES inside the cone — there is no volumetric
+         shaft in vacuum, so you see a tight bright dot where the beam lands, not a glowing line.
+
+     To make the edge razor-hard, set InnerAngle equal to OuterAngle. To go tighter than ~0.81° and stay
+     visible, raise Intensity to compensate for the falloff (see docs/LIGHT_PART_ANALYSIS.md §5).
+
+     DEPLOY ANIMATION: this part reuses the stock LightSmallA hinge/deploy animation by referencing the
+     same GLB (see the binding notes in CoreLaserAAssets.xml). The KeyframeAnimationModule below is what
+     makes gatOS surface lights/<n>/{goal,current,state} for this part. Its Id is a local label; only the
+     GLB Path must match the stock asset so the shared animation data is reused.
+     ==================================================================================================== -->
+<Assets>
+
+    <PartGameData Id="CoreLaserA_Prefab_LaserSmallA">
+        <EditorTag Value="Lights"/>
+        <PowerConsumer LightSwitch="true">
+            <Consumed Watts="80" />
+        </PowerConsumer>
+        <Connector Id="_connectorLaserA">
+            <Flags>ToSurface</Flags>
+        </Connector>
+        <KeyframeAnimationModule Id="CoreLaserA_Prefab_LaserSmallA_Anim">
+            <KeyframeAnimation Path="Animations/CoreElectricalA_Prefab_LightSmallA_Anim.glb" Id="CoreElectricalA_Prefab_LightSmallA_Anim" />
+        </KeyframeAnimationModule>
+        <Collider Id="Collider1">
+          <Box Id="BoxCollider1">
+            <LocationAsmb X="0" Y="0" Z="0.1" />
+            <Collider2Asmb X="0" Y="0" Z="0" />
+            <LengthX M="0.5" />
+            <LengthY M="0.5" />
+            <LengthZ M="0.5" />
+          </Box>
+        </Collider>
+    </PartGameData>
+
+    <SubPartGameData Id="CoreLaserA_Subpart_EmitterA">
+        <Light>
+            <Type>Spot</Type>
+            <Transform>
+                <Position X="0.38" Y="0.21" Z="0"/>
+            </Transform>
+            <Range Value="200"/>
+            <Intensity Value="500"/>
+            <Color R="1" G="0" B="0"/>
+            <!-- Half-angles in RADIANS. Tight, bright laser cone (see header). -->
+            <InnerAngle Value="0.010"/>   <!-- ~0.57° -->
+            <OuterAngle Value="0.020"/>   <!-- ~1.15° -->
+        </Light>
+    </SubPartGameData>
+
+</Assets>

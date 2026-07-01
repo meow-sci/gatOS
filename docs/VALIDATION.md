@@ -163,6 +163,10 @@ Prereq: the T6.6 pass (purrTTY tip release). Read surface verified over the mana
 | 15 | `echo 1 > /sim/debug/vessels/<id>/refill_battery` tops the battery (solver-phase drain) | ☐ | |
 | 16 | `echo "<px py pz vx vy vz>" > /sim/debug/vessels/<id>/teleport` moves the vessel; no NaN glitch | ☐ | |
 | 17 | `[control] debug_namespace=false` → `/sim/debug` is absent | ☐ | verified over 9p client ✅ |
+| 18 | `cat …/docking/<n>/pushoff_impulse` reads N·s (stock 7000); `echo 1 > …/docking/<n>/undock` separates a docked port; `echo <ns> > /sim/debug/vessels/<id>/docking/<n>/pushoff_impulse` changes the separation energy | ☐ | **4750 re-check:** rev 4683 renamed `PushoffForce`→`PushoffImpulse` (N→N·s) and the `/sim` leaf `pushoff_force`→`pushoff_impulse`; see `plans/FIX_CURRENT_GAPS_PLAN.md` G1 |
+| 19 | `cat …/power/{produced,consumed}` and `…/{solar,generators}/<n>/produced` read a **stable instantaneous wattage** (not a tiny per-frame number) that tracks the XML-authored panel/generator W under load | ☐ | **4750 re-check (G2):** rev 4681 retyped `Joules`→`Watts`; values now instantaneous W, magnitudes differ from the 4680 era; see `plans/FIX_CURRENT_GAPS_PLAN.md` G2 |
+| 20 | `cat …/vessels/active/controllable` reads `1`; on a debris/uncontrollable vessel (no Control Module) `…/vessels/by-id/<id>/controllable` reads `0`. Confirm flight-control writes to that uncontrollable vessel no-op (gatOS returns `ok`; KSA's lockout drops them) — the documented Option-A behavior | ☐ | **4750 re-check (G3):** rev 4699 `Vehicle.IsControllable`; decide live whether silent-`Ok` warrants Option B (`EACCES` gating); see `plans/FIX_CURRENT_GAPS_PLAN.md` G3 |
+| 21 | After loading 4750: `cat /sim/status/accessors` is clean (no degraded latches) through a throttle write (`ctl/throttle`, reflection field `_manualControlInputs.EngineThrottle`), a solver-phase FC setpoint (`ctl/attitude_mode`, Harmony `Universe.ExecuteNextVehicleSolvers` prefix), and the gatOS menu drawing (Harmony `Program.DrawProgramMenusHook`) | ☐ | **4750 re-check (G4.3):** reflection + Harmony targets can't be build-checked; confirmed present in decomp (`Vehicle.cs:232/526`), live-verify the latches stay clear; see `scope/ksa-runtime-coupling.md` |
 
 ## Screen stream (`/sim/display`) — in-game validation pass — **NOT YET RUN**
 
@@ -182,3 +186,49 @@ capture is render-thread Vulkan code that cannot be exercised headlessly — the
 | 7 | Status window Display line shows capture/encode ms while streaming; no game-fps hitch at 10–15 fps | ☐ | synchronous readback (S7 deferred readback is the no-stall follow-up) |
 | 8 | Two readers at once (purrTTY tab + external terminal) both render; closing one leaves the other streaming | ☐ | multi-reader fan-out |
 | 9 | `cat /sim/display/format` reports the live `WxH@fps enc`; `POST /v1/fs/display/enabled` (HTTP) toggles it too | ☐ | transport parity for the controls |
+
+## Welds / `always_render_iva` / parts — validation pass — **NOT YET RUN**
+
+Prereq: the T6.6 pass (purrTTY tip release). `[control] debug_namespace = true` and
+`telemetry_vessel_parts = true` (both default). Run during a real flight with **two vessels close
+together** (weld one onto the other) and a crewed capsule (an IVA). These surfaces are gatOS-only (no
+ImGui) — drive them over `/sim` (or HTTP/MQTT). See `SPEC_9P_FILESYSTEM.md` §3.4.16 (parts) + §3.7
+(`debug/welds/**`, `always_render_iva`) and `docs/KSA_INTEGRATION_MATRIX.md`.
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | `echo 1 > /sim/debug/always_render_iva` makes interior (IVA) meshes visible from the external camera; `echo 0 …` hides them again | ☐ | global render cheat |
+| 2 | With the cheat **off**, no `gatos.iva` Harmony patches exist (reads `0` at start; first enable logs "patches installed", disable logs "patches removed") | ☐ | dynamic patch lifecycle |
+| 3 | Toggle repeatedly → no residue (interiors hidden after the final `0`); quitting with it **on** restores templates + unpatches cleanly at unload | ☐ | `TeardownGameCheats` |
+| 4 | `ls /sim/vessels/active/parts/` lists the **top-level** parts (no subparts); `cat parts/0/{instance_id,template,is_root,position}` are sane | ☐ | `telemetry_vessel_parts` |
+| 5 | Stage/decouple or edit the active vessel → `parts/` updates within a sample (count-change invalidation); a count-preserving edit updates within 10 s | ☐ | per-vehicle cache invalidation |
+| 6 | `telemetry_vessel_parts=false` (the "Vessel parts" telemetry menu toggle or config) → `/sim/vessels/<id>/parts/` is gone | ☐ | gate |
+| 7 | Pick an anchor `<piid>` from the target's `parts/<n>/instance_id`; `echo "<target> <piid>" > /sim/debug/vessels/<source>/weld_here` welds the source at its current pose (it stays put relative to the target) | ☐ | `weld_here` capture |
+| 8 | The welded source tracks the target **rigidly** through translation, rotation, and **time-warp** (offset/orientation preserved); `cat /sim/debug/welds/count` ≥1 and `/sim/debug/welds/<source>/{target,part,offset,rotation,lock_rotation}` reflect it | ☐ | per-frame driver after `VehicleSolvers.Wait()` |
+| 9 | `echo 0 > /sim/debug/welds/<source>/enabled` suspends tracking (entry kept; source free); `echo 1 …` resumes it | ☐ | suspend/resume |
+| 10 | Staging an **unrelated** part on the target (anchor part survives) does **not** drop the weld; removing the anchor part itself falls back to body-frame anchoring (still not dropped) | ☐ | anchor re-resolution each tick |
+| 11 | `echo 1 > /sim/debug/vessels/<source>/unweld` removes that weld; `echo 1 > /sim/debug/welds/clear` removes all (count → 0) | ☐ | remove / clear |
+| 12 | Weld a vessel to itself, or to one orbiting a different body → `EBUSY`; bad `<piid>`/target → `ENOENT`; bad arity/values → `EINVAL` | ☐ | errnos |
+| 13 | With **no** welds active, the `OnAfterUi` driver is a no-op — no measurable per-frame cost, no `VehicleSolvers.Wait()` | ☐ | `WeldManager.IsEmpty` early-out |
+| 14 | Quit with welds active → clean unload (welds cleared, no exception); reload shows welds are **not** persisted | ☐ | runtime-only; `TeardownGameCheats` |
+
+## thug_life (world-space quad render cheat) — validation pass — **NOT YET RUN**
+
+Prereq: the T6.6 pass (purrTTY tip release). `[control] debug_namespace = true` and
+`telemetry_vessel_parts = true` (both default). Run during a real flight with at least one vessel
+(ideally **several**). gatOS's **first custom GPU rendering** — drive it over `/sim` (or HTTP/MQTT); no
+ImGui. See `SPEC_9P_FILESYSTEM.md` §3.7 (`debug/thug_life/**`), `docs/KSA_INTEGRATION_MATRIX.md` (render
+set), and the ksa skill `quad.md`. **All items pending a live flight.**
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | Pick a `<piid>` from `…/parts/<n>/instance_id`; `echo "<vessel> <piid>" > /sim/debug/thug_life/add` → the sunglasses quad appears on that part; `cat /sim/debug/thug_life/count` ≥1 | ☐ | first entry installs the patch + GPU lazily |
+| 2 | The quad is **correctly oriented** and **depth-tested** — it is occluded by geometry in front of it (NOT painted on top of everything) | ☐ | verifies the `Program.OffScreenPass` pass + **reverse-Z** depth |
+| 3 | Tune `position`/`rotation`/`size` live (`echo "x y z" > …/<id>/position`, etc.) → the quad moves/rotates/resizes immediately; `echo 0 > …/<id>/visible` hides it, `1` shows it | ☐ | per-entry STATE writes (id in `ordinal`) |
+| 4 | Multiple entries on **several vessels** all track their anchors **rigidly** through translation, rotation, **time-warp**, and **camera changes** (zoom/focus switch) | ☐ | per-frame anchor math on the main thread |
+| 5 | Stage/decouple an **unrelated** part on an anchor vessel → the entry **survives**; stage/remove the **anchor part itself** → the quad falls back to the **vehicle body frame** (no crash, no drop) | ☐ | `UpdateThugLife` re-resolution each frame |
+| 6 | Force MSAA **4×** and **8×** → no depth/edge artifacts on the quad | ☐ | `Program.OffScreenPass.SampleCount` must match the scene |
+| 7 | `echo 1 > …/<id>/remove` removes one; `echo 1 > /sim/debug/thug_life/clear` removes all → quads vanish, the render postfix is **removed** and GPU resources **freed** (no per-frame cost when empty) | ☐ | lazy teardown on the last entry |
+| 8 | Repeated add → clear → add cycles → no leak, no double-patch, no Vulkan validation spew; the quad still renders correctly after several cycles | ☐ | dynamic `gatos.thug_life` patch lifecycle |
+| 9 | Quit with entries active → **clean Unload** (no Vulkan validation errors / no exception); reload shows entries are **not** persisted | ☐ | runtime-only; `TeardownGameCheats` dispose order: clear `Active` → unpatch → dispose GPU |
+| 10 | Induce a GPU fault (e.g. an unavailable renderer) → the feature **self-disables** (`Active=false`), logs once, and the rest of gatOS keeps working | ☐ | `EIO` on `add` when the renderer is unavailable |

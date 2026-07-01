@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using gatOS.NineP.Protocol;
 using gatOS.NineP.Vfs;
 using gatOS.SimFs.Commands;
@@ -352,6 +353,7 @@ public static class SimFsTree
                     Line($"{p}/situation", "situation", () => Vessel(vesselId).Situation),
                     Line($"{p}/parent", "parent", () => Vessel(vesselId).ParentBodyName ?? ""),
                     Line($"{p}/controlled", "controlled", () => Formats.Flag(Vessel(vesselId).Controlled)),
+                    Line($"{p}/controllable", "controllable", () => Formats.Flag(Vessel(vesselId).Controllable)),
                     Line($"{p}/com", "com", () => Formats.Vector(Vessel(vesselId).CenterOfMass)),
                     new StaticTextFile("telemetry", Qid($"{p}/telemetry"),
                         () => Formats.VesselTelemetry(_store.Current, Vessel(vesselId)) + "\n"),
@@ -407,6 +409,10 @@ public static class SimFsTree
                             .Select(e => Formats.EncounterLine(e) + "\n"))));
                 if (vessel.Animations.Count > 0)
                     children.Add(AnimationsDir(p, vesselId));
+                // Top-level parts (the welds anchor picker). Present only when the parts stream is on
+                // (telemetry_vessel_parts gates the reader, so the list is empty when off → no dir).
+                if (vessel.Parts.Count > 0)
+                    children.Add(PartsDir(p, vesselId));
                 children.Add(new StreamFile("stream", Qid($"{p}/stream"), _store, vesselId));
 
                 // The vessel control surface (G1/G4): only when a command sink is wired. Per-module
@@ -495,6 +501,34 @@ public static class SimFsTree
                     () => Formats.Flag(Engine(vesselId, index).PropellantAvailable)),
                 FractionControl($"{p}/engines/{index}/min_throttle", "min_throttle", vesselId,
                     "engine.min_throttle", index, () => Formats.Scalar(Engine(vesselId, index).MinThrottle)));
+
+        // ---- top-level parts (the welds anchor picker; read-only, cached by the reader) -----------
+
+        private VfsDirectory PartsDir(string p, string vesselId)
+            => new DelegateDirectory("parts", Qid($"{p}/parts"),
+                () => Vessel(vesselId).Parts
+                    .Select(pt => (VfsNode)PartDir(p, vesselId, pt.Index))
+                    .ToArray(),
+                name => int.TryParse(name, out var index)
+                        && Vessel(vesselId).Parts.Any(pt => pt.Index == index)
+                    ? PartDir(p, vesselId, index)
+                    : null);
+
+        private VfsDirectory PartDir(string p, string vesselId, int index)
+            => DelegateDirectory.Fixed($"{index}", Qid($"{p}/parts/{index}"),
+                // instance_id is the STABLE handle a weld anchors to (Part.Id can collide).
+                Line($"{p}/parts/{index}/instance_id", "instance_id",
+                    () => Formats.UInt(Part(vesselId, index).InstanceId)),
+                Line($"{p}/parts/{index}/id", "id", () => Part(vesselId, index).Id),
+                Line($"{p}/parts/{index}/display_name", "display_name",
+                    () => Part(vesselId, index).DisplayName),
+                Line($"{p}/parts/{index}/template", "template", () => Part(vesselId, index).Template),
+                Line($"{p}/parts/{index}/is_root", "is_root",
+                    () => Formats.Flag(Part(vesselId, index).IsRoot)),
+                Line($"{p}/parts/{index}/subpart_count", "subpart_count",
+                    () => Part(vesselId, index).SubpartCount.ToString(CultureInfo.InvariantCulture)),
+                Line($"{p}/parts/{index}/position", "position",
+                    () => Formats.Vector(Part(vesselId, index).PositionVehicleAsmb)));
 
         // ---- control surface (only when a command sink is wired — KSA_GAME_INTEGRATION_PLAN T1) ----
 
@@ -597,7 +631,222 @@ public static class SimFsTree
                 // Focus AND take control of a vehicle by id (cheat-tier — grants control authority).
                 TokenControlFile.Create("control_vessel", Qid("debug/control_vessel"), sink,
                     () => _store.Current.ActiveVesselId ?? "",
-                    t => new SimCommand(t, "debug.control_vessel", SimCommand.NoOrdinal, 0) { Token = t }));
+                    t => new SimCommand(t, "debug.control_vessel", SimCommand.NoOrdinal, 0) { Token = t }),
+                // Global render hack: force interior (IVA) meshes visible outside the IVA camera.
+                FlagControl("debug/always_render_iva", "always_render_iva", "", "debug.always_render_iva",
+                    SimCommand.NoOrdinal, () => Formats.Flag(_store.Current.AlwaysRenderIva)),
+                // The welds registry view + global ops (per-source weld/unweld live under debug/vessels/<id>/).
+                WeldsDir(),
+                // The thug-life sunglasses registry: add/clear/count + one editable entry per quad.
+                ThugLifeDir());
+        }
+
+        // ---- welds cheat (G-D; gated by debug_namespace) ------------------------------------------
+
+        /// <summary>
+        ///     The welds registry view + global ops. <c>clear</c> drops every weld; <c>count</c> reports
+        ///     how many are active; each active weld appears as a <c>&lt;source_id&gt;/</c> subdir. The
+        ///     per-source create/remove controls live under <c>debug/vessels/&lt;id&gt;/</c> (so the source
+        ///     is path-implied, like teleport).
+        /// </summary>
+        private VfsDirectory WeldsDir()
+        {
+            var sink = _commands!;
+            VfsNode Clear() => new TriggerFile("clear", Qid("debug/welds/clear"), sink,
+                new SimCommand("", "debug.weld_clear", SimCommand.NoOrdinal, 1));
+            VfsNode Count() => Line("debug/welds/count", "count",
+                () => _store.Current.Welds.Count.ToString(CultureInfo.InvariantCulture));
+            return new DelegateDirectory("welds", Qid("debug/welds"),
+                () =>
+                {
+                    var children = new List<VfsNode> { Clear(), Count() };
+                    children.AddRange(SanitizedWelds(_store.Current)
+                        .Select(w => (VfsNode)WeldDir(w.Name, w.Weld.SourceId)));
+                    return children.ToArray();
+                },
+                name => name switch
+                {
+                    "clear" => Clear(),
+                    "count" => Count(),
+                    _ => SanitizedWelds(_store.Current)
+                        .Where(w => w.Name == name)
+                        .Select(w => (VfsNode?)WeldDir(w.Name, w.Weld.SourceId))
+                        .FirstOrDefault(),
+                });
+        }
+
+        private VfsDirectory WeldDir(string sanitized, string sourceId)
+        {
+            var sink = _commands!;
+            var q = $"debug/welds/{sanitized}";
+            return DelegateDirectory.Fixed(sanitized, Qid(q),
+                Line($"{q}/target", "target", () => Weld(sourceId).TargetId),
+                Line($"{q}/part", "part", () => Formats.UInt(Weld(sourceId).PartInstanceId)),
+                Line($"{q}/offset", "offset", () => Formats.Vector(Weld(sourceId).Offset)),
+                Line($"{q}/rotation", "rotation", () => Formats.Vector(Weld(sourceId).Rotation)),
+                Line($"{q}/lock_rotation", "lock_rotation", () => Formats.Flag(Weld(sourceId).LockRotation)),
+                // Suspend/resume this weld without removing it.
+                FlagControl($"{q}/enabled", "enabled", sourceId, "debug.weld_enable", SimCommand.NoOrdinal,
+                    () => Formats.Flag(Weld(sourceId).Enabled)));
+        }
+
+        // ---- thug-life cheat (G-D; gated by debug_namespace) --------------------------------------
+
+        /// <summary>
+        ///     The thug-life sunglasses registry: <c>add</c> creates a new anchored quad (returns nothing —
+        ///     the new entry appears under its id), <c>clear</c> removes all, <c>count</c> reports how many
+        ///     are active, and each active quad is an editable <c>&lt;id&gt;/</c> subdir. Entries are keyed by
+        ///     an integer id — the smallest free slot at create, reused after remove/clear — carried in the
+        ///     command <c>Ordinal</c>.
+        /// </summary>
+        private VfsDirectory ThugLifeDir()
+        {
+            var sink = _commands!;
+            VfsNode Add() => LineControlFile.Create("add", Qid("debug/thug_life/add"), sink,
+                () => "", ParseThugLifeAdd);
+            VfsNode Clear() => new TriggerFile("clear", Qid("debug/thug_life/clear"), sink,
+                new SimCommand("", "debug.thug_life_clear", SimCommand.NoOrdinal, 1));
+            VfsNode Count() => Line("debug/thug_life/count", "count",
+                () => _store.Current.ThugLife.Count.ToString(CultureInfo.InvariantCulture));
+            VfsNode Help() => new StaticTextFile("help", Qid("debug/thug_life/help"), () => ThugLifeHelp);
+            return new DelegateDirectory("thug_life", Qid("debug/thug_life"),
+                () =>
+                {
+                    var children = new List<VfsNode> { Help(), Add(), Clear(), Count() };
+                    children.AddRange(_store.Current.ThugLife
+                        .Select(t => (VfsNode)ThugLifeEntryDir(t.Id)));
+                    return children.ToArray();
+                },
+                name => name switch
+                {
+                    "help" => Help(),
+                    "add" => Add(),
+                    "clear" => Clear(),
+                    "count" => Count(),
+                    _ => int.TryParse(name, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)
+                         && _store.Current.ThugLife.Any(t => t.Id == id)
+                        ? ThugLifeEntryDir(id)
+                        : null,
+                });
+        }
+
+        /// <summary>
+        ///     The console-friendly readme behind <c>/sim/debug/thug_life/help</c> (a static text leaf):
+        ///     how to anchor/tune/remove the sunglasses, with worked examples on the EVA Kitten vehicles
+        ///     (ids <c>Hunter</c>, <c>Polaris</c>, <c>Banjo</c>).
+        /// </summary>
+        private const string ThugLifeHelp =
+            """
+            thug_life — stick "thug life" sunglasses (a flat textured quad) onto a part of a
+            vehicle; it tracks that part every frame. Pure cosmetic cheat. All paths below are
+            under /sim/debug/thug_life/ (needs the debug namespace enabled).
+
+            CREATE
+              echo "<vessel> <part_iid>" > add
+              echo "<vessel> <part_iid> <x> <y> <z> <pitch> <yaw> <roll> <w> <h>" > add
+                part_iid       a part instance_id (see FIND A PART), or 0 = the vehicle frame
+                x y z          offset in the part's local frame, metres   (default 0 0 0)
+                pitch yaw roll rotation, degrees                          (default 0 0 0)
+                w h            quad size, metres                          (default 0.975 0.1875)
+              Each add takes the lowest free id (0, 1, 2, ...) under thug_life/<id>/;
+              remove/clear free ids for reuse, so the numbering tracks what's live.
+
+            FIND A PART
+              ls  /sim/vessels/by-id/Hunter/parts/
+              cat /sim/vessels/by-id/Hunter/parts/0/instance_id    # the stable handle to pass
+              cat /sim/vessels/by-id/Hunter/parts/0/display_name
+
+            TUNE / INSPECT  (per entry <id>; write a file to set it, read it to see the current value)
+              position  "x y z"           3 numbers, metres, in the anchor part's local frame.
+                                          Axes follow the part; "0 0 0" sits right on the anchor.
+                  echo "0 0.25 0" > thug_life/0/position
+              rotation  "pitch yaw roll"  3 numbers, degrees, applied in the part's local frame.
+                  echo "0 0 15"   > thug_life/0/rotation
+              size      "width height"    2 numbers, metres — the quad's size in the world.
+                  echo "1.2 0.24" > thug_life/0/size
+              visible   0 | 1             0 hides the quad (entry kept); 1 shows it.
+                  echo 0          > thug_life/0/visible
+              spec      (read-only)       the full add-compatible line; echo it to add to clone.
+                  cat thug_life/0/spec
+
+            REMOVE
+              echo 1 > thug_life/0/remove              # one entry
+              echo 1 > thug_life/clear                 # every entry
+              cat     thug_life/count                  # how many are active
+
+            EXAMPLES  (EVA Kittens: Hunter, Polaris, Banjo)
+              # Shades on Hunter's root part:
+              iid=$(cat /sim/vessels/by-id/Hunter/parts/0/instance_id)
+              echo "Hunter $iid" > /sim/debug/thug_life/add
+
+              # Shades on Polaris at its body frame, nudged up 0.2 m and made bigger:
+              echo "Polaris 0 0 0.2 0 0 0 0 1.5 0.29" > /sim/debug/thug_life/add
+
+              # Give the whole squad shades (part_iid 0 = vehicle frame):
+              for k in Hunter Polaris Banjo; do echo "$k 0" > /sim/debug/thug_life/add; done
+
+              # Tilt the last one, then take everyone's shades off:
+              echo "0 0 20" > /sim/debug/thug_life/2/rotation
+              echo 1        > /sim/debug/thug_life/clear
+
+            Notes: entries are runtime-only (cleared on mod unload); if the anchor part is staged
+            away it falls back to the vehicle frame. The same actions work over HTTP /v1 and MQTT.
+
+            """;
+
+        private VfsDirectory ThugLifeEntryDir(int id)
+        {
+            var sink = _commands!;
+            var key = id.ToString(CultureInfo.InvariantCulture);
+            var q = $"debug/thug_life/{key}";
+            return DelegateDirectory.Fixed(key, Qid(q),
+                Line($"{q}/vessel", "vessel", () => ThugLife(id).VesselId),
+                Line($"{q}/part", "part", () => Formats.UInt(ThugLife(id).PartInstanceId)),
+                // Live-tunable transform in the part's local frame (registry-keyed: vesselId "" + id in ordinal).
+                VectorControl($"{q}/position", "position", "", "debug.thug_life_position", id, 3,
+                    () => Formats.Vector(ThugLife(id).Position)),
+                VectorControl($"{q}/rotation", "rotation", "", "debug.thug_life_rotation", id, 3,
+                    () => Formats.Vector(ThugLife(id).Rotation)),
+                VectorControl($"{q}/size", "size", "", "debug.thug_life_size", id, 2,
+                    () => $"{Formats.Scalar(ThugLife(id).Width)} {Formats.Scalar(ThugLife(id).Height)}"),
+                FlagControl($"{q}/visible", "visible", "", "debug.thug_life_visible", id,
+                    () => Formats.Flag(ThugLife(id).Visible)),
+                new TriggerFile("remove", Qid($"{q}/remove"), sink,
+                    new SimCommand("", "debug.thug_life_remove", id, 1)),
+                // The full write-compatible spec line (echo to add to recreate as a new id).
+                Line($"{q}/spec", "spec", () => Formats.ThugLifeSpec(ThugLife(id))));
+        }
+
+        /// <summary>
+        ///     Parses a thug-life <c>add</c> line — either <c>"&lt;vessel&gt; &lt;part_iid&gt;"</c> (2 tokens,
+        ///     transform defaulted) or the full 10-token
+        ///     <c>"&lt;vessel&gt; &lt;part_iid&gt; x y z pitch yaw roll width height"</c> — into a
+        ///     <c>debug.thug_life_add</c> command. Returns null (⇒ EINVAL) on any malformed token.
+        /// </summary>
+        private static SimCommand? ParseThugLifeAdd(string line)
+        {
+            var parts = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length is not (2 or 10) || parts[0].Length == 0)
+                return null;
+            // part_iid: a non-negative integer.
+            if (!double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var iid)
+                || !double.IsFinite(iid) || iid < 0 || iid != Math.Floor(iid))
+                return null;
+            // Values: [iid, x, y, z, pitch, yaw, roll, width, height] — defaults for the 2-token form.
+            var values = new double[9];
+            values[0] = iid;
+            values[7] = 0.975; // default width (unscience)
+            values[8] = 0.1875; // default height (keeps the 26:5 texture aspect at a uniform block size)
+            if (parts.Length == 10)
+                for (var i = 0; i < 8; i++) // x y z pitch yaw roll width height
+                    if (!double.TryParse(parts[i + 2], NumberStyles.Float, CultureInfo.InvariantCulture,
+                            out values[i + 1]) || !double.IsFinite(values[i + 1]))
+                        return null;
+            return new SimCommand("", "debug.thug_life_add", SimCommand.NoOrdinal, 0)
+            {
+                Token = parts[0],
+                Values = values,
+            };
         }
 
         private VfsDirectory DebugVesselDir(string sanitized, string vesselId)
@@ -612,6 +861,17 @@ public static class SimFsTree
                     new SimCommand(vesselId, "debug.refill_fuel", SimCommand.NoOrdinal, 1)),
                 new TriggerFile("refill_battery", Qid($"{q}/refill_battery"), sink,
                     new SimCommand(vesselId, "debug.refill_battery", SimCommand.NoOrdinal, 1)),
+                // Weld this vessel (source) to a target part with an explicit pose. Write:
+                //   "<target_id> <part_iid> <x> <y> <z> <pitch> <yaw> <roll> <lock>"
+                // (part_iid 0 = anchor to the target body frame; lock 0/1). Read = the current spec or "".
+                LineControlFile.Create("weld", Qid($"{q}/weld"), sink,
+                    () => WeldReadback(vesselId), line => ParseWeld(vesselId, line)),
+                // Weld at the CURRENT relative pose (captured now). Write: "<target_id> <part_iid> [<lock>]".
+                LineControlFile.Create("weld_here", Qid($"{q}/weld_here"), sink,
+                    () => WeldReadback(vesselId), line => ParseWeldHere(vesselId, line)),
+                // Remove this source's weld.
+                new TriggerFile("unweld", Qid($"{q}/unweld"), sink,
+                    new SimCommand(vesselId, "debug.weld_remove", SimCommand.NoOrdinal, 1)),
             };
             // Per-docking-port cheat knobs (only when the vessel carries docking ports). Non-throwing
             // presence check — Vessel() would throw if the snapshot lost the vessel mid-walk.
@@ -630,10 +890,11 @@ public static class SimFsTree
 
         private VfsDirectory DebugDockingPortDir(string q, string vesselId, int index)
             => DelegateDirectory.Fixed($"{index}", Qid($"{q}/docking/{index}"),
-                // Read shows the live Newton value (stock 7000); write overwrites DockingPort.PushoffForce,
-                // the separation impulse the regular docking/<n>/undock trigger then applies.
-                NumberControl($"{q}/docking/{index}/pushoff_force", "pushoff_force", vesselId,
-                    "debug.docking_pushoff", index, () => Formats.Scalar(Docking(vesselId, index).PushoffForceN)));
+                // Read shows the live impulse value in N·s (stock 7000); write overwrites
+                // DockingPort.PushoffImpulse, the separation impulse the regular docking/<n>/undock
+                // trigger then applies.
+                NumberControl($"{q}/docking/{index}/pushoff_impulse", "pushoff_impulse", vesselId,
+                    "debug.docking_pushoff", index, () => Formats.Scalar(Docking(vesselId, index).PushoffImpulseNs)));
 
         private VfsDirectory AnimationsDir(string p, string vesselId)
         {
@@ -723,15 +984,40 @@ public static class SimFsTree
                     ? LightDir(p, vesselId, idx)
                     : null);
 
+        /// <summary>
+        ///     One light by index: <c>on</c>/<c>brightness</c>/<c>color</c>/<c>inner_angle</c>/<c>outer_angle</c>
+        ///     always, plus the co-located actuate <c>goal</c>/<c>current</c>/<c>state</c> control when the
+        ///     light part carries a deploy animation (<see cref="LightSnapshot.AnimationIndex"/>). The same
+        ///     vessel-level animation is also reachable under <c>animations/&lt;n&gt;/</c>; both route
+        ///     the one <c>animation.goal</c> action by its ordinal (mirrors <see cref="SolarPanelDir"/>).
+        /// </summary>
         private VfsDirectory LightDir(string p, string vesselId, int index)
         {
             var q = $"{p}/lights/{index}";
-            return DelegateDirectory.Fixed($"{index}", Qid(q),
+            var light = Light(vesselId, index);
+            var children = new List<VfsNode>
+            {
                 FlagControl($"{q}/on", "on", vesselId, "light.on", index, () => Formats.Flag(Light(vesselId, index).On)),
                 NumberControl($"{q}/brightness", "brightness", vesselId, "light.brightness", index,
                     () => Formats.Scalar(Light(vesselId, index).Intensity)),
                 VectorControl($"{q}/color", "color", vesselId, "light.color", index, 3,
-                    () => Formats.Vector(Light(vesselId, index).Color)));
+                    () => Formats.Vector(Light(vesselId, index).Color)),
+                NumberControl($"{q}/outer_angle", "outer_angle", vesselId, "light.outer_angle", index,
+                    () => Formats.Scalar(Light(vesselId, index).OuterAngleDeg)),
+                NumberControl($"{q}/inner_angle", "inner_angle", vesselId, "light.inner_angle", index,
+                    () => Formats.Scalar(Light(vesselId, index).InnerAngleDeg)),
+            };
+            if (light.AnimationIndex >= 0)
+            {
+                var animIndex = light.AnimationIndex;
+                children.Add(FractionControl($"{q}/goal", "goal", vesselId, "animation.goal", animIndex,
+                    () => Formats.Scalar(Anim(vesselId, animIndex).GoalFraction)));
+                children.Add(Line($"{q}/current", "current",
+                    () => Formats.Scalar(Anim(vesselId, animIndex).CurrentFraction)));
+                children.Add(Line($"{q}/state", "state", () => Anim(vesselId, animIndex).DeploymentState));
+            }
+
+            return DelegateDirectory.Fixed($"{index}", Qid(q), children.ToArray());
         }
 
         private VfsDirectory DockingDir(string p, string vesselId)
@@ -748,8 +1034,8 @@ public static class SimFsTree
             {
                 Line($"{q}/docked", "docked", () => Formats.Flag(Docking(vesselId, index).Docked)),
                 Line($"{q}/docked_to", "docked_to", () => Docking(vesselId, index).DockedToPart ?? ""),
-                Line($"{q}/pushoff_force", "pushoff_force",
-                    () => Formats.Scalar(Docking(vesselId, index).PushoffForceN)),
+                Line($"{q}/pushoff_impulse", "pushoff_impulse",
+                    () => Formats.Scalar(Docking(vesselId, index).PushoffImpulseNs)),
             };
             // Undock (G4): a one-shot TRIGGER mirroring decoupler fire — write 1 to separate this
             // docked port. Only present when a command sink is wired.
@@ -865,8 +1151,77 @@ public static class SimFsTree
             => Vessel(vesselId).Decouplers.FirstOrDefault(d => d.Index == index)
                ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"decoupler {index} is gone");
 
+        private PartSnapshot Part(string vesselId, int index)
+            => Vessel(vesselId).Parts.FirstOrDefault(pt => pt.Index == index)
+               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"part {index} is gone");
+
+        private WeldSnapshot Weld(string sourceId)
+            => _store.Current.Welds.FirstOrDefault(w => w.SourceId == sourceId)
+               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"weld for '{sourceId}' is gone");
+
+        private ThugLifeSnapshot ThugLife(int id)
+            => _store.Current.ThugLife.FirstOrDefault(t => t.Id == id)
+               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"thug_life entry {id} is gone");
+
+        /// <summary>The current weld spec for a source (write-compatible), or "" when not welded.</summary>
+        private string WeldReadback(string sourceId)
+            => _store.Current.Welds.FirstOrDefault(w => w.SourceId == sourceId) is { } w
+                ? Formats.WeldSpec(w)
+                : "";
+
+        /// <summary>
+        ///     Parses an explicit weld line — <c>"&lt;target&gt; &lt;part_iid&gt; x y z pitch yaw roll lock"</c>
+        ///     (9 tokens) — into a <c>debug.weld_create</c> command. Returns null (⇒ EINVAL) on any
+        ///     malformed token: non-finite number, non-integer/negative <c>part_iid</c>, or <c>lock</c>∉{0,1}.
+        /// </summary>
+        private static SimCommand? ParseWeld(string sourceId, string line)
+        {
+            var parts = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length != 9 || parts[0].Length == 0)
+                return null;
+            var values = new double[8]; // part_iid, x, y, z, pitch, yaw, roll, lock
+            for (var i = 0; i < 8; i++)
+                if (!double.TryParse(parts[i + 1], NumberStyles.Float, CultureInfo.InvariantCulture, out values[i])
+                    || !double.IsFinite(values[i]))
+                    return null;
+            if (values[0] < 0 || values[0] != Math.Floor(values[0]) || values[7] is not (0 or 1))
+                return null;
+            return new SimCommand(sourceId, "debug.weld_create", SimCommand.NoOrdinal, 0)
+            {
+                Token = parts[0],
+                Values = values,
+            };
+        }
+
+        /// <summary>
+        ///     Parses a capture-pose weld line — <c>"&lt;target&gt; &lt;part_iid&gt; [lock]"</c> (2–3 tokens) —
+        ///     into a <c>debug.weld_here</c> command (the offset/rotation are captured on the game thread).
+        /// </summary>
+        private static SimCommand? ParseWeldHere(string sourceId, string line)
+        {
+            var parts = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length is < 2 or > 3 || parts[0].Length == 0)
+                return null;
+            if (!double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var part)
+                || !double.IsFinite(part) || part < 0 || part != Math.Floor(part))
+                return null;
+            var lockRot = 1.0;
+            if (parts.Length == 3
+                && (!double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out lockRot)
+                    || lockRot is not (0 or 1)))
+                return null;
+            return new SimCommand(sourceId, "debug.weld_here", SimCommand.NoOrdinal, 0)
+            {
+                Token = parts[0],
+                Values = [part, lockRot],
+            };
+        }
+
         private List<(string Name, TankSnapshot Tank)> SanitizedTanks(string vesselId)
             => SanitizeNames(Vessel(vesselId).Tanks, t => t.Resource);
+
+        private static List<(string Name, WeldSnapshot Weld)> SanitizedWelds(SimSnapshot snapshot)
+            => SanitizeNames(snapshot.Welds, w => w.SourceId);
 
         // ---- naming / qids -------------------------------------------------------------------
 

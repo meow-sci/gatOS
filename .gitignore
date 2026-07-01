@@ -8,6 +8,12 @@ dist/
 *.db
 # Rust example client (examples/dashboard-rs) build dir
 target/
+# The guest rootfs overlay ships committed userland helpers under usr/local/{bin,sbin}/
+# (e.g. the `tail` poll-mode shim) — keep them tracked despite the broad `bin/` rule above.
+!guest/rootfs-overlay/usr/local/bin/
+!guest/rootfs-overlay/usr/local/bin/**
+!guest/rootfs-overlay/usr/local/sbin/
+!guest/rootfs-overlay/usr/local/sbin/**
 
 # --- IDE / OS ---
 .idea/

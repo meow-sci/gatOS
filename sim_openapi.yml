@@ -620,6 +620,7 @@ components:
         id: { type: string }
         sit: { type: string, description: Situation string. }
         controlled: { type: boolean }
+        controllable: { type: boolean, description: KSA accepts control commands (vessel has a Control Module). Pre-check before commanding; the controlled vessel is always true. }
         parent: { type: string, description: Parent body name (omitted when unknown). }
         pos_cci: { $ref: "#/components/schemas/Vec3Array" }
         pos_ecl: { $ref: "#/components/schemas/Vec3Array" }
@@ -666,7 +667,7 @@ components:
             prod: { type: number, format: double, description: Power produced, W. }
             cons: { type: number, format: double, description: Power consumed, W. }
             battery: { type: number, format: double, description: Battery charge fraction 0..1 (omitted when no battery). }
-      required: [seq, ut, warp, id, sit, controlled, vel, alt, mass, att_q, power]
+      required: [seq, ut, warp, id, sit, controlled, controllable, vel, alt, mass, att_q, power]
 
     Vec3Array:
       type: array
@@ -754,6 +755,7 @@ components:
         velocity_cci: { $ref: "#/components/schemas/Vec3" }
         center_of_mass: { $ref: "#/components/schemas/Vec3" }
         controlled: { type: boolean }
+        controllable: { type: boolean, description: "KSA accepts control commands (Vehicle.IsControllable); gatOS does not gate, relies on KSA's lockout. (4750)" }
         navball:
           oneOf: [{ $ref: "#/components/schemas/NavballSnapshot" }, { type: "null" }]
         throttle_cmd: { type: number, format: double }
@@ -873,10 +875,10 @@ components:
         docked: { type: boolean }
         docked_to_part:
           oneOf: [{ type: string }, { type: "null" }]
-        pushoff_force_n:
+        pushoff_impulse_ns:
           type: number
           format: double
-          description: Separation impulse the port applies on undock, Newtons (stock 7000; live-settable via the debug knob).
+          description: Separation impulse the port applies on undock, newton-seconds N·s (stock 7000; live-settable via the debug knob). KSA 2026.6.9.4750 renamed this from force (N) to impulse (N·s).
       required: [index, docked]
 
     DecouplerSnapshot:

@@ -64,6 +64,7 @@ public sealed class GatOsConfig
             ("sample_rate_hz", "Master /sim sampling rate in Hz (clamped 1..120; retune live in-game)."),
             ("telemetry_enabled", "Master gate for sampling (false = /sim freezes; VM and shells unaffected)."),
             ("telemetry_vessel_detail", "Sample per-vessel detail (navball/environment/per-module); off = core only."),
+            ("telemetry_vessel_parts", "Sample the per-vessel top-level parts list (/sim/.../parts; the welds anchor picker)."),
             ("telemetry_bodies", "Sample the celestial-body catalog + system summary (/sim/bodies, /sim/system)."),
             ("telemetry_events", "Diff snapshots into /sim/events entries (and the event topics/streams)."),
         }),
@@ -153,6 +154,13 @@ public sealed class GatOsConfig
     ///     per-vessel work; <c>false</c> keeps only the core flight telemetry.
     /// </summary>
     public bool TelemetryVesselDetail { get; set; } = true;
+
+    /// <summary>
+    ///     Sample the per-vessel top-level parts list (<c>/sim/vessels/by-id/&lt;id&gt;/parts</c>) — the
+    ///     anchor picker for the welds cheat. Cached per vehicle (rebuilt on part-count change or every
+    ///     10 s); <c>false</c> skips the read and removes the subtree on every transport.
+    /// </summary>
+    public bool TelemetryVesselParts { get; set; } = true;
 
     /// <summary>Sample the celestial-body catalog and system summary (<c>/sim/bodies</c>, <c>/sim/system</c>).</summary>
     public bool TelemetryBodies { get; set; } = true;

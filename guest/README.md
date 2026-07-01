@@ -33,6 +33,15 @@ the host-folders 9p server once at `/mnt`; absent or `0` means no folders are sh
 `init-gatos` also runs `resize2fs /dev/vda` (best-effort) so the root ext4 grows online to fill a
 host-resized overlay — `resize2fs` comes from `e2fsprogs-extra` (busybox has none).
 
+The overlay also ships one userland shim, `usr/local/bin/tail` (ahead of coreutils
+`/usr/bin/tail` in PATH, for interactive shells *and* non-interactive `ssh host cmd`). GNU
+`tail -f` follows via inotify, but the 9p (v9fs) `/sim` mount delivers **no** inotify events for
+the host-side appends that grow `stream`/`events`/`alarm` — so a plain `tail -f
+/sim/vessels/active/stream` would print one line and then hang. The shim forces GNU `tail`'s
+stat-poll fallback (`---disable-inotify`) whenever follow mode is requested and otherwise passes
+straight through, so the documented `tail -f … | jq …` idiom works while keeping every coreutils
+feature. (`build-image.sh` marks `usr/local/{bin,sbin}/*` overlay files executable.)
+
 ## Branding (login banner + `/etc/os-release`)
 
 Three editable source files in `guest/` drive the gatOS look-and-feel; tweak them and rebuild:
