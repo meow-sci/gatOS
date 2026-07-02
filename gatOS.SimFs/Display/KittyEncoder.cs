@@ -10,15 +10,18 @@ namespace gatOS.SimFs.Display;
 /// </summary>
 /// <remarks>
 ///     <para>The frame is wrapped so a plain <c>cat /sim/display/stream</c> renders in place without
-///     disturbing the shell: <c>ESC 7</c> (save cursor) · <c>ESC [H</c> (home) · a Kitty <b>delete</b>
-///     of the (single, fixed) image id · the Kitty image transmit+display · <c>ESC 8</c> (restore
-///     cursor). <c>C=1</c> keeps the cursor from advancing past the image.</para>
-///     <para><b>The fixed-id "video" pattern.</b> Every frame deletes and re-transmits the <i>same</i>
-///     image id — exactly what terminal-doom does and what terminals (purrTTY included) are built to
-///     handle: the terminal keeps a single image/placement and updates its pixels in place. This is
-///     deliberately <b>not</b> a fresh id per frame: a new id each frame makes the terminal allocate a
-///     new GPU texture every frame and churn its image cache, which is abnormal and can destabilize the
-///     host renderer. One id, replaced in place, is the safe, supported path.</para>
+///     disturbing the shell: <c>ESC 7</c> (save cursor) · <c>ESC [H</c> (home) · the Kitty image
+///     transmit+display · <c>ESC 8</c> (restore cursor). <c>C=1</c> keeps the cursor from advancing
+///     past the image.</para>
+///     <para><b>The fixed-id "video" pattern — replace, never delete.</b> Every frame re-transmits the
+///     <i>same</i> image (and placement) id with <b>no delete</b>: a kitty <c>a=T</c> with an existing
+///     id replaces the stored image atomically at commit (the terminal frees the old data itself), so
+///     <b>the previous frame stays visible while the next one loads</b>. This matters because a frame
+///     unit spans several terminal render ticks at real data rates — the earlier delete-then-retransmit
+///     variant left the terminal imageless at almost every tick boundary (the following frame's delete
+///     lands in the same tick as the commit), rendering the stream permanently invisible in-game while
+///     passing unit-atomic headless tests. One fixed id also avoids per-frame GPU texture churn (a
+///     fresh id per frame makes the terminal allocate a new texture every frame).</para>
 ///     <para>The whole sequence is <b>LF-free by construction</b> (base64 has no newline, and every
 ///     escape is ESC-prefixed) so it survives a cooked PTY (<c>ONLCR</c>/<c>OPOST</c> cannot corrupt
 ///     it) with no raw-mode dance required of the consumer.</para>
@@ -58,9 +61,9 @@ public static class KittyEncoder
     /// <param name="encoding">Whether to zlib-deflate the RGBA block.</param>
     /// <param name="imageId">
     ///     The single, fixed Kitty image (and placement) id reused every frame (default
-    ///     <see cref="VideoImageId"/>). The frame deletes this id and re-transmits it, so the terminal
-    ///     updates one image in place — the "video" pattern terminals are built for (see the class
-    ///     remarks for why this is not a fresh id per frame).
+    ///     <see cref="VideoImageId"/>). Each frame re-transmits this id with no delete, so the terminal
+    ///     replaces one image in place at commit and keeps the previous frame visible while the next
+    ///     loads (see the class remarks).
     /// </param>
     /// <returns>The complete, self-contained frame bytes ready to write to a terminal.</returns>
     public static byte[] EncodeFrame(int width, int height, ReadOnlySpan<byte> bgra,
@@ -81,11 +84,9 @@ public static class KittyEncoder
         using var output = new MemoryStream(base64.Length + 256);
         output.Write(SaveCursor);
         output.Write(HomeCursor);
-        // Delete the previous copy of this id, then re-transmit it (terminal-doom's pattern): the
-        // terminal replaces the single stored image in place rather than accumulating a new one. The
-        // delete is harmless on the first frame (the id does not exist yet) and uppercase d=I also frees
-        // the old pixel data, so storage stays at exactly one image.
-        WriteKittyDelete(output, imageId);
+        // No delete: re-transmitting an existing id replaces the stored image at commit (the terminal
+        // frees the old data), keeping the previous frame visible while this one loads — see the class
+        // remarks for why an explicit per-frame delete blanks the stream at real data rates.
         WriteKittyImage(output, width, height, imageId, encoding == DisplayEncoding.RgbaZlib, base64);
         output.Write(RestoreCursor);
         return output.ToArray();
@@ -138,14 +139,6 @@ public static class KittyEncoder
             first = false;
         }
         while (offset < base64.Length);
-    }
-
-    /// <summary>Writes a Kitty delete command for one image id (frees placements + stored data).</summary>
-    private static void WriteKittyDelete(Stream output, int imageId)
-    {
-        output.Write(ApcStart);
-        output.Write(Encoding.ASCII.GetBytes($"a=d,d=I,i={imageId}"));
-        output.Write(ApcEnd);
     }
 
     private static string BuildFirstHeader(int width, int height, int imageId, bool zlib, bool more)

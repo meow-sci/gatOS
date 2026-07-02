@@ -41,7 +41,7 @@ public sealed class KittyEncoderTests
         var (headers, _) = Parse(frame);
 
         Assert.That(headers, Is.Not.Empty);
-        var first = headers.First(h => h.Contains("a=T")); // the transmit header (the delete precedes it)
+        var first = headers.First(h => h.Contains("a=T")); // the transmit header
         Assert.That(first, Does.Contain("a=T"));        // transmit + display
         Assert.That(first, Does.Contain("f=32"));       // 32-bit RGBA
         Assert.That(first, Does.Contain("o=z"));        // zlib
@@ -102,7 +102,6 @@ public sealed class KittyEncoderTests
             DisplayEncoding.Rgba, imageId: 1);
         var (headers, _) = Parse(frame);
 
-        // Only the transmit chunks carry the m= continuation key (the leading delete has none).
         var chunks = headers.Where(h => h.Contains("m=")).ToList();
         Assert.That(chunks, Has.Count.GreaterThanOrEqualTo(2));
         Assert.That(chunks[0], Does.Contain("m=1"));
@@ -116,18 +115,18 @@ public sealed class KittyEncoderTests
             KittyEncoder.EncodeFrame(4, 4, new byte[10], DisplayEncoding.Rgba, 1));
 
     [Test]
-    public void EncodeFrame_DeletesItsOwnIdBeforeRetransmitting()
+    public void EncodeFrame_NeverDeletes_ReplaceOnRetransmitKeepsTheOldFrameVisible()
     {
         var frame = KittyEncoder.EncodeFrame(2, 2, SolidBgra(2, 2, 1, 1, 1), DisplayEncoding.Rgba, imageId: 7);
         var text = Encoding.ASCII.GetString(frame);
 
-        // Every frame deletes the single fixed id (uppercase d=I frees the data too) and re-transmits it,
-        // so the terminal replaces one image in place rather than accumulating per-frame images.
-        var delete = text.IndexOf("d=I,i=7", StringComparison.Ordinal);
-        var transmit = text.IndexOf("a=T", StringComparison.Ordinal);
-        Assert.That(delete, Is.GreaterThanOrEqualTo(0), "frame must delete its own id");
-        Assert.That(transmit, Is.GreaterThanOrEqualTo(0), "frame must transmit its id");
-        Assert.That(delete, Is.LessThan(transmit), "the delete must precede the transmit");
+        // A frame unit spans several terminal render ticks at real data rates, so a per-frame
+        // delete leaves the terminal imageless at almost every tick boundary — the stream renders
+        // invisible. Re-transmitting the fixed id with NO delete replaces the image atomically at
+        // commit (the terminal frees the old data itself), keeping the previous frame visible
+        // while the next one loads.
+        Assert.That(text, Does.Not.Contain("a=d"), "the unit must not delete its id");
+        Assert.That(text, Does.Contain("a=T"), "the unit transmits (and displays) its fixed id");
     }
 
     [Test]

@@ -51,8 +51,11 @@ internal static class KittyStrict
 
     /// <summary>
     ///     Validates one complete <c>KittyEncoder.EncodeFrame</c> unit end to end and returns the
-    ///     decoded pixels. Expects exactly: <c>ESC 7</c> · <c>ESC [H</c> · a delete APC · 1..n
-    ///     transmit APCs · <c>ESC 8</c>, with nothing before, between, or after.
+    ///     decoded pixels. Expects exactly: <c>ESC 7</c> · <c>ESC [H</c> · 1..n transmit APCs ·
+    ///     <c>ESC 8</c>, with nothing before, between, or after. Deliberately <b>no delete APC</b>:
+    ///     the video pattern replaces the fixed id on re-transmit so the previous frame stays visible
+    ///     while the next loads — a per-frame delete blanks the stream at real data rates (a unit
+    ///     spans several terminal render ticks; see KittyEncoder remarks).
     /// </summary>
     public static Frame ValidateFrame(byte[] frame)
     {
@@ -70,19 +73,14 @@ internal static class KittyStrict
         Expect(frame, ref pos, [Esc, (byte)'8'], "restore-cursor ESC 8");
         if (pos != frame.Length)
             throw new KittyFormatException($"{frame.Length - pos} trailing bytes after ESC 8 (offset {pos})");
-        if (units.Count < 2)
-            throw new KittyFormatException($"expected a delete APC + ≥1 transmit APC, got {units.Count} unit(s)");
+        if (units.Count < 1)
+            throw new KittyFormatException("expected ≥1 transmit APC, got none");
+        if (units.Any(u => u.Get("a") == "d"))
+            throw new KittyFormatException(
+                "the unit must not delete: a per-frame delete blanks the stream mid-transmission");
 
-        // Unit 0: the delete of the fixed video id (a=d, d=I frees stored data too).
-        var delete = units[0];
-        if (delete.Get("a") != "d" || delete.Get("d") != "I")
-            throw new KittyFormatException($"first APC must be the delete (a=d,d=I…), got '{delete.Control}'");
-        if (delete.Payload.Length != 0)
-            throw new KittyFormatException("the delete APC must carry no payload");
-        var imageId = ParseInt(delete, "i");
-
-        // Unit 1: the transmit header carries every control key.
-        var head = units[1];
+        // Unit 0: the transmit header carries every control key.
+        var head = units[0];
         if (head.Get("a") != "T")
             throw new KittyFormatException($"transmit header must be a=T, got '{head.Control}'");
         if (head.Get("q") != "2")
@@ -91,9 +89,10 @@ internal static class KittyStrict
             throw new KittyFormatException($"pixel format must be f=32 (RGBA), got f={head.Get("f")}");
         if (head.Get("C") != "1")
             throw new KittyFormatException("transmit must set C=1 (don't move the cursor)");
-        if (ParseInt(head, "i") != imageId || ParseInt(head, "p") != imageId)
+        var imageId = ParseInt(head, "i");
+        if (ParseInt(head, "p") != imageId)
             throw new KittyFormatException(
-                $"transmit i/p ({head.Get("i")}/{head.Get("p")}) must match the deleted id ({imageId})");
+                $"transmit placement id p={head.Get("p")} must match the image id i={imageId}");
         var zlib = head.Get("o") is { } o && (o == "z"
             ? true
             : throw new KittyFormatException($"unknown compression o={o}"));
@@ -104,7 +103,7 @@ internal static class KittyStrict
 
         // m= sequencing across the transmit chunks; continuations must carry ONLY m (kitty spec:
         // subsequent chunks' control data "must contain only the m key").
-        var chunks = units.Skip(1).ToList();
+        var chunks = units;
         for (var c = 0; c < chunks.Count; c++)
         {
             var expectMore = c < chunks.Count - 1 ? "1" : "0";

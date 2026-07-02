@@ -97,8 +97,8 @@ KSA render thread (GameMod/Game/Ksa/, [KsaAnchor])       background worker (gatO
 │ Harmony transpiler in RenderGame (before End) │        │ KittyEncoder                                 │
 │   if !Enabled || !HasReaders → return         │        │   BGRA→RGBA swizzle                           │
 │   throttle to DisplaySettings.Fps             │        │   zlib compress (System.IO.Compression)      │
-│   src = OffscreenTarget.ColorImage  (A)       │  ring  │   Kitty APC frame: ONE fixed id, deleted +   │
-│   record into the engine's OWN command buffer:│ (drop- │     re-transmitted each frame (video case),  │
+│   src = OffscreenTarget.ColorImage  (A)       │  ring  │   Kitty APC frame: ONE fixed id, REPLACED     │
+│   record into the engine's OWN command buffer:│ (drop- │     by re-transmit each frame (NO delete),   │
 │     CopyImageToBuffer src → staging[idx](full)│  old)  │     chunked base64, ESC7/ESC[H … ESC8, LF-free│
 │     restore src → ShaderReadOnly              │        │   → DisplayStreamFile.Publish(frameBytes)    │
 │   deferred: map staging[idx] on its NEXT      │        │                                              │
@@ -427,7 +427,20 @@ libghostty-vt terminal (`KittyScreenStreamAssetTests`):
    stored payload (`KittyPlacementCursor.HashImageData`, a purrtty binding addition) + eviction of
    stale ids (purrtty gotcha 33). Mandatory for the raw default — every frame is now equal-length.
 
-Remaining: the in-game live-video pass (S6/S9) with both fixed mods deployed —
+**Finding 3 (2026-07-02, first live in-game run):** with both fixes deployed the stream no longer
+crashed, escape sequences flowed (the cursor homed per `ESC[H`), viu/chafa rendered kitty images
+pixel-perfect in the same tab — **but our video stayed invisible.** Cause: the per-frame
+**delete-then-retransmit** unit. A 320×180 raw frame unit is ~410 KB and spans several purrTTY render
+ticks, and the next frame's delete follows the previous commit inside the same SSH burst — so at
+virtually every `BuildFrame` sampling instant the state is "image deleted, transmission in progress"
+⇒ zero placements ⇒ permanently blank (while unit-atomic headless tests passed). Fix: **no delete** —
+a kitty `a=T` with an existing id *replaces* the image atomically at commit (ghostty
+`ImageStorage.addImage` frees the old data; chunked loads accumulate in a separate slot), so the
+previous frame stays visible while the next loads. `KittyEncoder` now emits transmit-only units;
+pinned by purrTTY's `MidTransmission_ThePreviousFrameStaysVisible` / `DeleteFreeRetransmit_…` tests
+(real frames, half-fed units) and gatOS's `KittyStrict` (rejects any `a=d` in a unit).
+
+Remaining: re-run the in-game live pass (S6/S9) with the delete-free gatOS deployed —
 `echo 1 > /sim/display/enabled && cat /sim/display/stream` in a purrTTY tab should now show live video.
 
 ---

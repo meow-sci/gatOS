@@ -48,7 +48,7 @@ public sealed class KittyDumpPairTests
 
             TestContext.Out.WriteLine(
                 $"{name}: OK — {width}x{height}, {(decoded.Zlib ? "rgba-zlib" : "rgba")}, "
-                + $"{decoded.Units.Count - 1} transmit chunk(s)");
+                + $"{decoded.Units.Count} transmit chunk(s)");
         }
     }
 }
