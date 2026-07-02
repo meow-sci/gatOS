@@ -128,7 +128,17 @@ public sealed class DisplaySurface : IDisposable
     private int _readers;
     private int _parkedWaiters; // readers currently awaiting the next frame (demand pacing, P3)
     private long _encodeSkips;
+    private long _staticSkips;
     private Task? _worker;
+
+    // Static-frame suppression (GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md GP6): the previous
+    // encoded frame's raw pixels, kept for an exact compare. Identical consecutive frames are
+    // coalesced — no encode, no wire, no guest/terminal work — with the ~1 s keyframe cadence as
+    // the heartbeat (late joiners and lost placements still recover within a keyframe interval).
+    // Worker-thread only.
+    private byte[] _previousPixels = [];
+    private int _previousWidth;
+    private int _previousHeight;
 
     private volatile string? _pngDumpDirectory;
     private long _lastPngWriteTs; // worker-thread only (the 1 Hz dump throttle)
@@ -157,6 +167,13 @@ public sealed class DisplaySurface : IDisposable
     ///     actual consumption when the transport saturates. Shown in the status window.
     /// </summary>
     public long EncodeSkips => Interlocked.Read(ref _encodeSkips);
+
+    /// <summary>
+    ///     Captured frames dropped because their pixels were byte-identical to the previous frame
+    ///     (static-frame suppression, GP6): a still scene costs no encode and no wire beyond the
+    ///     ~1 s keyframe heartbeat. Shown in the status window.
+    /// </summary>
+    public long StaticSkips => Interlocked.Read(ref _staticSkips);
 
     /// <summary>
     ///     The most recently encoded frame (starts at <see cref="EncodedFrame.None"/>). Reading its
@@ -345,10 +362,37 @@ public sealed class DisplaySurface : IDisposable
                     continue;
                 }
 
+                var encoding = Settings.Encoding;
+
+                // Static-frame suppression (GP6): a frame byte-identical to the previous one is
+                // coalesced — the terminal keeps showing the stored image, so a still scene costs
+                // no encode/wire/guest/parse work at all. Peeked (not consumed) keyframe conditions
+                // exempt the ~1 s heartbeat, a pending reader-forced keyframe, and an encoding
+                // change, so late joiners and lost placements still recover within a keyframe.
+                // Exact equality (SIMD SequenceEqual), so there is no hash-collision caveat.
+                var keyframeDue = Volatile.Read(ref _forceKeyframe) == 1
+                                  || width != _kfWidth || height != _kfHeight || encoding != _kfEncoding
+                                  || Stopwatch.GetTimestamp() - _lastKeyframeTs >= KeyframeIntervalTicks;
+                if (!keyframeDue && _current.Sequence > 0
+                    && width == _previousWidth && height == _previousHeight
+                    && _previousPixels.AsSpan(0, length).SequenceEqual(work.AsSpan(0, length)))
+                {
+                    Interlocked.Increment(ref _staticSkips);
+                    continue;
+                }
+
+                // Remember this frame for the next compare (only frames that reach the encoder —
+                // demand-paced drops above never update the reference, which can only produce a
+                // compare-unequal, never a false suppression).
+                if (_previousPixels.Length < length)
+                    _previousPixels = new byte[length];
+                work.AsSpan(0, length).CopyTo(_previousPixels);
+                _previousWidth = width;
+                _previousHeight = height;
+
                 // One fixed image id, re-transmitted each frame with no delete (the terminal replaces
                 // the image in place — see KittyEncoder). Keyframe (a=T) only when a placement must be
                 // [re]created; steady state is a=t replace frames (no per-frame placement churn).
-                var encoding = Settings.Encoding;
                 var display = Interlocked.Exchange(ref _forceKeyframe, 0) == 1
                               || width != _kfWidth || height != _kfHeight || encoding != _kfEncoding
                               || Stopwatch.GetTimestamp() - _lastKeyframeTs >= KeyframeIntervalTicks;

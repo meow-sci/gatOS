@@ -46,12 +46,15 @@ public sealed class ZeroCopyReadTests
             for (var warm = 0; warm < 8; warm++) // JIT + any IO-layer warmup
                 await handle.ReadAsync(0, destination.AsMemory(), CancellationToken.None);
 
-            var before = GC.GetAllocatedBytesForCurrentThread();
+            // Process-wide precise measurement: async file IO may hop threads, so a thread-local
+            // counter would race. The margin is still decisive — the old path allocated the full
+            // 64 KiB read size per call (1 MiB over 16 reads; LOH at msize 512 KiB).
+            var before = GC.GetTotalAllocatedBytes(precise: true);
             for (var i = 0; i < 16; i++)
                 await handle.ReadAsync((ulong)(i * 1024), destination.AsMemory(), CancellationToken.None);
-            var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            var allocated = GC.GetTotalAllocatedBytes(precise: true) - before;
 
-            Assert.That(allocated, Is.LessThan(16 * 1024),
+            Assert.That(allocated, Is.LessThan(256 * 1024),
                 $"16 zero-copy host reads allocated {allocated} B — the old path allocated the full "
                 + "read size per Tread (LOH at msize 512 KiB)");
         }

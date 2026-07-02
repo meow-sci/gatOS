@@ -85,6 +85,14 @@ internal sealed class FrameCapture : IDisposable
     private long _lastCaptureTs; // Stopwatch ticks of the last recorded capture (FPS throttle)
     private bool _disposed;
 
+    // Reused single-call parameter arrays (GP6): the record helpers run per captured frame on the
+    // render thread, and the Vulkan wrappers consume these synchronously during command recording —
+    // mutating cached arrays replaces five fresh allocations per capture.
+    private readonly ImageTransition[] _transitionPair = new ImageTransition[2];
+    private readonly ImageTransition[] _transitionOne = new ImageTransition[1];
+    private readonly VkImageBlit[] _blitOne = new VkImageBlit[1];
+    private readonly VkBufferImageCopy[] _regionOne = new VkBufferImageCopy[1];
+
     // Trace breadcrumbs (the GPU work runs in native code; a fault there is a process crash, not a
     // managed exception, so the last line written localizes the faulting step).
     private TextWriter? _trace;
@@ -136,6 +144,13 @@ internal sealed class FrameCapture : IDisposable
         {
             _mode = DetectMode(renderer.PhysicalDevice, offscreen.ColorImage.Format);
             Trace($"capture mode: {_mode} (offscreen format {offscreen.ColorImage.Format})");
+            // Surface the decision in the main log (GP6): a driver silently missing blit support
+            // would otherwise eat 30-80 ms per captured frame on the render thread unnoticed.
+            if (_mode == CaptureMode.CpuFullRes)
+                ModLog.Log.Warn("gatOS display capture: GPU blit unsupported by this driver/format — "
+                                + "falling back to the slow CPU convert path.");
+            else
+                ModLog.Log.Info("gatOS display capture: GPU blit downscale active.");
         }
 
         // Clamp the downscale target to the source so we only ever shrink.
@@ -325,26 +340,26 @@ internal sealed class FrameCapture : IDisposable
     /// </summary>
     private void RecordBlit(CommandBuffer cb, int idx, VkImage srcImage, int srcW, int srcH, int dstW, int dstH)
     {
-        cb.TransitionImages2(new[]
-        {
-            new ImageTransition(srcImage, ImageBarrierInfo.Presets.SampledReadVfc, ImageBarrierInfo.Presets.TransferSrc),
-            new ImageTransition(_scratch[idx].VkImage, ImageBarrierInfo.Presets.Undefined, ImageBarrierInfo.Presets.TransferDst),
-        });
+        _transitionPair[0] = new ImageTransition(srcImage,
+            ImageBarrierInfo.Presets.SampledReadVfc, ImageBarrierInfo.Presets.TransferSrc);
+        _transitionPair[1] = new ImageTransition(_scratch[idx].VkImage,
+            ImageBarrierInfo.Presets.Undefined, ImageBarrierInfo.Presets.TransferDst);
+        cb.TransitionImages2(_transitionPair);
 
         var layers = new VkImageSubresourceLayers
             { AspectMask = VkImageAspectFlags.ColorBit, MipLevel = 0, BaseArrayLayer = 0, LayerCount = 1 };
         var blit = new VkImageBlit { SrcSubresource = layers, DstSubresource = layers };
         blit.SrcOffsets[1] = new VkOffset3D { X = srcW, Y = srcH, Z = 1 };
         blit.DstOffsets[1] = new VkOffset3D { X = dstW, Y = dstH, Z = 1 };
+        _blitOne[0] = blit;
         cb.BlitImage(srcImage, VkImageLayout.TransferSrcOptimal,
-            _scratch[idx].VkImage, VkImageLayout.TransferDstOptimal, new[] { blit }, VkFilter.Linear);
+            _scratch[idx].VkImage, VkImageLayout.TransferDstOptimal, _blitOne, VkFilter.Linear);
 
-        cb.TransitionImages2(new[]
-        {
-            new ImageTransition(_scratch[idx].VkImage, ImageBarrierInfo.Presets.TransferDst, ImageBarrierInfo.Presets.TransferSrc),
-        });
+        _transitionOne[0] = new ImageTransition(_scratch[idx].VkImage,
+            ImageBarrierInfo.Presets.TransferDst, ImageBarrierInfo.Presets.TransferSrc);
+        cb.TransitionImages2(_transitionOne);
 
-        var region = new VkBufferImageCopy
+        _regionOne[0] = new VkBufferImageCopy
         {
             BufferOffset = ByteSize.Zero,
             BufferRowLength = 0,
@@ -354,14 +369,13 @@ internal sealed class FrameCapture : IDisposable
             ImageExtent = new VkExtent3D { Width = dstW, Height = dstH, Depth = 1 },
         };
         cb.CopyImageToBuffer(_scratch[idx].VkImage, VkImageLayout.TransferSrcOptimal,
-            _staging[idx].VkBuffer, new[] { region });
+            _staging[idx].VkBuffer, _regionOne);
 
         // offscreen: TransferSrc -> SampledReadVfc (restore the engine's expected end-of-frame layout).
         // The scratch stays TransferSrc; its next use discards via the Undefined transition above.
-        cb.TransitionImages2(new[]
-        {
-            new ImageTransition(srcImage, ImageBarrierInfo.Presets.TransferSrc, ImageBarrierInfo.Presets.SampledReadVfc),
-        });
+        _transitionOne[0] = new ImageTransition(srcImage,
+            ImageBarrierInfo.Presets.TransferSrc, ImageBarrierInfo.Presets.SampledReadVfc);
+        cb.TransitionImages2(_transitionOne);
     }
 
     /// <summary>
@@ -370,12 +384,11 @@ internal sealed class FrameCapture : IDisposable
     /// </summary>
     private void RecordFullResCopy(CommandBuffer cb, int idx, VkImage srcImage, int srcW, int srcH)
     {
-        cb.TransitionImages2(new[]
-        {
-            new ImageTransition(srcImage, ImageBarrierInfo.Presets.SampledReadVfc, ImageBarrierInfo.Presets.TransferSrc),
-        });
+        _transitionOne[0] = new ImageTransition(srcImage,
+            ImageBarrierInfo.Presets.SampledReadVfc, ImageBarrierInfo.Presets.TransferSrc);
+        cb.TransitionImages2(_transitionOne);
 
-        var region = new VkBufferImageCopy
+        _regionOne[0] = new VkBufferImageCopy
         {
             BufferOffset = ByteSize.Zero,
             BufferRowLength = 0,
@@ -385,12 +398,11 @@ internal sealed class FrameCapture : IDisposable
             ImageOffset = new VkOffset3D { X = 0, Y = 0, Z = 0 },
             ImageExtent = new VkExtent3D { Width = srcW, Height = srcH, Depth = 1 },
         };
-        cb.CopyImageToBuffer(srcImage, VkImageLayout.TransferSrcOptimal, _staging[idx].VkBuffer, new[] { region });
+        cb.CopyImageToBuffer(srcImage, VkImageLayout.TransferSrcOptimal, _staging[idx].VkBuffer, _regionOne);
 
-        cb.TransitionImages2(new[]
-        {
-            new ImageTransition(srcImage, ImageBarrierInfo.Presets.TransferSrc, ImageBarrierInfo.Presets.SampledReadVfc),
-        });
+        _transitionOne[0] = new ImageTransition(srcImage,
+            ImageBarrierInfo.Presets.TransferSrc, ImageBarrierInfo.Presets.SampledReadVfc);
+        cb.TransitionImages2(_transitionOne);
     }
 
     /// <summary>

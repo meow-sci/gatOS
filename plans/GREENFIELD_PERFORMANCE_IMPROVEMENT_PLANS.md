@@ -1,6 +1,12 @@
 # GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md — the whole-mod efficiency audit
 
-**Status: IN PROGRESS.** Landed 2026-07-02: **GP5** (SSH output path — the internal
+**Status: IN PROGRESS.** Landed 2026-07-02: **GP6** (display — static-frame suppression on the
+encode worker: byte-identical consecutive captures are coalesced via an exact SIMD compare unless a
+keyframe is due, so a still scene costs no encode/wire/guest/terminal work between the ≤1 s
+keyframe heartbeats; a `StaticSkips` counter joins the status window; `FrameCapture` reuses its
+Vulkan transition/blit/region parameter arrays per captured frame and logs the GpuBlit-vs-CpuFullRes
+decision to the main log once; SPEC §3.8 + STREAM_PLAN addenda in lockstep, pinned by a coalescing
+test), **GP5** (SSH output path — the internal
 `IShellChannel.DataReceived` event now carries a `ReadOnlyMemory<byte>` view of the reused 64 KiB
 pump buffer instead of a right-sized array per chunk; zero per-chunk allocation by construction.
 Safe because the whole consumption chain — session → purrTTY PTY bridge → `Surface.Write`'s

@@ -56,7 +56,8 @@ public sealed class DisplayStreamFileTests
         Assert.That(await Task.WhenAny(parked, Task.Delay(150)), Is.Not.SameAs(parked),
             "must block for the next frame, never return an empty (EOF) read");
 
-        _surface.SubmitFrame(4, 4, Solid(4, 4));
+        // Different pixels — an identical frame is coalesced (GP6 static suppression).
+        _surface.SubmitFrame(4, 4, Solid(4, 4, 42));
         var next = await parked.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.That(next.Length, Is.GreaterThan(0));
         Assert.That(next.Span[0], Is.EqualTo((byte)0x1b));
@@ -91,10 +92,10 @@ public sealed class DisplayStreamFileTests
         Assert.That(data[0], Is.EqualTo((byte)0x1b));
     }
 
-    private static byte[] Solid(int w, int h)
+    private static byte[] Solid(int w, int h, byte value = 200)
     {
         var px = new byte[w * h * 4];
-        Array.Fill(px, (byte)200);
+        Array.Fill(px, value);
         return px;
     }
 }

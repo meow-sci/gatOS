@@ -56,7 +56,8 @@ public sealed class DisplaySurfaceTests
 
         for (var i = 0; i < 5; i++)
         {
-            _surface.SubmitFrame(4, 4, Solid(4, 4));
+            // Varying content — identical consecutive frames are coalesced (GP6).
+            _surface.SubmitFrame(4, 4, Solid(4, 4, (byte)(i + 1)));
             // Let the worker advance the sequence.
             await WaitForSequenceBeyondAsync(first.Sequence + i, 5);
         }
@@ -75,8 +76,9 @@ public sealed class DisplaySurfaceTests
         Assert.That(KittyStrict.ValidateFrame(first.Memory.ToArray()).Display, Is.True,
             "the first frame must be a keyframe (creates the placement)");
 
-        // Steady state replaces in place (a=t) — no per-frame placement churn.
-        _surface.SubmitFrame(4, 4, Solid(4, 4));
+        // Steady state replaces in place (a=t) — no per-frame placement churn. (Different pixels —
+        // an identical frame would be coalesced, GP6.)
+        _surface.SubmitFrame(4, 4, Solid(4, 4, 200));
         var second = await _surface.WaitForNextEncodedAsync(first.Sequence, Cancel(5)).AsTask();
         Assert.That(KittyStrict.ValidateFrame(second.Memory.ToArray()).Display, Is.False,
             "steady-state frames must be a=t replaces");
@@ -88,7 +90,7 @@ public sealed class DisplaySurfaceTests
         try
         {
             var third = _surface.WaitForNextEncodedAsync(second.Sequence, Cancel(5)).AsTask();
-            _surface.SubmitFrame(4, 4, Solid(4, 4));
+            _surface.SubmitFrame(4, 4, Solid(4, 4, 50));
             Assert.That(KittyStrict.ValidateFrame((await third).Memory.ToArray()).Display, Is.True,
                 "a new reader must get a keyframe immediately");
         }
@@ -115,9 +117,9 @@ public sealed class DisplaySurfaceTests
             Assert.That(_surface.Current.Sequence, Is.EqualTo(first.Sequence),
                 "a frame no reader awaits must not be encoded (drop-old would discard it anyway)");
 
-            // A parked reader resumes the flow on the next capture.
+            // A parked reader resumes the flow on the next (changed — GP6) capture.
             var next = _surface.WaitForNextEncodedAsync(first.Sequence, Cancel(5)).AsTask(); // parks
-            _surface.SubmitFrame(4, 4, Solid(4, 4));
+            _surface.SubmitFrame(4, 4, Solid(4, 4, 7));
             Assert.That((await next).Sequence, Is.GreaterThan(first.Sequence));
         }
         finally
@@ -138,6 +140,25 @@ public sealed class DisplaySurfaceTests
         var decoded = KittyStrict.ValidateFrame(resized.Memory.ToArray());
         Assert.That((decoded.Width, decoded.Height), Is.EqualTo((6, 4)));
         Assert.That(decoded.Display, Is.True, "a geometry change must keyframe");
+    }
+
+    [Test]
+    public async Task IdenticalFrames_AreCoalesced_UntilSomethingChanges()
+    {
+        // GP6 static-frame suppression: a byte-identical capture publishes nothing (the terminal
+        // keeps showing the stored image; the ~1 s keyframe cadence remains the heartbeat).
+        _surface.SubmitFrame(4, 4, Solid(4, 4));
+        var first = await _surface.WaitForNextEncodedAsync(0, Cancel(5)).AsTask();
+
+        var parked = _surface.WaitForNextEncodedAsync(first.Sequence, Cancel(10)).AsTask();
+        _surface.SubmitFrame(4, 4, Solid(4, 4)); // identical — must be coalesced
+        await WaitForAsync(() => _surface.StaticSkips >= 1, 5);
+        Assert.That(_surface.StaticSkips, Is.GreaterThanOrEqualTo(1));
+        Assert.That(_surface.Current.Sequence, Is.EqualTo(first.Sequence),
+            "an identical frame must not advance the feed");
+
+        _surface.SubmitFrame(4, 4, Solid(4, 4, 99)); // changed — flows immediately
+        Assert.That((await parked).Sequence, Is.GreaterThan(first.Sequence));
     }
 
     [Test]
@@ -173,10 +194,10 @@ public sealed class DisplaySurfaceTests
         }
     }
 
-    private static byte[] Solid(int w, int h)
+    private static byte[] Solid(int w, int h, byte value = 128)
     {
         var px = new byte[w * h * 4];
-        Array.Fill(px, (byte)128);
+        Array.Fill(px, value);
         return px;
     }
 

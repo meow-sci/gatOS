@@ -802,7 +802,7 @@ public sealed partial class Mod
             if (cap.Count > 0)
                 ImGui.Text($"  capture avg {cap.AvgMicros / 1000:F3} ms, max {cap.MaxMicros / 1000:F3} ms; "
                            + $"encode avg {disp.EncodeStat.AvgMicros / 1000:F3} ms; "
-                           + $"skipped {disp.EncodeSkips}");
+                           + $"skipped {disp.EncodeSkips} demand + {disp.StaticSkips} static");
         }
 
         if (_simServer is { } simNineP && simNineP.Stats.TreadCount > 0)

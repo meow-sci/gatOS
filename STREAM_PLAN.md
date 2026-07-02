@@ -455,6 +455,11 @@ addPlacement` overwrites the old placement without `untrackPin`; the eviction pa
 which under `q=2` eventually fails silently and blanks the video — perf plan §2 R3. `KittyStrict`
 validates both forms (and rejects placement keys on `a=t`); SPEC §3.8 documents the two-form stream.
 
+**Static-frame suppression addendum (2026-07-02, GREENFIELD plan GP6):** byte-identical consecutive
+captures are coalesced on the encode worker (exact SIMD compare against the previous frame — no
+hash-collision caveat) unless a keyframe is due, so a still scene costs no encode, no wire, and no
+guest/terminal work between the ≤1 s keyframe heartbeats. SPEC §3.8 carries the one-sentence note.
+
 ---
 
 ### Appendix — key source anchors (verified)
