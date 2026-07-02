@@ -78,8 +78,20 @@ public static class VfsScan
     public static async ValueTask<string> ReadTextAsync(VfsFile file, CancellationToken ct = default)
     {
         using var handle = file.Open();
+        var first = await handle.ReadAsync(0, 8192, ct).ConfigureAwait(false);
+        if (first.IsEmpty)
+            return "";
+        var second = await handle.ReadAsync((ulong)first.Length, 8192, ct).ConfigureAwait(false);
+        // Fast path (the overwhelmingly common case — scalar leaves are tiny): the whole value came
+        // in one chunk; decode straight from the view, trimming the newline in the byte domain —
+        // no MemoryStream, no second (TrimEnd) string.
+        if (second.IsEmpty)
+            return DecodeTrimmed(first.Span);
+
         using var buffer = new MemoryStream();
-        ulong offset = 0;
+        buffer.Write(first.Span);
+        buffer.Write(second.Span);
+        var offset = (ulong)(first.Length + second.Length);
         while (true)
         {
             var chunk = await handle.ReadAsync(offset, 8192, ct).ConfigureAwait(false);
@@ -89,7 +101,14 @@ public static class VfsScan
             offset += (ulong)chunk.Length;
         }
 
-        return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length).TrimEnd('\n');
+        return DecodeTrimmed(buffer.GetBuffer().AsSpan(0, (int)buffer.Length));
+    }
+
+    private static string DecodeTrimmed(ReadOnlySpan<byte> utf8)
+    {
+        while (utf8.Length > 0 && utf8[^1] == (byte)'\n')
+            utf8 = utf8[..^1];
+        return Encoding.UTF8.GetString(utf8);
     }
 
     /// <summary>

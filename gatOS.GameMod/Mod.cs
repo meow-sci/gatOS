@@ -530,7 +530,7 @@ public sealed partial class Mod
         try
         {
             var broker = new SimMqttBroker(store, _commandQueue, SimTransportsStatus,
-                _config.MqttFieldTopics ? _simRoot : null, _config.FieldFeedHz);
+                _config.MqttFieldTopics ? _simRoot : null, _config.FieldFeedHz, _config.MqttPublishHz);
             broker.StartAsync(_config.MqttPreferredPort).GetAwaiter().GetResult();
             _mqttBroker = broker;
             ModLog.Log.Info($"gatOS MQTT broker listening on 127.0.0.1:{broker.Port} "

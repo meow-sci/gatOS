@@ -1,6 +1,13 @@
 # GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md — the whole-mod efficiency audit
 
-**Status: IN PROGRESS.** Landed 2026-07-02: **GP1** (memoized read surface — vessel/body/debug
+**Status: IN PROGRESS.** Landed 2026-07-02: **GP2** (MQTT pumps — subscription-aware gating via
+MQTTnet subscribe/unsubscribe events + a flattened filter array with force-republish on subscribe;
+lazy topic payloads so unmatched topics are never serialized; reference-identity delta for
+`system`/`bodies` riding GP3's reference-reuse; `mqtt_publish_hz` cadence cap (default 0 = every
+snapshot, SPEC/toml lockstep); the per-iteration linked-CTS `WaitForWorkAsync` dance replaced with a
+persistent wake waiter; field pump dictionary reuse + interned topic strings + per-leaf gating +
+the `VfsScan.ReadTextAsync` single-chunk fast path; vanished vessels' retained topics tombstoned —
+pinned by two new broker tests), **GP1** (memoized read surface — vessel/body/debug
 subtrees built once and cached (`CreateVesselDir` + `IndexedDir` + `NodeKey` caches with roster
 sweep), per-roster sanitized-name memos, `SnapshotTextFile` leaves formatted once per publish,
 `SnapshotIndex` per-snapshot vessel index + shared stream lines across fids, closure-free indexed

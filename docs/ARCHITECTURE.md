@@ -116,12 +116,17 @@ core flight telemetry.
 
 ### Consumer cost
 
-- **9p and HTTP are lazy**: a snapshot costs nothing until a guest reads.
-- **MQTT is the one eager pusher**: gated on `ConnectedClients` + changed-only (byte-compare vs
-  last payload — so static topics like `system`/`bodies` and a paused sim go quiet after one
-  publish), serializes straight to UTF-8 (no intermediate string).
+- **9p and HTTP are lazy**: a snapshot costs nothing until a guest reads (and since GP1, reads hit
+  per-snapshot memoized formatting — N readers of one value = one format).
+- **MQTT is the one eager pusher**, now triply gated (GP2): on `ConnectedClients`, on **live
+  subscription filters** (a topic nobody subscribed to is neither serialized nor injected; a new
+  subscription forces its retained baseline within one cycle), and changed-only (reference-identity
+  for `system`/`bodies` — the sampler re-publishes unchanged ones by reference — byte-compare for
+  the rest). `mqtt_publish_hz` (default 0 = every snapshot) additionally caps the world-topic
+  cadence. Vanished vessels' retained topics are tombstoned.
 - **Serial**: driven by `serial_interval_ms` (default 500), not the main sample rate.
-- **MQTT field mirror**: separate `field_feed_hz` cadence (default 4 Hz), also changed-only.
+- **MQTT field mirror**: separate `field_feed_hz` cadence (default 4 Hz), also changed-only and
+  subscription-gated per topic.
 
 ### Measuring live
 
@@ -224,7 +229,7 @@ All three create/remove via Frame-phase `/sim/debug` commands and tear down on u
 | `[telemetry]` | `telemetry_enabled`, `telemetry_vessel_detail`, `telemetry_vessel_parts`, `telemetry_bodies`, `telemetry_bodies_rate_hz`, `telemetry_events` |
 | `[control]` | `control_enabled`, `control_all_vessels`, `debug_namespace`, `command_timeout_ms`, `max_commands_per_frame` |
 | `[http]` | `enabled`, `preferred_port` (4242), `http_field_endpoints` |
-| `[mqtt]` | `enabled`, `preferred_port` (1883), `mqtt_field_topics`, `field_feed_hz` |
+| `[mqtt]` | `enabled`, `preferred_port` (1883), `mqtt_field_topics`, `field_feed_hz`, `mqtt_publish_hz` |
 | `[serial]` | `serial_telemetry_port`, `serial_command_port`, `serial_mode`, `serial_interval_ms` |
 | `[display]` | `display_enabled` (off), `display_fps`, `display_width`, `display_height`, `display_encoding` (boot seeds for `/sim/display`) |
 | `[[mounts]]` | `name`, `path`, `read_only` (array, off by default) |

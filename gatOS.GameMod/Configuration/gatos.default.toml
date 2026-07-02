@@ -92,6 +92,10 @@ mqtt_preferred_port = 1883
 # Publish the per-field gatos/sim/<path> filesystem mirror (one topic per leaf).
 mqtt_field_topics = true
 
+# Cap on the MQTT world-topic cadence in Hz (0 = every snapshot). Below the sample
+# rate the broker coalesces to the newest snapshot — cheaper at high sample rates.
+mqtt_publish_hz = 0
+
 # Cadence of the MQTT field mirror in Hz (default 4; clamped 1..30).
 field_feed_hz = 4
 

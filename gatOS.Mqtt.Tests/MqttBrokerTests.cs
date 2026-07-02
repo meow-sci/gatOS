@@ -365,6 +365,105 @@ public sealed class MqttBrokerTests
         }
     }
 
+    [Test]
+    public async Task VanishedVessel_RetainedTopicsAreCleared_ForNewSubscribers()
+    {
+        // GP2: when a vessel disappears from the snapshot, its retained topics are tombstoned
+        // (empty retained payload) instead of lingering until a broker restart — a client that
+        // subscribes afterwards must not see the ghost.
+        _store.Publish(Snapshot(1, Vessel("v1")));
+        await WaitForPayloadAsync("gatos/vessels/v1/telemetry", p => p.Length > 0);
+
+        _store.Publish(Snapshot(2, Vessel("v2")));
+        await WaitForPayloadAsync("gatos/vessels/v2/telemetry", p => p.Length > 0);
+        // A third cycle is the barrier: the single pump task finished cycle 2 — including the
+        // tombstones, which follow the vessel publishes — before it serves cycle 3's time topic.
+        _store.Publish(Snapshot(3, Vessel("v2")));
+        await WaitForPayloadAsync("gatos/time", p => p.Contains("0.3"));
+
+        var late = new MqttFactory().CreateMqttClient();
+        var lateMessages = Channel.CreateUnbounded<(string Topic, string Payload)>();
+        late.ApplicationMessageReceivedAsync += e =>
+        {
+            lateMessages.Writer.TryWrite((e.ApplicationMessage.Topic,
+                Encoding.UTF8.GetString(e.ApplicationMessage.PayloadSegment.ToArray())));
+            return Task.CompletedTask;
+        };
+        await late.ConnectAsync(new MqttClientOptionsBuilder().WithTcpServer("127.0.0.1", _broker.Port).Build());
+        try
+        {
+            await late.SubscribeAsync("gatos/vessels/#");
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var sawGhost = false;
+            var sawLive = false;
+            while (!sawLive && await lateMessages.Reader.WaitToReadAsync(cts.Token))
+                while (lateMessages.Reader.TryRead(out var msg))
+                {
+                    if (msg.Topic == "gatos/vessels/v1/telemetry" && msg.Payload.Length > 0)
+                        sawGhost = true;
+                    if (msg.Topic == "gatos/vessels/v2/telemetry" && msg.Payload.Length > 0)
+                        sawLive = true;
+                }
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(sawLive, "the live vessel's retained baseline must arrive");
+                Assert.That(sawGhost, Is.False, "the vanished vessel's retained topics must be gone");
+            });
+        }
+        finally
+        {
+            await late.DisconnectAsync();
+            late.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task NarrowSubscriber_LaterSubscription_GetsItsBaseline()
+    {
+        // GP2 subscription gating: with only a gatos/time subscriber, vessel topics are neither
+        // serialized nor injected — and a later subscription to them forces a full cycle so the
+        // new subscriber still gets its retained baseline promptly.
+        await using var broker = new SimMqttBroker(_store, _sink);
+        await broker.StartAsync(0);
+
+        var client = new MqttFactory().CreateMqttClient();
+        var messages = Channel.CreateUnbounded<(string Topic, string Payload)>();
+        client.ApplicationMessageReceivedAsync += e =>
+        {
+            messages.Writer.TryWrite((e.ApplicationMessage.Topic,
+                Encoding.UTF8.GetString(e.ApplicationMessage.PayloadSegment.ToArray())));
+            return Task.CompletedTask;
+        };
+        await client.ConnectAsync(new MqttClientOptionsBuilder().WithTcpServer("127.0.0.1", broker.Port).Build());
+        try
+        {
+            await client.SubscribeAsync("gatos/time");
+            _store.Publish(Snapshot(3, Vessel("v9")));
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var sawTime = false;
+            while (!sawTime && await messages.Reader.WaitToReadAsync(cts.Token))
+                while (messages.Reader.TryRead(out var msg))
+                    if (msg.Topic == "gatos/time")
+                        sawTime = true;
+            Assert.That(sawTime, "the subscribed topic must flow");
+
+            await client.SubscribeAsync("gatos/vessels/#");
+            var sawVessel = false;
+            while (!sawVessel && await messages.Reader.WaitToReadAsync(cts.Token))
+                while (messages.Reader.TryRead(out var msg))
+                    if (msg.Topic == "gatos/vessels/v9/telemetry" && msg.Payload.Length > 0)
+                        sawVessel = true;
+            Assert.That(sawVessel, "a later subscription must force its baseline out");
+        }
+        finally
+        {
+            await client.DisconnectAsync();
+            client.Dispose();
+        }
+    }
+
     private async Task WaitForTopicsAsync(params string[] topics)
     {
         var remaining = new HashSet<string>(topics);

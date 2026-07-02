@@ -110,9 +110,11 @@ listing order; empty/`.`/`..` become `_`/`_.`/`_..`. In KSA a vessel's **name *i
 | `control_all_vessels` | `true` | `false` ⇒ only the **controlled** vessel is commandable (`EACCES` otherwise); `camera.focus`, `vessel.scale` and the `debug.*` namespace are exempt |
 | `debug_namespace` | `true` | exposes `/sim/debug/**` and the `debug.*` actions; `false` ⇒ those vanish / `EACCES` |
 | `sample_rate_hz` | `10` | master cadence (1..120) |
+| `telemetry_bodies_rate_hz` | `0` | bodies resample cadence (0 = every tick); lower ⇒ `/sim/bodies` + `system` update at that cadence (values between are the previous sample) |
 | `http_enabled` / `http_preferred_port` | `true` / `4242` | HTTP `/v1` server (falls back to ephemeral on clash) |
 | `http_field_endpoints` | `true` | the `/v1/fs/<path>` mirror (off ⇒ those routes `ENOENT`) |
 | `mqtt_enabled` / `mqtt_preferred_port` | `true` / `1883` | embedded MQTT broker |
+| `mqtt_publish_hz` | `0` | cap on the MQTT world-topic cadence (0 = every snapshot; below the sample rate the broker coalesces to the newest snapshot). MQTT topics are also **subscription-gated**: a topic no live filter matches is not published (a new subscription forces its retained baseline within a cycle), and a vanished vessel's retained topics are cleared with an empty payload |
 | `command_timeout_ms` | `2000` | how long a write waits for the game thread before `ETIMEDOUT` |
 | `display_enabled` | `false` | boot seed for `/sim/display/enabled` — the screen stream (§3.8); **off by default** |
 | `display_fps` / `display_width` / `display_height` | `15` / `320` / `180` | boot seeds for the stream cadence + downscale size (runtime control is the `/sim/display/*` files) |

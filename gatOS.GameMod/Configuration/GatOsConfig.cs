@@ -88,6 +88,9 @@ public sealed class GatOsConfig
             ("mqtt_preferred_port", "Preferred MQTT port (1883); 0 = ephemeral only; falls back on a clash."),
             ("mqtt_field_topics", "Publish the per-field gatos/sim/<path> filesystem mirror (one topic per leaf)."),
             ("field_feed_hz", "Cadence of the MQTT field mirror in Hz (default 4; clamped 1..30)."),
+            ("mqtt_publish_hz",
+                "Cap on the MQTT world-topic cadence in Hz (0 = every snapshot). Below the sample\n"
+                + "rate the broker coalesces to the newest snapshot — cheaper at high sample rates."),
             ("serial_telemetry_port", "Stream telemetry out over the gatos.serial virtio-serial port."),
             ("serial_command_port", "Accept SCPI command lines in over the gatos.serial virtio-serial port."),
             ("serial_mode", "Serial telemetry wire format: ndjson | nmea | ccsds (default ndjson)."),
@@ -216,6 +219,14 @@ public sealed class GatOsConfig
 
     /// <summary>Publish the per-field <c>gatos/sim/&lt;path&gt;</c> filesystem mirror (one topic per leaf).</summary>
     public bool MqttFieldTopics { get; set; } = true;
+
+    /// <summary>
+    ///     MQTT world-topic publish cadence cap in Hz; <c>0</c> (the default) publishes on every
+    ///     snapshot. Below the sample rate the broker coalesces to the newest snapshot — useful at
+    ///     high sample rates so MQTT consumers stop paying ×N the serialization
+    ///     (GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md GP2).
+    /// </summary>
+    public int MqttPublishHz { get; set; }
 
     /// <summary>Cadence of the MQTT field mirror, Hz (clamped 1..30); throttled below the sample rate.</summary>
     public int FieldFeedHz { get; set; } = 4;
@@ -457,6 +468,7 @@ public sealed class GatOsConfig
             MqttPreferredPort = Clamp(nameof(MqttPreferredPort), MqttPreferredPort, 1024, 65535);
         SerialIntervalMs = Clamp(nameof(SerialIntervalMs), SerialIntervalMs, 50, 60000);
         FieldFeedHz = Clamp(nameof(FieldFeedHz), FieldFeedHz, 1, 30);
+        MqttPublishHz = Clamp(nameof(MqttPublishHz), MqttPublishHz, 0, 120);
         DisplayFps = Clamp(nameof(DisplayFps), DisplayFps, 1, 60);
         DisplayWidth = Clamp(nameof(DisplayWidth), DisplayWidth, 16, 1920);
         DisplayHeight = Clamp(nameof(DisplayHeight), DisplayHeight, 16, 1920);
