@@ -8,15 +8,20 @@ namespace gatOS.SimFs.Display;
 public enum DisplayEncoding
 {
     /// <summary>
-    ///     Raw RGBA, zlib-deflated (<c>f=32,o=z</c>). Small wire size — but <b>NOT the default</b>:
-    ///     purrTTY's pinned libghostty-vt native memory-corrupts/segfaults when committing an
-    ///     <c>o=z</c> payload of compressible data (purrtty gotcha 34; STREAM_PLAN.md §11 tier 4/5).
-    ///     Safe for external kitty terminals; select it only when no in-game purrTTY tab reads the
-    ///     stream, until the purrTTY native pin is bumped past a fix.
+    ///     Raw RGBA, zlib-deflated (<c>f=32,o=z</c>). <b>The default</b> — 3–10× smaller on the
+    ///     wire (space scenes deflate hard), which is what lets large captures stream through the
+    ///     slirp/SSH/PTY chain (PERF_IMPROVEMENT_PLAN.md P6). Requires purrTTY's 2026-07-02+
+    ///     native: earlier pins memory-corrupted on compressible <c>o=z</c> payloads (a zig
+    ///     0.15.2 std flate bug — purrtty gotcha 34, fixed by the <c>purrtty/vt-video-fixes</c>
+    ///     native patch; purrTTY's <c>ZlibRealFrame_DecodesToGroundTruth</c> is the standing
+    ///     regression gate).
     /// </summary>
     RgbaZlib,
 
-    /// <summary>Raw uncompressed RGBA (<c>f=32</c>). The default — pixel-exact through every consumer.</summary>
+    /// <summary>
+    ///     Raw uncompressed RGBA (<c>f=32</c>). Selectable fallback — pixel-exact through every
+    ///     consumer with zero inflate cost, at ~3–10× the wire size.
+    /// </summary>
     Rgba,
 }
 

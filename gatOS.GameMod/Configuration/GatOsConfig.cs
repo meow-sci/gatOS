@@ -99,9 +99,9 @@ public sealed class GatOsConfig
             ("display_fps", "Stream cadence in Hz (clamped 1..60), decoupled from the game frame rate."),
             ("display_width", "Downscale target width in pixels (clamped 16..1920)."),
             ("display_height", "Downscale target height in pixels (clamped 16..1920)."),
-            ("display_encoding", "Frame wire encoding: rgba (default) | rgba-zlib. rgba-zlib crashes the in-game\n"
-                + "purrTTY terminal (a libghostty-vt native bug, purrtty gotcha 34) — use it only for\n"
-                + "external kitty terminals until purrTTY ships a fixed native."),
+            ("display_encoding", "Frame wire encoding: rgba-zlib (default; 3-10x smaller on the wire) | rgba\n"
+                + "(raw fallback). rgba-zlib needs purrTTY's 2026-07-02+ native — older pins crash\n"
+                + "on compressible o=z payloads (purrtty gotcha 34, fixed)."),
         }),
     };
 
@@ -247,7 +247,7 @@ public sealed class GatOsConfig
     ///     Zlib is quarantined from the default: purrTTY's pinned libghostty-vt native
     ///     memory-corrupts on <c>o=z</c> payloads of compressible data (purrtty gotcha 34).
     /// </summary>
-    public string DisplayEncoding { get; set; } = "rgba";
+    public string DisplayEncoding { get; set; } = "rgba-zlib";
 
     // ---- MOUNTS: host folders shared into the guest under /mnt/<name>. ----
 
@@ -454,8 +454,8 @@ public sealed class GatOsConfig
         var displayEncoding = DisplayEncoding.Trim().ToLowerInvariant();
         if (displayEncoding is not ("rgba-zlib" or "rgba"))
         {
-            ModLog.Log.Warn($"Config: display_encoding '{DisplayEncoding}' is not rgba/rgba-zlib; using rgba.");
-            displayEncoding = "rgba";
+            ModLog.Log.Warn($"Config: display_encoding '{DisplayEncoding}' is not rgba/rgba-zlib; using rgba-zlib.");
+            displayEncoding = "rgba-zlib";
         }
 
         DisplayEncoding = displayEncoding;

@@ -11,9 +11,16 @@ downscale+convert in `FrameCapture`, format-feature-gated with the CPU path as f
 update-in-place, in-world render-skip w/ every-frame tick, background-tab decode gate, inbox
 8→24 MiB with an 8 MiB per-tick parse cap). P5 sub-items deliberately deferred: the ConPTY pump
 buffer reuse (the video path is SSH, already pump-based with bounded gen-0 copies since P0.1) and
-full pixel-buffer pooling + the native kitty-dirty-flag binding (both ride the P6/P7 native
-rebuild). **Remaining: P6 (native flate fix → zlib default), P7 (native APC fast path), P0.4
-(native pin-leak patch), P8 (soak/validation + in-game before/after numbers).**
+full pixel-buffer pooling + the native kitty-dirty-flag binding (deferrable micro-opts). **P0.4 +
+P6 landed 2026-07-02:** the purrTTY native was rebuilt on this Windows host (zig 0.15.2, all three
+RIDs cross-compiled) from ghostty main `c22df09da` + branch `purrtty/vt-video-fixes`
+(`ac3fee170` untrack placement pins on replace/eviction = P0.4; `bb9c398bf` decompressZlib routed
+around the zig #25032/#25035 flate bugs = the P6 native half), vendored in purrtty `b8cae1c` with
+the un-quarantined `ZlibRealFrame_DecodesToGroundTruth` + a keyframe/a=t zlib wire-shape test as
+standing gates; gatOS then flipped `display_encoding` default to **`rgba-zlib`** (settings/config/
+SPEC/docs lockstep) — the 3–10× wire shrink is live. **Remaining: P7 (optional native APC bulk-feed
+fast path), P8 (soak/validation + in-game before/after numbers); the osx-arm64 dylib builds clean
+but still wants one test pass on a mac.**
 **Symptoms driving this plan (observed in-game, 1440×900 capture, RTX 5090 / i9-13900K):**
 1. Game frame rate collapses from ~120 fps to **sub-10 fps** while the stream is on.
 2. After streaming for a while the stream (and eventually the whole terminal session) **hangs

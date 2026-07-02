@@ -48,8 +48,9 @@ public sealed class DisplayTreeTests
         Assert.That(await ReadAsync("display", "fps"), Is.EqualTo("15\n"));
         Assert.That(await ReadAsync("display", "width"), Is.EqualTo("320\n"));
         Assert.That(await ReadAsync("display", "height"), Is.EqualTo("180\n"));
-        Assert.That(await ReadAsync("display", "encoding"), Is.EqualTo("rgba\n"), "raw is the default (purrtty gotcha 34)");
-        Assert.That(await ReadAsync("display", "format"), Is.EqualTo("320x180@15 rgba\n"));
+        Assert.That(await ReadAsync("display", "encoding"), Is.EqualTo("rgba-zlib\n"),
+            "zlib is the default again (the gotcha-34 native fix landed; perf plan P6)");
+        Assert.That(await ReadAsync("display", "format"), Is.EqualTo("320x180@15 rgba-zlib\n"));
 
         // The binary stream is walkable (its bytes are exercised in DisplayStreamFileTests).
         var (fid, _) = await WalkAsync("display", "stream");
@@ -78,7 +79,7 @@ public sealed class DisplayTreeTests
 
         await WriteAsync("640", "display", "width");
         await WriteAsync("360", "display", "height");
-        Assert.That(await ReadAsync("display", "format"), Is.EqualTo($"640x360@{DisplaySettings.MaxFps} rgba\n"));
+        Assert.That(await ReadAsync("display", "format"), Is.EqualTo($"640x360@{DisplaySettings.MaxFps} rgba-zlib\n"));
     }
 
     [Test]

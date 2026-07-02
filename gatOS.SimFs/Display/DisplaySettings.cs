@@ -42,7 +42,7 @@ public sealed class DisplaySettings
     /// <param name="height">Initial downscale target height in pixels (clamped to the edge range).</param>
     /// <param name="encoding">Initial frame encoding.</param>
     public DisplaySettings(bool enabled = false, int fps = 15, int width = 320, int height = 180,
-        DisplayEncoding encoding = DisplayEncoding.Rgba)
+        DisplayEncoding encoding = DisplayEncoding.RgbaZlib)
     {
         _enabled = enabled;
         _fps = ClampFps(fps);

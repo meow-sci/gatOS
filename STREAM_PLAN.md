@@ -3,8 +3,10 @@
 **Status:** **Code-complete; the misrender ROOT CAUSE is found and fixed (§11, 2026-07-02): purrTTY's
 pinned libghostty-vt native memory-corrupts on kitty `o=z` (zlib) payloads of compressible data — the
 stream's old default encoding. purrTTY (branch `feature/kitty-video-validation`) gained a content-hash
-re-decode fix + real-frame regression tests; gatOS now defaults `display_encoding=rgba` (raw, proven
-pixel-exact end-to-end). In-game live-video validation (S6/S9) pending; S8 deferred.** This document is
+re-decode fix + real-frame regression tests. **2026-07-02 (perf plan P6): the purrTTY native was
+rebuilt from ghostty main + the `purrtty/vt-video-fixes` patches — the `o=z` corruption is FIXED
+and `display_encoding` defaults to `rgba-zlib` again** (raw stays selectable). In-game live-video
+validation (S6/S9) pending; S8 deferred.** This document is
 the research record and execution plan for exposing a downscaled,
 frame-rate-limited render of the KSA viewport **as a `/sim` file**, encoded as the **Kitty terminal
 graphics protocol**, so any SSH client whose terminal supports Kitty — purrTTY in-game tabs *and*
@@ -409,18 +411,20 @@ libghostty-vt terminal (`KittyScreenStreamAssetTests`):
    historical misrender**: the stream's old default encoding was `rgba-zlib`. Barely-compressible
    payloads (noise) survive, which is why synthetic unit tests never caught it. Raw `f=32` decodes
    **pixel-exact** vs the ground-truth PNGs; PNG `f=100` is silently ignored (unsupported) by this
-   native build. Quarantine: gatOS now **defaults `display_encoding=rgba`** (zlib stays selectable
-   for external kitty terminals only — purrtty gotcha 34 tracks the native bug; the `[Explicit]`
-   crash repro must be re-run on every purrTTY native pin bump).
+   native build. Quarantine (historical): gatOS defaulted `display_encoding=rgba` until the native was fixed
+   (2026-07-02, perf plan P6 — see below); purrtty gotcha 34 tracked the native bug and the
+   `[Explicit]` crash repro gated every pin bump.
    *Attribution (2026-07-02, verified against the ghostty repo + a standalone zig repro):* the fault
    is a **zig 0.15.2 `std.compress.flate.Decompress` bug**, not ghostty's code — `writeMatch` needs a
    rebase the internal window `Writer` declares `unreachable` whenever a back-reference write
    straddles the 64 KiB window (any compressible output > ~64 KiB); Debug panics, the shipped
    ReleaseFast native silently corrupts. Ghostty's kitty/lib-vt sources are byte-identical from our
    pin through current main (nothing to gain from a pin bump alone), and the zig issues
-   (ziglang/zig #25032/#25035, milestone "urgent") are still open — so the `rgba` default **remains
-   necessary** until a fixed zig (or a patched `decompressZlib`) rebuilds the native. Details +
-   re-enable paths: purrtty gotcha 34.
+   (ziglang/zig #25032/#25035, milestone "urgent") are still open. **RESOLVED 2026-07-02 (perf plan
+   P6): the native was rebuilt from ghostty main `c22df09da` + the `purrtty/vt-video-fixes` branch,
+   whose `decompressZlib` patch routes around the std bug (windowless direct mode into a
+   `Writer.Allocating`); the un-quarantined `ZlibRealFrame_DecodesToGroundTruth` decodes the real
+   `o=z` frame pixel-exact and the default is `rgba-zlib` again.** Details: purrtty gotcha 34.
 2. **purrTTY froze video on frame 1** for equal-length re-transmits: it re-decoded a same-id image
    only when the stored payload's byte LENGTH changed — but raw-format frames of fixed dims all have
    identical length (and zlib frames collide). Fixed with an FNV-1a-64 content hash over the engine's

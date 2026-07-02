@@ -124,10 +124,10 @@ display_width = 320
 # Downscale target height in pixels (clamped 16..1920).
 display_height = 180
 
-# Frame wire encoding: rgba (default) | rgba-zlib. rgba-zlib crashes the in-game
-# purrTTY terminal (a libghostty-vt native bug, purrtty gotcha 34) — use it only for
-# external kitty terminals until purrTTY ships a fixed native.
-display_encoding = "rgba"
+# Frame wire encoding: rgba-zlib (default; 3-10x smaller on the wire) | rgba
+# (raw fallback). rgba-zlib needs purrTTY's 2026-07-02+ native — older pins crash
+# on compressible o=z payloads (purrtty gotcha 34, fixed).
+display_encoding = "rgba-zlib"
 
 # ===== MOUNTS — host folders shared into the guest under /mnt/<name> =====
 

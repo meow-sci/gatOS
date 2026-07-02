@@ -180,7 +180,7 @@ public sealed partial class Mod
                 TimeSpan.FromMilliseconds(_config.CommandTimeoutMs));
             _displaySurface = new DisplaySurface(new DisplaySettings(
                 _config.DisplayEnabled, _config.DisplayFps, _config.DisplayWidth, _config.DisplayHeight,
-                DisplayEncodings.Parse(_config.DisplayEncoding) ?? DisplayEncoding.Rgba));
+                DisplayEncodings.Parse(_config.DisplayEncoding) ?? DisplayEncoding.RgbaZlib));
             // Standing debug harness (STREAM_PLAN.md §11): setting PngDumpDirectory (e.g. to
             // Path.Combine(GatOsPaths.DataDir, ".tmp-screencaps")) makes the encode worker dump
             // 1 PNG + .kitty pair per second instead of publishing Kitty bytes — the tier-1/2
