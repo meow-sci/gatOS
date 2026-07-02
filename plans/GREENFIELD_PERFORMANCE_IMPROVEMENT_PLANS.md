@@ -1,6 +1,11 @@
 # GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md — the whole-mod efficiency audit
 
-**Status: IN PROGRESS.** Landed 2026-07-02: **GP3** (single-pass `VesselReader` — one snapshot
+**Status: IN PROGRESS.** Landed 2026-07-02: **GP1** (memoized read surface — vessel/body/debug
+subtrees built once and cached (`CreateVesselDir` + `IndexedDir` + `NodeKey` caches with roster
+sweep), per-roster sanitized-name memos, `SnapshotTextFile` leaves formatted once per publish,
+`SnapshotIndex` per-snapshot vessel index + shared stream lines across fids, closure-free indexed
+accessors, `VesselTelemetryLine` UTF-8 path — all pinned by `SnapshotMemoTests`; `/sim` protocol
+behavior unchanged, no SPEC delta) and **GP3** (single-pass `VesselReader` — one snapshot
 construction, one battery walk, power accumulated in the solar/generator passes, `AnimationLinks`
 per-vehicle structural cache; `BodyReader` static split — per-body cached catalog constants + orbit,
 per-tick work is one record + two vectors per body; optional `telemetry_bodies_rate_hz` sub-cadence

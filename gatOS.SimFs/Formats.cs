@@ -184,6 +184,20 @@ public static class Formats
     /// <summary><see cref="VesselTelemetry"/> as raw UTF-8 bytes (no trailing LF) — the MQTT push path.</summary>
     public static byte[] VesselTelemetryUtf8(SimSnapshot snapshot, VesselSnapshot v)
     {
+        var buffer = WriteVesselTelemetry(snapshot, v);
+        return buffer.WrittenSpan.ToArray();
+    }
+
+    /// <summary>
+    ///     <see cref="VesselTelemetry"/> as raw UTF-8 bytes <b>with</b> the trailing LF — the
+    ///     <c>/sim/…/telemetry</c> file body, produced without the bytes→string→re-encode
+    ///     round-trip the string form forced on the 9p path (GP1).
+    /// </summary>
+    public static byte[] VesselTelemetryLine(SimSnapshot snapshot, VesselSnapshot v)
+        => WithNewline(WriteVesselTelemetry(snapshot, v));
+
+    private static ArrayBufferWriter<byte> WriteVesselTelemetry(SimSnapshot snapshot, VesselSnapshot v)
+    {
         var buffer = new ArrayBufferWriter<byte>(512);
         using (var json = new Utf8JsonWriter(buffer, JsonOptions))
         {
@@ -250,7 +264,7 @@ public static class Formats
             json.WriteEndObject();
         }
 
-        return buffer.WrittenSpan.ToArray();
+        return buffer;
     }
 
     private static void WriteVec3(Utf8JsonWriter json, string name, double3Snap v)

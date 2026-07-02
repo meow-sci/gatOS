@@ -43,23 +43,17 @@ public sealed class StreamFile : VfsFile
     {
         get
         {
-            // Truthful unopened size: what a fresh open would seed its buffer with.
+            // Truthful unopened size: what a fresh open would seed its buffer with. The line is the
+            // per-snapshot memo (SnapshotIndex, GP1) — a stat no longer serializes JSON just to
+            // measure it once any handle (or a sibling stat) has formatted this snapshot's line.
             var snapshot = _store.Current;
-            var vessel = FindVessel(snapshot, _vesselId);
-            return vessel is null ? 0 : Formats.StreamLine(snapshot, vessel).Length;
+            var vessel = SnapshotIndex.VesselById(snapshot, _vesselId);
+            return vessel is null ? 0 : SnapshotIndex.StreamLine(snapshot, vessel).Length;
         }
     }
 
     /// <inheritdoc />
     public override IVfsFileHandle Open() => new Handle(_store, _vesselId);
-
-    private static VesselSnapshot? FindVessel(SimSnapshot snapshot, string vesselId)
-    {
-        foreach (var vessel in snapshot.Vessels)
-            if (vessel.Id == vesselId)
-                return vessel;
-        return null;
-    }
 
     private sealed class Handle : IVfsFileHandle
     {
@@ -80,8 +74,8 @@ public sealed class StreamFile : VfsFile
             // Seed with the current snapshot so the first Tgetattr reports a non-zero size.
             var snapshot = store.Current;
             var lastSeq = snapshot.Sequence;
-            if (FindVessel(snapshot, vesselId) is { } vessel)
-                Append(Formats.StreamLine(snapshot, vessel));
+            if (SnapshotIndex.VesselById(snapshot, vesselId) is { } vessel)
+                Append(SnapshotIndex.StreamLine(snapshot, vessel));
             _ = Task.Run(() => PumpAsync(lastSeq));
         }
 
@@ -128,8 +122,10 @@ public sealed class StreamFile : VfsFile
                 {
                     var snapshot = await _store.WaitForNextAsync(lastSeq, _cts.Token).ConfigureAwait(false);
                     lastSeq = snapshot.Sequence;
-                    if (FindVessel(snapshot, _vesselId) is { } vessel)
-                        Append(Formats.StreamLine(snapshot, vessel));
+                    // The formatted line is shared across every fid on this vessel (GP1): N
+                    // concurrent tail -f's serialize the snapshot once, not N times.
+                    if (SnapshotIndex.VesselById(snapshot, _vesselId) is { } vessel)
+                        Append(SnapshotIndex.StreamLine(snapshot, vessel));
                 }
             }
             catch (OperationCanceledException)

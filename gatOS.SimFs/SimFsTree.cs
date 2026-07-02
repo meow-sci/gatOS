@@ -82,6 +82,33 @@ public static class SimFsTree
         private readonly ConcurrentDictionary<string, ulong> _qids = new();
         private long _nextQid;
 
+        // Cached per-entity subtrees (GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md GP1): the node
+        // objects are snapshot-agnostic (their delegates read _store.Current at access time), so a
+        // vessel/body dir — and everything under it — is built ONCE instead of materialized on
+        // every walk. Presence (in listings and lookups) still tracks the live snapshot. Keyed by
+        // (sanitized name, id) so a collision-suffix rename simply creates a sibling entry; stale
+        // entries are swept when the cache outgrows the roster (SweepVesselDirs).
+        private readonly ConcurrentDictionary<NodeKey, VfsDirectory> _vesselDirs = new();
+        private readonly ConcurrentDictionary<NodeKey, VfsDirectory> _debugVesselDirs = new();
+        private readonly ConcurrentDictionary<NodeKey, VfsDirectory> _bodyDirs = new();
+
+        // Per-roster memo (GP1): the sanitized-name list + name/id indexes for the current
+        // snapshot's vessel (and body) rosters, rebuilt only when the underlying list reference
+        // changes — the old code re-sanitized every vessel id on every walk step through by-id.
+        private volatile Roster<VesselSnapshot>? _vesselRoster;
+        private volatile Roster<BodySnapshot>? _bodyRoster;
+
+        private readonly record struct NodeKey(string Name, string Id);
+
+        private sealed class Roster<T>
+            where T : class
+        {
+            public required IReadOnlyList<T> Source { get; init; }
+            public required List<(string Name, T Item)> Sanitized { get; init; }
+            public required Dictionary<string, T> ByName { get; init; }
+            public required Dictionary<string, (string Name, T Item)> ById { get; init; }
+        }
+
         internal Builder(SnapshotStore store, ICommandSink? commands, Func<string>? transports,
             DisplaySurface? display)
         {
@@ -93,15 +120,19 @@ public static class SimFsTree
 
         internal VfsDirectory BuildRoot()
         {
+            // The active/by-id containers are singletons (only their delegates are dynamic).
+            var activeDir = ActiveDir();
+            var byIdDir = ByIdDir();
+            var vesselsChildren = new VfsNode[] { activeDir, byIdDir };
             var children = new List<VfsNode>
             {
                 TimeDir(),
                 new DelegateDirectory("vessels", Qid("vessels"),
-                    () => [ActiveDir(), ByIdDir()],
+                    () => vesselsChildren,
                     name => name switch
                     {
-                        "active" => ActiveDir(),
-                        "by-id" => ByIdDir(),
+                        "active" => activeDir,
+                        "by-id" => byIdDir,
                         _ => null,
                     }),
                 SystemDir(),
@@ -152,53 +183,100 @@ public static class SimFsTree
 
         private VfsDirectory BodiesDir()
             => new DelegateDirectory("bodies", Qid("bodies"),
-                () => SanitizedBodies(_store.Current)
-                    .Select(b => (VfsNode)BodyDir(b.Name, b.Item.Id))
-                    .ToArray(),
-                name => SanitizedBodies(_store.Current)
-                    .Where(b => b.Name == name)
-                    .Select(b => (VfsNode?)BodyDir(b.Name, b.Item.Id))
-                    .FirstOrDefault());
+                () =>
+                {
+                    var roster = Bodies(_store.Current);
+                    var children = new VfsNode[roster.Sanitized.Count];
+                    for (var i = 0; i < children.Length; i++)
+                    {
+                        var (name, body) = roster.Sanitized[i];
+                        children[i] = BodyDir(name, body.Id);
+                    }
+
+                    return children;
+                },
+                name => Bodies(_store.Current).ByName.TryGetValue(name, out var body)
+                    ? BodyDir(name, body.Id)
+                    : null);
 
         private VfsDirectory BodyDir(string sanitized, string bodyId)
+            => _bodyDirs.GetOrAdd(new NodeKey(sanitized, bodyId),
+                static (key, self) => self.CreateBodyDir(key.Name, key.Id), this);
+
+        /// <summary>
+        ///     Builds a body's subtree ONCE (GP1): every child node reads the live snapshot at
+        ///     access time, so only presence (orbit/atmosphere/ocean — constants per body in
+        ///     practice) is re-checked per list/lookup.
+        /// </summary>
+        private VfsDirectory CreateBodyDir(string sanitized, string bodyId)
         {
             var p = $"bodies/{sanitized}";
-            return new DelegateDirectory(sanitized, Qid(p), () =>
+            var always = new VfsNode[]
             {
-                var body = Body(bodyId);
-                var children = new List<VfsNode>
-                {
-                    Line($"{p}/id", "id", () => Body(bodyId).Id),
-                    Line($"{p}/class", "class", () => Body(bodyId).Class),
-                    Line($"{p}/parent", "parent", () => Body(bodyId).ParentId ?? ""),
-                    Line($"{p}/children", "children", () => string.Join('\n', Body(bodyId).ChildIds)),
-                    Line($"{p}/mass", "mass", () => Formats.Scalar(Body(bodyId).Mass)),
-                    Line($"{p}/radius", "radius", () => Formats.Scalar(Body(bodyId).MeanRadius)),
-                    Line($"{p}/mu", "mu", () => Formats.Scalar(Body(bodyId).Mu)),
-                    Line($"{p}/soi", "soi", () => Formats.Scalar(Body(bodyId).SoiMeters)),
-                    Line($"{p}/rotation_rate", "rotation_rate",
-                        () => Formats.Scalar(Body(bodyId).RotationRateRadS)),
-                    DelegateDirectory.Fixed("position", Qid($"{p}/position"),
-                        Line($"{p}/position/ecl", "ecl", () => Formats.Vector(Body(bodyId).PositionEcl))),
-                    DelegateDirectory.Fixed("velocity", Qid($"{p}/velocity"),
-                        Line($"{p}/velocity/ecl", "ecl", () => Formats.Vector(Body(bodyId).VelocityEcl))),
-                };
-                if (body.Orbit is not null)
-                    children.Add(BodyOrbitDir(p, bodyId));
-                if (body.Atmosphere is not null)
-                    children.Add(AtmosphereDir(p, bodyId));
-                if (body.Ocean is not null)
-                    children.Add(DelegateDirectory.Fixed("ocean", Qid($"{p}/ocean"),
-                        Line($"{p}/ocean/present", "present", () => "1"),
-                        Line($"{p}/ocean/density", "density",
-                            () => Formats.Scalar(Body(bodyId).Ocean!.DensityKgM3))));
-                // Move the main camera to this celestial (write 1), same action vessels' ctl/focus uses.
-                if (_commands is { } sink)
-                    children.Add(new TriggerFile("focus", Qid($"{p}/focus"), sink,
-                        new SimCommand(bodyId, "camera.focus", SimCommand.NoOrdinal, 1)));
+                Line($"{p}/id", "id", () => Body(bodyId).Id),
+                Line($"{p}/class", "class", () => Body(bodyId).Class),
+                Line($"{p}/parent", "parent", () => Body(bodyId).ParentId ?? ""),
+                Line($"{p}/children", "children", () => string.Join('\n', Body(bodyId).ChildIds)),
+                Line($"{p}/mass", "mass", () => Formats.Scalar(Body(bodyId).Mass)),
+                Line($"{p}/radius", "radius", () => Formats.Scalar(Body(bodyId).MeanRadius)),
+                Line($"{p}/mu", "mu", () => Formats.Scalar(Body(bodyId).Mu)),
+                Line($"{p}/soi", "soi", () => Formats.Scalar(Body(bodyId).SoiMeters)),
+                Line($"{p}/rotation_rate", "rotation_rate",
+                    () => Formats.Scalar(Body(bodyId).RotationRateRadS)),
+                DelegateDirectory.Fixed("position", Qid($"{p}/position"),
+                    Line($"{p}/position/ecl", "ecl", () => Formats.Vector(Body(bodyId).PositionEcl))),
+                DelegateDirectory.Fixed("velocity", Qid($"{p}/velocity"),
+                    Line($"{p}/velocity/ecl", "ecl", () => Formats.Vector(Body(bodyId).VelocityEcl))),
+            };
+            var orbit = BodyOrbitDir(p, bodyId);
+            var atmosphere = AtmosphereDir(p, bodyId);
+            var ocean = DelegateDirectory.Fixed("ocean", Qid($"{p}/ocean"),
+                Line($"{p}/ocean/present", "present", () => "1"),
+                Line($"{p}/ocean/density", "density",
+                    () => Formats.Scalar(Body(bodyId).Ocean!.DensityKgM3)));
+            // Move the main camera to this celestial (write 1), same action vessels' ctl/focus uses.
+            var focus = _commands is { } sink
+                ? new TriggerFile("focus", Qid($"{p}/focus"), sink,
+                    new SimCommand(bodyId, "camera.focus", SimCommand.NoOrdinal, 1))
+                : null;
 
-                return children;
-            });
+            return new DelegateDirectory(sanitized, Qid(p),
+                () =>
+                {
+                    var body = Body(bodyId);
+                    var children = new List<VfsNode>(always.Length + 4);
+                    children.AddRange(always);
+                    if (body.Orbit is not null)
+                        children.Add(orbit);
+                    if (body.Atmosphere is not null)
+                        children.Add(atmosphere);
+                    if (body.Ocean is not null)
+                        children.Add(ocean);
+                    if (focus is not null)
+                        children.Add(focus);
+                    return children;
+                },
+                name =>
+                {
+                    var body = Body(bodyId); // ENOENT when the body vanished, like the old list scan
+                    return name switch
+                    {
+                        "orbit" => body.Orbit is not null ? orbit : null,
+                        "atmosphere" => body.Atmosphere is not null ? atmosphere : null,
+                        "ocean" => body.Ocean is not null ? ocean : null,
+                        "focus" => focus,
+                        _ => FindByName(always, name),
+                    };
+                });
+        }
+
+        /// <summary>Linear scan over a small fixed child set (no dictionary needed at ≤ ~20 entries).</summary>
+        private static VfsNode? FindByName(VfsNode[] nodes, string name)
+        {
+            foreach (var node in nodes)
+                if (node.Name == name)
+                    return node;
+            return null;
         }
 
         private VfsDirectory BodyOrbitDir(string p, string bodyId)
@@ -225,15 +303,13 @@ public static class SimFsTree
                     () => Formats.Scalar(Body(bodyId).Atmosphere!.SeaLevelDensityKgM3)));
 
         private BodySnapshot Body(string bodyId)
-            => _store.Current.Bodies.FirstOrDefault(b => b.Id == bodyId)
-               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"body '{bodyId}' is gone");
+            => Bodies(_store.Current).ById.TryGetValue(bodyId, out var entry)
+                ? entry.Item
+                : throw new VfsErrorException(LinuxErrno.ENOENT, $"body '{bodyId}' is gone");
 
         private OrbitSnapshot BodyOrbit(string bodyId)
             => Body(bodyId).Orbit
                ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"body '{bodyId}' has no orbit");
-
-        private static List<(string Name, BodySnapshot Item)> SanitizedBodies(SimSnapshot snapshot)
-            => SanitizeNames(snapshot.Bodies, b => b.Id);
 
         // ---- status (integration health) -------------------------------------------------
 
@@ -246,9 +322,10 @@ public static class SimFsTree
                     var rate = _store.Current.SampleRateHz;
                     return rate > 0 ? $"ok {Formats.Scalar(rate)}" : "idle";
                 }),
-                new StaticTextFile("accessors", Qid("status/accessors"),
+                new SnapshotTextFile("accessors", Qid("status/accessors"), _store,
                     () => string.Concat(_store.Current.Accessors.Select(a => Formats.AccessorLine(a) + "\n"))),
-                Line("status/transports", "transports", () => _transports?.Invoke() ?? "unknown"));
+                // LIVE (not snapshot-memoized): ports bind/unbind without a publish.
+                LiveLine("status/transports", "transports", () => _transports?.Invoke() ?? "unknown"));
 
         // ---- display (the screen stream — STREAM_PLAN.md) --------------------------------
 
@@ -277,7 +354,8 @@ public static class SimFsTree
                         settings.Encoding = encoding;
                         return true;
                     }),
-                Line("display/format", "format",
+                // LIVE (not snapshot-memoized): the settings mutate without a publish.
+                LiveLine("display/format", "format",
                     () => $"{settings.Width}x{settings.Height}@{settings.Fps} {settings.Encoding.Token()}"),
                 new DisplayStreamFile("stream", Qid("display/stream"), _display!));
         }
@@ -311,13 +389,39 @@ public static class SimFsTree
 
         private VfsDirectory ByIdDir()
             => new DelegateDirectory("by-id", Qid("vessels/by-id"),
-                () => SanitizedVessels(_store.Current)
-                    .Select(v => (VfsNode)VesselDir(v.Name, v.Vessel.Id))
-                    .ToArray(),
-                name => SanitizedVessels(_store.Current)
-                    .Where(v => v.Name == name)
-                    .Select(v => (VfsNode?)VesselDir(v.Name, v.Vessel.Id))
-                    .FirstOrDefault());
+                () =>
+                {
+                    var roster = Vessels(_store.Current);
+                    SweepVesselDirs(roster);
+                    var children = new VfsNode[roster.Sanitized.Count];
+                    for (var i = 0; i < children.Length; i++)
+                    {
+                        var (name, vessel) = roster.Sanitized[i];
+                        children[i] = VesselDir(name, vessel.Id);
+                    }
+
+                    return children;
+                },
+                name => Vessels(_store.Current).ByName.TryGetValue(name, out var vessel)
+                    ? VesselDir(name, vessel.Id)
+                    : null);
+
+        /// <summary>
+        ///     Evicts cached subtrees for vessels that no longer exist. Amortized: runs only when
+        ///     the cache has outgrown the live roster (debris churn over a long session), from the
+        ///     by-id listing path.
+        /// </summary>
+        private void SweepVesselDirs(Roster<VesselSnapshot> roster)
+        {
+            if (_vesselDirs.Count <= 2 * roster.Sanitized.Count + 16)
+                return;
+            foreach (var key in _vesselDirs.Keys)
+                if (!roster.ById.ContainsKey(key.Id))
+                    _vesselDirs.TryRemove(key, out _);
+            foreach (var key in _debugVesselDirs.Keys)
+                if (!roster.ById.ContainsKey(key.Id))
+                    _debugVesselDirs.TryRemove(key, out _);
+        }
 
         /// <summary>
         ///     The <c>active</c> alias: its own directory qid, but it lists/resolves the
@@ -334,20 +438,26 @@ public static class SimFsTree
             var snapshot = _store.Current;
             if (snapshot.ActiveVesselId is not { } activeId)
                 return null;
-            return SanitizedVessels(snapshot)
-                .Where(v => v.Vessel.Id == activeId)
-                .Select(v => (VfsDirectory?)VesselDir(v.Name, v.Vessel.Id))
-                .FirstOrDefault();
+            return Vessels(snapshot).ById.TryGetValue(activeId, out var entry)
+                ? VesselDir(entry.Name, activeId)
+                : null;
         }
 
         private VfsDirectory VesselDir(string sanitized, string vesselId)
+            => _vesselDirs.GetOrAdd(new NodeKey(sanitized, vesselId),
+                static (key, self) => self.CreateVesselDir(key.Name, key.Id), this);
+
+        /// <summary>
+        ///     Builds a vessel's whole subtree ONCE (GP1): the pre-GP1 tree re-materialized all
+        ///     ~60–100 child nodes on <b>every walk step</b> into the vessel. Node content always
+        ///     reads the live snapshot; only presence (orbit/battery/module dirs coming and going)
+        ///     is re-evaluated per list/lookup, in the exact pre-GP1 listing order.
+        /// </summary>
+        private VfsDirectory CreateVesselDir(string sanitized, string vesselId)
         {
             var p = $"vessels/by-id/{sanitized}";
-            return new DelegateDirectory(sanitized, Qid(p), () =>
+            var prefix = new VfsNode[]
             {
-                var vessel = Vessel(vesselId);
-                var children = new List<VfsNode>
-                {
                     Line($"{p}/id", "id", () => Vessel(vesselId).Id),
                     Line($"{p}/name", "name", () => Vessel(vesselId).Name),
                     Line($"{p}/situation", "situation", () => Vessel(vesselId).Situation),
@@ -361,8 +471,10 @@ public static class SimFsTree
                     // whole model (action vessel.scale, one-shot, exempt from the authority gate).
                     NumberControl($"{p}/scale", "scale", vesselId, "vessel.scale", SimCommand.NoOrdinal,
                         () => Formats.Scalar(Vessel(vesselId).Scale)),
-                    new StaticTextFile("telemetry", Qid($"{p}/telemetry"),
-                        () => Formats.VesselTelemetry(_store.Current, Vessel(vesselId)) + "\n"),
+                    // Byte-provider form (GP1): the JSON doc is built as UTF-8 once per snapshot —
+                    // the old string form built bytes, decoded, concatenated "\n", re-encoded.
+                    new SnapshotTextFile("telemetry", Qid($"{p}/telemetry"), _store,
+                        () => Formats.VesselTelemetryLine(_store.Current, Vessel(vesselId))),
                     DelegateDirectory.Fixed("position", Qid($"{p}/position"),
                         Line($"{p}/position/cci", "cci", () => Formats.Vector(Vessel(vesselId).PositionCci)),
                         Line($"{p}/position/ecl", "ecl", () => Formats.Vector(Vessel(vesselId).PositionEcl)),
@@ -385,50 +497,102 @@ public static class SimFsTree
                         Line($"{p}/mass/dry", "dry", () => Formats.Scalar(Vessel(vesselId).MassDry)),
                         Line($"{p}/mass/propellant", "propellant",
                             () => Formats.Scalar(Vessel(vesselId).MassPropellant))),
-                };
-                if (vessel.Orbit is not null)
-                    children.Add(OrbitDir(p, vesselId));
-                if (vessel.Navball is not null)
-                    children.Add(NavballDir(p, vesselId));
-                if (vessel.Environment is not null)
-                    children.Add(EnvironmentDir(p, vesselId));
-                if (vessel.BatteryChargeFraction is not null)
-                    children.Add(BatteryDir(p, vesselId));
-                children.Add(PowerDir(p, vesselId));
-                children.Add(EnginesDir(p, vesselId));
-                children.Add(TanksDir(p, vesselId));
-                if (vessel.Rcs.Count > 0)
-                    children.Add(RcsDir(p, vesselId));
-                if (vessel.Solar.Count > 0)
-                    children.Add(SolarDir(p, vesselId));
-                if (vessel.Generators.Count > 0)
-                    children.Add(GeneratorsDir(p, vesselId));
-                if (vessel.Lights.Count > 0)
-                    children.Add(LightsDir(p, vesselId));
-                if (vessel.Docking.Count > 0)
-                    children.Add(DockingDir(p, vesselId));
-                if (vessel.Decouplers.Count > 0)
-                    children.Add(DecouplersDir(p, vesselId));
-                if (vessel.Encounters.Count > 0)
-                    children.Add(new StaticTextFile("encounters", Qid($"{p}/encounters"),
-                        () => string.Concat(Vessel(vesselId).Encounters
-                            .Select(e => Formats.EncounterLine(e) + "\n"))));
-                if (vessel.Animations.Count > 0)
-                    children.Add(AnimationsDir(p, vesselId));
-                // Top-level parts (the welds anchor picker). Present only when the parts stream is on
-                // (telemetry_vessel_parts gates the reader, so the list is empty when off → no dir).
-                if (vessel.Parts.Count > 0)
-                    children.Add(PartsDir(p, vesselId));
-                children.Add(new StreamFile("stream", Qid($"{p}/stream"), _store, vesselId));
+            };
 
-                // The vessel control surface (G1/G4): only when a command sink is wired. Per-module
-                // controls (engine active, rcs active, light state, decoupler fire, solar/animation
-                // goal) live inside their own read dirs above and light up the same way.
-                if (_commands is not null)
-                    children.Add(CtlDir(p, vesselId));
+            // Conditional subtrees, built once; presence tracks the live snapshot per list/lookup.
+            var orbit = OrbitDir(p, vesselId);
+            var navball = NavballDir(p, vesselId);
+            var environment = EnvironmentDir(p, vesselId);
+            var battery = BatteryDir(p, vesselId);
+            var power = PowerDir(p, vesselId);
+            var engines = EnginesDir(p, vesselId);
+            var tanks = TanksDir(p, vesselId);
+            var rcs = RcsDir(p, vesselId);
+            var solar = SolarDir(p, vesselId);
+            var generators = GeneratorsDir(p, vesselId);
+            var lights = LightsDir(p, vesselId);
+            var docking = DockingDir(p, vesselId);
+            var decouplers = DecouplersDir(p, vesselId);
+            var encounters = new SnapshotTextFile("encounters", Qid($"{p}/encounters"), _store,
+                () => string.Concat(Vessel(vesselId).Encounters
+                    .Select(e => Formats.EncounterLine(e) + "\n")));
+            var animations = AnimationsDir(p, vesselId);
+            // Top-level parts (the welds anchor picker). Present only when the parts stream is on
+            // (telemetry_vessel_parts gates the reader, so the list is empty when off → no dir).
+            var parts = PartsDir(p, vesselId);
+            var stream = new StreamFile("stream", Qid($"{p}/stream"), _store, vesselId);
+            // The vessel control surface (G1/G4): only when a command sink is wired. Per-module
+            // controls (engine active, rcs active, light state, decoupler fire, solar/animation
+            // goal) live inside their own read dirs above and light up the same way.
+            var ctl = _commands is not null ? CtlDir(p, vesselId) : null;
 
-                return children;
-            });
+            return new DelegateDirectory(sanitized, Qid(p),
+                () =>
+                {
+                    var vessel = Vessel(vesselId);
+                    var children = new List<VfsNode>(prefix.Length + 18);
+                    children.AddRange(prefix);
+                    if (vessel.Orbit is not null)
+                        children.Add(orbit);
+                    if (vessel.Navball is not null)
+                        children.Add(navball);
+                    if (vessel.Environment is not null)
+                        children.Add(environment);
+                    if (vessel.BatteryChargeFraction is not null)
+                        children.Add(battery);
+                    children.Add(power);
+                    children.Add(engines);
+                    children.Add(tanks);
+                    if (vessel.Rcs.Count > 0)
+                        children.Add(rcs);
+                    if (vessel.Solar.Count > 0)
+                        children.Add(solar);
+                    if (vessel.Generators.Count > 0)
+                        children.Add(generators);
+                    if (vessel.Lights.Count > 0)
+                        children.Add(lights);
+                    if (vessel.Docking.Count > 0)
+                        children.Add(docking);
+                    if (vessel.Decouplers.Count > 0)
+                        children.Add(decouplers);
+                    if (vessel.Encounters.Count > 0)
+                        children.Add(encounters);
+                    if (vessel.Animations.Count > 0)
+                        children.Add(animations);
+                    if (vessel.Parts.Count > 0)
+                        children.Add(parts);
+                    children.Add(stream);
+                    if (ctl is not null)
+                        children.Add(ctl);
+
+                    return children;
+                },
+                name =>
+                {
+                    var vessel = Vessel(vesselId); // ENOENT when the vessel is gone (as before)
+                    return name switch
+                    {
+                        "orbit" => vessel.Orbit is not null ? orbit : null,
+                        "navball" => vessel.Navball is not null ? navball : null,
+                        "environment" => vessel.Environment is not null ? environment : null,
+                        "battery" => vessel.BatteryChargeFraction is not null ? battery : null,
+                        "power" => power,
+                        "engines" => engines,
+                        "tanks" => tanks,
+                        "rcs" => vessel.Rcs.Count > 0 ? rcs : null,
+                        "solar" => vessel.Solar.Count > 0 ? solar : null,
+                        "generators" => vessel.Generators.Count > 0 ? generators : null,
+                        "lights" => vessel.Lights.Count > 0 ? lights : null,
+                        "docking" => vessel.Docking.Count > 0 ? docking : null,
+                        "decouplers" => vessel.Decouplers.Count > 0 ? decouplers : null,
+                        "encounters" => vessel.Encounters.Count > 0 ? encounters : null,
+                        "animations" => vessel.Animations.Count > 0 ? animations : null,
+                        "parts" => vessel.Parts.Count > 0 ? parts : null,
+                        "stream" => stream,
+                        "ctl" => ctl,
+                        _ => FindByName(prefix, name),
+                    };
+                });
         }
 
         private VfsDirectory OrbitDir(string p, string vesselId)
@@ -484,15 +648,34 @@ public static class SimFsTree
                 Line($"{p}/power/produced", "produced", () => Formats.Scalar(Vessel(vesselId).PowerProducedW)),
                 Line($"{p}/power/consumed", "consumed", () => Formats.Scalar(Vessel(vesselId).PowerConsumedW)));
 
-        private VfsDirectory EnginesDir(string p, string vesselId)
-            => new DelegateDirectory("engines", Qid($"{p}/engines"),
-                () => Vessel(vesselId).Engines
-                    .Select(e => (VfsNode)EngineDir(p, vesselId, e.Index))
-                    .ToArray(),
-                name => int.TryParse(name, out var index)
-                        && Vessel(vesselId).Engines.Any(e => e.Index == index)
-                    ? EngineDir(p, vesselId, index)
+        /// <summary>
+        ///     An index-keyed collection directory (<c>engines/</c>, <c>rcs/</c>, <c>parts/</c>, …):
+        ///     the child <c>&lt;n&gt;/</c> nodes are created once and cached (GP1 — they read the live
+        ///     snapshot at access time); presence tracks the live count on every list/lookup. Module
+        ///     indexes equal their list positions (the sampler invariant the event differ also leans
+        ///     on), so the count check is the exact old <c>Any(x =&gt; x.Index == index)</c> test.
+        /// </summary>
+        private VfsDirectory IndexedDir(string dirName, string qidPath, Func<int> count, Func<int, VfsNode> create)
+        {
+            var cache = new ConcurrentDictionary<int, VfsNode>();
+            return new DelegateDirectory(dirName, Qid(qidPath),
+                () =>
+                {
+                    var n = count();
+                    var children = new VfsNode[n];
+                    for (var i = 0; i < n; i++)
+                        children[i] = cache.GetOrAdd(i, create);
+                    return children;
+                },
+                name => int.TryParse(name, out var index) && index >= 0 && index < count()
+                    ? cache.GetOrAdd(index, create)
                     : null);
+        }
+
+        private VfsDirectory EnginesDir(string p, string vesselId)
+            => IndexedDir("engines", $"{p}/engines",
+                () => Vessel(vesselId).Engines.Count,
+                index => EngineDir(p, vesselId, index));
 
         private VfsDirectory EngineDir(string p, string vesselId, int index)
             => DelegateDirectory.Fixed($"{index}", Qid($"{p}/engines/{index}"),
@@ -511,14 +694,9 @@ public static class SimFsTree
         // ---- top-level parts (the welds anchor picker; read-only, cached by the reader) -----------
 
         private VfsDirectory PartsDir(string p, string vesselId)
-            => new DelegateDirectory("parts", Qid($"{p}/parts"),
-                () => Vessel(vesselId).Parts
-                    .Select(pt => (VfsNode)PartDir(p, vesselId, pt.Index))
-                    .ToArray(),
-                name => int.TryParse(name, out var index)
-                        && Vessel(vesselId).Parts.Any(pt => pt.Index == index)
-                    ? PartDir(p, vesselId, index)
-                    : null);
+            => IndexedDir("parts", $"{p}/parts",
+                () => Vessel(vesselId).Parts.Count,
+                index => PartDir(p, vesselId, index));
 
         private VfsDirectory PartDir(string p, string vesselId, int index)
             => DelegateDirectory.Fixed($"{index}", Qid($"{p}/parts/{index}"),
@@ -552,6 +730,17 @@ public static class SimFsTree
             => _commands is { } sink
                 ? ControlFile.Fraction(name, Qid(qidPath), sink, read,
                     v => new SimCommand(vesselId, action, ordinal, v))
+                : new StaticTextFile(name, Qid(qidPath), () => read() + "\n");
+
+        /// <summary>
+        ///     A <c>0..1</c> STATE control whose ordinal is resolved at write time — for cached nodes
+        ///     whose target ordinal can move (a solar panel's / light's linked animation, GP1).
+        /// </summary>
+        private VfsFile FractionControl(string qidPath, string name, string vesselId, string action,
+            Func<int> ordinal, Func<string> read)
+            => _commands is { } sink
+                ? ControlFile.Fraction(name, Qid(qidPath), sink, read,
+                    v => new SimCommand(vesselId, action, ordinal(), v))
                 : new StaticTextFile(name, Qid(qidPath), () => read() + "\n");
 
         /// <summary>An unbounded numeric STATE control, or its read-only twin when control is unwired.</summary>
@@ -619,13 +808,21 @@ public static class SimFsTree
             var sink = _commands!;
             return DelegateDirectory.Fixed("debug", Qid("debug"),
                 new DelegateDirectory("vessels", Qid("debug/vessels"),
-                    () => SanitizedVessels(_store.Current)
-                        .Select(v => (VfsNode)DebugVesselDir(v.Name, v.Vessel.Id))
-                        .ToArray(),
-                    name => SanitizedVessels(_store.Current)
-                        .Where(v => v.Name == name)
-                        .Select(v => (VfsNode?)DebugVesselDir(v.Name, v.Vessel.Id))
-                        .FirstOrDefault()),
+                    () =>
+                    {
+                        var roster = Vessels(_store.Current);
+                        var children = new VfsNode[roster.Sanitized.Count];
+                        for (var i = 0; i < children.Length; i++)
+                        {
+                            var (name, vessel) = roster.Sanitized[i];
+                            children[i] = DebugVesselDir(name, vessel.Id);
+                        }
+
+                        return children;
+                    },
+                    name => Vessels(_store.Current).ByName.TryGetValue(name, out var vessel)
+                        ? DebugVesselDir(name, vessel.Id)
+                        : null),
                 DelegateDirectory.Fixed("time", Qid("debug/time"),
                     NumberControl("debug/time/warp", "warp", "", "debug.warp", SimCommand.NoOrdinal,
                         () => Formats.Scalar(_store.Current.WarpFactor))),
@@ -658,22 +855,22 @@ public static class SimFsTree
         private VfsDirectory WeldsDir()
         {
             var sink = _commands!;
-            VfsNode Clear() => new TriggerFile("clear", Qid("debug/welds/clear"), sink,
+            var clear = new TriggerFile("clear", Qid("debug/welds/clear"), sink,
                 new SimCommand("", "debug.weld_clear", SimCommand.NoOrdinal, 1));
-            VfsNode Count() => Line("debug/welds/count", "count",
+            var count = Line("debug/welds/count", "count",
                 () => _store.Current.Welds.Count.ToString(CultureInfo.InvariantCulture));
             return new DelegateDirectory("welds", Qid("debug/welds"),
                 () =>
                 {
-                    var children = new List<VfsNode> { Clear(), Count() };
+                    var children = new List<VfsNode> { clear, count };
                     children.AddRange(SanitizedWelds(_store.Current)
                         .Select(w => (VfsNode)WeldDir(w.Name, w.Weld.SourceId)));
                     return children.ToArray();
                 },
                 name => name switch
                 {
-                    "clear" => Clear(),
-                    "count" => Count(),
+                    "clear" => clear,
+                    "count" => count,
                     _ => SanitizedWelds(_store.Current)
                         .Where(w => w.Name == name)
                         .Select(w => (VfsNode?)WeldDir(w.Name, w.Weld.SourceId))
@@ -708,27 +905,27 @@ public static class SimFsTree
         private VfsDirectory ThugLifeDir()
         {
             var sink = _commands!;
-            VfsNode Add() => LineControlFile.Create("add", Qid("debug/thug_life/add"), sink,
+            var add = LineControlFile.Create("add", Qid("debug/thug_life/add"), sink,
                 () => "", ParseThugLifeAdd);
-            VfsNode Clear() => new TriggerFile("clear", Qid("debug/thug_life/clear"), sink,
+            var clear = new TriggerFile("clear", Qid("debug/thug_life/clear"), sink,
                 new SimCommand("", "debug.thug_life_clear", SimCommand.NoOrdinal, 1));
-            VfsNode Count() => Line("debug/thug_life/count", "count",
+            var count = Line("debug/thug_life/count", "count",
                 () => _store.Current.ThugLife.Count.ToString(CultureInfo.InvariantCulture));
-            VfsNode Help() => new StaticTextFile("help", Qid("debug/thug_life/help"), () => ThugLifeHelp);
+            var help = new StaticTextFile("help", Qid("debug/thug_life/help"), () => ThugLifeHelp);
             return new DelegateDirectory("thug_life", Qid("debug/thug_life"),
                 () =>
                 {
-                    var children = new List<VfsNode> { Help(), Add(), Clear(), Count() };
+                    var children = new List<VfsNode> { help, add, clear, count };
                     children.AddRange(_store.Current.ThugLife
                         .Select(t => (VfsNode)ThugLifeEntryDir(t.Id)));
                     return children.ToArray();
                 },
                 name => name switch
                 {
-                    "help" => Help(),
-                    "add" => Add(),
-                    "clear" => Clear(),
-                    "count" => Count(),
+                    "help" => help,
+                    "add" => add,
+                    "clear" => clear,
+                    "count" => count,
                     _ => int.TryParse(name, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)
                          && _store.Current.ThugLife.Any(t => t.Id == id)
                         ? ThugLifeEntryDir(id)
@@ -856,10 +1053,14 @@ public static class SimFsTree
         }
 
         private VfsDirectory DebugVesselDir(string sanitized, string vesselId)
+            => _debugVesselDirs.GetOrAdd(new NodeKey(sanitized, vesselId),
+                static (key, self) => self.CreateDebugVesselDir(key.Name, key.Id), this);
+
+        private VfsDirectory CreateDebugVesselDir(string sanitized, string vesselId)
         {
             var sink = _commands!;
             var q = $"debug/vessels/{sanitized}";
-            var children = new List<VfsNode>
+            var always = new VfsNode[]
             {
                 VectorControl($"{q}/teleport", "teleport", vesselId, "debug.teleport", SimCommand.NoOrdinal, 6,
                     () => "0 0 0 0 0 0"),
@@ -879,20 +1080,28 @@ public static class SimFsTree
                 new TriggerFile("unweld", Qid($"{q}/unweld"), sink,
                     new SimCommand(vesselId, "debug.weld_remove", SimCommand.NoOrdinal, 1)),
             };
-            // Per-docking-port cheat knobs (only when the vessel carries docking ports). Non-throwing
-            // presence check — Vessel() would throw if the snapshot lost the vessel mid-walk.
-            if (_store.Current.Vessels.FirstOrDefault(v => v.Id == vesselId)?.Docking.Count > 0)
-                children.Add(DebugDockingDir(q, vesselId));
-            return DelegateDirectory.Fixed(sanitized, Qid(q), children.ToArray());
+            // Per-docking-port cheat knobs (only when the vessel carries docking ports). Presence is
+            // re-checked per list/lookup via a non-throwing lookup — the vessel may be gone mid-walk.
+            var docking = DebugDockingDir(q, vesselId);
+
+            return new DelegateDirectory(sanitized, Qid(q),
+                () =>
+                {
+                    var children = new List<VfsNode>(always.Length + 1);
+                    children.AddRange(always);
+                    if (SnapshotIndex.VesselById(_store.Current, vesselId)?.Docking.Count > 0)
+                        children.Add(docking);
+                    return children;
+                },
+                name => name == "docking"
+                    ? SnapshotIndex.VesselById(_store.Current, vesselId)?.Docking.Count > 0 ? docking : null
+                    : FindByName(always, name));
         }
 
         private VfsDirectory DebugDockingDir(string q, string vesselId)
-            => new DelegateDirectory("docking", Qid($"{q}/docking"),
-                () => Vessel(vesselId).Docking
-                    .Select(d => (VfsNode)DebugDockingPortDir(q, vesselId, d.Index)).ToArray(),
-                name => int.TryParse(name, out var idx) && Vessel(vesselId).Docking.Any(d => d.Index == idx)
-                    ? DebugDockingPortDir(q, vesselId, idx)
-                    : null);
+            => IndexedDir("docking", $"{q}/docking",
+                () => Vessel(vesselId).Docking.Count,
+                index => DebugDockingPortDir(q, vesselId, index));
 
         private VfsDirectory DebugDockingPortDir(string q, string vesselId, int index)
             => DelegateDirectory.Fixed($"{index}", Qid($"{q}/docking/{index}"),
@@ -905,13 +1114,9 @@ public static class SimFsTree
         private VfsDirectory AnimationsDir(string p, string vesselId)
         {
             var basePath = $"{p}/animations";
-            return new DelegateDirectory("animations", Qid(basePath),
-                () => Vessel(vesselId).Animations
-                    .Select(a => (VfsNode)AnimationDir(basePath, vesselId, a.Index.ToString(), a.Index))
-                    .ToArray(),
-                name => int.TryParse(name, out var idx) && Vessel(vesselId).Animations.Any(a => a.Index == idx)
-                    ? AnimationDir(basePath, vesselId, idx.ToString(), idx)
-                    : null);
+            return IndexedDir("animations", basePath,
+                () => Vessel(vesselId).Animations.Count,
+                index => AnimationDir(basePath, vesselId, index.ToString(), index));
         }
 
         /// <summary>
@@ -920,45 +1125,68 @@ public static class SimFsTree
         ///     animation (<see cref="SolarSnapshot.AnimationIndex"/>) and a sink is wired.
         /// </summary>
         private VfsDirectory SolarDir(string p, string vesselId)
-            => new DelegateDirectory("solar", Qid($"{p}/solar"),
-                () => Vessel(vesselId).Solar.Select(s => (VfsNode)SolarPanelDir(p, vesselId, s.Index)).ToArray(),
-                name => int.TryParse(name, out var idx) && Vessel(vesselId).Solar.Any(s => s.Index == idx)
-                    ? SolarPanelDir(p, vesselId, idx)
-                    : null);
+            => IndexedDir("solar", $"{p}/solar",
+                () => Vessel(vesselId).Solar.Count,
+                index => SolarPanelDir(p, vesselId, index));
 
         private VfsDirectory SolarPanelDir(string p, string vesselId, int index)
         {
             var q = $"{p}/solar/{index}";
-            var panel = Solar(vesselId, index);
-            var children = new List<VfsNode>
-            {
-                Line($"{q}/produced", "produced", () => Formats.Scalar(Solar(vesselId, index).ProducedW)),
-                Line($"{q}/occluded", "occluded", () => Formats.Flag(Solar(vesselId, index).Occluded)),
-                Line($"{q}/sun_aoa", "sun_aoa", () => Formats.Scalar(Solar(vesselId, index).SunAoaDeg)),
-                Line($"{q}/efficiency", "efficiency", () => Formats.Scalar(Solar(vesselId, index).Efficiency)),
-            };
-            if (panel.HasTracker)
-                children.Add(Line($"{q}/tracker_angle", "tracker_angle",
-                    () => Formats.Scalar(Solar(vesselId, index).TrackerAngleDeg)));
-            if (panel.AnimationIndex >= 0)
-            {
-                var animIndex = panel.AnimationIndex;
-                children.Add(FractionControl($"{q}/goal", "goal", vesselId, "animation.goal", animIndex,
-                    () => Formats.Scalar(Anim(vesselId, animIndex).GoalFraction)));
-                children.Add(Line($"{q}/current", "current",
-                    () => Formats.Scalar(Anim(vesselId, animIndex).CurrentFraction)));
-                children.Add(Line($"{q}/state", "state", () => Anim(vesselId, animIndex).DeploymentState));
-            }
+            var produced = Line($"{q}/produced", "produced", () => Formats.Scalar(Solar(vesselId, index).ProducedW));
+            var occluded = Line($"{q}/occluded", "occluded", () => Formats.Flag(Solar(vesselId, index).Occluded));
+            var sunAoa = Line($"{q}/sun_aoa", "sun_aoa", () => Formats.Scalar(Solar(vesselId, index).SunAoaDeg));
+            var efficiency = Line($"{q}/efficiency", "efficiency",
+                () => Formats.Scalar(Solar(vesselId, index).Efficiency));
+            var trackerAngle = Line($"{q}/tracker_angle", "tracker_angle",
+                () => Formats.Scalar(Solar(vesselId, index).TrackerAngleDeg));
+            // The panel's animation ordinal is resolved at ACCESS time (it can move on a vehicle
+            // edit) — the cached node never bakes a stale ordinal into its reads or its command.
+            var goal = FractionControl($"{q}/goal", "goal", vesselId, "animation.goal",
+                () => Solar(vesselId, index).AnimationIndex,
+                () => Formats.Scalar(Anim(vesselId, Solar(vesselId, index).AnimationIndex).GoalFraction));
+            var current = Line($"{q}/current", "current",
+                () => Formats.Scalar(Anim(vesselId, Solar(vesselId, index).AnimationIndex).CurrentFraction));
+            var state = Line($"{q}/state", "state",
+                () => Anim(vesselId, Solar(vesselId, index).AnimationIndex).DeploymentState);
 
-            return DelegateDirectory.Fixed($"{index}", Qid(q), children.ToArray());
+            return new DelegateDirectory($"{index}", Qid(q),
+                () =>
+                {
+                    var panel = Solar(vesselId, index);
+                    var children = new List<VfsNode>(8) { produced, occluded, sunAoa, efficiency };
+                    if (panel.HasTracker)
+                        children.Add(trackerAngle);
+                    if (panel.AnimationIndex >= 0)
+                    {
+                        children.Add(goal);
+                        children.Add(current);
+                        children.Add(state);
+                    }
+
+                    return children;
+                },
+                name =>
+                {
+                    var panel = Solar(vesselId, index);
+                    return name switch
+                    {
+                        "produced" => produced,
+                        "occluded" => occluded,
+                        "sun_aoa" => sunAoa,
+                        "efficiency" => efficiency,
+                        "tracker_angle" => panel.HasTracker ? trackerAngle : null,
+                        "goal" => panel.AnimationIndex >= 0 ? goal : null,
+                        "current" => panel.AnimationIndex >= 0 ? current : null,
+                        "state" => panel.AnimationIndex >= 0 ? state : null,
+                        _ => null,
+                    };
+                });
         }
 
         private VfsDirectory RcsDir(string p, string vesselId)
-            => new DelegateDirectory("rcs", Qid($"{p}/rcs"),
-                () => Vessel(vesselId).Rcs.Select(r => (VfsNode)RcsThrusterDir(p, vesselId, r.Index)).ToArray(),
-                name => int.TryParse(name, out var idx) && Vessel(vesselId).Rcs.Any(r => r.Index == idx)
-                    ? RcsThrusterDir(p, vesselId, idx)
-                    : null);
+            => IndexedDir("rcs", $"{p}/rcs",
+                () => Vessel(vesselId).Rcs.Count,
+                index => RcsThrusterDir(p, vesselId, index));
 
         private VfsDirectory RcsThrusterDir(string p, string vesselId, int index)
         {
@@ -971,11 +1199,9 @@ public static class SimFsTree
         }
 
         private VfsDirectory GeneratorsDir(string p, string vesselId)
-            => new DelegateDirectory("generators", Qid($"{p}/generators"),
-                () => Vessel(vesselId).Generators.Select(g => (VfsNode)GeneratorDir(p, vesselId, g.Index)).ToArray(),
-                name => int.TryParse(name, out var idx) && Vessel(vesselId).Generators.Any(g => g.Index == idx)
-                    ? GeneratorDir(p, vesselId, idx)
-                    : null);
+            => IndexedDir("generators", $"{p}/generators",
+                () => Vessel(vesselId).Generators.Count,
+                index => GeneratorDir(p, vesselId, index));
 
         private VfsDirectory GeneratorDir(string p, string vesselId, int index)
             => DelegateDirectory.Fixed($"{index}", Qid($"{p}/generators/{index}"),
@@ -984,11 +1210,9 @@ public static class SimFsTree
                     () => Formats.Scalar(Generator(vesselId, index).ProducedW)));
 
         private VfsDirectory LightsDir(string p, string vesselId)
-            => new DelegateDirectory("lights", Qid($"{p}/lights"),
-                () => Vessel(vesselId).Lights.Select(l => (VfsNode)LightDir(p, vesselId, l.Index)).ToArray(),
-                name => int.TryParse(name, out var idx) && Vessel(vesselId).Lights.Any(l => l.Index == idx)
-                    ? LightDir(p, vesselId, idx)
-                    : null);
+            => IndexedDir("lights", $"{p}/lights",
+                () => Vessel(vesselId).Lights.Count,
+                index => LightDir(p, vesselId, index));
 
         /// <summary>
         ///     One light by index: <c>on</c>/<c>brightness</c>/<c>color</c>/<c>inner_angle</c>/<c>outer_angle</c>
@@ -1000,8 +1224,7 @@ public static class SimFsTree
         private VfsDirectory LightDir(string p, string vesselId, int index)
         {
             var q = $"{p}/lights/{index}";
-            var light = Light(vesselId, index);
-            var children = new List<VfsNode>
+            var always = new VfsNode[]
             {
                 FlagControl($"{q}/on", "on", vesselId, "light.on", index, () => Formats.Flag(Light(vesselId, index).On)),
                 NumberControl($"{q}/brightness", "brightness", vesselId, "light.brightness", index,
@@ -1013,25 +1236,47 @@ public static class SimFsTree
                 NumberControl($"{q}/inner_angle", "inner_angle", vesselId, "light.inner_angle", index,
                     () => Formats.Scalar(Light(vesselId, index).InnerAngleDeg)),
             };
-            if (light.AnimationIndex >= 0)
-            {
-                var animIndex = light.AnimationIndex;
-                children.Add(FractionControl($"{q}/goal", "goal", vesselId, "animation.goal", animIndex,
-                    () => Formats.Scalar(Anim(vesselId, animIndex).GoalFraction)));
-                children.Add(Line($"{q}/current", "current",
-                    () => Formats.Scalar(Anim(vesselId, animIndex).CurrentFraction)));
-                children.Add(Line($"{q}/state", "state", () => Anim(vesselId, animIndex).DeploymentState));
-            }
+            // Like SolarPanelDir: the light part's animation ordinal resolves at access time.
+            var goal = FractionControl($"{q}/goal", "goal", vesselId, "animation.goal",
+                () => Light(vesselId, index).AnimationIndex,
+                () => Formats.Scalar(Anim(vesselId, Light(vesselId, index).AnimationIndex).GoalFraction));
+            var current = Line($"{q}/current", "current",
+                () => Formats.Scalar(Anim(vesselId, Light(vesselId, index).AnimationIndex).CurrentFraction));
+            var state = Line($"{q}/state", "state",
+                () => Anim(vesselId, Light(vesselId, index).AnimationIndex).DeploymentState);
 
-            return DelegateDirectory.Fixed($"{index}", Qid(q), children.ToArray());
+            return new DelegateDirectory($"{index}", Qid(q),
+                () =>
+                {
+                    var light = Light(vesselId, index);
+                    var children = new List<VfsNode>(always.Length + 3);
+                    children.AddRange(always);
+                    if (light.AnimationIndex >= 0)
+                    {
+                        children.Add(goal);
+                        children.Add(current);
+                        children.Add(state);
+                    }
+
+                    return children;
+                },
+                name =>
+                {
+                    var light = Light(vesselId, index);
+                    return name switch
+                    {
+                        "goal" => light.AnimationIndex >= 0 ? goal : null,
+                        "current" => light.AnimationIndex >= 0 ? current : null,
+                        "state" => light.AnimationIndex >= 0 ? state : null,
+                        _ => FindByName(always, name),
+                    };
+                });
         }
 
         private VfsDirectory DockingDir(string p, string vesselId)
-            => new DelegateDirectory("docking", Qid($"{p}/docking"),
-                () => Vessel(vesselId).Docking.Select(d => (VfsNode)DockingPortDir(p, vesselId, d.Index)).ToArray(),
-                name => int.TryParse(name, out var idx) && Vessel(vesselId).Docking.Any(d => d.Index == idx)
-                    ? DockingPortDir(p, vesselId, idx)
-                    : null);
+            => IndexedDir("docking", $"{p}/docking",
+                () => Vessel(vesselId).Docking.Count,
+                index => DockingPortDir(p, vesselId, index));
 
         private VfsDirectory DockingPortDir(string p, string vesselId, int index)
         {
@@ -1052,11 +1297,9 @@ public static class SimFsTree
         }
 
         private VfsDirectory DecouplersDir(string p, string vesselId)
-            => new DelegateDirectory("decouplers", Qid($"{p}/decouplers"),
-                () => Vessel(vesselId).Decouplers.Select(d => (VfsNode)DecouplerDir(p, vesselId, d.Index)).ToArray(),
-                name => int.TryParse(name, out var idx) && Vessel(vesselId).Decouplers.Any(d => d.Index == idx)
-                    ? DecouplerDir(p, vesselId, idx)
-                    : null);
+            => IndexedDir("decouplers", $"{p}/decouplers",
+                () => Vessel(vesselId).Decouplers.Count,
+                index => DecouplerDir(p, vesselId, index));
 
         private VfsDirectory DecouplerDir(string p, string vesselId, int index)
         {
@@ -1082,13 +1325,27 @@ public static class SimFsTree
         }
 
         private VfsDirectory TanksDir(string p, string vesselId)
-            => new DelegateDirectory("tanks", Qid($"{p}/tanks"),
-                () => SanitizedTanks(vesselId)
-                    .Select(t => (VfsNode)TankDir(p, vesselId, t.Name))
-                    .ToArray(),
-                name => SanitizedTanks(vesselId).Any(t => t.Name == name)
-                    ? TankDir(p, vesselId, name)
-                    : null);
+        {
+            var cache = new ConcurrentDictionary<string, VfsNode>(StringComparer.Ordinal);
+            Func<string, VfsNode> create = tankName => TankDir(p, vesselId, tankName);
+            return new DelegateDirectory("tanks", Qid($"{p}/tanks"),
+                () =>
+                {
+                    var tanks = SanitizedTanks(vesselId);
+                    var children = new VfsNode[tanks.Count];
+                    for (var i = 0; i < tanks.Count; i++)
+                        children[i] = cache.GetOrAdd(tanks[i].Name, create);
+                    return children;
+                },
+                name =>
+                {
+                    var tanks = SanitizedTanks(vesselId);
+                    for (var i = 0; i < tanks.Count; i++)
+                        if (tanks[i].Name == name)
+                            return cache.GetOrAdd(name, create);
+                    return null;
+                });
+        }
 
         private VfsDirectory TankDir(string p, string vesselId, string tankName)
             => DelegateDirectory.Fixed(tankName, Qid($"{p}/tanks/{tankName}"),
@@ -1100,10 +1357,14 @@ public static class SimFsTree
                     () => Formats.Scalar(Tank(vesselId, tankName).Fraction)));
 
         // ---- live accessors (ENOENT when the entity vanished — OS_PLAN.md T7.1/T8.2) -------
+        // All closure-free (GP1): id lookups hit the per-roster dictionaries; per-module lookups
+        // index directly (module Index == list position, the sampler invariant) with a linear
+        // fallback rather than a per-call LINQ lambda.
 
         private VesselSnapshot Vessel(string vesselId)
-            => _store.Current.Vessels.FirstOrDefault(v => v.Id == vesselId)
-               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"vessel '{vesselId}' is gone");
+            => Vessels(_store.Current).ById.TryGetValue(vesselId, out var entry)
+                ? entry.Item
+                : throw new VfsErrorException(LinuxErrno.ENOENT, $"vessel '{vesselId}' is gone");
 
         private OrbitSnapshot Orbit(string vesselId)
             => Vessel(vesselId).Orbit
@@ -1113,17 +1374,31 @@ public static class SimFsTree
             => Vessel(vesselId).BatteryChargeFraction
                ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"vessel '{vesselId}' has no battery");
 
+        private static T ByIndex<T>(IReadOnlyList<T> items, int index, Func<T, int> indexOf, string what)
+            where T : class
+        {
+            if ((uint)index < (uint)items.Count && indexOf(items[index]) == index)
+                return items[index];
+            for (var i = 0; i < items.Count; i++)
+                if (indexOf(items[i]) == index)
+                    return items[i];
+            throw new VfsErrorException(LinuxErrno.ENOENT, $"{what} {index} is gone");
+        }
+
         private EngineSnapshot Engine(string vesselId, int index)
-            => Vessel(vesselId).Engines.FirstOrDefault(e => e.Index == index)
-               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"engine {index} is gone");
+            => ByIndex(Vessel(vesselId).Engines, index, static e => e.Index, "engine");
 
         private AnimationSnapshot Anim(string vesselId, int index)
-            => Vessel(vesselId).Animations.FirstOrDefault(a => a.Index == index)
-               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"animation {index} is gone");
+            => ByIndex(Vessel(vesselId).Animations, index, static a => a.Index, "animation");
 
         private TankSnapshot Tank(string vesselId, string tankName)
-            => SanitizedTanks(vesselId).Where(t => t.Name == tankName).Select(t => t.Tank).FirstOrDefault()
-               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"tank '{tankName}' is gone");
+        {
+            var tanks = SanitizedTanks(vesselId);
+            for (var i = 0; i < tanks.Count; i++)
+                if (tanks[i].Name == tankName)
+                    return tanks[i].Tank;
+            throw new VfsErrorException(LinuxErrno.ENOENT, $"tank '{tankName}' is gone");
+        }
 
         private NavballSnapshot Navball(string vesselId)
             => Vessel(vesselId).Navball
@@ -1134,46 +1409,51 @@ public static class SimFsTree
                ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"vessel '{vesselId}' has no environment");
 
         private RcsSnapshot Rcs(string vesselId, int index)
-            => Vessel(vesselId).Rcs.FirstOrDefault(r => r.Index == index)
-               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"rcs {index} is gone");
+            => ByIndex(Vessel(vesselId).Rcs, index, static r => r.Index, "rcs");
 
         private SolarSnapshot Solar(string vesselId, int index)
-            => Vessel(vesselId).Solar.FirstOrDefault(s => s.Index == index)
-               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"solar {index} is gone");
+            => ByIndex(Vessel(vesselId).Solar, index, static s => s.Index, "solar");
 
         private GeneratorSnapshot Generator(string vesselId, int index)
-            => Vessel(vesselId).Generators.FirstOrDefault(g => g.Index == index)
-               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"generator {index} is gone");
+            => ByIndex(Vessel(vesselId).Generators, index, static g => g.Index, "generator");
 
         private LightSnapshot Light(string vesselId, int index)
-            => Vessel(vesselId).Lights.FirstOrDefault(l => l.Index == index)
-               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"light {index} is gone");
+            => ByIndex(Vessel(vesselId).Lights, index, static l => l.Index, "light");
 
         private DockingSnapshot Docking(string vesselId, int index)
-            => Vessel(vesselId).Docking.FirstOrDefault(d => d.Index == index)
-               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"docking {index} is gone");
+            => ByIndex(Vessel(vesselId).Docking, index, static d => d.Index, "docking");
 
         private DecouplerSnapshot Decoupler(string vesselId, int index)
-            => Vessel(vesselId).Decouplers.FirstOrDefault(d => d.Index == index)
-               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"decoupler {index} is gone");
+            => ByIndex(Vessel(vesselId).Decouplers, index, static d => d.Index, "decoupler");
 
         private PartSnapshot Part(string vesselId, int index)
-            => Vessel(vesselId).Parts.FirstOrDefault(pt => pt.Index == index)
-               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"part {index} is gone");
+            => ByIndex(Vessel(vesselId).Parts, index, static pt => pt.Index, "part");
 
         private WeldSnapshot Weld(string sourceId)
-            => _store.Current.Welds.FirstOrDefault(w => w.SourceId == sourceId)
+            => FindWeld(sourceId)
                ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"weld for '{sourceId}' is gone");
 
+        private WeldSnapshot? FindWeld(string sourceId)
+        {
+            var welds = _store.Current.Welds;
+            for (var i = 0; i < welds.Count; i++)
+                if (welds[i].SourceId == sourceId)
+                    return welds[i];
+            return null;
+        }
+
         private ThugLifeSnapshot ThugLife(int id)
-            => _store.Current.ThugLife.FirstOrDefault(t => t.Id == id)
-               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"thug_life entry {id} is gone");
+        {
+            var entries = _store.Current.ThugLife;
+            for (var i = 0; i < entries.Count; i++)
+                if (entries[i].Id == id)
+                    return entries[i];
+            throw new VfsErrorException(LinuxErrno.ENOENT, $"thug_life entry {id} is gone");
+        }
 
         /// <summary>The current weld spec for a source (write-compatible), or "" when not welded.</summary>
         private string WeldReadback(string sourceId)
-            => _store.Current.Welds.FirstOrDefault(w => w.SourceId == sourceId) is { } w
-                ? Formats.WeldSpec(w)
-                : "";
+            => FindWeld(sourceId) is { } w ? Formats.WeldSpec(w) : "";
 
         /// <summary>
         ///     Parses an explicit weld line — <c>"&lt;target&gt; &lt;part_iid&gt; x y z pitch yaw roll lock"</c>
@@ -1231,8 +1511,46 @@ public static class SimFsTree
 
         // ---- naming / qids -------------------------------------------------------------------
 
-        private static List<(string Name, VesselSnapshot Vessel)> SanitizedVessels(SimSnapshot snapshot)
-            => SanitizeNames(snapshot.Vessels, v => v.Id);
+        /// <summary>
+        ///     The memoized vessel roster for a snapshot (GP1): the sanitized-name list plus
+        ///     name→vessel and id→(name, vessel) indexes, rebuilt only when the snapshot's vessel
+        ///     list reference changes — every walk step used to re-sanitize the whole roster.
+        /// </summary>
+        private Roster<VesselSnapshot> Vessels(SimSnapshot snapshot)
+        {
+            var roster = _vesselRoster;
+            if (roster is not null && ReferenceEquals(roster.Source, snapshot.Vessels))
+                return roster;
+            roster = BuildRoster(snapshot.Vessels, static v => v.Id);
+            _vesselRoster = roster;
+            return roster;
+        }
+
+        /// <summary>The memoized body roster (reference-keyed, so the GP3 bodies sub-cadence keeps one roster alive).</summary>
+        private Roster<BodySnapshot> Bodies(SimSnapshot snapshot)
+        {
+            var roster = _bodyRoster;
+            if (roster is not null && ReferenceEquals(roster.Source, snapshot.Bodies))
+                return roster;
+            roster = BuildRoster(snapshot.Bodies, static b => b.Id);
+            _bodyRoster = roster;
+            return roster;
+        }
+
+        private static Roster<T> BuildRoster<T>(IReadOnlyList<T> items, Func<T, string> key)
+            where T : class
+        {
+            var sanitized = SanitizeNames(items, key);
+            var byName = new Dictionary<string, T>(sanitized.Count, StringComparer.Ordinal);
+            var byId = new Dictionary<string, (string Name, T Item)>(sanitized.Count, StringComparer.Ordinal);
+            foreach (var (name, item) in sanitized)
+            {
+                byName.TryAdd(name, item);
+                byId.TryAdd(key(item), (name, item));
+            }
+
+            return new Roster<T> { Source = items, Sanitized = sanitized, ByName = byName, ById = byId };
+        }
 
         /// <summary>
         ///     Maps items to unique directory names: anything outside <c>[A-Za-z0-9._-]</c>
@@ -1283,7 +1601,19 @@ public static class SimFsTree
             };
         }
 
-        private StaticTextFile Line(string qidPath, string name, Func<string> value)
+        /// <summary>
+        ///     A snapshot-derived scalar leaf, memoized per published snapshot (GP1): one format
+        ///     serves the Tgetattr + open + every concurrent reader until the next publish. Use
+        ///     <see cref="LiveLine"/> for values that can change without a publish.
+        /// </summary>
+        private SnapshotTextFile Line(string qidPath, string name, Func<string> value)
+            => new(name, Qid(qidPath), _store, () => value() + "\n");
+
+        /// <summary>
+        ///     A leaf whose value can change <b>without</b> a snapshot publish (live transport
+        ///     state, display settings) — formatted on every access, never memoized.
+        /// </summary>
+        private StaticTextFile LiveLine(string qidPath, string name, Func<string> value)
             => new(name, Qid(qidPath), () => value() + "\n");
 
         private ulong Qid(string path)
