@@ -42,6 +42,13 @@ cheats ported from `unscience`, are code-complete.** The only pending work is a 
 (T6.6/T9.3/G1–G4, plus the welds/IVA/parts checklist) that require a live KSA flight; checklists are in
 [`docs/VALIDATION.md`](docs/VALIDATION.md). The purrTTY tip release is now cut.
 
+> **Whole-mod perf pass (2026-07-02):** all seven plans of
+> [`plans/GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md`](plans/GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md)
+> (GP1–GP7) are landed — zero-steady-state-alloc sampler (+"Sample alloc" tripwire in the status
+> window), memoized `/sim` read surface, subscription-gated/paced MQTT, 9p zero-copy reads + inline
+> dispatch, zero-alloc SSH pump, display static-frame suppression, HTTP keep-alive. The formal
+> before/after measurement pass (plan §6) is still open.
+
 | Milestone | Status | Key entry points |
 |---|---|---|
 | M0 — scaffold | DONE | `gatos.slnx`, `Directory.Build.props`, `GatOsPaths` |
