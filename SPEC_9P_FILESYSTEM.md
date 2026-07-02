@@ -661,7 +661,9 @@ velocity m/s) and applies it **about the vessel's *current* parent body** via
 ## 7. HTTP `/v1` endpoint reference (`gatOS.Http/SimHttpServer.cs`)
 
 Base URL: `$GATOS_HTTP` (guest) or `http://127.0.0.1:<http_preferred_port>/v1` (host, default `4242`).
-Loopback only, no auth. Aggregate reads serialize the snapshot via `SimJson`.
+Loopback only, no auth. Aggregate reads serialize the snapshot via `SimJson`. Connections are
+HTTP/1.1 **keep-alive** (idle timeout ~30 s; `Connection: close` honored; SSE responses stream until
+the client disconnects) — polling clients can and should reuse one connection.
 
 | Method | Route | Returns |
 |---|---|---|

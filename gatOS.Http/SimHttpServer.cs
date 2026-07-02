@@ -119,6 +119,12 @@ public sealed class SimHttpServer : IAsyncDisposable
         }
     }
 
+    /// <summary>How long a keep-alive connection may sit idle between requests before we close it.</summary>
+    private static readonly TimeSpan KeepAliveIdle = TimeSpan.FromSeconds(30);
+
+    /// <summary>Requests served per connection before a polite close (a runaway-client backstop).</summary>
+    private const int MaxRequestsPerConnection = 1000;
+
     private async Task ServeAsync(TcpClient client, CancellationToken ct)
     {
         Interlocked.Increment(ref _activeSessions);
@@ -126,10 +132,33 @@ public sealed class SimHttpServer : IAsyncDisposable
         {
             client.NoDelay = true;
             await using var stream = client.GetStream();
-            var request = await HttpRequestLine.ReadAsync(stream, ct).ConfigureAwait(false);
-            if (request is null)
-                return;
-            await DispatchAsync(stream, request, ct).ConfigureAwait(false);
+            // Keep-alive (GP7): serve requests off one connection until the client closes, asks to
+            // close, idles out, or hits the cap. SDK polling loops stop paying a TCP handshake +
+            // fresh connection task per request.
+            var reader = new HttpConnectionReader(stream);
+            using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            for (var served = 0; served < MaxRequestsPerConnection; served++)
+            {
+                idle.CancelAfter(KeepAliveIdle);
+                HttpRequestLine? request;
+                try
+                {
+                    request = await reader.ReadRequestAsync(idle.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    return; // keep-alive idle timeout — close quietly
+                }
+
+                if (request is null)
+                    return;
+                // Disarm the idle timer for the handler's duration — SSE/long-poll handlers run
+                // until the client disconnects and must not be reaped as "idle".
+                idle.CancelAfter(Timeout.InfiniteTimeSpan);
+                await DispatchAsync(stream, request, ct).ConfigureAwait(false);
+                if (request.WantsClose)
+                    return;
+            }
         }
         catch (OperationCanceledException)
         {
@@ -544,7 +573,7 @@ public sealed class SimHttpServer : IAsyncDisposable
         var payload = Encoding.UTF8.GetBytes(json);
         var head = Encoding.ASCII.GetBytes(
             $"HTTP/1.1 {status} {Reason(status)}\r\nContent-Type: application/json\r\n"
-            + $"Content-Length: {payload.Length}\r\nConnection: close\r\n\r\n");
+            + $"Content-Length: {payload.Length}\r\nConnection: keep-alive\r\n\r\n");
         var buffer = new ArrayBufferWriter<byte>(head.Length + payload.Length);
         buffer.Write(head);
         buffer.Write(payload);
@@ -557,7 +586,7 @@ public sealed class SimHttpServer : IAsyncDisposable
         var payload = Encoding.UTF8.GetBytes(text + "\n"); // trailing LF mirrors the /sim file convention
         var head = Encoding.ASCII.GetBytes(
             $"HTTP/1.1 {status} {Reason(status)}\r\nContent-Type: text/plain; charset=utf-8\r\n"
-            + $"Content-Length: {payload.Length}\r\nConnection: close\r\n\r\n");
+            + $"Content-Length: {payload.Length}\r\nConnection: keep-alive\r\n\r\n");
         var buffer = new ArrayBufferWriter<byte>(head.Length + payload.Length);
         buffer.Write(head);
         buffer.Write(payload);

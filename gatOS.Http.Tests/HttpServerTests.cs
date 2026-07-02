@@ -43,6 +43,51 @@ public sealed class HttpServerTests
     }
 
     [Test]
+    public async Task KeepAlive_ServesMultipleRequestsOnOneConnection()
+    {
+        // GP7: HTTP/1.1 keep-alive — a raw connection serves several requests without closing.
+        using var tcp = new System.Net.Sockets.TcpClient();
+        await tcp.ConnectAsync("127.0.0.1", _server.Port);
+        await using var stream = tcp.GetStream();
+        using var http = new StreamReader(stream, leaveOpen: true);
+
+        for (var i = 0; i < 3; i++)
+        {
+            var request = "GET /v1/time HTTP/1.1\r\nHost: x\r\n\r\n"u8.ToArray();
+            await stream.WriteAsync(request);
+            var status = await http.ReadLineAsync();
+            Assert.That(status, Does.StartWith("HTTP/1.1 200"), $"request {i} on the shared connection");
+            var contentLength = 0;
+            while (await http.ReadLineAsync() is { Length: > 0 } header)
+                if (header.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
+                    contentLength = int.Parse(header["Content-Length:".Length..].Trim());
+            var body = new char[contentLength];
+            await http.ReadBlockAsync(body, 0, contentLength);
+            Assert.That(new string(body), Does.Contain("ut"));
+        }
+    }
+
+    [Test]
+    public async Task DribbledRequest_StillParses()
+    {
+        // GP7: the buffered head reader must handle a client trickling bytes (the pre-GP7 reader
+        // read one byte per await by construction; the buffered one must not depend on bulk arrival).
+        using var tcp = new System.Net.Sockets.TcpClient();
+        await tcp.ConnectAsync("127.0.0.1", _server.Port);
+        await using var stream = tcp.GetStream();
+        var request = "GET /v1/time HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"u8.ToArray();
+        foreach (var b in request)
+        {
+            await stream.WriteAsync(new[] { b });
+            await Task.Delay(1);
+        }
+
+        using var http = new StreamReader(stream);
+        var status = await http.ReadLineAsync();
+        Assert.That(status, Does.StartWith("HTTP/1.1 200"));
+    }
+
+    [Test]
     public async Task Snapshot_SerializesVesselsAndSnakeCase()
     {
         using var json = JsonDocument.Parse(await _client.GetStringAsync("v1/snapshot"));

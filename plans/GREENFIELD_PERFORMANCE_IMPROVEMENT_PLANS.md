@@ -1,6 +1,12 @@
 # GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md — the whole-mod efficiency audit
 
-**Status: IN PROGRESS.** Landed 2026-07-02: **GP6** (display — static-frame suppression on the
+**Status: COMPLETE (all seven plans landed 2026-07-02; formal in-game/before-after measurement per
+§6 still open — the instrumentation is in place).** **GP7** (HTTP — `HttpConnectionReader` reads
+request heads in bulk with a persistent 16 KiB buffer and hands leftover bytes to the body/next
+request, replacing the one-`ReadAsync`-per-header-byte loop; HTTP/1.1 keep-alive with a 30 s idle
+timeout and a per-connection request cap, `Connection: close` honored, SSE unchanged;
+`Segments` computed once per request; SPEC §7 notes keep-alive; pinned by keep-alive +
+dribbled-request tests), **GP6** (display — static-frame suppression on the
 encode worker: byte-identical consecutive captures are coalesced via an exact SIMD compare unless a
 keyframe is due, so a still scene costs no encode/wire/guest/terminal work between the ≤1 s
 keyframe heartbeats; a `StaticSkips` counter joins the status window; `FrameCapture` reuses its
