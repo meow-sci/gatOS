@@ -201,7 +201,7 @@ and `TelemetrySettings`. The display surface is the same kind of thing. Stays ga
   `stream`/`events`/`alarm`. **Multi-reader fan-out:** each open fid is an independent subscriber; the
   encoder `Publish(frameBytes)` hands the newest complete frame to every subscriber, **dropping** a
   frame for any reader still draining the previous one (latest-frame-wins, never blocks the producer).
-  A frame larger than `msize` (~64 KiB) is delivered across successive `Tread`s; frame boundaries are
+  A frame larger than `msize` (512 KiB as of guest v15 / perf plan P4; ~128 KiB before) is delivered across successive `Tread`s; frame boundaries are
   self-evident (each is a complete Kitty unit), so back-to-back concatenation is valid. When `Enabled=0`,
   no frames are published and readers block — `cat` simply waits. (Optional refinement: ref-count open
   readers so capture auto-pauses when nobody is watching even if `Enabled=1`; primary gate remains the

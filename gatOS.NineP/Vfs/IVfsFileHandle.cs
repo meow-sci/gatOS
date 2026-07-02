@@ -53,6 +53,9 @@ public interface IVfsWritableFileHandle : IDisposable
     ///     number of bytes consumed (normally the full length). Throws
     ///     <see cref="VfsErrorException"/> to fail the underlying <c>write(2)</c> with a specific
     ///     errno. The token fires on <c>Tflush</c>/<c>Tclunk</c>/teardown.
+    ///     <paramref name="data"/> is a view into the server's pooled message buffer — it is valid
+    ///     only until the returned task completes; an implementation that defers consumption must
+    ///     copy it first.
     /// </summary>
     ValueTask<uint> WriteAsync(ulong offset, ReadOnlyMemory<byte> data, CancellationToken ct);
 

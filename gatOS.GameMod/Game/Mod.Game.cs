@@ -794,7 +794,19 @@ public sealed partial class Mod
             var cap = disp.CaptureStat;
             if (cap.Count > 0)
                 ImGui.Text($"  capture avg {cap.AvgMicros / 1000:F3} ms, max {cap.MaxMicros / 1000:F3} ms; "
-                           + $"encode avg {disp.EncodeStat.AvgMicros / 1000:F3} ms");
+                           + $"encode avg {disp.EncodeStat.AvgMicros / 1000:F3} ms; "
+                           + $"skipped {disp.EncodeSkips}");
+        }
+
+        if (_simServer is { } simNineP && simNineP.Stats.TreadCount > 0)
+        {
+            var np = simNineP.Stats;
+            ImGui.Text($"9p reads: {np.TreadCount} treads, {np.TreadBytes / (1024.0 * 1024.0):F1} MiB; "
+                       + $"send avg {np.SendAvgMicros / 1000:F3} ms");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Rread replies served by the /sim 9p server (all files; the display "
+                                 + "stream dominates while it runs) and the mean reply socket-write time. "
+                                 + "The transport half of the display pipeline — see PERF_IMPROVEMENT_PLAN.md P4/P8.");
         }
 
         if (ImGui.SmallButton("Reset perf##gatos_reset_perf"))
@@ -804,6 +816,7 @@ public sealed partial class Mod
             _mqttBroker?.PublishStats.Reset();
             _displaySurface?.CaptureStat.Reset();
             _displaySurface?.EncodeStat.Reset();
+            _simServer?.Stats.Reset();
         }
     }
 

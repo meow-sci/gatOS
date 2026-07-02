@@ -17,7 +17,7 @@ modprobe 9p 2>/dev/null
 mkdir -p /mnt
 while :; do
     if ! mountpoint -q /mnt; then
-        mount -t 9p -o "trans=tcp,port=$PORT,version=9p2000.L,msize=131072,cache=none" 10.0.2.2 /mnt 2>/dev/null
+        mount -t 9p -o "trans=tcp,port=$PORT,version=9p2000.L,msize=524288,cache=none" 10.0.2.2 /mnt 2>/dev/null
     fi
     sleep 2
 done

@@ -53,7 +53,7 @@ public sealed class ServerConformanceTests
         var (msize, version) = await _client.VersionAsync(1 << 20);
         Assert.Multiple(() =>
         {
-            Assert.That(msize, Is.EqualTo(131072), "server ceiling");
+            Assert.That(msize, Is.EqualTo(524288), "server ceiling");
             Assert.That(version, Is.EqualTo("9P2000.L"));
         });
 

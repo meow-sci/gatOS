@@ -46,7 +46,7 @@ cheats ported from `unscience`, are code-complete.** The only pending work is a 
 |---|---|---|
 | M0 — scaffold | DONE | `gatos.slnx`, `Directory.Build.props`, `GatOsPaths` |
 | M1 — spike | DONE | `spike/NOTES.md` (**required reading** before M3/M4/M7/M8) |
-| M2 — guest image | DONE | `guest/build-image.sh`, `guest/fetch-guest.*`, `GUEST_VERSION`=14 |
+| M2 — guest image | DONE | `guest/build-image.sh`, `guest/fetch-guest.*`, `GUEST_VERSION`=15 |
 | M3 — gatOS.Vm | DONE | `VmHost.cs`, `QemuCommandBuilder`, `DiskManager`, `PortAllocator` |
 | M4 — gatOS.Ssh | DONE | `SshShellSession.cs`, `VmConnectionBroker.cs` |
 | M5 — purrTTY upstream | DONE (tip release cut) | purrtty commits `9fb5e13`/`a56966a` |
@@ -71,7 +71,8 @@ Since then guest v10 added the `coreutils` package, whose GNU `tail` shadowed bu
 PATH and broke `tail -f` on the 9p `/sim` mount (GNU `tail -f` follows via inotify, which v9fs
 never delivers for the host-side appends that grow `stream`/`events`/`alarm`) — failing
 `SimMountIntegrationTests`; fixed in guest **v14** by the `usr/local/bin/tail` poll-mode shim
-(verified against a live mount, Windows/TCG, 2026-06-20). **M10 (persistence & savegame) is next.**
+(verified against a live mount, Windows/TCG, 2026-06-20); guest **v15** raises the /sim + /mnt mount
+msize to 524288 to match the 9p server's raised ceiling (plans/PERF_IMPROVEMENT_PLAN.md P4). **M10 (persistence & savegame) is next.**
 
 > **`spike/NOTES.md` is REQUIRED READING before any M3/M4/M7/M8 work** — notably: `i_size`
 > must be truthful on ≥6.11 kernels; two distinct file models exist (growing-log `tail -f` vs

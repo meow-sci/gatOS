@@ -2,7 +2,10 @@
 # 9p /sim remount supervisor (OS_PLAN.md T2.2; respawned by busybox init).
 # The host passes gatos.simport=<port> on the kernel cmdline; absent or 0 means
 # the 9p server is disabled (M3 passes 0 until M8 wires the real server).
-# Mount options validated against the M1 spike (spike/NOTES.md T1.2).
+# Mount options validated against the M1 spike (spike/NOTES.md T1.2). msize is raised to
+# the server ceiling (512 KiB, PERF_IMPROVEMENT_PLAN.md P4) — the kernel default request
+# is only ~128 KiB, and the /sim/display video stream pays a slirp round-trip per Tread;
+# older servers negotiate the value down automatically.
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
 PORT="$(sed -n 's/.*gatos\.simport=\([0-9][0-9]*\).*/\1/p' /proc/cmdline)"
@@ -15,7 +18,7 @@ modprobe 9p 2>/dev/null
 mkdir -p /sim
 while :; do
     if ! mountpoint -q /sim; then
-        mount -t 9p -o "trans=tcp,port=$PORT,version=9p2000.L,cache=none" 10.0.2.2 /sim 2>/dev/null
+        mount -t 9p -o "trans=tcp,port=$PORT,version=9p2000.L,msize=524288,cache=none" 10.0.2.2 /sim 2>/dev/null
     fi
     sleep 2
 done

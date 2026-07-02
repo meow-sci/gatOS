@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Text;
 
@@ -8,9 +9,16 @@ namespace gatOS.NineP.Protocol;
 ///     <c>size[4] type[1] tag[2]</c> header, the primitive writers append little-endian
 ///     fields, and <see cref="Frame"/> patches the final size (OS_PLAN.md T7.2).
 /// </summary>
+/// <remarks>
+///     The backing buffer is pooled (PERF_IMPROVEMENT_PLAN.md P4): a video-rate stream mount
+///     answers hundreds of up-to-msize <c>Rread</c>s per second, and a fresh array per reply was
+///     ~100 MB/s of allocation. Callers that own a writer's full lifecycle (the server session)
+///     call <see cref="Return"/> once the frame bytes are on the wire; forgetting it merely costs
+///     a pool miss (the array is GC-reclaimed).
+/// </remarks>
 public sealed class NinePWriter
 {
-    private byte[] _buffer = new byte[256];
+    private byte[] _buffer = ArrayPool<byte>.Shared.Rent(256);
     private int _position;
 
     /// <summary>Starts a frame of the given type/tag, resetting any previous content.</summary>
@@ -95,12 +103,29 @@ public sealed class NinePWriter
         return _buffer.AsMemory(0, _position);
     }
 
+    /// <summary>
+    ///     Returns the backing buffer to the pool. Call only once the frame bytes are fully
+    ///     consumed (written to the socket); the writer is unusable afterwards until
+    ///     <see cref="Begin"/> regrows it.
+    /// </summary>
+    public void Return()
+    {
+        var buffer = _buffer;
+        _buffer = [];
+        _position = 0;
+        if (buffer.Length > 0)
+            ArrayPool<byte>.Shared.Return(buffer);
+    }
+
     private Span<byte> Span(int count)
     {
         if (_buffer.Length - _position < count)
         {
-            var grown = Math.Max(_buffer.Length * 2, _position + count);
-            Array.Resize(ref _buffer, grown);
+            var grown = ArrayPool<byte>.Shared.Rent(Math.Max(_buffer.Length * 2, _position + count));
+            _buffer.AsSpan(0, _position).CopyTo(grown);
+            if (_buffer.Length > 0)
+                ArrayPool<byte>.Shared.Return(_buffer);
+            _buffer = grown;
         }
 
         var span = _buffer.AsSpan(_position, count);

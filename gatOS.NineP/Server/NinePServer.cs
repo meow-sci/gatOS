@@ -44,6 +44,9 @@ public sealed class NinePServer : IAsyncDisposable
     /// </summary>
     public int ActiveSessions => _sessions.Count;
 
+    /// <summary>Transport counters across all sessions (Treads served/bytes, reply-write time).</summary>
+    public NinePServerStats Stats { get; } = new();
+
     /// <summary>Binds the listener (port 0 = ephemeral) and starts accepting connections.</summary>
     public Task StartAsync(int port = 0)
     {
@@ -91,7 +94,7 @@ public sealed class NinePServer : IAsyncDisposable
             }
 
             client.NoDelay = true;
-            var session = new Session(client, _root, _options, _attrTime, ct);
+            var session = new Session(client, _root, _options, _attrTime, Stats, ct);
             _sessions.TryAdd(session, 0);
             _ = Task.Run(async () =>
             {

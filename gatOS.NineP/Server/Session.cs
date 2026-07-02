@@ -1,5 +1,7 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net.Sockets;
 using gatOS.Logging;
 using gatOS.NineP.Protocol;
@@ -49,16 +51,18 @@ internal sealed class Session
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly ConcurrentDictionary<uint, FidEntry> _fids = new();
     private readonly ConcurrentDictionary<ushort, InFlight> _inFlight = new();
+    private readonly NinePServerStats _stats;
     private volatile uint _msize;
 
     internal Session(TcpClient client, VfsDirectory root, NinePServerOptions options,
-        DateTimeOffset attrTime, CancellationToken serverToken)
+        DateTimeOffset attrTime, NinePServerStats stats, CancellationToken serverToken)
     {
         _client = client;
         _stream = client.GetStream();
         _root = root;
         _options = options;
         _attrTime = attrTime;
+        _stats = stats;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
         _msize = options.MaxMsize;
     }
@@ -77,10 +81,22 @@ internal sealed class Session
                 if (size is < HeaderBytes or > MaxFrameBytes)
                     throw new ProtocolException($"frame size {size} outside [{HeaderBytes}, {MaxFrameBytes}]");
 
-                var frame = new byte[size - 4];
-                await _stream.ReadExactlyAsync(frame, ct).ConfigureAwait(false);
-                Dispatch((MessageType)frame[0], BinaryPrimitives.ReadUInt16LittleEndian(frame.AsSpan(1, 2)),
-                    frame[3..]);
+                // The frame body is rented (P4): a video-rate mount moves hundreds of messages a
+                // second and a fresh array per message was steady garbage. Ownership passes to the
+                // Dispatch task, whose finally returns it once the handler completes.
+                var frameLength = (int)size - 4;
+                var frame = ArrayPool<byte>.Shared.Rent(frameLength);
+                try
+                {
+                    await _stream.ReadExactlyAsync(frame.AsMemory(0, frameLength), ct).ConfigureAwait(false);
+                    Dispatch((MessageType)frame[0],
+                        BinaryPrimitives.ReadUInt16LittleEndian(frame.AsSpan(1, 2)), frame, frameLength);
+                }
+                catch
+                {
+                    ArrayPool<byte>.Shared.Return(frame);
+                    throw;
+                }
             }
         }
         catch (OperationCanceledException)
@@ -122,13 +138,14 @@ internal sealed class Session
         _client.Close();
     }
 
-    private void Dispatch(MessageType type, ushort tag, byte[] body)
+    private void Dispatch(MessageType type, ushort tag, byte[] frame, int frameLength)
     {
         var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
         var inFlight = new InFlight(cts, tag);
         if (!_inFlight.TryAdd(tag, inFlight))
         {
-            // A tag may not be reused while outstanding; treat as a broken peer.
+            // A tag may not be reused while outstanding; treat as a broken peer. The caller's
+            // catch returns the rented frame.
             cts.Dispose();
             throw new ProtocolException($"tag {tag} reused while in flight");
         }
@@ -137,7 +154,10 @@ internal sealed class Session
         {
             try
             {
-                await HandleAsync(type, tag, body, inFlight, cts.Token).ConfigureAwait(false);
+                // The body view (after type[1] tag[2]) stays valid for the handler's whole run —
+                // the rented frame is returned only in the finally below.
+                await HandleAsync(type, tag, frame.AsMemory(3, frameLength - 3), inFlight, cts.Token)
+                    .ConfigureAwait(false);
             }
             finally
             {
@@ -145,11 +165,12 @@ internal sealed class Session
                 // there). This still covers the suppressed-reply and exception paths.
                 _inFlight.TryRemove(tag, out _);
                 cts.Dispose();
+                ArrayPool<byte>.Shared.Return(frame);
             }
         });
     }
 
-    private async Task HandleAsync(MessageType type, ushort tag, byte[] body, InFlight inFlight,
+    private async Task HandleAsync(MessageType type, ushort tag, ReadOnlyMemory<byte> body, InFlight inFlight,
         CancellationToken ct)
     {
         try
@@ -176,6 +197,7 @@ internal sealed class Session
                 _ => Error(tag, LinuxErrno.EOPNOTSUPP),
             };
             await SendAsync(reply, inFlight).ConfigureAwait(false);
+            reply.Return(); // reply bytes are on the wire (or suppressed) — recycle the buffer
         }
         catch (OperationCanceledException)
         {
@@ -183,7 +205,9 @@ internal sealed class Session
         }
         catch (VfsErrorException ex)
         {
-            await SendAsync(Error(tag, ex.Errno), inFlight).ConfigureAwait(false);
+            var error = Error(tag, ex.Errno);
+            await SendAsync(error, inFlight).ConfigureAwait(false);
+            error.Return();
         }
         catch (ProtocolException ex)
         {
@@ -193,7 +217,9 @@ internal sealed class Session
         catch (Exception ex) when (ex is not IOException and not ObjectDisposedException)
         {
             ModLog.Log.Error($"9p session: {type} handler failed", ex);
-            await SendAsync(Error(tag, LinuxErrno.EIO), inFlight).ConfigureAwait(false);
+            var error = Error(tag, LinuxErrno.EIO);
+            await SendAsync(error, inFlight).ConfigureAwait(false);
+            error.Return();
         }
     }
 
@@ -214,6 +240,7 @@ internal sealed class Session
         _inFlight.TryRemove(inFlight.Tag, out _);
 
         await _writeLock.WaitAsync(_cts.Token).ConfigureAwait(false);
+        var started = Stopwatch.GetTimestamp();
         try
         {
             await _stream.WriteAsync(reply.Frame(), _cts.Token).ConfigureAwait(false);
@@ -225,6 +252,7 @@ internal sealed class Session
         finally
         {
             _writeLock.Release();
+            _stats.RecordSend(Stopwatch.GetTimestamp() - started);
         }
     }
 
@@ -233,9 +261,9 @@ internal sealed class Session
 
     // ---- handlers ------------------------------------------------------------------------
 
-    private NinePWriter HandleVersion(byte[] body, ushort tag)
+    private NinePWriter HandleVersion(ReadOnlyMemory<byte> body, ushort tag)
     {
-        var reader = new NinePReader(body);
+        var reader = new NinePReader(body.Span);
         var clientMsize = reader.ReadUInt32();
         var version = reader.ReadString();
         if (clientMsize < 4096)
@@ -265,9 +293,9 @@ internal sealed class Session
             .WriteString(accepted ? "9P2000.L" : "unknown");
     }
 
-    private NinePWriter HandleAttach(byte[] body, ushort tag)
+    private NinePWriter HandleAttach(ReadOnlyMemory<byte> body, ushort tag)
     {
-        var reader = new NinePReader(body);
+        var reader = new NinePReader(body.Span);
         var fid = reader.ReadUInt32();
         _ = reader.ReadUInt32();  // afid — no auth
         _ = reader.ReadString();  // uname
@@ -278,9 +306,9 @@ internal sealed class Session
         return new NinePWriter().Begin(MessageType.Rattach, tag).WriteQid(Qid.ForNode(_root));
     }
 
-    private NinePWriter HandleWalk(byte[] body, ushort tag)
+    private NinePWriter HandleWalk(ReadOnlyMemory<byte> body, ushort tag)
     {
-        var reader = new NinePReader(body);
+        var reader = new NinePReader(body.Span);
         var fid = reader.ReadUInt32();
         var newfid = reader.ReadUInt32();
         var count = reader.ReadUInt16();
@@ -353,9 +381,9 @@ internal sealed class Session
         return writer;
     }
 
-    private NinePWriter HandleLopen(byte[] body, ushort tag)
+    private NinePWriter HandleLopen(ReadOnlyMemory<byte> body, ushort tag)
     {
-        var reader = new NinePReader(body);
+        var reader = new NinePReader(body.Span);
         var fid = reader.ReadUInt32();
         var flags = reader.ReadUInt32();
         var entry = RequireFid(fid);
@@ -390,9 +418,9 @@ internal sealed class Session
             .WriteUInt32(0); // iounit: 0 = use msize-derived chunks
     }
 
-    private NinePWriter HandleGetattr(byte[] body, ushort tag)
+    private NinePWriter HandleGetattr(ReadOnlyMemory<byte> body, ushort tag)
     {
-        var reader = new NinePReader(body);
+        var reader = new NinePReader(body.Span);
         var fid = reader.ReadUInt32();
         _ = reader.ReadUInt64(); // request_mask — we always answer the basic set
         var entry = RequireFid(fid);
@@ -432,9 +460,9 @@ internal sealed class Session
             .WriteUInt64(0);                                             // data_version
     }
 
-    private NinePWriter HandleReaddir(byte[] body, ushort tag)
+    private NinePWriter HandleReaddir(ReadOnlyMemory<byte> body, ushort tag)
     {
-        var reader = new NinePReader(body);
+        var reader = new NinePReader(body.Span);
         var fid = reader.ReadUInt32();
         var offset = reader.ReadUInt64();
         var count = reader.ReadUInt32();
@@ -485,12 +513,12 @@ internal sealed class Session
         return writer.PatchUInt32(payloadStart - 4, (uint)(writer.Length - payloadStart));
     }
 
-    private async Task<NinePWriter> HandleReadAsync(byte[] body, ushort tag, CancellationToken ct)
+    private async Task<NinePWriter> HandleReadAsync(ReadOnlyMemory<byte> body, ushort tag, CancellationToken ct)
     {
         uint fid, count;
         ulong offset;
         {
-            var reader = new NinePReader(body);
+            var reader = new NinePReader(body.Span);
             fid = reader.ReadUInt32();
             offset = reader.ReadUInt64();
             count = reader.ReadUInt32();
@@ -504,22 +532,27 @@ internal sealed class Session
 
         var clamped = Math.Min(count, _msize - ReadOverhead);
         var data = await handle.ReadAsync(offset, clamped, ct).ConfigureAwait(false);
+        _stats.RecordTread(data.Length);
         return new NinePWriter().Begin(MessageType.Rread, tag)
             .WriteUInt32((uint)data.Length)
             .WriteBytes(data.Span);
     }
 
-    private async Task<NinePWriter> HandleWriteAsync(byte[] body, ushort tag, CancellationToken ct)
+    private async Task<NinePWriter> HandleWriteAsync(ReadOnlyMemory<byte> body, ushort tag, CancellationToken ct)
     {
         uint fid;
         ulong offset;
-        byte[] data;
+        ReadOnlyMemory<byte> data;
         {
-            var reader = new NinePReader(body);
+            var reader = new NinePReader(body.Span);
             fid = reader.ReadUInt32();
             offset = reader.ReadUInt64();
             var count = reader.ReadUInt32();
-            data = reader.ReadBytes((int)count).ToArray();
+            _ = reader.ReadBytes((int)count); // bounds-check the declared count against the body
+            // Slice the pooled body directly (fid[4] offset[8] count[4] precede the payload): it
+            // stays valid for the handler's whole run — Dispatch returns the rented frame only
+            // after this task completes — sparing a per-write payload copy.
+            data = body.Slice(16, (int)count);
         }
 
         var entry = RequireFid(fid);
@@ -539,9 +572,9 @@ internal sealed class Session
     ///     accepted as best-effort no-ops so <c>cp -p</c>/<c>chmod</c> don't fail on a host mount.
     ///     Read-only nodes get EOPNOTSUPP (control-file truncate stays a no-op success).
     /// </summary>
-    private NinePWriter HandleSetattr(byte[] body, ushort tag)
+    private NinePWriter HandleSetattr(ReadOnlyMemory<byte> body, ushort tag)
     {
-        var reader = new NinePReader(body);
+        var reader = new NinePReader(body.Span);
         var fid = reader.ReadUInt32();
         var valid = reader.ReadUInt32();
         _ = reader.ReadUInt32(); // mode
@@ -570,9 +603,9 @@ internal sealed class Session
     ///     (<c>Tlcreate</c> — host read-write mounts). The synthetic tree's directories are not
     ///     writable, so this surfaces EROFS there.
     /// </summary>
-    private NinePWriter HandleLcreate(byte[] body, ushort tag)
+    private NinePWriter HandleLcreate(ReadOnlyMemory<byte> body, ushort tag)
     {
-        var reader = new NinePReader(body);
+        var reader = new NinePReader(body.Span);
         var fid = reader.ReadUInt32();
         var name = reader.ReadString();
         var flags = reader.ReadUInt32();
@@ -604,9 +637,9 @@ internal sealed class Session
     }
 
     /// <summary>Creates a directory in a directory fid (<c>Tmkdir</c>); read-only tree → EROFS.</summary>
-    private NinePWriter HandleMkdir(byte[] body, ushort tag)
+    private NinePWriter HandleMkdir(ReadOnlyMemory<byte> body, ushort tag)
     {
-        var reader = new NinePReader(body);
+        var reader = new NinePReader(body.Span);
         var fid = reader.ReadUInt32();
         var name = reader.ReadString();
         var mode = reader.ReadUInt32();
@@ -620,9 +653,9 @@ internal sealed class Session
     }
 
     /// <summary>Removes a child of a directory fid (<c>Tunlinkat</c>); read-only tree → EROFS.</summary>
-    private NinePWriter HandleUnlinkat(byte[] body, ushort tag)
+    private NinePWriter HandleUnlinkat(ReadOnlyMemory<byte> body, ushort tag)
     {
-        var reader = new NinePReader(body);
+        var reader = new NinePReader(body.Span);
         var fid = reader.ReadUInt32();
         var name = reader.ReadString();
         var flags = reader.ReadUInt32();
@@ -635,9 +668,9 @@ internal sealed class Session
     }
 
     /// <summary>Moves a child between two directory fids (<c>Trenameat</c>); read-only tree → EROFS.</summary>
-    private NinePWriter HandleRenameat(byte[] body, ushort tag)
+    private NinePWriter HandleRenameat(ReadOnlyMemory<byte> body, ushort tag)
     {
-        var reader = new NinePReader(body);
+        var reader = new NinePReader(body.Span);
         var oldFid = reader.ReadUInt32();
         var oldName = reader.ReadString();
         var newFid = reader.ReadUInt32();
@@ -654,25 +687,25 @@ internal sealed class Session
     }
 
     /// <summary>Trivially succeeds for any fid: synthetic files have nothing to flush to disk.</summary>
-    private NinePWriter HandleFsync(byte[] body, ushort tag)
+    private NinePWriter HandleFsync(ReadOnlyMemory<byte> body, ushort tag)
     {
-        var reader = new NinePReader(body);
+        var reader = new NinePReader(body.Span);
         _ = RequireFid(reader.ReadUInt32());
         return new NinePWriter().Begin(MessageType.Rfsync, tag);
     }
 
-    private NinePWriter HandleClunk(byte[] body, ushort tag)
+    private NinePWriter HandleClunk(ReadOnlyMemory<byte> body, ushort tag)
     {
-        var reader = new NinePReader(body);
+        var reader = new NinePReader(body.Span);
         var fid = reader.ReadUInt32();
         if (_fids.TryRemove(fid, out var entry))
             entry.DisposeHandle();
         return new NinePWriter().Begin(MessageType.Rclunk, tag); // always succeeds (T7.4 table)
     }
 
-    private NinePWriter HandleStatfs(byte[] body, ushort tag)
+    private NinePWriter HandleStatfs(ReadOnlyMemory<byte> body, ushort tag)
     {
-        var reader = new NinePReader(body);
+        var reader = new NinePReader(body.Span);
         _ = reader.ReadUInt32(); // fid (existence not enforced; static answer)
         return new NinePWriter().Begin(MessageType.Rstatfs, tag)
             .WriteUInt32(0x01021997) // V9FS_MAGIC
@@ -686,11 +719,11 @@ internal sealed class Session
             .WriteUInt32(255);       // namelen
     }
 
-    private async Task<NinePWriter> HandleFlushAsync(byte[] body, ushort tag)
+    private async Task<NinePWriter> HandleFlushAsync(ReadOnlyMemory<byte> body, ushort tag)
     {
         ushort oldtag;
         {
-            var reader = new NinePReader(body);
+            var reader = new NinePReader(body.Span);
             oldtag = reader.ReadUInt16();
         }
 
