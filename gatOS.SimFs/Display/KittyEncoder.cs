@@ -14,7 +14,7 @@ namespace gatOS.SimFs.Display;
 ///     transmit+display · <c>ESC 8</c> (restore cursor). <c>C=1</c> keeps the cursor from advancing
 ///     past the image.</para>
 ///     <para><b>The fixed-id "video" pattern — replace, never delete.</b> Every frame re-transmits the
-///     <i>same</i> image (and placement) id with <b>no delete</b>: a kitty <c>a=T</c> with an existing
+///     <i>same</i> image (and placement) id with <b>no delete</b>: a kitty transmit with an existing
 ///     id replaces the stored image atomically at commit (the terminal frees the old data itself), so
 ///     <b>the previous frame stays visible while the next one loads</b>. This matters because a frame
 ///     unit spans several terminal render ticks at real data rates — the earlier delete-then-retransmit
@@ -22,6 +22,15 @@ namespace gatOS.SimFs.Display;
 ///     lands in the same tick as the commit), rendering the stream permanently invisible in-game while
 ///     passing unit-atomic headless tests. One fixed id also avoids per-frame GPU texture churn (a
 ///     fresh id per frame makes the terminal allocate a new texture every frame).</para>
+///     <para><b>Keyframes vs replace frames (PERF_IMPROVEMENT_PLAN.md P0.3).</b> Two unit forms share
+///     that pattern: a <b>keyframe</b> (<c>a=T</c>, transmit+display) [re]creates the placement, and a
+///     steady-state <b>replace</b> frame (<c>a=t</c>, transmit only) swaps the stored image bytes in
+///     place — the placement from the last keyframe re-renders the new pixels. Re-displaying every
+///     frame is not just redundant: each kitty display step allocates a cursor-tracking pin in the
+///     terminal, and ghostty's placement overwrite leaks it (~one pin per frame, unbounded — perf plan
+///     §2 R3). <see cref="DisplaySurface"/> chooses the form per frame: keyframe for the first frame,
+///     on a new reader, on a size/encoding change, and at least once per second (so a consumer
+///     attaching mid-stream sees video within ≤1 s); everything else is a replace frame.</para>
 ///     <para>The whole sequence is <b>LF-free by construction</b> (base64 has no newline, and every
 ///     escape is ESC-prefixed) so it survives a cooked PTY (<c>ONLCR</c>/<c>OPOST</c> cannot corrupt
 ///     it) with no raw-mode dance required of the consumer.</para>
@@ -59,6 +68,12 @@ public static class KittyEncoder
     /// <param name="height">Frame height in pixels.</param>
     /// <param name="bgra">The pixel block: <paramref name="width"/>×<paramref name="height"/>×4 bytes, BGRA.</param>
     /// <param name="encoding">Whether to zlib-deflate the RGBA block.</param>
+    /// <param name="display">
+    ///     <c>true</c> emits a <b>keyframe</b> (<c>a=T</c>, transmit+display — [re]creates the
+    ///     placement); <c>false</c> emits a steady-state <b>replace</b> frame (<c>a=t</c>, transmit
+    ///     only — the existing placement re-renders the swapped bytes, no placement churn). See the
+    ///     class remarks for the cadence.
+    /// </param>
     /// <param name="imageId">
     ///     The single, fixed Kitty image (and placement) id reused every frame (default
     ///     <see cref="VideoImageId"/>). Each frame re-transmits this id with no delete, so the terminal
@@ -67,7 +82,7 @@ public static class KittyEncoder
     /// </param>
     /// <returns>The complete, self-contained frame bytes ready to write to a terminal.</returns>
     public static byte[] EncodeFrame(int width, int height, ReadOnlySpan<byte> bgra,
-        DisplayEncoding encoding, int imageId = VideoImageId)
+        DisplayEncoding encoding, bool display = true, int imageId = VideoImageId)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
@@ -87,7 +102,7 @@ public static class KittyEncoder
         // No delete: re-transmitting an existing id replaces the stored image at commit (the terminal
         // frees the old data), keeping the previous frame visible while this one loads — see the class
         // remarks for why an explicit per-frame delete blanks the stream at real data rates.
-        WriteKittyImage(output, width, height, imageId, encoding == DisplayEncoding.RgbaZlib, base64);
+        WriteKittyImage(output, width, height, imageId, encoding == DisplayEncoding.RgbaZlib, display, base64);
         output.Write(RestoreCursor);
         return output.ToArray();
     }
@@ -116,7 +131,8 @@ public static class KittyEncoder
     ///     Writes the chunked Kitty graphics transmit-and-display escapes. All control keys ride on the
     ///     first chunk; continuation chunks carry only <c>m</c>; the final chunk sets <c>m=0</c>.
     /// </summary>
-    private static void WriteKittyImage(Stream output, int width, int height, int imageId, bool zlib, string base64)
+    private static void WriteKittyImage(Stream output, int width, int height, int imageId, bool zlib,
+        bool display, string base64)
     {
         var offset = 0;
         var first = true;
@@ -128,7 +144,7 @@ public static class KittyEncoder
 
             output.Write(ApcStart);
             var header = first
-                ? BuildFirstHeader(width, height, imageId, zlib, more: !last)
+                ? BuildFirstHeader(width, height, imageId, zlib, display, more: !last)
                 : $"m={(last ? 0 : 1)}";
             output.Write(Encoding.ASCII.GetBytes(header));
             output.WriteByte((byte)';');
@@ -141,15 +157,22 @@ public static class KittyEncoder
         while (offset < base64.Length);
     }
 
-    private static string BuildFirstHeader(int width, int height, int imageId, bool zlib, bool more)
+    private static string BuildFirstHeader(int width, int height, int imageId, bool zlib, bool display, bool more)
     {
-        // a=T transmit+display, q=2 suppress responses, f=32 RGBA, i/p fixed ids (replace each frame),
-        // s/v pixel dims (required for raw/zlib RGBA), C=1 don't advance the cursor, o=z when deflated.
+        // a=T transmit+display (keyframe) or a=t transmit-only (replace frame), q=2 suppress
+        // responses, f=32 RGBA, i the fixed image id, s/v pixel dims (required for raw/zlib RGBA),
+        // o=z when deflated. p (placement id) and C=1 (don't advance the cursor) belong to the
+        // display step, so only keyframes carry them.
         var sb = new StringBuilder(64);
-        sb.Append("a=T,q=2,i=").Append(imageId).Append(",p=").Append(imageId).Append(",f=32");
+        sb.Append("a=").Append(display ? 'T' : 't').Append(",q=2,i=").Append(imageId);
+        if (display)
+            sb.Append(",p=").Append(imageId);
+        sb.Append(",f=32");
         if (zlib)
             sb.Append(",o=z");
-        sb.Append(",s=").Append(width).Append(",v=").Append(height).Append(",C=1");
+        sb.Append(",s=").Append(width).Append(",v=").Append(height);
+        if (display)
+            sb.Append(",C=1");
         sb.Append(",m=").Append(more ? 1 : 0);
         return sb.ToString();
     }

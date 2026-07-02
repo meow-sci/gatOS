@@ -22,6 +22,22 @@ public sealed class KittyConformanceTests
 
         Assert.That((decoded.Width, decoded.Height), Is.EqualTo((6, 4)));
         Assert.That(decoded.Zlib, Is.EqualTo(encoding == DisplayEncoding.RgbaZlib));
+        Assert.That(decoded.Display, Is.True, "the default form is the a=T keyframe");
+        Assert.That(decoded.ImageId, Is.EqualTo(KittyEncoder.VideoImageId));
+        Assert.That(decoded.Rgba, Is.EqualTo(SwizzleOpaque(bgra)));
+    }
+
+    [TestCase(DisplayEncoding.RgbaZlib)]
+    [TestCase(DisplayEncoding.Rgba)]
+    public void TransmitOnlyFrame_IsStrictlyValid_AndRoundTrips(DisplayEncoding encoding)
+    {
+        // The steady-state replace form (a=t): same pixel round-trip, no placement keys.
+        var bgra = Gradient(6, 4);
+        var frame = KittyEncoder.EncodeFrame(6, 4, bgra, encoding, display: false);
+
+        var decoded = KittyStrict.ValidateFrame(frame);
+
+        Assert.That(decoded.Display, Is.False);
         Assert.That(decoded.ImageId, Is.EqualTo(KittyEncoder.VideoImageId));
         Assert.That(decoded.Rgba, Is.EqualTo(SwizzleOpaque(bgra)));
     }

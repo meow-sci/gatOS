@@ -67,6 +67,50 @@ public sealed class DisplaySurfaceTests
     }
 
     [Test]
+    public async Task Feed_KeyframesFirst_ThenReplaces_AndKeyframesForANewReader()
+    {
+        // First frame must display (a=T — nothing has a placement yet).
+        _surface.SubmitFrame(4, 4, Solid(4, 4));
+        var first = await _surface.WaitForNextEncodedAsync(0, Cancel(5)).AsTask();
+        Assert.That(KittyStrict.ValidateFrame(first.Bytes).Display, Is.True,
+            "the first frame must be a keyframe (creates the placement)");
+
+        // Steady state replaces in place (a=t) — no per-frame placement churn.
+        _surface.SubmitFrame(4, 4, Solid(4, 4));
+        var second = await _surface.WaitForNextEncodedAsync(first.Sequence, Cancel(5)).AsTask();
+        Assert.That(KittyStrict.ValidateFrame(second.Bytes).Display, Is.False,
+            "steady-state frames must be a=t replaces");
+
+        // A new reader has no placement — the very next frame must keyframe for it.
+        _surface.RegisterReader();
+        try
+        {
+            _surface.SubmitFrame(4, 4, Solid(4, 4));
+            var third = await _surface.WaitForNextEncodedAsync(second.Sequence, Cancel(5)).AsTask();
+            Assert.That(KittyStrict.ValidateFrame(third.Bytes).Display, Is.True,
+                "a new reader must get a keyframe immediately");
+        }
+        finally
+        {
+            _surface.UnregisterReader();
+        }
+    }
+
+    [Test]
+    public async Task Feed_KeyframesWhenTheGeometryChanges()
+    {
+        _surface.SubmitFrame(4, 4, Solid(4, 4));
+        var first = await _surface.WaitForNextEncodedAsync(0, Cancel(5)).AsTask();
+
+        // A size change re-transmits with new s/v — the placement must be re-established.
+        _surface.SubmitFrame(6, 4, Solid(6, 4));
+        var resized = await _surface.WaitForNextEncodedAsync(first.Sequence, Cancel(5)).AsTask();
+        var decoded = KittyStrict.ValidateFrame(resized.Bytes);
+        Assert.That((decoded.Width, decoded.Height), Is.EqualTo((6, 4)));
+        Assert.That(decoded.Display, Is.True, "a geometry change must keyframe");
+    }
+
+    [Test]
     public void Dispose_StopsTheWorker_Idempotently()
     {
         _surface.Dispose();

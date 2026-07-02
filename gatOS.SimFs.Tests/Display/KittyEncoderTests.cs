@@ -112,7 +112,27 @@ public sealed class KittyEncoderTests
     [Test]
     public void EncodeFrame_RejectsTooSmallABuffer()
         => Assert.Throws<ArgumentException>(() =>
-            KittyEncoder.EncodeFrame(4, 4, new byte[10], DisplayEncoding.Rgba, 1));
+            KittyEncoder.EncodeFrame(4, 4, new byte[10], DisplayEncoding.Rgba, imageId: 1));
+
+    [Test]
+    public void EncodeFrame_TransmitOnly_OmitsThePlacementKeys()
+    {
+        // Steady-state replace frames (a=t) swap the image bytes under the existing placement;
+        // p= and C= belong to the display step, so they must not appear (a display per frame
+        // leaks a terminal-side placement pin — PERF_IMPROVEMENT_PLAN.md P0.3).
+        var frame = KittyEncoder.EncodeFrame(4, 3, SolidBgra(4, 3, 1, 2, 3),
+            DisplayEncoding.Rgba, display: false, imageId: 7);
+        var (headers, _) = Parse(frame);
+
+        var first = headers[0];
+        Assert.That(first, Does.Contain("a=t"));
+        Assert.That(first, Does.Contain("i=7"));
+        Assert.That(first, Does.Contain("s=4"));
+        Assert.That(first, Does.Contain("v=3"));
+        Assert.That(first, Does.Not.Contain("p="));
+        Assert.That(first, Does.Not.Contain("C="));
+        Assert.That(first, Does.Not.Contain("a=T"));
+    }
 
     [Test]
     public void EncodeFrame_NeverDeletes_ReplaceOnRetransmitKeepsTheOldFrameVisible()

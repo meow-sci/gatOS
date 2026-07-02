@@ -443,6 +443,14 @@ pinned by purrTTY's `MidTransmission_ThePreviousFrameStaysVisible` / `DeleteFree
 Remaining: re-run the in-game live pass (S6/S9) with the delete-free gatOS deployed —
 `echo 1 > /sim/display/enabled && cat /sim/display/stream` in a purrTTY tab should now show live video.
 
+**Perf addendum (2026-07-02, `plans/PERF_IMPROVEMENT_PLAN.md` P0.3):** steady-state frames are now
+`a=t` **transmit-only** replaces — the placement from the last `a=T` keyframe re-renders the swapped
+bytes — with keyframes re-emitted on new-reader / size / encoding change and at least once per second.
+Re-displaying every frame was leaking one tracked pin per frame inside ghostty (`graphics_storage.zig
+addPlacement` overwrites the old placement without `untrackPin`; the eviction path does the same),
+which under `q=2` eventually fails silently and blanks the video — perf plan §2 R3. `KittyStrict`
+validates both forms (and rejects placement keys on `a=t`); SPEC §3.8 documents the two-form stream.
+
 ---
 
 ### Appendix — key source anchors (verified)

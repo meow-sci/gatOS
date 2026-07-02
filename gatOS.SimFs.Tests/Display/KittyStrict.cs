@@ -46,16 +46,20 @@ internal static class KittyStrict
         }
     }
 
-    /// <summary>A fully validated frame: the declared geometry and the decoded RGBA pixels.</summary>
-    internal sealed record Frame(int Width, int Height, bool Zlib, int ImageId, byte[] Rgba, IReadOnlyList<Unit> Units);
+    /// <summary>A fully validated frame: the declared geometry, form, and the decoded RGBA pixels.</summary>
+    /// <param name="Display"><c>true</c> for a keyframe (<c>a=T</c>), <c>false</c> for a transmit-only replace (<c>a=t</c>).</param>
+    internal sealed record Frame(
+        int Width, int Height, bool Zlib, bool Display, int ImageId, byte[] Rgba, IReadOnlyList<Unit> Units);
 
     /// <summary>
     ///     Validates one complete <c>KittyEncoder.EncodeFrame</c> unit end to end and returns the
     ///     decoded pixels. Expects exactly: <c>ESC 7</c> · <c>ESC [H</c> · 1..n transmit APCs ·
-    ///     <c>ESC 8</c>, with nothing before, between, or after. Deliberately <b>no delete APC</b>:
-    ///     the video pattern replaces the fixed id on re-transmit so the previous frame stays visible
-    ///     while the next loads — a per-frame delete blanks the stream at real data rates (a unit
-    ///     spans several terminal render ticks; see KittyEncoder remarks).
+    ///     <c>ESC 8</c>, with nothing before, between, or after. The transmit is either a keyframe
+    ///     (<c>a=T</c>, carries the placement keys <c>p</c>/<c>C=1</c>) or a transmit-only replace
+    ///     (<c>a=t</c>, which must NOT carry them — there is no display step). Deliberately <b>no
+    ///     delete APC</b>: the video pattern replaces the fixed id on re-transmit so the previous
+    ///     frame stays visible while the next loads — a per-frame delete blanks the stream at real
+    ///     data rates (a unit spans several terminal render ticks; see KittyEncoder remarks).
     /// </summary>
     public static Frame ValidateFrame(byte[] frame)
     {
@@ -81,18 +85,35 @@ internal static class KittyStrict
 
         // Unit 0: the transmit header carries every control key.
         var head = units[0];
-        if (head.Get("a") != "T")
-            throw new KittyFormatException($"transmit header must be a=T, got '{head.Control}'");
+        var display = head.Get("a") switch
+        {
+            "T" => true,
+            "t" => false,
+            _ => throw new KittyFormatException(
+                $"transmit header must be a=T (keyframe) or a=t (replace), got '{head.Control}'"),
+        };
         if (head.Get("q") != "2")
             throw new KittyFormatException("transmit must set q=2 (suppress responses; nothing drains them)");
         if (head.Get("f") != "32")
             throw new KittyFormatException($"pixel format must be f=32 (RGBA), got f={head.Get("f")}");
-        if (head.Get("C") != "1")
-            throw new KittyFormatException("transmit must set C=1 (don't move the cursor)");
         var imageId = ParseInt(head, "i");
-        if (ParseInt(head, "p") != imageId)
-            throw new KittyFormatException(
-                $"transmit placement id p={head.Get("p")} must match the image id i={imageId}");
+        if (display)
+        {
+            if (head.Get("C") != "1")
+                throw new KittyFormatException("a keyframe must set C=1 (don't move the cursor)");
+            if (ParseInt(head, "p") != imageId)
+                throw new KittyFormatException(
+                    $"keyframe placement id p={head.Get("p")} must match the image id i={imageId}");
+        }
+        else
+        {
+            // p and C belong to the display step; a transmit-only replace must not carry them.
+            if (head.Get("p") is not null)
+                throw new KittyFormatException("a=t (transmit only) must not carry a placement id (p=)");
+            if (head.Get("C") is not null)
+                throw new KittyFormatException("a=t (transmit only) must not carry C= (no display step)");
+        }
+
         var zlib = head.Get("o") is { } o && (o == "z"
             ? true
             : throw new KittyFormatException($"unknown compression o={o}"));
@@ -154,7 +175,7 @@ internal static class KittyStrict
             throw new KittyFormatException(
                 $"pixel block is {rgba.Length} B, but s={width},v={height} demands {width * height * 4} B");
 
-        return new Frame(width, height, zlib, imageId, rgba, units);
+        return new Frame(width, height, zlib, display, imageId, rgba, units);
     }
 
     private static Unit ReadApc(byte[] frame, ref int pos)

@@ -44,6 +44,19 @@ public sealed class DisplaySurface : IDisposable
     private volatile TaskCompletionSource _outSignal = NewSignal();
     private long _sequence;
 
+    // Keyframe cadence (PERF_IMPROVEMENT_PLAN.md P0.3): a keyframe (a=T, transmit+display)
+    // [re]creates the placement; steady-state frames are a=t replaces (no placement churn — a
+    // kitty display step allocates a terminal-side pin every time, and ghostty leaks it on
+    // placement overwrite). Keyframe on: the first frame, a new reader (it has no placement
+    // yet), a size/encoding change, and at least once per KeyframeInterval so a consumer that
+    // lost its placement (terminal reset) or attached out-of-band recovers within ~1 s.
+    private static readonly long KeyframeIntervalTicks = Stopwatch.Frequency;
+    private int _forceKeyframe = 1; // first frame always displays
+    private long _lastKeyframeTs;   // worker-thread only
+    private int _kfWidth;           // worker-thread only: geometry/encoding the last keyframe carried
+    private int _kfHeight;
+    private DisplayEncoding _kfEncoding;
+
     private readonly CancellationTokenSource _stopping = new();
     private int _readers;
     private Task? _worker;
@@ -127,8 +140,16 @@ public sealed class DisplaySurface : IDisposable
         Interlocked.Exchange(ref _inSignal, NewSignal()).TrySetResult();
     }
 
-    /// <summary>Registers an open reader (gates the capture via <see cref="HasReaders"/>).</summary>
-    public void RegisterReader() => Interlocked.Increment(ref _readers);
+    /// <summary>
+    ///     Registers an open reader (gates the capture via <see cref="HasReaders"/>). The next
+    ///     encoded frame keyframes (<c>a=T</c>) so the newcomer gets a placement immediately
+    ///     instead of waiting out the periodic keyframe interval.
+    /// </summary>
+    public void RegisterReader()
+    {
+        Interlocked.Exchange(ref _forceKeyframe, 1);
+        Interlocked.Increment(ref _readers);
+    }
 
     /// <summary>Unregisters a reader closed (clunk).</summary>
     public void UnregisterReader() => Interlocked.Decrement(ref _readers);
@@ -214,12 +235,24 @@ public sealed class DisplaySurface : IDisposable
                     continue;
                 }
 
-                // One fixed image id, deleted + re-transmitted each frame (the terminal updates a single
-                // image in place — see KittyEncoder). A fresh id per frame would churn the terminal's
-                // GPU image cache.
+                // One fixed image id, re-transmitted each frame with no delete (the terminal replaces
+                // the image in place — see KittyEncoder). Keyframe (a=T) only when a placement must be
+                // [re]created; steady state is a=t replace frames (no per-frame placement churn).
+                var encoding = Settings.Encoding;
+                var display = Interlocked.Exchange(ref _forceKeyframe, 0) == 1
+                              || width != _kfWidth || height != _kfHeight || encoding != _kfEncoding
+                              || Stopwatch.GetTimestamp() - _lastKeyframeTs >= KeyframeIntervalTicks;
                 byte[] encoded;
                 using (EncodeStat.Measure())
-                    encoded = KittyEncoder.EncodeFrame(width, height, work.AsSpan(0, length), Settings.Encoding);
+                    encoded = KittyEncoder.EncodeFrame(width, height, work.AsSpan(0, length), encoding, display);
+                if (display)
+                {
+                    _lastKeyframeTs = Stopwatch.GetTimestamp();
+                    _kfWidth = width;
+                    _kfHeight = height;
+                    _kfEncoding = encoding;
+                }
+
                 Publish(encoded);
             }
             catch (Exception ex)
