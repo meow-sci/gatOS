@@ -18,9 +18,16 @@ RIDs cross-compiled) from ghostty main `c22df09da` + branch `purrtty/vt-video-fi
 around the zig #25032/#25035 flate bugs = the P6 native half), vendored in purrtty `b8cae1c` with
 the un-quarantined `ZlibRealFrame_DecodesToGroundTruth` + a keyframe/a=t zlib wire-shape test as
 standing gates; gatOS then flipped `display_encoding` default to **`rgba-zlib`** (settings/config/
-SPEC/docs lockstep) — the 3–10× wire shrink is live. **Remaining: P7 (optional native APC bulk-feed
-fast path), P8 (soak/validation + in-game before/after numbers); the osx-arm64 dylib builds clean
-but still wants one test pass on a mac.**
+SPEC/docs lockstep) — the 3–10× wire shrink is live. **P7 landed 2026-07-02** (ghostty
+`d10bcee6d`: the APC bulk lane — `consumeUntilGround` hands whole put-byte runs to an opt-in
+`vtApcPutMany` handler, kitty `Parser.feedSlice` appends payload in one memcpy — plus the
+`LoadingImage` s×v×bpp presize; vendored in purrtty `6278bc6`). Measured on the new `[Explicit]`
+`VtWriteThroughput_RawVideoUnits_Probe` (200 real units through Write+BuildFrame incl. hash+decode):
+**82 → 1185 MiB/s (14.5×)**. Full ghostty `test-lib-vt` + purrTTY suites green; three equivalence
+tests pin bulk == per-byte. **P0–P7 confirmed working in-game 2026-07-02** (informal pass: live
+video, clearly improved stream performance). **Remaining: P8** (the formal soak matrix +
+before/after numbers in `docs/VALIDATION.md`, and the STREAM_PLAN S6/S9 checklist) **plus one
+purrTTY test pass of the osx-arm64 dylib on a mac.**
 **Symptoms driving this plan (observed in-game, 1440×900 capture, RTX 5090 / i9-13900K):**
 1. Game frame rate collapses from ~120 fps to **sub-10 fps** while the stream is on.
 2. After streaming for a while the stream (and eventually the whole terminal session) **hangs
