@@ -16,6 +16,7 @@ on:
   push:
     branches:
       - main
+      - feature/display
     paths:
       - 'guest/**'
       - '.github/workflows/guest-image.yml'
