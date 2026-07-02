@@ -48,8 +48,8 @@ public sealed class DisplayTreeTests
         Assert.That(await ReadAsync("display", "fps"), Is.EqualTo("15\n"));
         Assert.That(await ReadAsync("display", "width"), Is.EqualTo("320\n"));
         Assert.That(await ReadAsync("display", "height"), Is.EqualTo("180\n"));
-        Assert.That(await ReadAsync("display", "encoding"), Is.EqualTo("rgba-zlib\n"));
-        Assert.That(await ReadAsync("display", "format"), Is.EqualTo("320x180@15 rgba-zlib\n"));
+        Assert.That(await ReadAsync("display", "encoding"), Is.EqualTo("rgba\n"), "raw is the default (purrtty gotcha 34)");
+        Assert.That(await ReadAsync("display", "format"), Is.EqualTo("320x180@15 rgba\n"));
 
         // The binary stream is walkable (its bytes are exercised in DisplayStreamFileTests).
         var (fid, _) = await WalkAsync("display", "stream");
@@ -78,17 +78,17 @@ public sealed class DisplayTreeTests
 
         await WriteAsync("640", "display", "width");
         await WriteAsync("360", "display", "height");
-        Assert.That(await ReadAsync("display", "format"), Is.EqualTo($"640x360@{DisplaySettings.MaxFps} rgba-zlib\n"));
+        Assert.That(await ReadAsync("display", "format"), Is.EqualTo($"640x360@{DisplaySettings.MaxFps} rgba\n"));
     }
 
     [Test]
     public async Task WritingEncoding_SwitchesFormat_AndRejectsUnknown()
     {
-        await WriteAsync("rgba", "display", "encoding");
-        Assert.That(_surface.Settings.Encoding, Is.EqualTo(DisplayEncoding.Rgba));
+        await WriteAsync("rgba-zlib", "display", "encoding");
+        Assert.That(_surface.Settings.Encoding, Is.EqualTo(DisplayEncoding.RgbaZlib));
 
         Assert.CatchAsync(() => WriteAsync("png", "display", "encoding"));
-        Assert.That(_surface.Settings.Encoding, Is.EqualTo(DisplayEncoding.Rgba), "rejected write does not change it");
+        Assert.That(_surface.Settings.Encoding, Is.EqualTo(DisplayEncoding.RgbaZlib), "rejected write does not change it");
     }
 
     [Test]

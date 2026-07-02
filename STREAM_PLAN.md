@@ -1,8 +1,11 @@
 # STREAM_PLAN.md — Live game video as a `/sim` stream, rendered via Kitty graphics
 
-**Status:** **Code-complete (S0–S5 + the S7 no-stall readback), but the in-game stream misrendered —
-now in a tiered debug pass (§11, tier 1: host-side PNG dump ACTIVE); in-game validation pending (S6/S9);
-S8 deferred.** This document is the research record and execution plan for exposing a downscaled,
+**Status:** **Code-complete; the misrender ROOT CAUSE is found and fixed (§11, 2026-07-02): purrTTY's
+pinned libghostty-vt native memory-corrupts on kitty `o=z` (zlib) payloads of compressible data — the
+stream's old default encoding. purrTTY (branch `feature/kitty-video-validation`) gained a content-hash
+re-decode fix + real-frame regression tests; gatOS now defaults `display_encoding=rgba` (raw, proven
+pixel-exact end-to-end). In-game live-video validation (S6/S9) pending; S8 deferred.** This document is
+the research record and execution plan for exposing a downscaled,
 frame-rate-limited render of the KSA viewport **as a `/sim` file**, encoded as the **Kitty terminal
 graphics protocol**, so any SSH client whose terminal supports Kitty — purrTTY in-game tabs *and*
 external emulators alike — can display it by consuming the stream from guest userland.
@@ -379,8 +382,8 @@ next tier builds on it:
 | **1** | Capture → readback → HDR convert → downscale produce real rasterized pixels | **Host-side dump (ACTIVE):** `DisplaySurface.PngDumpDirectory` (wired in `Mod.cs`) bypasses the live Kitty publish — while `enabled=1` **and** a reader holds `stream` open, at most one **pair**/s lands in `<data dir>/.tmp-screencaps/`: `screencap-<ISO 8601 UTC>.png` (ground truth, `PngEncoder`) **+** `screencap-<same stamp>.kitty` (the exact live-path `KittyEncoder` unit for the same frame); the reader gets one ASCII `wrote …` line per pair (read with `dd bs=64` — see the read-granularity finding below). Open the PNGs in any viewer. | **PASSED 2026-07-01** (PNGs valid in a stock viewer) |
 | 2 | Kitty encode is byte-correct | **Built (`KittyStrict` + two fixtures):** the strict sequential validator enforces exact framing, the ≤4096 B escape budget, key grammar (`a=T,q=2,f=32,i,p,s,v,C=1[,o=z]`), continuation-chunks-carry-only-`m`, m= sequencing, 4-aligned chunk splits, padding placement, and pixel round-trip. `KittyConformanceTests` runs it headlessly on synthetic frames (both encodings, single- and multi-chunk, stream-sized); `KittyDumpPairTests` (gated on `GATOS_KITTY_DUMP=<dump dir>`) validates **real in-game pairs** — every `.kitty` must decode to exactly its sibling PNG's pixels. A validated `.kitty` is the vendorable purrTTY test asset (tier 4). | harness built; **awaiting an in-game dump run** |
 | 3 | Delivery: 9p → SSH PTY → terminal input is byte-clean | `cat /sim/display/stream > /tmp/dump` in the guest; compare hashes host-side vs guest-side; then the same through the PTY (`cat` to a tty with logging). | **9p leg PASSED 2026-07-01** (`dd` returned the debug lines byte-exact, ordered, complete); PTY leg folds into tier 4 |
-| 4 | purrTTY renders a static Kitty unit correctly | Print one captured-and-verified Kitty frame (from tier 2) in a purrTTY tab (e.g. `printf` from a file); also cross-check in an external kitty/Ghostty terminal — if externals render it and purrTTY doesn't, the bug is purrTTY's decoder/renderer. | pending |
-| 5 | The animated case (fixed-id re-transmit, chunking, in-place overwrite) | Loop tier-4 frames; then re-enable the live `KittyEncoder` path (unset `PngDumpDirectory`). | pending |
+| 4 | purrTTY renders a static Kitty unit correctly | Two vendored pairs live in `purrtty/purrTTY.Terminal.Tests/Assets/`; `KittyScreenStreamAssetTests` drives them through a **live libghostty-vt terminal** (the real decode path, headless) and diffs decoded pixels vs the ground-truth PNG. | **DONE 2026-07-02 — found the root cause** (see the finding below): raw `f=32` is pixel-exact; `o=z` corrupts the native engine |
+| 5 | The animated case (fixed-id re-transmit, chunking, in-place overwrite) | Same fixture: equal-length delete+re-transmit of the same id (real frames A→B and synthetic) must re-emit new pixels; a still image must not re-decode per tick. | **DONE 2026-07-02 — found + fixed a second bug**: purrTTY re-decoded only on payload-LENGTH change, freezing raw video on frame 1; now an FNV-1a-64 content hash (`KittyPlacementCursor.HashImageData`, purrtty gotcha 33) |
 
 While tier 1 is active the `stream` file intentionally does **not** carry Kitty bytes (SPEC §3.8 carries
 a matching DEBUG-MODE note). The tier-1 machinery (`PngEncoder`, `PngDumpDirectory`, the tests) is kept
@@ -395,6 +398,28 @@ the same buffer fills in ~40–130 ms, which is why the original (misrendered) s
 Consequences: **delivery is byte-correct** — the historical misrender is *not* a transport bug, narrowing
 the remaining suspects to the Kitty encoding (tier 2) and purrTTY decode/draw (tiers 4–5); low-rate
 consumption needs small reads (`dd bs=64`); see the corollary added to spike/NOTES.md §"THE BIG ONE".
+
+**ROOT CAUSE (2026-07-02, tiers 4–5, in the purrtty repo, branch `feature/kitty-video-validation`):**
+two independent purrTTY-side bugs, cornered with the vendored real-frame pairs driven through a live
+libghostty-vt terminal (`KittyScreenStreamAssetTests`):
+
+1. **The pinned libghostty-vt native memory-corrupts on kitty `o=z` (zlib) payloads of compressible
+   data** — any real image; minimal repro: zlib of 230 KB of zeros (2 239 B payload). The corruption
+   usually segfaults inside `VTWrite`, sometimes stays silent (heap-layout-dependent) — **this is the
+   historical misrender**: the stream's old default encoding was `rgba-zlib`. Barely-compressible
+   payloads (noise) survive, which is why synthetic unit tests never caught it. Raw `f=32` decodes
+   **pixel-exact** vs the ground-truth PNGs; PNG `f=100` is silently ignored (unsupported) by this
+   native build. Quarantine: gatOS now **defaults `display_encoding=rgba`** (zlib stays selectable
+   for external kitty terminals only — purrtty gotcha 34 tracks the native bug; the `[Explicit]`
+   crash repro must be re-run on every purrTTY native pin bump).
+2. **purrTTY froze video on frame 1** for equal-length re-transmits: it re-decoded a same-id image
+   only when the stored payload's byte LENGTH changed — but raw-format frames of fixed dims all have
+   identical length (and zlib frames collide). Fixed with an FNV-1a-64 content hash over the engine's
+   stored payload (`KittyPlacementCursor.HashImageData`, a purrtty binding addition) + eviction of
+   stale ids (purrtty gotcha 33). Mandatory for the raw default — every frame is now equal-length.
+
+Remaining: the in-game live-video pass (S6/S9) with both fixed mods deployed —
+`echo 1 > /sim/display/enabled && cat /sim/display/stream` in a purrTTY tab should now show live video.
 
 ---
 

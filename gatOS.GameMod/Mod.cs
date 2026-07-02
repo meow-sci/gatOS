@@ -180,12 +180,11 @@ public sealed partial class Mod
                 TimeSpan.FromMilliseconds(_config.CommandTimeoutMs));
             _displaySurface = new DisplaySurface(new DisplaySettings(
                 _config.DisplayEnabled, _config.DisplayFps, _config.DisplayWidth, _config.DisplayHeight,
-                DisplayEncodings.Parse(_config.DisplayEncoding) ?? DisplayEncoding.RgbaZlib));
-            // TIER-1 DEBUG (STREAM_PLAN.md "Debugging the encoded stream"): the Kitty encoding of the
-            // stream misrendered and is being validated bottom-up. While this is set, enabling the
-            // stream + opening /sim/display/stream dumps 1 PNG/s here instead of emitting Kitty bytes
-            // (the reader gets one plain-text line per file). Remove to restore Kitty encoding.
-            _displaySurface.PngDumpDirectory = Path.Combine(GatOsPaths.DataDir, ".tmp-screencaps");
+                DisplayEncodings.Parse(_config.DisplayEncoding) ?? DisplayEncoding.Rgba));
+            // Standing debug harness (STREAM_PLAN.md §11): setting PngDumpDirectory (e.g. to
+            // Path.Combine(GatOsPaths.DataDir, ".tmp-screencaps")) makes the encode worker dump
+            // 1 PNG + .kitty pair per second instead of publishing Kitty bytes — the tier-1/2
+            // capture/encode validation used to corner the 2026-07 libghostty o=z corruption.
             _displaySurface.Start();
             _simRoot = SimFsTree.Build(_simStore, _commandQueue, SimTransportsStatus, _displaySurface);
             StartSimServer(port: 0);

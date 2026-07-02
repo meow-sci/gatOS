@@ -116,7 +116,7 @@ listing order; empty/`.`/`..` become `_`/`_.`/`_..`. In KSA a vessel's **name *i
 | `command_timeout_ms` | `2000` | how long a write waits for the game thread before `ETIMEDOUT` |
 | `display_enabled` | `false` | boot seed for `/sim/display/enabled` — the screen stream (§3.8); **off by default** |
 | `display_fps` / `display_width` / `display_height` | `15` / `320` / `180` | boot seeds for the stream cadence + downscale size (runtime control is the `/sim/display/*` files) |
-| `display_encoding` | `rgba-zlib` | boot seed for the frame encoding (`rgba-zlib` \| `rgba`) |
+| `display_encoding` | `rgba` | boot seed for the frame encoding (`rgba` \| `rgba-zlib`; zlib crashes the in-game purrTTY — §3.8) |
 
 ---
 
@@ -500,20 +500,17 @@ capture costs nothing until a client writes `1` to `enabled` *and* opens `stream
 | `display/fps` | **St** | integer (clamped 1..60) | Stream cadence, decoupled from the game frame rate. |
 | `display/width` | **St** | pixels (clamped 16..1920) | Downscale target width; the terminal renders the image at this pixel size. |
 | `display/height` | **St** | pixels (clamped 16..1920) | Downscale target height. |
-| `display/encoding` | **St** | `rgba-zlib` \| `rgba` | Frame wire format (zlib-deflated RGBA, or raw RGBA). Unknown ⇒ `EINVAL`. |
+| `display/encoding` | **St** | `rgba` (default) \| `rgba-zlib` | Frame wire format (raw RGBA, or zlib-deflated RGBA). Unknown ⇒ `EINVAL`. **`rgba-zlib` crashes the in-game purrTTY terminal** (a memory-corruption bug in its pinned libghostty-vt native on compressible `o=z` payloads — purrtty gotcha 34); select it only for external kitty terminals until purrTTY ships a fixed native. |
 | `display/format` | S | `WxH@fps enc` | Read-only discovery of the live parameters. |
 | `display/stream` | **Smb** | — (read) | The binary Kitty frame feed. A **continuous** stream: a single `cat /sim/display/stream` blocks for each next frame and renders it forever (never EOF; Ctrl-C to stop). Each frame is a complete, self-contained, LF-free Kitty unit; a slow reader skips to the latest (drop-old); multiple readers fan out. **Delivery granularity:** a guest `read()` completes only once its full buffer fills (kernel 9p semantics — no partial-read wakeups), so consumer latency = read-buffer ÷ data-rate. `cat` is fine at video rates; to consume a *low-rate* feed use small reads (`dd if=/sim/display/stream bs=64`). |
 
 Out-of-range writes to the numeric controls **clamp** (and succeed), matching the config's clamp-don't-reject rule.
 
-> **DEBUG MODE ACTIVE (temporary, this branch):** the Kitty encoding is being validated bottom-up
-> (STREAM_PLAN.md "Debugging the encoded stream"). While `DisplaySurface.PngDumpDirectory` is wired
-> (see `Mod.cs`), `stream` does **not** emit Kitty bytes: each captured frame is instead written on the
-> **host** as a pair — `<data dir>/.tmp-screencaps/screencap-<ISO 8601 UTC>.png` (ground-truth pixels)
-> plus `screencap-<same stamp>.kitty` (the exact live-path Kitty unit) — at most one pair/s, and
-> `stream` carries one plain-text `wrote screencap-<stamp>.{png,kitty} (<WxH>, png <n> B, kitty <m> B)`
-> line per pair (consume with `dd bs=64` — see the delivery-granularity note above). All other
-> semantics (gating, controls, blocking reads) are unchanged. Removed when Kitty encoding returns.
+> **Debug harness (dormant):** `DisplaySurface.PngDumpDirectory` (settable only in code — see the
+> comment at the construction site in `Mod.cs`) switches `stream` from Kitty bytes to a host-side
+> dump of one `screencap-<ISO 8601 UTC>.{png,kitty}` pair per second plus a plain-text progress line
+> per pair on the feed. It is the tier-1/2 validation harness from STREAM_PLAN.md §11 (used to
+> corner the 2026-07 purrTTY libghostty `o=z` corruption); normal builds leave it unset.
 
 ---
 

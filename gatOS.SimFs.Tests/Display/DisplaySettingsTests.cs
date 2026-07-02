@@ -16,7 +16,9 @@ public sealed class DisplaySettingsTests
             Assert.That(s.Fps, Is.EqualTo(15));
             Assert.That(s.Width, Is.EqualTo(320));
             Assert.That(s.Height, Is.EqualTo(180));
-            Assert.That(s.Encoding, Is.EqualTo(DisplayEncoding.RgbaZlib));
+            // Raw is the default: the purrTTY-pinned libghostty native corrupts on o=z
+            // payloads of compressible data (purrtty gotcha 34; STREAM_PLAN.md §11).
+            Assert.That(s.Encoding, Is.EqualTo(DisplayEncoding.Rgba));
         });
     }
 
