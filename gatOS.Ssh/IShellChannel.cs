@@ -27,8 +27,14 @@ internal interface IShellBroker
 /// </summary>
 internal interface IShellChannel : IDisposable
 {
-    /// <summary>Raised per received output chunk. The array is owned by the receiver.</summary>
-    event EventHandler<byte[]>? DataReceived;
+    /// <summary>
+    ///     Raised per received output chunk. The memory is a view into the channel's reused pump
+    ///     buffer (GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md GP5) — <b>valid only for the
+    ///     duration of the callback</b>; a handler that defers consumption must copy first. (The
+    ///     one production consumer, purrTTY's PTY bridge, copies synchronously into the surface
+    ///     inbox inside the event chain.)
+    /// </summary>
+    event EventHandler<ReadOnlyMemory<byte>>? DataReceived;
 
     /// <summary>Raised when the connection dies (daemon/VM death, network error).</summary>
     event EventHandler<Exception>? ErrorOccurred;

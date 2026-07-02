@@ -1,6 +1,13 @@
 # GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md — the whole-mod efficiency audit
 
-**Status: IN PROGRESS.** Landed 2026-07-02: **GP4** (9p data plane — `IVfsFileHandle` gains a
+**Status: IN PROGRESS.** Landed 2026-07-02: **GP5** (SSH output path — the internal
+`IShellChannel.DataReceived` event now carries a `ReadOnlyMemory<byte>` view of the reused 64 KiB
+pump buffer instead of a right-sized array per chunk; zero per-chunk allocation by construction.
+Safe because the whole consumption chain — session → purrTTY PTY bridge → `Surface.Write`'s
+copy-into-inbox — runs synchronously inside the event invoke; the validity contract is documented
+on the event, and the planned config escape hatch was dropped as unnecessary: the vendored
+contract's `ShellOutputEventArgs.Data` is already `ReadOnlyMemory<byte>`, and purrTTY — the one
+consumer — copies before returning), **GP4** (9p data plane — `IVfsFileHandle` gains a
 read-into-destination overload with a bridging default; the session reserves the Rread payload in
 its pooled reply frame (`NinePWriter.Reserve`/`TrimTo`) and files write straight into it —
 `HostFile`'s per-Tread `byte[count]` (512 KiB LOH at the raised msize) is gone, `StreamFile` and

@@ -273,7 +273,11 @@ public sealed class SshShellSession : ICustomShell
         }
     }
 
-    private void OnChannelData(object? sender, byte[] data)
+    // The memory is a view into the channel's reused pump buffer (GP5) — valid only during this
+    // event chain. purrTTY's PTY bridge forwards it synchronously into Surface.Write, which copies
+    // into the terminal inbox before returning; the contract event's ReadOnlyMemory shape makes the
+    // no-retention reading natural for any other consumer.
+    private void OnChannelData(object? sender, ReadOnlyMemory<byte> data)
         => OutputReceived?.Invoke(this, new ShellOutputEventArgs(data));
 
     private void OnChannelError(object? sender, Exception ex)

@@ -41,7 +41,7 @@ internal sealed class FakeShellChannel : IShellChannel
 
     public bool Disposed { get; private set; }
 
-    public event EventHandler<byte[]>? DataReceived;
+    public event EventHandler<ReadOnlyMemory<byte>>? DataReceived;
     public event EventHandler<Exception>? ErrorOccurred;
     public event EventHandler? Closed;
 
@@ -87,7 +87,7 @@ internal sealed class FakeShellChannel : IShellChannel
 
     public void Dispose() => Disposed = true;
 
-    public void RaiseData(byte[] data) => DataReceived?.Invoke(this, data);
+    public void RaiseData(byte[] data) => DataReceived?.Invoke(this, data.AsMemory());
     public void RaiseError(Exception ex) => ErrorOccurred?.Invoke(this, ex);
     public void RaiseClosed() => Closed?.Invoke(this, EventArgs.Empty);
 }

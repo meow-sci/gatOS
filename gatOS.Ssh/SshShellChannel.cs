@@ -40,7 +40,7 @@ internal sealed class SshShellChannel : IShellChannel
         _pump.Start();
     }
 
-    public event EventHandler<byte[]>? DataReceived;
+    public event EventHandler<ReadOnlyMemory<byte>>? DataReceived;
     public event EventHandler<Exception>? ErrorOccurred;
     public event EventHandler? Closed;
 
@@ -85,9 +85,13 @@ internal sealed class SshShellChannel : IShellChannel
     }
 
     /// <summary>
-    ///     Drains the stream until it reports EOF (disposed/closed and empty). The contract event
-    ///     hands out a right-sized array per chunk ("owned by the receiver",
-    ///     <see cref="IShellChannel.DataReceived"/>).
+    ///     Drains the stream until it reports EOF (disposed/closed and empty). The event hands out
+    ///     a <b>view into the reused pump buffer</b> (GP5): the pre-GP5 right-sized array per chunk
+    ///     was the largest byte-rate allocator in the system at video-stream rates (tens of MB/s of
+    ///     64 KiB gen-0 arrays). Safe because the whole consumption chain — session → purrTTY PTY
+    ///     bridge → <c>Surface.Write</c>'s copy-into-inbox — runs synchronously inside the Invoke;
+    ///     the buffer is not touched again until every handler returned
+    ///     (<see cref="IShellChannel.DataReceived"/> documents the validity contract).
     /// </summary>
     private void PumpLoop()
     {
@@ -99,7 +103,7 @@ internal sealed class SshShellChannel : IShellChannel
                 var read = _stream.Read(buffer, 0, buffer.Length);
                 if (read <= 0)
                     return; // stream disposed/closed and drained; Closed/ErrorOccurred drive teardown
-                DataReceived?.Invoke(this, buffer[..read]);
+                DataReceived?.Invoke(this, buffer.AsMemory(0, read));
             }
         }
         catch (Exception ex)
