@@ -1,7 +1,8 @@
 # PERF_IMPROVEMENT_PLAN.md — `/sim/display` screen-stream performance + stability
 
 **Status:** IN PROGRESS. Landed 2026-07-02: **P0** (P0.1 SSH read-pump + P0.3 a=t keyframes here;
-P0.2 storage limit in purrtty `dbb42d3`; P0.4 rides the P6 native rebuild). P1–P8 pending.
+P0.2 storage limit in purrtty `dbb42d3`; P0.4 rides the P6 native rebuild), **P1** (GPU blit
+downscale+convert in `FrameCapture`, format-feature-gated with the CPU path as fallback). P2–P8 pending.
 **Symptoms driving this plan (observed in-game, 1440×900 capture, RTX 5090 / i9-13900K):**
 1. Game frame rate collapses from ~120 fps to **sub-10 fps** while the stream is on.
 2. After streaming for a while the stream (and eventually the whole terminal session) **hangs

@@ -28,10 +28,10 @@ caller — the whole solution still builds without the game DLLs (CLAUDE.md depe
 
 ---
 
-## Harmony patches (the two KSA hook targets) {#threading-phases}
+## Harmony patches (the three permanent KSA hook targets) {#threading-phases}
 
-gatOS installs **two permanent** Harmony patches, both in `Game/Mod.Game.cs`, both via
-`AccessTools.Method(...)` with a null-check and try/catch so a missing/renamed target **disables that one
+gatOS installs **three permanent** Harmony patches, all via `AccessTools.Method(...)` with a null-check
+and try/catch (or a degrade-to-no-injection transpiler) so a missing/renamed target **disables that one
 feature with a logged warning instead of crashing** (two further dynamic instances — `gatos.iva` for the
 IVA cheat and `gatos.thug_life` for the world-space quad cheat — are each installed only while their
 feature is active; see below):
@@ -40,6 +40,7 @@ feature is active; see below):
 |---|---|---|---|---|
 | Solver-drain **prefix** (`Priority.First`) | `Universe.ExecuteNextVehicleSolvers` | `KSA/Universe.cs` | drains `CommandPhase.Solver` commands inside the vehicle-solver step (`Mod.DrainSolverCommands`) | solver-phase commands (attitude/frame/target, burn, refills) never drain; logged once |
 | Menu **postfix** | `Program.DrawProgramMenusHook` | `KSA/Program.cs` | draws the fallback top-level "gatOS" menu when the ModMenu mod is absent; also touches `Program.MainViewport.MenuBarInUse`, `ModLibrary.Find("ModMenu")` | gatOS menu only reachable via ModMenu; logged once |
+| Screen-stream capture **transpiler** (`DisplayRenderPatch`) | `Program.RenderGame` — inserts a call before the frame's final 1-arg `Brutal.VulkanApi` `End()` | `KSA/Program.cs` | records the `/sim/display` capture into the engine's own frame command buffer (see [the capture section](#display-capture)) | no `End()` site found → **no injection** (stream dark, warning logged); the method is never corrupted |
 
 **Risk: Medium.** Neither target appears in the 4680→4750 changelog and `Game/Mod.Game.cs` compiled
 clean against 4750. These are the non-`/sim` KSA members most worth re-checking on any update (a rename
@@ -100,6 +101,29 @@ same-thread). The per-frame anchor math and GPU surface are **runtime coupling**
 seven `debug.thug_life_*` control writes are ordinary Frame-phase commands — see
 [`ksa-write-surface.md#thug-life`](ksa-write-surface.md#thug-life). Welds, IVA, and thug_life are all
 **runtime-only** (never persisted).
+
+### Screen-stream capture (`DisplayRenderPatch` + `FrameCapture`) — in-band GPU readback {#display-capture}
+
+The `/sim/display` screen stream (STREAM_PLAN.md; `Game/Ksa/{DisplayRenderPatch,FrameCapture}.cs`, both
+`[KsaAnchor]`, Risk **Medium**, verified `2026-07-02`) taps the **public** offscreen scene target and
+rides the engine's own frame command buffer — no private queue submit, no `WaitIdle` (an out-of-band
+variant corrupted the device). Per throttled frame (default 15 fps, gated on `enabled` **and** ≥1 open
+reader — near-zero cost otherwise), `FrameCapture.MaybeRecord` records, in-band:
+offscreen `SampledReadVfc→TransferSrc` + per-slot scratch `Undefined→TransferDst` (sync2
+`TransitionImages2` + `ImageBarrierInfo.Presets` only — no sync1/sync2 mixing), a `BlitImage`
+(LINEAR) of the full `R16G16B16A16_SFLOAT` scene into a small `B8G8R8A8_UNORM` scratch (downscale +
+float→byte clamp in one GPU op — PERF_IMPROVEMENT_PLAN.md P1), `CopyImageToBuffer`(scratch→host
+staging, preferring `HOST_CACHED`), and the offscreen restored to `SampledReadVfc`. Readback is
+deferred one slot revisit (frames-in-flight fence contract — no fence wait) and is a bulk span
+hand-off to the game-free `DisplaySurface`. Blit support is format-feature-queried once
+(`PhysicalDevice.GetFormatProperties`); a miss falls back to the previous full-res copy + CPU
+nearest-neighbour convert. **KSA members touched:** `Program.GetRenderer/MainViewport/ResourceFrameIndex`,
+`OffscreenTarget.ColorImage/.Extent`, `Renderer.Allocator/.MaxFramesInFlight/.PhysicalDevice`,
+`CommandBufferEx.TransitionImages2`+`ImageBarrierInfo.Presets`+`ImageTransition`, allocator
+`CreateBuffer`/`CreateImage`, `CommandBuffer.BlitImage`/`CopyImageToBuffer`, `BufferEx.Map` — full row in
+[`docs/KSA_INTEGRATION_MATRIX.md`](../docs/KSA_INTEGRATION_MATRIX.md). Break behavior: the transpiler
+degrades to no-injection; a capture-time managed fault latches the feature off for the session
+(`DisplayRenderPatch._faulted`, one error log).
 
 ### Threading phases (binding)
 - **Frame phase** — `OnBeforeUi` → `CommandQueue.Drain(CommandPhase.Frame, …)`. Most actions (incl. the
