@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using gatOS.GameMod.Game.Ksa;
 using gatOS.GameMod.Game.Ksa.Readers;
 using gatOS.GameMod.Game.Ksa.Render;
@@ -32,6 +33,7 @@ internal sealed class TelemetrySampler
     private readonly KsaHealth _health;
     private readonly TelemetrySettings _settings;
     private readonly PerfStat _sampleStats;
+    private readonly ValueStat _allocStats;
     private readonly WeldManager _welds;
     private readonly ThugLifeManager _thugLife;
     private int _appliedRateHz;
@@ -42,6 +44,14 @@ internal sealed class TelemetrySampler
     private bool _bodyErrorLogged;
     private string _gameVersion = "";
 
+    // Bodies sub-cadence (GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md GP3): when
+    // telemetry_bodies_rate_hz is below the master rate, the ticks in between re-publish the SAME
+    // bodies/system objects by reference — no KSA reads, no allocation, and consumers get a
+    // reference-equality "unchanged" signal. Wall-clock (Stopwatch) paced, like the master clock.
+    private long _lastBodiesTimestamp;
+    private IReadOnlyList<BodySnapshot> _lastBodies = [];
+    private SystemSnapshot? _lastSystem;
+
     /// <param name="store">The exchange the 9p tree reads from.</param>
     /// <param name="settings">
     ///     The runtime-mutable cadence + per-stream gates (seeded from config, retuned in-game).
@@ -49,10 +59,11 @@ internal sealed class TelemetrySampler
     /// </param>
     /// <param name="health">Accessor-health latches, shared with the command executor.</param>
     /// <param name="sampleStats">Timing accumulator for one <see cref="Sample"/> (the status window reads it).</param>
+    /// <param name="allocStats">Bytes allocated by one <see cref="Sample"/> (the status window reads it).</param>
     /// <param name="welds">The weld registry — projected into the snapshot for the <c>/sim/debug/welds</c> view.</param>
     /// <param name="thugLife">The thug-life registry — projected for the <c>/sim/debug/thug_life</c> view.</param>
     internal TelemetrySampler(SnapshotStore store, TelemetrySettings settings, KsaHealth health,
-        PerfStat sampleStats, WeldManager welds, ThugLifeManager thugLife)
+        PerfStat sampleStats, ValueStat allocStats, WeldManager welds, ThugLifeManager thugLife)
     {
         _store = store;
         _settings = settings;
@@ -60,6 +71,7 @@ internal sealed class TelemetrySampler
         _clock = new SampleClock(_appliedRateHz);
         _health = health;
         _sampleStats = sampleStats;
+        _allocStats = allocStats;
         _welds = welds;
         _thugLife = thugLife;
     }
@@ -87,7 +99,13 @@ internal sealed class TelemetrySampler
 
         if (_clock.Tick(dt))
             using (_sampleStats.Measure()) // two timestamp reads; alloc-free
+            {
+                // Alloc/tick tripwire (GP3): a thread-local counter read before/after — alloc-free
+                // to record, and the number the status window shows as "sample alloc".
+                var allocBefore = GC.GetAllocatedBytesForCurrentThread();
                 Sample();
+                _allocStats.Add(GC.GetAllocatedBytesForCurrentThread() - allocBefore);
+            }
     }
 
     [KsaAnchor("Universe.GetElapsedSimTime().Seconds(); Universe.SimulationSpeed; Universe.GetLastSimStep().DeltaTime; "
@@ -104,7 +122,7 @@ internal sealed class TelemetrySampler
         var activeId = Program.ControlledVehicle?.Id;
         var detail = _settings.VesselDetail;
 
-        var vessels = new List<VesselSnapshot>();
+        var vessels = new List<VesselSnapshot>(_previous?.Vessels.Count ?? 4);
         IReadOnlyList<BodySnapshot> bodies = [];
         SystemSnapshot? systemSummary = null;
         if (Universe.CurrentSystem is { } system)
@@ -134,7 +152,9 @@ internal sealed class TelemetrySampler
             }
 
             if (_settings.Bodies)
-                (bodies, systemSummary) = SampleBodies(system);
+                (bodies, systemSummary) = SampleBodiesPaced(system);
+            else
+                _lastBodiesTimestamp = 0; // gate off: a re-enable resamples immediately
         }
 
         var events = _settings.Events
@@ -155,6 +175,26 @@ internal sealed class TelemetrySampler
         };
         _previous = snapshot;
         _store.Publish(snapshot);
+    }
+
+    /// <summary>
+    ///     Samples the celestial catalog at its own (optional) sub-cadence: when
+    ///     <see cref="TelemetrySettings.BodiesRateHz"/> is below the master rate, the ticks in
+    ///     between carry the previous bodies/system <b>by reference</b> — zero KSA reads, zero
+    ///     allocation, and a reference-equality "unchanged" signal for consumers (GP3).
+    /// </summary>
+    private (IReadOnlyList<BodySnapshot>, SystemSnapshot?) SampleBodiesPaced(CelestialSystem system)
+    {
+        var rate = _settings.BodiesRateHz;
+        var now = Stopwatch.GetTimestamp();
+        if (rate > 0 && _lastBodiesTimestamp != 0 && now - _lastBodiesTimestamp < Stopwatch.Frequency / rate)
+            return (_lastBodies, _lastSystem);
+
+        var (bodies, summary) = SampleBodies(system);
+        _lastBodies = bodies;
+        _lastSystem = summary;
+        _lastBodiesTimestamp = now;
+        return (bodies, summary);
     }
 
     private (IReadOnlyList<BodySnapshot>, SystemSnapshot?) SampleBodies(CelestialSystem system)

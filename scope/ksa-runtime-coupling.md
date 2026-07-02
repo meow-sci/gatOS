@@ -198,7 +198,7 @@ explicitly confirmed present in 4750. If a future update removes it, `ctl/thrott
 | `[KsaAnchor]` attribute | `Game/Ksa/KsaAnchor.cs` | documentary marker on every KSA-touching member (`Member`, `SourceFile`, `Verified`, `GameVersion`, `Risk`, `Notes`). The grep target when a build breaks; the **source of truth** this whole `scope/` folder mirrors. |
 | `KsaHealth` | `Game/Ksa/KsaHealth.cs` | per-accessor degrade latches (game-thread-only dict); first fault logs once, publishes to `/sim/status/accessors`, a later success clears it. The runtime safety net. |
 | `KsaCatalog` | `Game/Ksa/KsaCatalog.cs` | the only place actuators are reached: dispatch table, authority gate, per-command try/catch → `KsaHealth`. |
-| `VesselReader.Enrich` guard | `Game/Ksa/Readers/VesselReader.cs:40` | whole detail-pass try/catch: an extension-API drift drops the extension dirs, keeps core telemetry. |
+| `VesselReader.BuildFull` guard | `Game/Ksa/Readers/VesselReader.cs` (`Sample`) | whole detail-pass try/catch: an extension-API drift falls back to `BuildCore`, keeping core telemetry and dropping the extension dirs. |
 | Build against new DLLs | `KSAFolder` resolution | the **compile-time alarm**: non-reflective renames/removals become errors at the anchor sites. |
 
 Two-layer defense: **build = catches structural breaks; health latch = catches runtime drift.** Neither

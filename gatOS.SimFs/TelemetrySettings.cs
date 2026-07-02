@@ -31,6 +31,7 @@ public sealed class TelemetrySettings
     private volatile bool _bodies;
     private volatile bool _events;
     private volatile bool _vesselParts;
+    private volatile int _bodiesRateHz;
 
     /// <param name="sampleRateHz">Initial sample cadence in Hz (already clamped by the config).</param>
     /// <param name="enabled">Master gate — when false the sampler idles entirely.</param>
@@ -38,8 +39,10 @@ public sealed class TelemetrySettings
     /// <param name="bodies">Sample the celestial-body catalog and the system summary.</param>
     /// <param name="events">Diff snapshots into <c>/sim/events</c> entries.</param>
     /// <param name="vesselParts">Sample the per-vessel top-level parts list (the welds anchor picker).</param>
+    /// <param name="bodiesRateHz">Bodies resample cadence in Hz; 0 (default) follows the master rate.</param>
     public TelemetrySettings(int sampleRateHz = 10, bool enabled = true,
-        bool vesselDetail = true, bool bodies = true, bool events = true, bool vesselParts = true)
+        bool vesselDetail = true, bool bodies = true, bool events = true, bool vesselParts = true,
+        int bodiesRateHz = 0)
     {
         _sampleRateHz = Clamp(sampleRateHz);
         _enabled = enabled;
@@ -47,6 +50,7 @@ public sealed class TelemetrySettings
         _bodies = bodies;
         _events = events;
         _vesselParts = vesselParts;
+        _bodiesRateHz = ClampBodiesRate(bodiesRateHz);
     }
 
     /// <summary>Sample cadence in Hz; setting clamps to <see cref="MinRateHz"/>..<see cref="MaxRateHz"/>.</summary>
@@ -99,5 +103,20 @@ public sealed class TelemetrySettings
         set => _vesselParts = value;
     }
 
+    /// <summary>
+    ///     Bodies resample cadence in Hz (GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md GP3):
+    ///     <c>0</c> (the default) resamples the celestial catalog on every master tick; a lower rate
+    ///     resamples at that cadence and re-publishes the <b>same</b> bodies/system objects (by
+    ///     reference) on the ticks between — cutting the per-tick KSA reads and giving consumers a
+    ///     reference-equality "unchanged" signal. Setting clamps to 0..<see cref="MaxRateHz"/>.
+    /// </summary>
+    public int BodiesRateHz
+    {
+        get => _bodiesRateHz;
+        set => _bodiesRateHz = ClampBodiesRate(value);
+    }
+
     private static int Clamp(int rate) => Math.Clamp(rate, MinRateHz, MaxRateHz);
+
+    private static int ClampBodiesRate(int rate) => Math.Clamp(rate, 0, MaxRateHz);
 }

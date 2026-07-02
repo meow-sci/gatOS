@@ -101,10 +101,11 @@ All default on; `telemetry_enabled` is the master gate:
 
 | Config key | What it gates | Cost when off |
 |---|---|---|
-| `telemetry_vessel_detail` | G3 enrich pass (navball, environment, every per-module `StateList` read, `with`-clone alloc) | Drops all module-level events (flameout/dock/decouple) the differ can no longer see |
+| `telemetry_vessel_detail` | G3 detail pass (navball, environment, every per-module `StateList` read — sampled in the same single `BuildFull` pass as the core since GP3) | Drops all module-level events (flameout/dock/decouple) the differ can no longer see |
 | `telemetry_vessel_parts` | `PartsReader` per-vessel top-level parts list (the welds anchor picker); cached per vehicle, rebuilt on `Vehicle.Parts.Count` change or every 10 s | Drops `/sim/vessels/<id>/parts/` |
-| `telemetry_bodies` | `BodyReader` celestial catalog reads | Drops `/sim/bodies/` + `system` |
-| `telemetry_events` | `EventDiffer` + `EventsFile` | Drops `/sim/events` blocking reads |
+| `telemetry_bodies` | `BodyReader` celestial catalog reads (statics cached per body since GP3 — per tick only positions/velocities are read) | Drops `/sim/bodies/` + `system` |
+| `telemetry_bodies_rate_hz` | Bodies resample cadence (0 = every tick). Below the master rate, in-between ticks re-publish the **same** bodies/system objects by reference — no KSA reads, no allocation, and consumers can reference-compare for "unchanged" | n/a (a cadence, not a gate) |
+| `telemetry_events` | `EventDiffer` + `EventsFile` (dictionary-free positional diff since GP3 — allocation-free when nothing changed) | Drops `/sim/events` blocking reads |
 
 Gating **at the sampler** is deliberate: a disabled stream skips its (often expensive) KSA reads
 *and* shrinks the published snapshot, so every transport (9p/HTTP/MQTT/serial) serves less **by
@@ -126,12 +127,14 @@ core flight telemetry.
 
 The status window's **Telemetry block** shows `PerfStat` readouts for the game-thread costs:
 - **Sample time** (avg/max/last) — the full `SampleTelemetry` call
+- **Sample alloc** (avg/max/last, KiB) — bytes allocated on the game thread by one sample
+  (`GC.GetAllocatedBytesForCurrentThread` delta; the GP3 regression tripwire)
 - **Command drain** (avg/max) — per-frame + solver-phase `CommandQueue.Drain`
 - **MQTT publish** (avg/max) — background serialization time while a client is connected
 
-All recorded allocation-free (two `Stopwatch.GetTimestamp()` reads per interval). Use them to
-see the cost of the current rate/stream config and confirm a toggle's effect. The **Reset**
-button clears all accumulators.
+All recorded allocation-free (two `Stopwatch.GetTimestamp()` reads per interval; one thread-local
+counter read per sample for the alloc figure). Use them to see the cost of the current rate/stream
+config and confirm a toggle's effect. The **Reset** button clears all accumulators.
 
 ---
 
@@ -218,7 +221,7 @@ All three create/remove via Frame-phase `/sim/debug` commands and tear down on u
 | Section | Key knobs |
 |---|---|
 | `[common]` | `sample_rate_hz`, `disk_size_gb`, `cpu_model` |
-| `[telemetry]` | `telemetry_enabled`, `telemetry_vessel_detail`, `telemetry_vessel_parts`, `telemetry_bodies`, `telemetry_events` |
+| `[telemetry]` | `telemetry_enabled`, `telemetry_vessel_detail`, `telemetry_vessel_parts`, `telemetry_bodies`, `telemetry_bodies_rate_hz`, `telemetry_events` |
 | `[control]` | `control_enabled`, `control_all_vessels`, `debug_namespace`, `command_timeout_ms`, `max_commands_per_frame` |
 | `[http]` | `enabled`, `preferred_port` (4242), `http_field_endpoints` |
 | `[mqtt]` | `enabled`, `preferred_port` (1883), `mqtt_field_topics`, `field_feed_hz` |

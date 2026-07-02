@@ -48,6 +48,10 @@ telemetry_vessel_detail = true
 # Sample the celestial-body catalog + system summary (/sim/bodies, /sim/system).
 telemetry_bodies = true
 
+# Bodies resample cadence in Hz (0 = every sample tick). Below the master rate, the
+# ticks between re-publish the same bodies/system data — cheaper, slightly staler.
+telemetry_bodies_rate_hz = 0
+
 # Diff snapshots into /sim/events entries (and the event topics/streams).
 telemetry_events = true
 

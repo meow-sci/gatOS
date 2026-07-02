@@ -182,14 +182,14 @@ Anchors in `Game/Ksa/Actuators/**`; routed by `KsaCatalog`. Frame phase unless n
 | `bodies/<id>/focus` | T | `1` | same `camera.focus` action on a celestial (`CurrentSystem.Get(id)` → `Astronomical`); view-only, exempt from the authority gate | M | Frame |
 
 A STATE control file's **read** returns the current setpoint, so the vessel-level ones need a reader
-that samples it back. These are populated in `VesselReader.Enrich` (anchor `SampleFlightComputer` +
+that samples it back. These are populated in `VesselReader.BuildFull` (anchor `SampleFlightComputer` +
 `GetManualThrottle`): `ctl/throttle` ← `Vehicle.GetManualThrottle()`, `ctl/rcs` ← any
 `ThrusterController.IsActive`, `ctl/attitude_mode` ← `FlightComputer.AttitudeMode`/`AttitudeTrackTarget`
 (`manual` when Manual, else the track-target name), `ctl/attitude_frame` ← `FlightComputer.AttitudeFrame`.
 (Before this wiring the snapshot reported the record defaults — throttle `0`, attitude `""` — on every
 transport regardless of the real state.)
 
-The `ctl/engine` ignition master is read in `VesselReader.SampleCore` (anchor `ReadEngineOn`, always
+The `ctl/engine` ignition master is read in `VesselReader.ReadBasics` (anchor `ReadEngineOn`, always
 on — not gated by the detail pass): `ctl/engine` ← `Vehicle.IsSet(VehicleEngine.MainIgnite, false)`
 (= `_manualControlInputs.EngineOn`, the live state `ctl/ignite`/`ctl/shutdown` set — the same boolean
 the game's ignite button reads). This is distinct from the per-engine `engines/<n>/active`

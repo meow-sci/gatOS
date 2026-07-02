@@ -1,6 +1,12 @@
 # GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md — the whole-mod efficiency audit
 
-**Status: PROPOSED (nothing here is started).** Written 2026-07-02, immediately after
+**Status: IN PROGRESS.** Landed 2026-07-02: **GP3** (single-pass `VesselReader` — one snapshot
+construction, one battery walk, power accumulated in the solar/generator passes, `AnimationLinks`
+per-vehicle structural cache; `BodyReader` static split — per-body cached catalog constants + orbit,
+per-tick work is one record + two vectors per body; optional `telemetry_bodies_rate_hz` sub-cadence
+with reference-reuse on skipped ticks; dictionary-free `EventDiffer` with an allocation-free
+no-change path pinned by a test; `EnumText` cached enum names; presized vessel list; and the
+"Sample alloc" `ValueStat` tripwire in the status window). Written 2026-07-02, immediately after
 `plans/PERF_IMPROVEMENT_PLAN.md` P0–P7 landed and was confirmed in-game. That plan fixed the
 `/sim/display` chain end-to-end; **this plan is the fresh, comprehensive look at everything else** —
 every gatOS feature, hunting for game-tick allocations, blocking work, redundant serialization, and

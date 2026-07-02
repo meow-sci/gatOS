@@ -184,7 +184,7 @@ public sealed partial class Mod
             _weldManager ??= new WeldManager();
             _thugLife ??= new ThugLifeManager();
             _telemetry ??= new TelemetrySampler(store, _telemetrySettings, _health, _sampleStats,
-                _weldManager, _thugLife);
+                _sampleAllocStats, _weldManager, _thugLife);
             // Sample only while something can actually read /sim: the VM is up, or a host-side
             // transport client is connected (9p / HTTP / MQTT). Otherwise the sampler idles for free.
             var state = CurrentVmStatus.State;
@@ -759,6 +759,13 @@ public sealed partial class Mod
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Game-thread cost of one telemetry sample (all vessels + the enabled "
                                  + "streams). Lower the rate or turn off vessel detail / bodies to reduce it.");
+            var a = _sampleAllocStats;
+            ImGui.Text($"Sample alloc: avg {a.Avg / 1024:F1} KiB, max {a.Max / 1024.0:F1} KiB, "
+                       + $"last {a.Last / 1024.0:F1} KiB");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Bytes allocated on the game thread by one telemetry sample — the GP3 "
+                                 + "regression tripwire (GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md). "
+                                 + "Scales with vessels/parts; spikes on vehicle edits are expected.");
         }
 
         var d = _drainStats;
@@ -812,6 +819,7 @@ public sealed partial class Mod
         if (ImGui.SmallButton("Reset perf##gatos_reset_perf"))
         {
             _sampleStats.Reset();
+            _sampleAllocStats.Reset();
             _drainStats.Reset();
             _mqttBroker?.PublishStats.Reset();
             _displaySurface?.CaptureStat.Reset();

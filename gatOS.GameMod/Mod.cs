@@ -74,6 +74,10 @@ public sealed partial class Mod
     // is lazily constructed and survive its disposal.
     private readonly PerfStat _sampleStats = new();
 
+    // Bytes allocated by one telemetry sample (game thread) — the GP3 alloc/tick tripwire the
+    // status window shows next to the sample timing. Recorded allocation-free by the sampler.
+    private readonly ValueStat _sampleAllocStats = new();
+
     // Timing of one command-queue drain (game thread — both the per-frame Frame-phase drain and the
     // solver-phase drain accumulate here). Usually ~0 (empty queue); the max catches a hitch when a
     // burst of control commands actuates KSA on a frame.
@@ -175,7 +179,8 @@ public sealed partial class Mod
             _simStore = new SnapshotStore();
             _telemetrySettings = new TelemetrySettings(
                 _config.SampleRateHz, _config.TelemetryEnabled, _config.TelemetryVesselDetail,
-                _config.TelemetryBodies, _config.TelemetryEvents, _config.TelemetryVesselParts);
+                _config.TelemetryBodies, _config.TelemetryEvents, _config.TelemetryVesselParts,
+                _config.TelemetryBodiesRateHz);
             _commandQueue = new CommandQueue(_config.ControlEnabled, _config.DebugNamespace,
                 TimeSpan.FromMilliseconds(_config.CommandTimeoutMs));
             _displaySurface = new DisplaySurface(new DisplaySettings(

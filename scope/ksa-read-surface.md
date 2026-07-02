@@ -39,10 +39,10 @@ statics (+ `VersionInfo.Current`).
 
 ---
 
-## Vessel core reads — `VesselReader.SampleCore` (always sampled)
+## Vessel core reads — `VesselReader.ReadBasics`/`BuildCore` (always sampled)
 
 `gatOS.GameMod/Game/Ksa/Readers/VesselReader.cs`. Sampled for every vessel regardless of the
-`telemetry_vessel_detail` gate. Anchor: `VesselReader.cs:28`.
+`telemetry_vessel_detail` gate. Anchor: `VesselReader.Sample`.
 
 | `/sim` path (under `vessels/by-id/<id>/`) | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4750 |
 |---|---|---|---|---|---|---|
@@ -76,10 +76,12 @@ the strongly-typed `Joules` struct (rev 4681); `.Value()` still returns the joul
 
 ---
 
-## Vessel detail reads — `VesselReader.Enrich` (gated by `telemetry_vessel_detail`)
+## Vessel detail reads — `VesselReader.BuildFull` (gated by `telemetry_vessel_detail`)
 
-Same file; runs inside a whole-pass try/catch (`VesselReader.cs:40`) — if any extension API drifts, the
-vessel keeps its core telemetry and the extension dirs vanish (logged once).
+Same file; the full single-pass build runs inside a whole-pass try/catch in `VesselReader.Sample` — if
+any extension API drifts, the vessel falls back to `BuildCore` (core telemetry only) and the extension
+dirs vanish (logged once). The structural animation↔module links (IsSolar, solar/light AnimationIndex)
+are cached per vehicle in `Readers/AnimationLinks.cs` (GP3), rebuilt on module-count change or every 10 s.
 
 ### Position / navball / environment
 
@@ -195,8 +197,9 @@ the backing `float`, verified in `KSA/Watts.cs`/`KSA/Joules.cs`), so it **compil
 emitted numbers now mean **instantaneous power (W)** instead of energy accumulated per sample (J). The
 `/sim` fields were already named/specced in watts (`PowerProducedW`, SPEC said "W") and the asset XML
 authors `<Produced W="200"/>`, so 4750 makes these values *correct*. **Applied fix (G2):** verified no
-gatOS reader scales by `dt` or accumulates (`SamplePowerProduced` `:351` / `SamplePowerConsumed` `:365` /
-`SampleSolar` `:410` / `SampleGenerators` `:467` sum `.Value()` straight through); re-labelled the five
+gatOS reader scales by `dt` or accumulates (`SamplePowerConsumed` / `SampleSolar` / `SampleGenerators`
+sum `.Value()` straight through; since GP3 the vessel `PowerProducedW` total is accumulated inside the
+solar/generator passes — same members, one read); re-labelled the five
 power/battery `[KsaAnchor]` `Notes` (Joules→Watts) and bumped them to `2026-06-27` / `2026.6.9.4750`;
 dropped the stale "this sample" phrasing from the SPEC, matrix, and snapshot field docs. **No functional
 code change** — but **guests will see different magnitudes** than the 4680 era (instantaneous W, not

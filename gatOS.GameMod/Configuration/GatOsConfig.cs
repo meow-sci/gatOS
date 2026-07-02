@@ -66,6 +66,9 @@ public sealed class GatOsConfig
             ("telemetry_vessel_detail", "Sample per-vessel detail (navball/environment/per-module); off = core only."),
             ("telemetry_vessel_parts", "Sample the per-vessel top-level parts list (/sim/.../parts; the welds anchor picker)."),
             ("telemetry_bodies", "Sample the celestial-body catalog + system summary (/sim/bodies, /sim/system)."),
+            ("telemetry_bodies_rate_hz",
+                "Bodies resample cadence in Hz (0 = every sample tick). Below the master rate, the\n"
+                + "ticks between re-publish the same bodies/system data — cheaper, slightly staler."),
             ("telemetry_events", "Diff snapshots into /sim/events entries (and the event topics/streams)."),
         }),
         ("CONTROL — the /sim write surface", new[]
@@ -166,6 +169,13 @@ public sealed class GatOsConfig
 
     /// <summary>Sample the celestial-body catalog and system summary (<c>/sim/bodies</c>, <c>/sim/system</c>).</summary>
     public bool TelemetryBodies { get; set; } = true;
+
+    /// <summary>
+    ///     Bodies resample cadence in Hz; <c>0</c> (the default) resamples on every master tick.
+    ///     Below the master rate, the ticks between re-publish the same bodies/system data by
+    ///     reference (cheaper, slightly staler — GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md GP3).
+    /// </summary>
+    public int TelemetryBodiesRateHz { get; set; }
 
     /// <summary>Diff consecutive snapshots into <c>/sim/events</c> entries (and the event streams/topics).</summary>
     public bool TelemetryEvents { get; set; } = true;

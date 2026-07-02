@@ -153,8 +153,9 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 
 | Location | KSA touch | Guarded by |
 |---|---|---|
-| `Game/Ksa/Readers/VesselReader.cs` | 21 `[KsaAnchor]` reads (the bulk of telemetry; +`ReadControllable`, G3) | per-accessor try/catch → `KsaHealth`; `Enrich` whole-pass guard |
-| `Game/Ksa/Readers/BodyReader.cs` | 3 `[KsaAnchor]` reads (celestial catalog) | sampler-level guard |
+| `Game/Ksa/Readers/VesselReader.cs` | 21 `[KsaAnchor]` reads (the bulk of telemetry; +`ReadControllable`, G3) | per-accessor try/catch → `KsaHealth`; `BuildFull` whole-pass guard |
+| `Game/Ksa/Readers/AnimationLinks.cs` | 1 `[KsaAnchor]` read (structural animation↔module links, cached per vehicle — GP3) | rebuilt on module-count change / 10 s; consumed inside the `BuildFull`/`BuildCore` guards |
+| `Game/Ksa/Readers/BodyReader.cs` | 3 `[KsaAnchor]` reads (celestial catalog; statics cached per body — GP3) | sampler-level guard |
 | `Game/Ksa/Readers/PartsReader.cs` | 1 `[KsaAnchor]` read (top-level parts; welds anchor picker) | per-call try/catch; `VesselParts` sampler gate |
 | `Game/Ksa/Actuators/*.cs` (11 anchored files; `IvaActuator.cs` delegates to `Render/IvaForceRender.cs`, no anchor) | 26 `[KsaAnchor]` writes (all controls + debug) | `KsaCatalog` try/catch per command |
 | `Game/Ksa/Render/IvaForceRender.cs` | 1 `[KsaAnchor]` (`always_render_iva` cheat; own dynamic `gatos.iva` Harmony) | per-postfix try/catch; restored + unpatched on disable/unload |

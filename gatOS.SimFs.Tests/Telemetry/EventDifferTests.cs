@@ -178,4 +178,41 @@ public sealed class EventDifferTests
             "warp-changed", "active-changed", "situation-change", "vessel-appeared",
         }));
     }
+
+    [Test]
+    public void NoChanges_SteadyStateAllocatesNothing()
+    {
+        // The differ runs on the game thread every sample tick, and "no events" is the
+        // overwhelmingly common outcome — it must not allocate then
+        // (GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md GP3). Fully-populated vessels so every
+        // module walk (engines/docking/decouplers/animations/battery) is exercised.
+        var vessels = new[] { TestData.FullVessel(), TestData.FullVessel("test-2") };
+        var previous = TestData.Snapshot(1, vessels);
+
+        for (var warm = 0; warm < 64; warm++) // tiered-JIT warmup
+            EventDiffer.Diff(previous, 2, previous.WarpFactor, previous.ActiveVesselId, vessels);
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 64; i++)
+            EventDiffer.Diff(previous, 2, previous.WarpFactor, previous.ActiveVesselId, vessels);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.That(allocated, Is.LessThan(1024),
+            $"a no-event diff allocated {allocated} B over 64 ticks — the steady state must be allocation-free");
+    }
+
+    [Test]
+    public void RosterReordered_StillMatchesById()
+    {
+        // A reordered roster takes the dictionary fallback path — same vessels, no
+        // appeared/removed noise, and per-vessel changes still attribute correctly.
+        var a = TestData.Vessel("a", situation: "Landed");
+        var b = TestData.Vessel("b");
+        var previous = Previous(a, b);
+        var events = EventDiffer.Diff(previous, 2, 1, previous.ActiveVesselId,
+            [b, TestData.Vessel("a", situation: "Freefall")]);
+
+        Assert.That(events.Single().Type, Is.EqualTo("situation-change"));
+        Assert.That(events.Single().VesselId, Is.EqualTo("a"));
+    }
 }
