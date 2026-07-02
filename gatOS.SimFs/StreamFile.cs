@@ -109,6 +109,23 @@ public sealed class StreamFile : VfsFile
             }
         }
 
+        /// <summary>The zero-copy path (GP4): copies straight into the 9p reply frame, no per-read array.</summary>
+        public ValueTask<int> ReadAsync(ulong offset, Memory<byte> destination, CancellationToken ct)
+        {
+            lock (_lock)
+            {
+                var produced = _bufferStart + _bufferLength;
+                if ((long)offset >= produced)
+                    return ValueTask.FromResult(0); // frontier: 0, never block
+
+                var effective = Math.Max((long)offset, _bufferStart);
+                var available = (int)(produced - effective);
+                var length = Math.Min(destination.Length, available);
+                _buffer.AsSpan((int)(effective - _bufferStart), length).CopyTo(destination.Span);
+                return ValueTask.FromResult(length);
+            }
+        }
+
         public void Dispose()
             // Cancel only — disposing the CTS would race the pump's next Token access; a
             // timer-less CTS needs no deterministic disposal.

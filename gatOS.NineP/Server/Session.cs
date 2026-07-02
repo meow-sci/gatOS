@@ -89,8 +89,25 @@ internal sealed class Session
                 try
                 {
                     await _stream.ReadExactlyAsync(frame.AsMemory(0, frameLength), ct).ConfigureAwait(false);
-                    Dispatch((MessageType)frame[0],
-                        BinaryPrimitives.ReadUInt16LittleEndian(frame.AsSpan(1, 2)), frame, frameLength);
+                    var type = (MessageType)frame[0];
+                    var tag = BinaryPrimitives.ReadUInt16LittleEndian(frame.AsSpan(1, 2));
+                    if (CanRunInline(type))
+                    {
+                        // Fast path (GP4): metadata ops (walk/getattr/open/readdir/clunk/…) cannot
+                        // park, so they run inline on the read loop — no Task.Run hop, no linked
+                        // CTS, no in-flight registry entry (they are atomic wrt this loop, so a
+                        // Tflush can only ever arrive after they finished — flush of a completed
+                        // tag correctly answers a bare Rflush). Tread/Twrite/Tflush can block
+                        // (parked stream reads, control writes awaiting the game thread, flush
+                        // awaiting its victim) and keep the concurrent dispatch path.
+                        await HandleAsync(type, tag, frame.AsMemory(3, frameLength - 3), inFlight: null,
+                            _cts.Token).ConfigureAwait(false);
+                        ArrayPool<byte>.Shared.Return(frame);
+                    }
+                    else
+                    {
+                        Dispatch(type, tag, frame, frameLength);
+                    }
                 }
                 catch
                 {
@@ -138,6 +155,16 @@ internal sealed class Session
         _client.Close();
     }
 
+    /// <summary>
+    ///     Whether a message type is handled inline on the session read loop (GP4): everything
+    ///     that completes without parking. <c>Tread</c> can block for the next frame/event,
+    ///     <c>Twrite</c> awaits the game thread (control files), and <c>Tflush</c> awaits its
+    ///     victim — those stay on their own dispatch tasks so the loop keeps consuming (Tflush
+    ///     must be readable while a read is parked).
+    /// </summary>
+    private static bool CanRunInline(MessageType type)
+        => type is not (MessageType.Tread or MessageType.Twrite or MessageType.Tflush);
+
     private void Dispatch(MessageType type, ushort tag, byte[] frame, int frameLength)
     {
         var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
@@ -170,7 +197,7 @@ internal sealed class Session
         });
     }
 
-    private async Task HandleAsync(MessageType type, ushort tag, ReadOnlyMemory<byte> body, InFlight inFlight,
+    private async Task HandleAsync(MessageType type, ushort tag, ReadOnlyMemory<byte> body, InFlight? inFlight,
         CancellationToken ct)
     {
         try
@@ -223,12 +250,13 @@ internal sealed class Session
         }
     }
 
-    private async Task SendAsync(NinePWriter reply, InFlight inFlight)
+    private async Task SendAsync(NinePWriter reply, InFlight? inFlight)
     {
         // A flushed request must never be answered after its Rflush (flush(5); spike T1.2).
         // The Tflush handler sends its Rflush only after awaiting this task, so leaving the
         // tag for the Dispatch finally to reap is correct on this suppressed path.
-        if (inFlight.Flushed)
+        // (Inline messages — inFlight null — are atomic wrt the read loop and can't be flushed.)
+        if (inFlight is { Flushed: true })
             return;
 
         // Free the tag BEFORE the reply bytes can reach the client. 9p lets a client reuse a
@@ -237,7 +265,8 @@ internal sealed class Session
         // flight" tears the whole connection down (a load-dependent flake under e.g. `find`,
         // which recycles tags rapidly). This TryRemove is sequenced before WriteAsync, so the
         // tag is gone before any byte is sent and the reuse can never collide.
-        _inFlight.TryRemove(inFlight.Tag, out _);
+        if (inFlight is not null)
+            _inFlight.TryRemove(inFlight.Tag, out _);
 
         await _writeLock.WaitAsync(_cts.Token).ConfigureAwait(false);
         var started = Stopwatch.GetTimestamp();
@@ -530,12 +559,30 @@ internal sealed class Session
         var handle = entry.Handle
                      ?? throw new VfsErrorException(LinuxErrno.EBADF, $"read: fid {fid} is not open");
 
-        var clamped = Math.Min(count, _msize - ReadOverhead);
-        var data = await handle.ReadAsync(offset, clamped, ct).ConfigureAwait(false);
-        _stats.RecordTread(data.Length);
-        return new NinePWriter().Begin(MessageType.Rread, tag)
-            .WriteUInt32((uint)data.Length)
-            .WriteBytes(data.Span);
+        // Zero-copy payload (GP4): reserve the max payload in the pooled reply frame and let the
+        // handle write straight into it (host files read from disk into the frame; view-backed
+        // handles copy once — exactly what WriteBytes did, minus the intermediate buffer some
+        // handles had to allocate), then trim the frame to what actually arrived.
+        var clamped = (int)Math.Min(count, _msize - ReadOverhead);
+        var writer = new NinePWriter().Begin(MessageType.Rread, tag).WriteUInt32(0);
+        var payloadStart = writer.Length;
+        var destination = writer.Reserve(clamped);
+        int read;
+        try
+        {
+            read = await handle.ReadAsync(offset, destination, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // A parked read cancels on every Ctrl-C (Tflush) — recycle the reserved buffer
+            // instead of leaking a pool miss per flush.
+            writer.Return();
+            throw;
+        }
+
+        writer.TrimTo(payloadStart + read).PatchUInt32(payloadStart - 4, (uint)read);
+        _stats.RecordTread(read);
+        return writer;
     }
 
     private async Task<NinePWriter> HandleWriteAsync(ReadOnlyMemory<byte> body, ushort tag, CancellationToken ct)

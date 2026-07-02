@@ -143,6 +143,26 @@ public sealed class HostFile : VfsFile
             }
         }
 
+        /// <summary>
+        ///     The zero-copy path (GP4): reads from disk straight into the caller's (the 9p reply
+        ///     frame's) buffer. The count-allocating overload above was a fresh <c>byte[count]</c>
+        ///     per Tread — a 512 KiB <b>LOH allocation each</b> at the raised msize, so a guest-side
+        ///     bulk copy from <c>/mnt</c> produced hundreds of LOH allocations per second.
+        /// </summary>
+        public async ValueTask<int> ReadAsync(ulong offset, Memory<byte> destination, CancellationToken ct)
+        {
+            if (destination.IsEmpty)
+                return 0;
+            try
+            {
+                return await RandomAccess.ReadAsync(handle, destination, (long)offset, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                throw HostIo.ToVfsError(ex, "read");
+            }
+        }
+
         public void Dispose() => handle.Dispose();
     }
 

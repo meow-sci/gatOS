@@ -31,6 +31,24 @@ public interface IVfsFileHandle : IDisposable
     ///     honor it promptly (that is how Ctrl-C on a blocked <c>cat</c> works).
     /// </summary>
     ValueTask<ReadOnlyMemory<byte>> ReadAsync(ulong offset, uint count, CancellationToken ct);
+
+    /// <summary>
+    ///     Reads up to <paramref name="destination"/>.Length bytes at <paramref name="offset"/>
+    ///     <b>directly into the caller's buffer</b>, returning the byte count (0 = EOF for this
+    ///     offset). The 9p session passes a slice of its pooled reply frame, so an implementation
+    ///     that overrides this writes payload bytes exactly once with no intermediate allocation
+    ///     (GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md GP4 — the host-file handle turns a 512 KiB
+    ///     LOH allocation per <c>/mnt</c> Tread into a plain disk read). The default bridges to
+    ///     <see cref="ReadAsync(ulong, uint, CancellationToken)"/> with one copy, so existing
+    ///     implementations keep working unchanged. Same blocking/cancellation contract.
+    /// </summary>
+    async ValueTask<int> ReadAsync(ulong offset, Memory<byte> destination, CancellationToken ct)
+    {
+        var data = await ReadAsync(offset, (uint)destination.Length, ct).ConfigureAwait(false);
+        var length = Math.Min(data.Length, destination.Length);
+        data.Span[..length].CopyTo(destination.Span);
+        return length;
+    }
 }
 
 /// <summary>

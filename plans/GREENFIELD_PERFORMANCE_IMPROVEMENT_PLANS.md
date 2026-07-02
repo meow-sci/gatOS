@@ -1,6 +1,14 @@
 # GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md — the whole-mod efficiency audit
 
-**Status: IN PROGRESS.** Landed 2026-07-02: **GP2** (MQTT pumps — subscription-aware gating via
+**Status: IN PROGRESS.** Landed 2026-07-02: **GP4** (9p data plane — `IVfsFileHandle` gains a
+read-into-destination overload with a bridging default; the session reserves the Rread payload in
+its pooled reply frame (`NinePWriter.Reserve`/`TrimTo`) and files write straight into it —
+`HostFile`'s per-Tread `byte[count]` (512 KiB LOH at the raised msize) is gone, `StreamFile` and
+`DisplayStreamFile` copy once with no intermediate array; metadata ops (walk/getattr/open/readdir/
+clunk/…) now run inline on the session read loop — no `Task.Run` hop, no linked CTS, no in-flight
+registry entry — while Tread/Twrite/Tflush keep the concurrent dispatch path so parked reads and
+game-thread writes never stall the loop; the display handle creates its dispose-unpark linked CTS
+only when actually parking. Pinned by `ZeroCopyReadTests`), **GP2** (MQTT pumps — subscription-aware gating via
 MQTTnet subscribe/unsubscribe events + a flattened filter array with force-republish on subscribe;
 lazy topic payloads so unmatched topics are never serialized; reference-identity delta for
 `system`/`bodies` riding GP3's reference-reuse; `mqtt_publish_hz` cadence cap (default 0 = every

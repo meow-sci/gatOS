@@ -78,22 +78,10 @@ public sealed class DisplayStreamFile : VfsFile
         {
             // Offsets are ignored: delivery is strictly sequential. The read blocks for the next frame
             // and never returns empty, so cat streams forever (Tflush/clunk unpark it via the token).
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _disposed.Token);
-            var token = linked.Token;
-            await _readGate.WaitAsync(token).ConfigureAwait(false);
+            await _readGate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                while (_pendingAt >= _pending.Length)
-                {
-                    // The wait returns a frame retained for us; release the fully-delivered one so
-                    // its pooled buffer can cycle. Frames skipped by drop-old were never retained.
-                    var frame = await _surface.WaitForNextEncodedAsync(_lastSeq, token).ConfigureAwait(false);
-                    _lastSeq = frame.Sequence;
-                    _pending.Release();
-                    _pending = frame;
-                    _pendingAt = 0;
-                }
-
+                await EnsurePendingAsync(ct).ConfigureAwait(false);
                 var length = (int)Math.Min(count, (uint)(_pending.Length - _pendingAt));
                 // The slice stays valid: the handle retains the frame at least until it advances to
                 // the next one, and the 9p layer copies the span into its reply before then.
@@ -104,6 +92,50 @@ public sealed class DisplayStreamFile : VfsFile
             finally
             {
                 _readGate.Release();
+            }
+        }
+
+        /// <summary>The zero-copy path (GP4): the frame chunk is copied straight into the 9p reply frame.</summary>
+        public async ValueTask<int> ReadAsync(ulong offset, Memory<byte> destination, CancellationToken ct)
+        {
+            await _readGate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                await EnsurePendingAsync(ct).ConfigureAwait(false);
+                var length = Math.Min(destination.Length, _pending.Length - _pendingAt);
+                _pending.Memory.Slice(_pendingAt, length).Span.CopyTo(destination.Span);
+                _pendingAt += length;
+                return length; // always > 0 — never EOF
+            }
+            finally
+            {
+                _readGate.Release();
+            }
+        }
+
+        /// <summary>
+        ///     Ensures an undelivered chunk is pending, parking for the next encoded frame when the
+        ///     current one is fully delivered. The linked token source (the handle-dispose unpark)
+        ///     is created only on the park path (GP4) — a continuation read that finds pending bytes
+        ///     costs no CTS at all; disposal is checked before the fast path so a clunked handle
+        ///     still refuses further reads.
+        /// </summary>
+        private async ValueTask EnsurePendingAsync(CancellationToken ct)
+        {
+            _disposed.Token.ThrowIfCancellationRequested();
+            if (_pendingAt < _pending.Length)
+                return;
+
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _disposed.Token);
+            while (_pendingAt >= _pending.Length)
+            {
+                // The wait returns a frame retained for us; release the fully-delivered one so
+                // its pooled buffer can cycle. Frames skipped by drop-old were never retained.
+                var frame = await _surface.WaitForNextEncodedAsync(_lastSeq, linked.Token).ConfigureAwait(false);
+                _lastSeq = frame.Sequence;
+                _pending.Release();
+                _pending = frame;
+                _pendingAt = 0;
             }
         }
 

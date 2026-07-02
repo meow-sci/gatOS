@@ -85,6 +85,32 @@ public sealed class NinePWriter
     public int Length => _position;
 
     /// <summary>
+    ///     Reserves <paramref name="count"/> bytes at the current position for direct writing and
+    ///     returns them (the position advances past the reservation). Used by the zero-copy read
+    ///     path (GP4): the session reserves the max payload, hands the slice to the file handle,
+    ///     then <see cref="TrimTo"/>s back to what was actually read. The memory is a view into
+    ///     the backing buffer — it is invalidated by any subsequent write that grows the frame, so
+    ///     reserve last (the <c>Rread</c> payload is the final field).
+    /// </summary>
+    public Memory<byte> Reserve(int count)
+    {
+        Span(count);
+        return _buffer.AsMemory(_position - count, count);
+    }
+
+    /// <summary>
+    ///     Rolls the frame back to <paramref name="length"/> bytes — undoing the unused tail of a
+    ///     <see cref="Reserve"/> when the read delivered fewer bytes than the reservation.
+    /// </summary>
+    public NinePWriter TrimTo(int length)
+    {
+        if (length < 0 || length > _position)
+            throw new ArgumentOutOfRangeException(nameof(length));
+        _position = length;
+        return this;
+    }
+
+    /// <summary>
     ///     Overwrites a previously written <c>u32</c> at <paramref name="position"/> (used to
     ///     patch the payload-byte count of <c>Rreaddir</c>/<c>Rread</c> after packing).
     /// </summary>
