@@ -67,7 +67,7 @@ public sealed class SimFsTreeTests
 
         string[] vesselFiles =
         [
-            "id", "name", "situation", "parent", "controlled", "controllable", "com", "telemetry",
+            "id", "name", "situation", "parent", "controlled", "controllable", "com", "scale", "telemetry",
             "position/cci", "position/ecl", "position/lat", "position/lon",
             "velocity/orbital", "velocity/surface", "velocity/inertial", "velocity/cci",
             "attitude/quat", "attitude/rates",

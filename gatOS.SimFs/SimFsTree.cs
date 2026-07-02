@@ -355,6 +355,12 @@ public static class SimFsTree
                     Line($"{p}/controlled", "controlled", () => Formats.Flag(Vessel(vesselId).Controlled)),
                     Line($"{p}/controllable", "controllable", () => Formats.Flag(Vessel(vesselId).Controllable)),
                     Line($"{p}/com", "com", () => Formats.Vector(Vessel(vesselId).CenterOfMass)),
+                    // Model scale factor. Intentionally a first-class vessel node (NOT under
+                    // /sim/debug): the first per-vessel control deliberately moved out of the debug
+                    // namespace. Read = current (best-effort); write any value > 0 to rescale the
+                    // whole model (action vessel.scale, one-shot, exempt from the authority gate).
+                    NumberControl($"{p}/scale", "scale", vesselId, "vessel.scale", SimCommand.NoOrdinal,
+                        () => Formats.Scalar(Vessel(vesselId).Scale)),
                     new StaticTextFile("telemetry", Qid($"{p}/telemetry"),
                         () => Formats.VesselTelemetry(_store.Current, Vessel(vesselId)) + "\n"),
                     DelegateDirectory.Fixed("position", Qid($"{p}/position"),

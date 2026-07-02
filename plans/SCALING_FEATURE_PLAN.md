@@ -1,6 +1,7 @@
 # SCALING_FEATURE_PLAN — per-vessel model scaling on `/sim`
 
-Status: **planned** (not yet implemented). This plan adds an independent **vessel model scaling**
+Status: **implemented** (2026-07-02; in-game validation — checklist item 10 in §10 — still pending a
+live KSA flight). This plan adds an independent **vessel model scaling**
 feature to gatOS, ported from the scaling behavior in the sibling `unscience/garrys-torch` mod but
 **decoupled from welds** and exposed as a first-class per-vessel `/sim` node.
 
