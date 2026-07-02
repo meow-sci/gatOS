@@ -1,16 +1,72 @@
+using System.Buffers;
 using System.Diagnostics;
 using System.Text;
 using gatOS.Logging;
 
 namespace gatOS.SimFs.Display;
 
-/// <summary>One encoded Kitty frame on the output feed: a monotonic sequence and its bytes.</summary>
-/// <param name="Sequence">Strictly increasing; readers track the last one they delivered.</param>
-/// <param name="Bytes">The complete, self-contained Kitty frame (see <see cref="KittyEncoder"/>).</param>
-public sealed record EncodedFrame(long Sequence, byte[] Bytes)
+/// <summary>
+///     One encoded Kitty frame on the output feed: a monotonic sequence and its bytes. Frame buffers
+///     are pooled (PERF_IMPROVEMENT_PLAN.md P2) and shared by reference across every open reader, so
+///     lifetime is reference-counted: the publisher holds one reference for the current-frame slot,
+///     and each reader that obtained the frame via
+///     <see cref="DisplaySurface.WaitForNextEncodedAsync"/> holds one until it calls
+///     <see cref="Release"/>. When the count reaches zero the buffer returns to the pool. Unpooled
+///     frames (<see cref="None"/>, debug text lines, tests) are immortal — retain/release no-op.
+/// </summary>
+public sealed class EncodedFrame
 {
+    private readonly ArrayPool<byte>? _pool;
+    private readonly byte[] _bytes; // may be longer than Length when pooled
+    private int _refs;
+
+    internal EncodedFrame(long sequence, byte[] bytes, int length, ArrayPool<byte>? pool)
+    {
+        Sequence = sequence;
+        Length = length;
+        _bytes = bytes;
+        _pool = pool;
+        _refs = 1; // the publisher's current-frame reference
+    }
+
     /// <summary>The feed's start state: nothing produced yet.</summary>
-    public static EncodedFrame None { get; } = new(0, []);
+    public static EncodedFrame None { get; } = new(0, [], 0, null);
+
+    /// <summary>Strictly increasing; readers track the last one they delivered.</summary>
+    public long Sequence { get; }
+
+    /// <summary>The frame's byte count (the backing buffer may be larger — it is pooled).</summary>
+    public int Length { get; }
+
+    /// <summary>The complete, self-contained Kitty frame bytes (see <see cref="KittyEncoder"/>).</summary>
+    public ReadOnlyMemory<byte> Memory => _bytes.AsMemory(0, Length);
+
+    /// <summary>
+    ///     Takes a reference if the frame is still live; <c>false</c> means the publisher already
+    ///     replaced and released it (its buffer may be back in the pool) — re-read the current frame.
+    /// </summary>
+    internal bool TryRetain()
+    {
+        if (_pool is null)
+            return true;
+        while (true)
+        {
+            var refs = Volatile.Read(ref _refs);
+            if (refs == 0)
+                return false;
+            if (Interlocked.CompareExchange(ref _refs, refs + 1, refs) == refs)
+                return true;
+        }
+    }
+
+    /// <summary>Drops a reference; the last one returns the pooled buffer.</summary>
+    internal void Release()
+    {
+        if (_pool is null)
+            return;
+        if (Interlocked.Decrement(ref _refs) == 0)
+            _pool.Return(_bytes);
+    }
 }
 
 /// <summary>
@@ -33,6 +89,13 @@ public sealed record EncodedFrame(long Sequence, byte[] Bytes)
 /// </remarks>
 public sealed class DisplaySurface : IDisposable
 {
+    /// <summary>
+    ///     Published frame buffers — pooled and reference-counted via <see cref="EncodedFrame"/> so
+    ///     the steady-state encode→publish→read cycle allocates nothing. Private (not
+    ///     <see cref="ArrayPool{T}.Shared"/>) because frames exceed the shared pool's 1 MiB bucket cap.
+    /// </summary>
+    private static readonly ArrayPool<byte> FrameBuffers = ArrayPool<byte>.Create(1 << 26, 8);
+
     private readonly object _inLock = new();
     private byte[] _inBuffer = [];
     private int _inWidth;
@@ -82,7 +145,13 @@ public sealed class DisplaySurface : IDisposable
     /// <summary>Number of readers currently streaming (shown in the status window).</summary>
     public int ReaderCount => Volatile.Read(ref _readers);
 
-    /// <summary>The most recently encoded frame (never null bytes; starts at <see cref="EncodedFrame.None"/>).</summary>
+    /// <summary>
+    ///     The most recently encoded frame (starts at <see cref="EncodedFrame.None"/>). Reading its
+    ///     <see cref="EncodedFrame.Sequence"/>/<see cref="EncodedFrame.Length"/> is always safe;
+    ///     consuming its <b>bytes</b> requires the retention
+    ///     <see cref="WaitForNextEncodedAsync"/> provides (the pooled buffer may otherwise be
+    ///     recycled mid-read).
+    /// </summary>
     public EncodedFrame Current => _current;
 
     /// <summary>
@@ -157,20 +226,24 @@ public sealed class DisplaySurface : IDisposable
     /// <summary>
     ///     Completes with the first encoded frame whose sequence exceeds <paramref name="afterSequence"/>
     ///     (immediately when one is already current). Mirrors <c>SnapshotStore.WaitForNextAsync</c>; a
-    ///     reader that fell behind resumes at the latest frame, not the next one (drop-old).
+    ///     reader that fell behind resumes at the latest frame, not the next one (drop-old). The
+    ///     returned frame is <b>retained for the caller</b> — call <see cref="EncodedFrame.Release"/>
+    ///     once its bytes are no longer needed so the pooled buffer can be reused.
     /// </summary>
     public async ValueTask<EncodedFrame> WaitForNextEncodedAsync(long afterSequence, CancellationToken ct)
     {
         while (true)
         {
             ct.ThrowIfCancellationRequested();
+            // TryRetain fails only when the publisher already replaced (and released) the frame we
+            // read — a newer one exists, so looping re-reads it. Progress is guaranteed.
             var frame = _current;
-            if (frame.Sequence > afterSequence)
+            if (frame.Sequence > afterSequence && frame.TryRetain())
                 return frame;
 
             var signal = _outSignal;
             frame = _current; // re-check after capturing the signal (publish-between-reads race)
-            if (frame.Sequence > afterSequence)
+            if (frame.Sequence > afterSequence && frame.TryRetain())
                 return frame;
 
             await signal.Task.WaitAsync(ct).ConfigureAwait(false);
@@ -183,7 +256,9 @@ public sealed class DisplaySurface : IDisposable
         if (_stopping.IsCancellationRequested)
             return;
         _stopping.Cancel();
-        // Unpark the worker if it is waiting on an input signal.
+        // Unpark the worker if it is waiting on an input signal. The current frame's pooled buffer
+        // is deliberately NOT released here: a concurrent in-flight Publish could double-release,
+        // and the cost of skipping it is one un-returned (GC-reclaimed) buffer per surface lifetime.
         _inSignal.TrySetResult();
     }
 
@@ -199,12 +274,13 @@ public sealed class DisplaySurface : IDisposable
             {
                 if (_inHasFrame)
                 {
-                    length = _inWidth * _inHeight * 4;
-                    if (work.Length < length)
-                        work = new byte[length];
-                    _inBuffer.AsSpan(0, length).CopyTo(work);
+                    // Pointer-swap the input buffer out instead of copying it (P2): the render
+                    // thread's next SubmitFrame regrows the (possibly smaller) swapped-in array as
+                    // needed. Saves a full frame memcpy per encode.
+                    (work, _inBuffer) = (_inBuffer, work);
                     width = _inWidth;
                     height = _inHeight;
+                    length = width * height * 4;
                     _inHasFrame = false;
                 }
                 else
@@ -242,9 +318,23 @@ public sealed class DisplaySurface : IDisposable
                 var display = Interlocked.Exchange(ref _forceKeyframe, 0) == 1
                               || width != _kfWidth || height != _kfHeight || encoding != _kfEncoding
                               || Stopwatch.GetTimestamp() - _lastKeyframeTs >= KeyframeIntervalTicks;
-                byte[] encoded;
-                using (EncodeStat.Measure())
-                    encoded = KittyEncoder.EncodeFrame(width, height, work.AsSpan(0, length), encoding, display);
+
+                // Encode straight into a pooled frame buffer (zero steady-state allocation; the
+                // buffer returns to the pool when the publisher and every reader release the frame).
+                var buffer = FrameBuffers.Rent(KittyEncoder.GetMaxEncodedLength(width, height, encoding));
+                int encodedLength;
+                try
+                {
+                    using (EncodeStat.Measure())
+                        encodedLength = KittyEncoder.EncodeFrame(
+                            width, height, work.AsSpan(0, length), encoding, display, KittyEncoder.VideoImageId, buffer);
+                }
+                catch
+                {
+                    FrameBuffers.Return(buffer);
+                    throw;
+                }
+
                 if (display)
                 {
                     _lastKeyframeTs = Stopwatch.GetTimestamp();
@@ -253,7 +343,7 @@ public sealed class DisplaySurface : IDisposable
                     _kfEncoding = encoding;
                 }
 
-                Publish(encoded);
+                Publish(buffer, encodedLength, FrameBuffers);
             }
             catch (Exception ex)
             {
@@ -288,14 +378,18 @@ public sealed class DisplaySurface : IDisposable
         var stamp = DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmss'.'fff'Z'");
         File.WriteAllBytes(Path.Combine(dir, $"screencap-{stamp}.png"), png);
         File.WriteAllBytes(Path.Combine(dir, $"screencap-{stamp}.kitty"), kitty);
-        Publish(Encoding.ASCII.GetBytes(
-            $"wrote screencap-{stamp}.{{png,kitty}} ({width}x{height}, png {png.Length} B, kitty {kitty.Length} B)\r\n"));
+        var line = Encoding.ASCII.GetBytes(
+            $"wrote screencap-{stamp}.{{png,kitty}} ({width}x{height}, png {png.Length} B, kitty {kitty.Length} B)\r\n");
+        Publish(line, line.Length, pool: null); // debug text line — unpooled, immortal
     }
 
-    private void Publish(byte[] bytes)
+    private void Publish(byte[] bytes, int length, ArrayPool<byte>? pool)
     {
-        _current = new EncodedFrame(Interlocked.Increment(ref _sequence), bytes);
+        var frame = new EncodedFrame(Interlocked.Increment(ref _sequence), bytes, length, pool);
+        var previous = _current;
+        _current = frame;
         Interlocked.Exchange(ref _outSignal, NewSignal()).TrySetResult();
+        previous.Release(); // the current-frame slot's reference to the replaced frame
     }
 
     private static TaskCompletionSource NewSignal()

@@ -28,9 +28,9 @@ public sealed class DisplaySurfaceTests
         var frame = await _surface.WaitForNextEncodedAsync(0, Cancel(5)).AsTask();
 
         Assert.That(frame.Sequence, Is.GreaterThan(0));
-        Assert.That(frame.Bytes, Is.Not.Empty);
+        Assert.That(frame.Length, Is.GreaterThan(0));
         // It is a real Kitty unit (starts with the save-cursor wrapper).
-        Assert.That(frame.Bytes[0], Is.EqualTo((byte)0x1b));
+        Assert.That(frame.Memory.Span[0], Is.EqualTo((byte)0x1b));
     }
 
     [Test]
@@ -72,13 +72,13 @@ public sealed class DisplaySurfaceTests
         // First frame must display (a=T — nothing has a placement yet).
         _surface.SubmitFrame(4, 4, Solid(4, 4));
         var first = await _surface.WaitForNextEncodedAsync(0, Cancel(5)).AsTask();
-        Assert.That(KittyStrict.ValidateFrame(first.Bytes).Display, Is.True,
+        Assert.That(KittyStrict.ValidateFrame(first.Memory.ToArray()).Display, Is.True,
             "the first frame must be a keyframe (creates the placement)");
 
         // Steady state replaces in place (a=t) — no per-frame placement churn.
         _surface.SubmitFrame(4, 4, Solid(4, 4));
         var second = await _surface.WaitForNextEncodedAsync(first.Sequence, Cancel(5)).AsTask();
-        Assert.That(KittyStrict.ValidateFrame(second.Bytes).Display, Is.False,
+        Assert.That(KittyStrict.ValidateFrame(second.Memory.ToArray()).Display, Is.False,
             "steady-state frames must be a=t replaces");
 
         // A new reader has no placement — the very next frame must keyframe for it.
@@ -87,7 +87,7 @@ public sealed class DisplaySurfaceTests
         {
             _surface.SubmitFrame(4, 4, Solid(4, 4));
             var third = await _surface.WaitForNextEncodedAsync(second.Sequence, Cancel(5)).AsTask();
-            Assert.That(KittyStrict.ValidateFrame(third.Bytes).Display, Is.True,
+            Assert.That(KittyStrict.ValidateFrame(third.Memory.ToArray()).Display, Is.True,
                 "a new reader must get a keyframe immediately");
         }
         finally
@@ -105,7 +105,7 @@ public sealed class DisplaySurfaceTests
         // A size change re-transmits with new s/v — the placement must be re-established.
         _surface.SubmitFrame(6, 4, Solid(6, 4));
         var resized = await _surface.WaitForNextEncodedAsync(first.Sequence, Cancel(5)).AsTask();
-        var decoded = KittyStrict.ValidateFrame(resized.Bytes);
+        var decoded = KittyStrict.ValidateFrame(resized.Memory.ToArray());
         Assert.That((decoded.Width, decoded.Height), Is.EqualTo((6, 4)));
         Assert.That(decoded.Display, Is.True, "a geometry change must keyframe");
     }

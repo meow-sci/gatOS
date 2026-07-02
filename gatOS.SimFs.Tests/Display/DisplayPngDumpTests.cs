@@ -47,9 +47,9 @@ public sealed class DisplayPngDumpTests
         _surface.SubmitFrame(4, 4, Solid(4, 4, value: 200));
         var frame = await _surface.WaitForNextEncodedAsync(0, Cancel(5)).AsTask();
 
-        var text = Encoding.ASCII.GetString(frame.Bytes);
+        var text = Encoding.ASCII.GetString(frame.Memory.Span);
         Assert.That(text, Does.StartWith("wrote screencap-"));
-        Assert.That(frame.Bytes, Does.Not.Contain((byte)0x1b), "no ESC — the feed carries text, not a Kitty unit");
+        Assert.That(frame.Memory.ToArray(), Does.Not.Contain((byte)0x1b), "no ESC — the feed carries text, not a Kitty unit");
 
         var files = Directory.GetFiles(_dir, "screencap-*.png");
         Assert.That(files, Has.Length.EqualTo(1));

@@ -62,7 +62,7 @@ public sealed class DisplayStreamFile : VfsFile
         private readonly SemaphoreSlim _readGate = new(1, 1);
         private readonly CancellationTokenSource _disposed = new();
         private long _lastSeq;
-        private byte[] _pending = [];
+        private EncodedFrame _pending = EncodedFrame.None; // retained until fully delivered (P2 pooling)
         private int _pendingAt;
 
         internal Handle(DisplaySurface surface)
@@ -85,14 +85,19 @@ public sealed class DisplayStreamFile : VfsFile
             {
                 while (_pendingAt >= _pending.Length)
                 {
+                    // The wait returns a frame retained for us; release the fully-delivered one so
+                    // its pooled buffer can cycle. Frames skipped by drop-old were never retained.
                     var frame = await _surface.WaitForNextEncodedAsync(_lastSeq, token).ConfigureAwait(false);
                     _lastSeq = frame.Sequence;
-                    _pending = frame.Bytes;
+                    _pending.Release();
+                    _pending = frame;
                     _pendingAt = 0;
                 }
 
                 var length = (int)Math.Min(count, (uint)(_pending.Length - _pendingAt));
-                var chunk = _pending.AsMemory(_pendingAt, length);
+                // The slice stays valid: the handle retains the frame at least until it advances to
+                // the next one, and the 9p layer copies the span into its reply before then.
+                var chunk = _pending.Memory.Slice(_pendingAt, length);
                 _pendingAt += length;
                 return chunk; // always > 0 — never EOF
             }
@@ -105,7 +110,9 @@ public sealed class DisplayStreamFile : VfsFile
         public void Dispose()
         {
             _surface.UnregisterReader();
-            _disposed.Cancel(); // cancel-only; the semaphore is left to the GC so a parked read releases safely
+            // Cancel-only: the semaphore (and the pending frame's retention) are left to the GC so a
+            // parked read unwinds safely; one unreturned pooled buffer per closed reader is noise.
+            _disposed.Cancel();
         }
     }
 }

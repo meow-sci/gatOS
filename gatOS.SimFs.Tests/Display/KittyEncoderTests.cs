@@ -115,6 +115,39 @@ public sealed class KittyEncoderTests
             KittyEncoder.EncodeFrame(4, 4, new byte[10], DisplayEncoding.Rgba, imageId: 1));
 
     [Test]
+    public void EncodeFrame_SpanOverload_SteadyStateAllocatesNothing()
+    {
+        // The live path (PERF_IMPROVEMENT_PLAN.md P2): swizzle, base64 and framing all write into
+        // caller/pooled buffers. The old implementation allocated ~67 MB of transients per
+        // 1440x900 frame (a base64 STRING, ~1700 substrings, a doubling MemoryStream), keeping the
+        // shared game-process GC in gen2/LOH storms — this pins the fix.
+        var bgra = SolidBgra(64, 64, 1, 2, 3);
+        var destination = new byte[KittyEncoder.GetMaxEncodedLength(64, 64, DisplayEncoding.Rgba)];
+        for (var warm = 0; warm < 8; warm++) // warm the scratch pool + tiered JIT
+            KittyEncoder.EncodeFrame(64, 64, bgra, DisplayEncoding.Rgba, warm == 0, 1, destination);
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 32; i++)
+            KittyEncoder.EncodeFrame(64, 64, bgra, DisplayEncoding.Rgba, i == 0, 1, destination);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.That(allocated, Is.LessThan(2048),
+            $"steady-state raw encode allocated {allocated} B over 32 frames — the hot path must be allocation-free");
+    }
+
+    [Test]
+    public void EncodeFrame_SpanOverload_MatchesTheArrayOverload_ByteForByte()
+    {
+        var bgra = SolidBgra(70, 30, 9, 8, 7); // 8400 B raw -> multi-chunk
+        var expected = KittyEncoder.EncodeFrame(70, 30, bgra, DisplayEncoding.Rgba, display: false, imageId: 3);
+
+        var destination = new byte[KittyEncoder.GetMaxEncodedLength(70, 30, DisplayEncoding.Rgba)];
+        var written = KittyEncoder.EncodeFrame(70, 30, bgra, DisplayEncoding.Rgba, false, 3, destination);
+
+        Assert.That(destination[..written], Is.EqualTo(expected));
+    }
+
+    [Test]
     public void EncodeFrame_TransmitOnly_OmitsThePlacementKeys()
     {
         // Steady-state replace frames (a=t) swap the image bytes under the existing placement;
