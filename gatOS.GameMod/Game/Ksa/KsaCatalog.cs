@@ -66,8 +66,11 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
                 return new CommandResult(CommandOutcome.NotFound, $"vessel '{targetId}' is gone");
 
             // Authority gate (G-D1): with all_vessels=false only the controlled vehicle is commandable.
-            // The cheat namespace is exempt — it is its own opt-in (G-D2).
-            if (!isDebug && !allVessels && Program.ControlledVehicle?.Id != vehicle.Id)
+            // The cheat namespace is exempt — it is its own opt-in (G-D2). vessel.scale is likewise
+            // exempt: a deliberate per-vessel operation that works on any addressed vessel (the first
+            // control moved out of the /sim/debug namespace).
+            var anyVessel = isDebug || command.Action == "vessel.scale";
+            if (!anyVessel && !allVessels && Program.ControlledVehicle?.Id != vehicle.Id)
                 return new CommandResult(CommandOutcome.Denied, "control is restricted to the active vessel");
 
             return Finish(accessor, Dispatch(vehicle, command));
@@ -105,6 +108,9 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
         "vessel.attitude_frame" => FlightComputerActuator.SetAttitudeFrame(vehicle, c.Token ?? ""),
         "vessel.attitude_target" => FlightComputerActuator.SetAttitudeTarget(vehicle, c.Values ?? []),
         "vessel.burn" => FlightComputerActuator.SetBurn(vehicle, c.Values ?? []),
+
+        // Model scaling — a first-class vessel node (any-vessel; see the authority gate above).
+        "vessel.scale" => ScaleActuator.Set(vehicle, c.Value),
 
         // Per-module (G4)
         "rcs.active" => RcsActuator.SetActive(vehicle, c.Ordinal, c.Value > 0.5),

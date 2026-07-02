@@ -1,4 +1,5 @@
 using Brutal.Numerics;
+using gatOS.GameMod.Game.Ksa.Actuators;
 using gatOS.Logging;
 using gatOS.SimFs.Snapshots;
 using gatOS.SimFs.Telemetry;
@@ -115,6 +116,9 @@ internal static class VesselReader
             Controlled = activeVesselId is not null && vehicle.Id == activeVesselId,
             Controllable = ReadControllable(vehicle),
             EngineOn = ReadEngineOn(vehicle),
+            // Rides the always-sampled core (not the gated Enrich pass): one cheap Part.Scale.X
+            // read, and the scale node stays truthful with telemetry_vessel_detail off.
+            Scale = ScaleActuator.Read(vehicle),
         };
     }
 

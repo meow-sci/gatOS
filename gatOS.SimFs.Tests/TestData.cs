@@ -11,7 +11,7 @@ internal static class TestData
         IReadOnlyList<AnimationSnapshot>? animations = null,
         IReadOnlyList<SolarSnapshot>? solar = null, IReadOnlyList<DecouplerSnapshot>? decouplers = null,
         IReadOnlyList<RcsSnapshot>? rcs = null, IReadOnlyList<LightSnapshot>? lights = null,
-        IReadOnlyList<DockingSnapshot>? docking = null)
+        IReadOnlyList<DockingSnapshot>? docking = null, double scale = 1.0)
         => new VesselSnapshot(
             Id: id,
             Name: $"Vessel {id}",
@@ -43,6 +43,7 @@ internal static class TestData
             Lights = lights ?? [],
             Docking = docking ?? [],
             EngineOn = engineOn,
+            Scale = scale,
         };
 
     /// <summary>

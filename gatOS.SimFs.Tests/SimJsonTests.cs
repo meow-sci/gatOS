@@ -76,12 +76,14 @@ public sealed class SimJsonTests
         // The "full" shape: raw-record snake_case names + every per-module collection, the data the
         // compact telemetry doc deliberately omits. This is what gives MQTT/HTTP parity with the
         // individual /sim scalar files.
-        using var json = JsonDocument.Parse(SimJson.Serialize(TestData.FullVessel()));
+        using var json = JsonDocument.Parse(SimJson.Serialize(TestData.FullVessel() with { Scale = 2.5 }));
         var root = json.RootElement;
         Assert.Multiple(() =>
         {
             Assert.That(root.GetProperty("id").GetString(), Is.EqualTo("test-1"));
             Assert.That(root.GetProperty("barometric_altitude").GetDouble(), Is.EqualTo(71000));
+            Assert.That(root.GetProperty("scale").GetDouble(), Is.EqualTo(2.5),
+                "the vessel model scale factor rides the full record dump");
             Assert.That(root.GetProperty("engines").GetArrayLength(), Is.GreaterThan(0));
             Assert.That(root.GetProperty("rcs").GetArrayLength(), Is.GreaterThan(0));
             Assert.That(root.GetProperty("navball").GetProperty("frame").GetString(), Is.EqualTo("Lvlh"));

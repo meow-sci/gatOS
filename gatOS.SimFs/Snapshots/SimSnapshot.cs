@@ -158,6 +158,9 @@ public sealed record VesselSnapshot(
     /// <summary>Vessel-level manual throttle setpoint 0..1 (<c>ctl/throttle</c> read).</summary>
     public double ThrottleCmd { get; init; }
 
+    /// <summary>Uniform vessel model scale factor (<c>scale</c> read; best-effort). 1.0 = unscaled.</summary>
+    public double Scale { get; init; } = 1.0;
+
     /// <summary>The flight computer's attitude track-target name (<c>ctl/attitude_mode</c> read).</summary>
     public string AttitudeMode { get; init; } = "";
 
