@@ -73,13 +73,19 @@ public sealed class DisplaySurface : IDisposable
     public EncodedFrame Current => _current;
 
     /// <summary>
-    ///     Tier-1 debug mode (STREAM_PLAN.md "Debugging the encoded stream"): when set, the encode
-    ///     worker <b>bypasses the Kitty encoder entirely</b> and instead writes at most one PNG per
-    ///     second into this directory (<c>screencap-&lt;ISO 8601 UTC&gt;.png</c>, via
-    ///     <see cref="PngEncoder"/>), publishing a one-line ASCII note per file on the stream feed so
-    ///     an attached reader (<c>cat /sim/display/stream</c>) sees per-file progress. Capture gating
-    ///     is unchanged — frames only flow while <see cref="DisplaySettings.Enabled"/> is set and a
-    ///     reader has the stream open. Null (the default) restores normal Kitty encoding.
+    ///     Tier-1/2 debug mode (STREAM_PLAN.md "Debugging the encoded stream"): when set, the encode
+    ///     worker <b>does not publish Kitty bytes</b> — instead, at most once per second, it writes the
+    ///     frame into this directory <b>twice</b>: <c>screencap-&lt;ISO 8601 UTC&gt;.png</c> (ground-truth
+    ///     pixels, via <see cref="PngEncoder"/>) and <c>screencap-&lt;same stamp&gt;.kitty</c> (the exact
+    ///     Kitty unit the live path would publish, via <see cref="KittyEncoder"/> at the current
+    ///     <see cref="DisplaySettings.Encoding"/>). The pair is the tier-2 artifact: decode the
+    ///     <c>.kitty</c> offline and diff against the sibling PNG (<c>KittyDumpPairTests</c>, gated on
+    ///     <c>GATOS_KITTY_DUMP</c>), and a validated <c>.kitty</c> is the vendorable purrTTY test asset.
+    ///     A one-line ASCII note per pair is published on the stream feed so an attached reader sees
+    ///     progress (read it with small buffers, e.g. <c>dd bs=64</c> — see the class remarks on read
+    ///     granularity). Capture gating is unchanged — frames only flow while
+    ///     <see cref="DisplaySettings.Enabled"/> is set and a reader has the stream open. Null (the
+    ///     default) restores normal Kitty encoding.
     /// </summary>
     public string? PngDumpDirectory
     {
@@ -204,7 +210,7 @@ public sealed class DisplaySurface : IDisposable
             {
                 if (_pngDumpDirectory is { } pngDir)
                 {
-                    DumpPng(pngDir, width, height, work.AsSpan(0, length));
+                    DumpFramePair(pngDir, width, height, work.AsSpan(0, length));
                     continue;
                 }
 
@@ -224,13 +230,13 @@ public sealed class DisplaySurface : IDisposable
     }
 
     /// <summary>
-    ///     The tier-1 debug sink (see <see cref="PngDumpDirectory"/>): at most once per second, PNG-encode
-    ///     the frame, write it to disk with an ISO 8601 UTC basic-format timestamp (colon-free, so
-    ///     Windows-safe), and publish a plain-text progress line on the stream feed in place of the
-    ///     Kitty bytes. Frames inside the 1 s window are dropped, decoupling the dump rate from the
-    ///     capture cadence.
+    ///     The tier-1/2 debug sink (see <see cref="PngDumpDirectory"/>): at most once per second, write
+    ///     the frame as a PNG <b>and</b> as the exact live-path Kitty unit, sharing an ISO 8601 UTC
+    ///     basic-format timestamp (colon-free, so Windows-safe), and publish a plain-text progress line
+    ///     on the stream feed in place of the Kitty bytes. Frames inside the 1 s window are dropped,
+    ///     decoupling the dump rate from the capture cadence.
     /// </summary>
-    private void DumpPng(string dir, int width, int height, ReadOnlySpan<byte> bgra)
+    private void DumpFramePair(string dir, int width, int height, ReadOnlySpan<byte> bgra)
     {
         var now = Stopwatch.GetTimestamp();
         if (_lastPngWriteTs != 0 && now - _lastPngWriteTs < Stopwatch.Frequency)
@@ -238,12 +244,19 @@ public sealed class DisplaySurface : IDisposable
         _lastPngWriteTs = now;
 
         byte[] png;
+        byte[] kitty;
         using (EncodeStat.Measure())
+        {
             png = PngEncoder.EncodeBgra(width, height, bgra);
+            kitty = KittyEncoder.EncodeFrame(width, height, bgra, Settings.Encoding);
+        }
+
         Directory.CreateDirectory(dir);
-        var name = $"screencap-{DateTime.UtcNow:yyyyMMdd'T'HHmmss'.'fff'Z'}.png";
-        File.WriteAllBytes(Path.Combine(dir, name), png);
-        Publish(Encoding.ASCII.GetBytes($"wrote {name} ({width}x{height}, {png.Length} B)\r\n"));
+        var stamp = DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmss'.'fff'Z'");
+        File.WriteAllBytes(Path.Combine(dir, $"screencap-{stamp}.png"), png);
+        File.WriteAllBytes(Path.Combine(dir, $"screencap-{stamp}.kitty"), kitty);
+        Publish(Encoding.ASCII.GetBytes(
+            $"wrote screencap-{stamp}.{{png,kitty}} ({width}x{height}, png {png.Length} B, kitty {kitty.Length} B)\r\n"));
     }
 
     private void Publish(byte[] bytes)

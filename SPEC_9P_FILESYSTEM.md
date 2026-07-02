@@ -509,9 +509,11 @@ Out-of-range writes to the numeric controls **clamp** (and succeed), matching th
 > **DEBUG MODE ACTIVE (temporary, this branch):** the Kitty encoding is being validated bottom-up
 > (STREAM_PLAN.md "Debugging the encoded stream"). While `DisplaySurface.PngDumpDirectory` is wired
 > (see `Mod.cs`), `stream` does **not** emit Kitty bytes: each captured frame is instead written on the
-> **host** as `<data dir>/.tmp-screencaps/screencap-<ISO 8601 UTC>.png` (at most 1/s), and `stream`
-> carries one plain-text `wrote <file> (<WxH>, <bytes> B)` line per file. All other semantics
-> (gating, controls, blocking reads) are unchanged. This note is removed when Kitty encoding returns.
+> **host** as a pair — `<data dir>/.tmp-screencaps/screencap-<ISO 8601 UTC>.png` (ground-truth pixels)
+> plus `screencap-<same stamp>.kitty` (the exact live-path Kitty unit) — at most one pair/s, and
+> `stream` carries one plain-text `wrote screencap-<stamp>.{png,kitty} (<WxH>, png <n> B, kitty <m> B)`
+> line per pair (consume with `dd bs=64` — see the delivery-granularity note above). All other
+> semantics (gating, controls, blocking reads) are unchanged. Removed when Kitty encoding returns.
 
 ---
 

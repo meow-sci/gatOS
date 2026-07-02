@@ -42,14 +42,14 @@ public sealed class DisplayPngDumpTests
     }
 
     [Test]
-    public async Task SubmitFrame_WritesAPng_AndPublishesATextLine_NotKittyBytes()
+    public async Task SubmitFrame_WritesAPngKittyPair_AndPublishesATextLine_NotKittyBytes()
     {
         _surface.SubmitFrame(4, 4, Solid(4, 4, value: 200));
         var frame = await _surface.WaitForNextEncodedAsync(0, Cancel(5)).AsTask();
 
         var text = Encoding.ASCII.GetString(frame.Bytes);
         Assert.That(text, Does.StartWith("wrote screencap-"));
-        Assert.That(frame.Bytes, Does.Not.Contain((byte)0x1b), "no ESC — this is not a Kitty unit");
+        Assert.That(frame.Bytes, Does.Not.Contain((byte)0x1b), "no ESC — the feed carries text, not a Kitty unit");
 
         var files = Directory.GetFiles(_dir, "screencap-*.png");
         Assert.That(files, Has.Length.EqualTo(1));
@@ -58,12 +58,19 @@ public sealed class DisplayPngDumpTests
         Assert.That(png[..8], Is.EqualTo(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }));
         Assert.That(BinaryPrimitives.ReadUInt32BigEndian(png.AsSpan(16)), Is.EqualTo(4), "IHDR width");
         Assert.That(BinaryPrimitives.ReadUInt32BigEndian(png.AsSpan(20)), Is.EqualTo(4), "IHDR height");
+
+        // The sibling .kitty file carries the exact live-path Kitty unit for the SAME frame and
+        // must pass the strict tier-2 validation (same basename, same geometry).
+        var kittyPath = Path.ChangeExtension(files[0], ".kitty");
+        Assert.That(File.Exists(kittyPath), Is.True, "the PNG must have a sibling .kitty dump");
+        var decoded = KittyStrict.ValidateFrame(await File.ReadAllBytesAsync(kittyPath));
+        Assert.That((decoded.Width, decoded.Height), Is.EqualTo((4, 4)));
     }
 
     [Test]
-    public async Task RapidFrames_AreThrottledToOnePngPerSecond()
+    public async Task RapidFrames_AreThrottledToOnePairPerSecond()
     {
-        // All submits land well inside one second, so exactly the first becomes a file (the 1 Hz
+        // All submits land well inside one second, so exactly the first becomes a pair (the 1 Hz
         // throttle drops the rest — the dump rate is decoupled from the capture cadence).
         _surface.SubmitFrame(4, 4, Solid(4, 4, value: 10));
         await _surface.WaitForNextEncodedAsync(0, Cancel(5)).AsTask();
@@ -72,6 +79,7 @@ public sealed class DisplayPngDumpTests
         await Task.Delay(200);
 
         Assert.That(Directory.GetFiles(_dir, "screencap-*.png"), Has.Length.EqualTo(1));
+        Assert.That(Directory.GetFiles(_dir, "screencap-*.kitty"), Has.Length.EqualTo(1));
     }
 
     private static byte[] Solid(int w, int h, byte value)
