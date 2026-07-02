@@ -6,8 +6,14 @@ downscale+convert in `FrameCapture`, format-feature-gated with the CPU path as f
 (zero-allocation encoder — span/pooled path pinned by an allocation test; refcounted pooled
 `EncodedFrame`s; input double-buffer swap), **P3** (demand-paced encode — parked-waiter tracking +
 `EncodeSkips` counter), **P4** (9p pooled bodies/reply buffers + write-payload slicing; MaxMsize
-524288 + guest v15 mounts msize=524288; `NinePServerStats` in the status window). P5–P8 pending
-(P5 purrtty; P6/P7 native rebuild; P8 soak/validation).
+524288 + guest v15 mounts msize=524288; `NinePServerStats` in the status window), **P5** (purrtty
+`a9020f9`: quiet-tick scan skip, single-copy raw decode via `ReadImageData(Span)`, texture
+update-in-place, in-world render-skip w/ every-frame tick, background-tab decode gate, inbox
+8→24 MiB with an 8 MiB per-tick parse cap). P5 sub-items deliberately deferred: the ConPTY pump
+buffer reuse (the video path is SSH, already pump-based with bounded gen-0 copies since P0.1) and
+full pixel-buffer pooling + the native kitty-dirty-flag binding (both ride the P6/P7 native
+rebuild). **Remaining: P6 (native flate fix → zlib default), P7 (native APC fast path), P0.4
+(native pin-leak patch), P8 (soak/validation + in-game before/after numbers).**
 **Symptoms driving this plan (observed in-game, 1440×900 capture, RTX 5090 / i9-13900K):**
 1. Game frame rate collapses from ~120 fps to **sub-10 fps** while the stream is on.
 2. After streaming for a while the stream (and eventually the whole terminal session) **hangs

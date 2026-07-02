@@ -62,7 +62,7 @@ cheats ported from `unscience`, are code-complete.** The only pending work is a 
 | Host folder mounts | DONE | `NineP/Vfs/HostDirectory.cs`, `HostFile.cs` |
 | Welds + `always_render_iva` + parts (ex-`unscience`) | Code DONE; in-game pending | `Game/Ksa/Welds/`, `Game/Ksa/Render/IvaForceRender.cs`, `Game/Ksa/Readers/PartsReader.cs` |
 | `thug_life` sunglasses quad (ex-`unscience`) | Code DONE; in-game pending | `Game/Ksa/ThugLife/` (GPU quad renderer + dynamic render postfix), `SimFs` `debug/thug_life` |
-| Screen stream (`/sim/display`) | Code DONE; misrender **root-caused + fixed** (purrTTY libghostty `o=z` corruption → default `rgba`, + purrTTY content-hash re-decode; STREAM_PLAN.md §11); in-game live pass pending | `SimFs/Display/`, `Game/Ksa/FrameCapture.cs` + `DisplayRenderPatch.cs` (in-band render-hook capture), `STREAM_PLAN.md` |
+| Screen stream (`/sim/display`) | Code DONE; misrender **root-caused + fixed** (purrTTY libghostty `o=z` corruption → default `rgba`, + purrTTY content-hash re-decode; STREAM_PLAN.md §11); **perf/stability P0–P5 of [`plans/PERF_IMPROVEMENT_PLAN.md`](plans/PERF_IMPROVEMENT_PLAN.md) landed 2026-07-02** (SSH read-pump, a=t keyframes, GPU blit downscale, zero-alloc encoder, demand pacing, 9p pooling + msize 512 KiB/guest v15, purrtty consumption fixes); in-game live pass pending | `SimFs/Display/`, `Game/Ksa/FrameCapture.cs` + `DisplayRenderPatch.cs` (in-band render-hook capture), `STREAM_PLAN.md` |
 | T11.1 — QEMU win-x64 | DONE | `tools/fetch-qemu.*`, `vendor/qemu/win-x64/` |
 | M10+ | **Not yet implemented** | — |
 
