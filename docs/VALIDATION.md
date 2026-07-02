@@ -232,3 +232,23 @@ set), and the ksa skill `quad.md`. **All items pending a live flight.**
 | 8 | Repeated add → clear → add cycles → no leak, no double-patch, no Vulkan validation spew; the quad still renders correctly after several cycles | ☐ | dynamic `gatos.thug_life` patch lifecycle |
 | 9 | Quit with entries active → **clean Unload** (no Vulkan validation errors / no exception); reload shows entries are **not** persisted | ☐ | runtime-only; `TeardownGameCheats` dispose order: clear `Active` → unpatch → dispose GPU |
 | 10 | Induce a GPU fault (e.g. an unavailable renderer) → the feature **self-disables** (`Active=false`), logs once, and the rest of gatOS keeps working | ☐ | `EIO` on `add` when the renderer is unavailable |
+
+## Per-vessel `scale` + `always_render` nodes — validation pass — **NOT YET RUN**
+
+Prereq: the T6.6 pass. `[control] control_enabled = true` (default); works with
+`control_all_vessels = false` too — both actions are authority-exempt (`KsaCatalog.AnyVesselActions`).
+Run during a real flight with at least two vessels, one far away. See `SPEC_9P_FILESYSTEM.md` §3.4.1
+and `docs/KSA_INTEGRATION_MATRIX.md` (per-vessel nodes). **All items pending a live flight.**
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | `echo 2 > /sim/vessels/by-id/<id>/scale` doubles the model; `echo 50000 >` gives planet-size; `echo 1 >` restores 1:1 | ☐ | one-shot recursive `Part.Scale` |
+| 2 | `echo 0`, `echo -1`, `echo abc` into `scale` each fail with `EINVAL`; `cat scale` reflects the current factor | ☐ | `ScaleRules` + parse-level rejection |
+| 3 | Scaling a **non-active** vessel by id works even with `control_all_vessels = false` | ☐ | authority exemption |
+| 4 | A KittenEva (EVA kitten) scales via the avatar path (`Core.Scale`) | ☐ | reflection special-case |
+| 5 | Scene reload / staging / undock reverts `scale` to 1 and the read-back honestly shows it | ☐ | accepted D1 limitation |
+| 6 | Fly (or warp) away from a vessel until it disappears (< 1 px); `echo 1 > /sim/vessels/by-id/<id>/always_render` makes it visible again and it **stays** rendered at any distance; `echo 0 >` restores the stock cull (it vanishes again) | ☐ | first mark installs the `gatos.always_render` prefixes |
+| 7 | `cat always_render` reads back `1` while marked, `0` after; marking a **non-active** vessel works with `control_all_vessels = false` | ☐ | read-back + authority exemption |
+| 8 | The mark **survives a scene rebuild** (staging/undock — same vessel id); despawning the vessel (recover/destroy) drops the mark automatically (`cat` of a re-spawned same-id vessel reads `0`… unless it truly is the same id, in which case still marked — verify the prune only fires on despawn) | ☐ | id-keyed registry + sampler prune |
+| 9 | With **no** vessel marked, no `gatos.always_render` patches are installed (repeated mark/unmark cycles → no double-patch, no leak); quit with marks active → clean unload | ☐ | dynamic patch lifecycle; `TeardownGameCheats` |
+| 10 | An EVA kitten marked `always_render` is **not** force-rendered (documented limitation — its `UpdateRenderData` override bypasses the patched base) | ☐ | virtual-method limitation |

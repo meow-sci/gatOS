@@ -107,7 +107,7 @@ listing order; empty/`.`/`..` become `_`/`_.`/`_..`. In KSA a vessel's **name *i
 | `telemetry_bodies` | `true` | `/sim/bodies` + `/sim/system` |
 | `telemetry_events` | `true` | `/sim/events` diffs |
 | `control_enabled` | `true` | master write switch; `false` ⇒ every control write `EACCES` |
-| `control_all_vessels` | `true` | `false` ⇒ only the **controlled** vessel is commandable (`EACCES` otherwise); `camera.focus`, `vessel.scale` and the `debug.*` namespace are exempt |
+| `control_all_vessels` | `true` | `false` ⇒ only the **controlled** vessel is commandable (`EACCES` otherwise); `camera.focus`, `vessel.scale`, `vessel.always_render` and the `debug.*` namespace are exempt |
 | `debug_namespace` | `true` | exposes `/sim/debug/**` and the `debug.*` actions; `false` ⇒ those vanish / `EACCES` |
 | `sample_rate_hz` | `10` | master cadence (1..120) |
 | `http_enabled` / `http_preferred_port` | `true` / `4242` | HTTP `/v1` server (falls back to ephemeral on clash) |
@@ -198,6 +198,7 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 | `controllable` | S | flag | `1` when KSA will accept flight-control + flight-computer commands (`Vehicle.IsControllable`: the vessel has a Control Module). A vessel reading `0` here **silently ignores** throttle/stage/attitude/burn/RCS/ignite — gatOS does not gate, it relies on KSA's own lockout, so pre-check this. The controlled vessel is always `1`. (KSA 2026.6.9.4750.) |
 | `com` | S | vector | Center of mass in the assembly frame, meters. |
 | `scale` | **St** | scalar | Uniform model scale factor; read = current (best-effort; `1` = unscaled/unknown), **write any finite value > 0** to rescale the whole vessel model (action `vessel.scale`, Frame, one-shot). Default `1.0`; no upper clamp; `0`/negative/non-finite → `EINVAL`. Exempt from the active-vessel authority gate — works on **any** vessel by id. The game reverts the scale when it rebuilds the vessel (scene reload / staging / undock). First per-vessel control intentionally placed here rather than under `/sim/debug/`. |
+| `always_render` | **St** | flag | Render-distance override; read = current mark, **write `1`** to keep this vessel rendered at any distance (bypasses KSA's sub-pixel cull — normally a vehicle whose projected diameter falls under 1 px is not drawn), **`0`** to restore the stock cull (action `vessel.always_render`, Frame). Off by default; exempt from the active-vessel authority gate — works on **any** vessel by id, like `scale`. The mark keys on the vessel **id**, so it survives scene rebuilds, and is dropped automatically when the vessel despawns. The render patches behind it exist only while ≥ 1 vessel is marked. Note: EVA kittens render through their own path and are **not** affected. |
 | `telemetry` | S | JSON | The **atomic** per-vessel document (see §4). One `read()` = one self-consistent snapshot. |
 | `position/cci` | S | vector | Position in **CCI** (Celestial-Centered Inertial about `parent`), meters. |
 | `position/ecl` | S | vector | Position in the parent's ecliptic frame, meters. |
@@ -580,6 +581,7 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `vessel.attitude_target` | — | values `[x,y,z,w]` | **Solver** | `ctl/attitude_target` | Body→CCI quaternion |
 | `vessel.burn` | — | values `[ut,dvx,dvy,dvz]` | **Solver** | `ctl/burn` | CCI Δv |
 | `vessel.scale` | — | value > 0 | Frame | `vessels/by-id/<id>/scale` | positive-only (`EINVAL` if ≤ 0 / non-finite); one-shot; exempt from the active-vessel authority gate |
+| `vessel.always_render` | — | value `0`/`1` | Frame | `vessels/by-id/<id>/always_render` | render-distance override (bypass the sub-pixel cull); exempt from the active-vessel authority gate |
 | `engine.active` | engine n | value `0`/`1` | Frame | `engines/<n>/active` | |
 | `engine.min_throttle` | engine n | value `0..1` | Frame | `engines/<n>/min_throttle` | |
 | `rcs.active` | rcs n | value `0`/`1` | Frame | `rcs/<n>/active` | |

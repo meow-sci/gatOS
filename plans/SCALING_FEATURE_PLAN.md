@@ -1,7 +1,12 @@
 # SCALING_FEATURE_PLAN — per-vessel model scaling on `/sim`
 
 Status: **implemented** (2026-07-02; in-game validation — checklist item 10 in §10 — still pending a
-live KSA flight). This plan adds an independent **vessel model scaling**
+live KSA flight, checklist now in `docs/VALIDATION.md`). The D6 "minimal documentation" choice was
+superseded the same day when the sibling `always_render` feature landed with full doc lockstep: `scale`
+is now also catalogued in `docs/KSA_INTEGRATION_MATRIX.md`, `scope/ksa-write-surface.md`,
+`docs/MILESTONES.md`, the CLAUDE.md status table, and the `gatos` skill (the authority-gate exemption
+was promoted to `KsaCatalog.AnyVesselActions` as §3.2b anticipated). This plan adds an independent
+**vessel model scaling**
 feature to gatOS, ported from the scaling behavior in the sibling `unscience/garrys-torch` mod but
 **decoupled from welds** and exposed as a first-class per-vessel `/sim` node.
 

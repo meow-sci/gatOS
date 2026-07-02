@@ -671,6 +671,42 @@ render set is flagged the **deepest / highest-churn** KSA coupling). **Pending: 
 
 ---
 
+## First-class per-vessel nodes: `scale` + `always_render` (ex-`unscience`): Code DONE; in-game pass pending
+
+Two more `unscience` ports (garrys-torch scaling / i-feel-seen render-distance override), landed
+2026-07-02 as **first-class vessel nodes** under `vessels/by-id/<id>/` — deliberately **outside**
+`/sim/debug` (the first per-vessel controls migrated out of the debug namespace) and **exempt from the
+active-vessel authority gate** (`KsaCatalog.AnyVesselActions`, a `HashSet` — each is a deliberate by-id
+operation on an arbitrary vessel). Gated only by the `control_enabled` master; both Frame-phase.
+
+**`scale`** (`SCALING_FEATURE_PLAN.md`; `Game/Ksa/Actuators/ScaleActuator.cs`): write any finite
+value > 0 (`EINVAL` otherwise, via the game-free `gatOS.SimFs/Commands/ScaleRules`) to **one-shot**
+uniformly rescale the model — recursive `Part.Scale = (f,f,f)` (public `double3` setter) +
+the KittenEva avatar via reflected `Core.Scale = f*0.01f`. No driver, no patch, no clamp; KSA reverts
+it on vessel rebuild. Read-back = a representative `Part.Scale.X` (best-effort, `1.0` fallback).
+
+**`always_render`** (`Game/Ksa/Render/VesselForceRender.cs`): a `0`/`1` flag that bypasses KSA's
+sub-pixel cull (`Camera.GetObjectDiameterPixelsAsDouble < 1.0` normally hides the vehicle) so the
+vessel renders at **any** distance. Two Harmony prefixes on a dynamic `Harmony("gatos.always_render")`
+instance — `Vehicle.GetWorldMatrix(Camera)` + `Vehicle.UpdateRenderData(Viewport,int)`, each
+reproducing the stock body minus the cull — installed **only while ≥ 1 vessel is marked**, removed on
+the last unmark/despawn/unload (the welds/IVA/thug_life discipline; a marked-empty session carries
+zero patches). The id-keyed registry is game-thread-mutated and published as a volatile immutable set
+for the prefixes; `VesselForceRender.Prune` (riding the sampler's vehicle enumeration) drops despawned
+ids. Marks survive scene rebuilds (id-keyed); KittenEva's `UpdateRenderData` override is **not**
+affected (virtual-method limitation, as in unscience). Read-back is a pure registry lookup.
+
+**Wiring:** `VesselSnapshot.{Scale,AlwaysRender}` (init-only, sampled in `VesselReader.SampleCore` —
+always on, not detail-gated); `SimFsTree` `NumberControl`/`FlagControl` nodes beside `com`;
+`Mod.TeardownGameCheats` calls `VesselForceRender.Teardown()`. Tests:
+`gatOS.SimFs.Tests/Commands/{VesselScaleTests,VesselAlwaysRenderTests}.cs`. Catalog:
+`SPEC_9P_FILESYSTEM.md` §3.4.1 + §5.1; anchors mirrored in `docs/KSA_INTEGRATION_MATRIX.md`
+(per-vessel nodes section) and `scope/` (`ksa-write-surface.md#per-vessel-nodes`,
+`ksa-runtime-coupling.md#always-render-patches`). **Pending: the in-game pass** (checklist in
+`docs/VALIDATION.md`).
+
+---
+
 ## Suite totals and pending work
 
 **Full non-IT suite**: green, zero warnings.
@@ -679,9 +715,9 @@ render set is flagged the **deepest / highest-churn** KSA coupling). **Pending: 
 (including the 43 additional tests from the 2026-06-13 hardening review). The
 `HostMountIntegrationTests` fixture requires guest v10 to be published.
 
-**Still pending: the in-game passes** — T6.6/T9.3/G1–G4 and the welds/IVA/parts checklists in
-`docs/VALIDATION.md` are runnable now that the purrTTY tip release is cut, but need a live KSA flight
-to complete.
+**Still pending: the in-game passes** — T6.6/T9.3/G1–G4 and the welds/IVA/parts, thug_life, and
+per-vessel `scale`/`always_render` checklists in `docs/VALIDATION.md` are runnable now that the
+purrTTY tip release is cut, but need a live KSA flight to complete.
 
 **Next**: M10 (persistence & savegame shape). Everything past M9 is not yet implemented, with
 the single exception of T11.1 (QEMU win-x64 bundle) which was pulled forward and is done.

@@ -278,8 +278,9 @@ public sealed partial class Mod
 
     /// <summary>
     ///     Tears down the runtime cheats at unload: clears every weld, removes the thug-life quads (which
-    ///     also unpatches the render hook + frees its GPU resources), and restores IVA (which unpatches the
-    ///     IVA Harmony hooks). Game-coupled, so it is elided without the KSA assemblies.
+    ///     also unpatches the render hook + frees its GPU resources), restores IVA (which unpatches the
+    ///     IVA Harmony hooks), and drops every vessel force-render mark (which unpatches the
+    ///     <c>gatos.always_render</c> prefixes). Game-coupled, so it is elided without the KSA assemblies.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     partial void TeardownGameCheats()
@@ -309,6 +310,15 @@ public sealed partial class Mod
         catch (Exception ex)
         {
             ModLog.Log.Debug($"gatOS IVA teardown error: {ex.Message}");
+        }
+
+        try
+        {
+            VesselForceRender.Teardown();
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS force-render teardown error: {ex.Message}");
         }
     }
 

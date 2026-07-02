@@ -175,10 +175,10 @@ render thread (GameMod/Game/Ksa)                          background (gatOS.SimF
 
 ---
 
-## Game-thread cheats (welds + IVA render + thug_life)
+## Game-thread cheats (welds + IVA render + thug_life + per-vessel scale/always_render)
 
-Three cheats ported from the sibling `unscience` mod are exposed **only** on gatOS surfaces (9p `/sim`
-debug + HTTP `/v1` + MQTT — no ImGui), all mutating game state on the game thread:
+The cheats ported from the sibling `unscience` mod are exposed **only** on gatOS surfaces (9p `/sim`
++ HTTP `/v1` + MQTT — no ImGui), all mutating game state on the game thread:
 
 - **Welds** (`gatOS.GameMod/Game/Ksa/Welds/`): a registry (`WeldManager`) whose per-frame driver
   teleports each welded source vessel onto its target/part anchor. It runs in `OnAfterUi`
@@ -206,8 +206,19 @@ debug + HTTP `/v1` + MQTT — no ImGui), all mutating game state on the game thr
   falls back to the vehicle body frame rather than dropping). The manager publishes an immutable
   `ThugLifeEntry[]` (swapped on add/remove) that the postfix reads, and self-disables (`Active=false`) on
   any GPU fault. Teardown dispose order: clear `Active` → unpatch → dispose GPU (safe because same-thread).
+- **Per-vessel `scale` + `always_render`** (`Game/Ksa/Actuators/ScaleActuator.cs` +
+  `Game/Ksa/Render/VesselForceRender.cs`): **first-class vessel nodes** under
+  `vessels/by-id/<id>/`, deliberately outside `/sim/debug` and exempt from the active-vessel authority
+  gate (`KsaCatalog.AnyVesselActions`). `scale` is a **one-shot** recursive `Part.Scale` write (no
+  driver, no patch — KSA keeps it until it rebuilds the vessel). `always_render` bypasses KSA's
+  sub-pixel cull (a vehicle whose projected diameter is < 1 px is normally not drawn) via **two
+  Harmony prefixes on its own dynamic `Harmony("gatos.always_render")` instance —
+  `Vehicle.GetWorldMatrix` + `Vehicle.UpdateRenderData` — installed only while ≥ 1 vessel is marked**
+  and removed on the last unmark/despawn/unload. The id-keyed registry is mutated only on the game
+  thread; the prefixes read a volatile immutable set (two hash lookups per vehicle per frame while
+  installed); despawn pruning (`VesselForceRender.Prune`) rides the sampler's vehicle enumeration.
 
-All three create/remove via Frame-phase `/sim/debug` commands and tear down on unload
+All create/remove via Frame-phase commands and tear down on unload
 (`Mod.TeardownGameCheats`). The anchor picker for welds **and `thug_life`** is the per-vessel `parts/` list
 (`telemetry_vessel_parts`; `thug_life` also accepts `0` = the vehicle body frame).
 
