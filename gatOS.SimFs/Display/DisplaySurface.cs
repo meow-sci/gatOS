@@ -86,6 +86,10 @@ public sealed class EncodedFrame
 ///     <para><b>Idle by default.</b> The capture only submits while <see cref="DisplaySettings.Enabled"/>
 ///     is set <i>and</i> <see cref="HasReaders"/> is true, so an enabled-but-unwatched stream still
 ///     costs no GPU work — the surface idles until someone opens <c>/sim/display/stream</c>.</para>
+///     <para><b>Demand-paced (PERF_IMPROVEMENT_PLAN.md P3).</b> When readers exist but none is parked
+///     awaiting the next frame (all still draining the previous one — the saturated-transport case),
+///     the worker drops the captured frame without encoding it: drop-old semantics would discard it
+///     anyway, so the encode rate self-paces to actual consumption (see <see cref="EncodeSkips"/>).</para>
 /// </remarks>
 public sealed class DisplaySurface : IDisposable
 {
@@ -122,6 +126,8 @@ public sealed class DisplaySurface : IDisposable
 
     private readonly CancellationTokenSource _stopping = new();
     private int _readers;
+    private int _parkedWaiters; // readers currently awaiting the next frame (demand pacing, P3)
+    private long _encodeSkips;
     private Task? _worker;
 
     private volatile string? _pngDumpDirectory;
@@ -144,6 +150,13 @@ public sealed class DisplaySurface : IDisposable
 
     /// <summary>Number of readers currently streaming (shown in the status window).</summary>
     public int ReaderCount => Volatile.Read(ref _readers);
+
+    /// <summary>
+    ///     Captured frames dropped without encoding because every reader was still draining the
+    ///     previous frame (demand pacing, PERF_IMPROVEMENT_PLAN.md P3) — the encoder self-paces to
+    ///     actual consumption when the transport saturates. Shown in the status window.
+    /// </summary>
+    public long EncodeSkips => Interlocked.Read(ref _encodeSkips);
 
     /// <summary>
     ///     The most recently encoded frame (starts at <see cref="EncodedFrame.None"/>). Reading its
@@ -246,7 +259,17 @@ public sealed class DisplaySurface : IDisposable
             if (frame.Sequence > afterSequence && frame.TryRetain())
                 return frame;
 
-            await signal.Task.WaitAsync(ct).ConfigureAwait(false);
+            // Parked-waiter accounting drives the demand pacing (P3): the encode worker skips
+            // frames while no reader is waiting for one.
+            Interlocked.Increment(ref _parkedWaiters);
+            try
+            {
+                await signal.Task.WaitAsync(ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _parkedWaiters);
+            }
         }
     }
 
@@ -308,6 +331,17 @@ public sealed class DisplaySurface : IDisposable
                 if (_pngDumpDirectory is { } pngDir)
                 {
                     DumpFramePair(pngDir, width, height, work.AsSpan(0, length));
+                    continue;
+                }
+
+                // Demand pacing (P3): encoding a frame no reader is waiting for is pure waste under
+                // saturation — drop-old means it would be skipped anyway. Readers mid-drain re-park
+                // when they finish and pick up the NEXT capture (≤ one capture interval of added
+                // latency). The bootstrap frame (sequence 0 → 1) always encodes so the feed starts
+                // even before the first read parks, and the dump/debug branch above is exempt.
+                if (_current.Sequence > 0 && HasReaders && Volatile.Read(ref _parkedWaiters) == 0)
+                {
+                    Interlocked.Increment(ref _encodeSkips);
                     continue;
                 }
 

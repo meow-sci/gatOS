@@ -81,14 +81,44 @@ public sealed class DisplaySurfaceTests
         Assert.That(KittyStrict.ValidateFrame(second.Memory.ToArray()).Display, Is.False,
             "steady-state frames must be a=t replaces");
 
-        // A new reader has no placement — the very next frame must keyframe for it.
+        // A new reader has no placement — the very next frame must keyframe for it. (Park the
+        // wait before submitting: with a reader registered, demand pacing skips the encode of a
+        // frame nobody is waiting on.)
         _surface.RegisterReader();
         try
         {
+            var third = _surface.WaitForNextEncodedAsync(second.Sequence, Cancel(5)).AsTask();
             _surface.SubmitFrame(4, 4, Solid(4, 4));
-            var third = await _surface.WaitForNextEncodedAsync(second.Sequence, Cancel(5)).AsTask();
-            Assert.That(KittyStrict.ValidateFrame(third.Memory.ToArray()).Display, Is.True,
+            Assert.That(KittyStrict.ValidateFrame((await third).Memory.ToArray()).Display, Is.True,
                 "a new reader must get a keyframe immediately");
+        }
+        finally
+        {
+            _surface.UnregisterReader();
+        }
+    }
+
+    [Test]
+    public async Task Encode_IsDemandPaced_SkipsFramesNoReaderIsWaitingFor()
+    {
+        _surface.RegisterReader(); // a reader exists but is NOT parked on the feed
+        try
+        {
+            // The bootstrap frame always encodes so the feed starts.
+            _surface.SubmitFrame(4, 4, Solid(4, 4));
+            var first = await _surface.WaitForNextEncodedAsync(0, Cancel(5)).AsTask();
+
+            // Nobody is waiting now — these captures must be dropped without encoding.
+            _surface.SubmitFrame(4, 4, Solid(4, 4));
+            _surface.SubmitFrame(4, 4, Solid(4, 4));
+            await WaitForAsync(() => _surface.EncodeSkips >= 1, 5);
+            Assert.That(_surface.Current.Sequence, Is.EqualTo(first.Sequence),
+                "a frame no reader awaits must not be encoded (drop-old would discard it anyway)");
+
+            // A parked reader resumes the flow on the next capture.
+            var next = _surface.WaitForNextEncodedAsync(first.Sequence, Cancel(5)).AsTask(); // parks
+            _surface.SubmitFrame(4, 4, Solid(4, 4));
+            Assert.That((await next).Sequence, Is.GreaterThan(first.Sequence));
         }
         finally
         {
@@ -126,6 +156,17 @@ public sealed class DisplaySurfaceTests
         var deadline = TimeSpan.FromSeconds(seconds);
         var spun = TimeSpan.Zero;
         while (_surface.Current.Sequence <= sequence && spun < deadline)
+        {
+            await Task.Delay(10);
+            spun += TimeSpan.FromMilliseconds(10);
+        }
+    }
+
+    private static async Task WaitForAsync(Func<bool> condition, int seconds)
+    {
+        var deadline = TimeSpan.FromSeconds(seconds);
+        var spun = TimeSpan.Zero;
+        while (!condition() && spun < deadline)
         {
             await Task.Delay(10);
             spun += TimeSpan.FromMilliseconds(10);

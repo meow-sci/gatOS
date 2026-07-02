@@ -4,7 +4,8 @@
 P0.2 storage limit in purrtty `dbb42d3`; P0.4 rides the P6 native rebuild), **P1** (GPU blit
 downscale+convert in `FrameCapture`, format-feature-gated with the CPU path as fallback), **P2**
 (zero-allocation encoder — span/pooled path pinned by an allocation test; refcounted pooled
-`EncodedFrame`s; input double-buffer swap). P3–P8 pending.
+`EncodedFrame`s; input double-buffer swap), **P3** (demand-paced encode — parked-waiter tracking +
+`EncodeSkips` counter). P4–P8 pending.
 **Symptoms driving this plan (observed in-game, 1440×900 capture, RTX 5090 / i9-13900K):**
 1. Game frame rate collapses from ~120 fps to **sub-10 fps** while the stream is on.
 2. After streaming for a while the stream (and eventually the whole terminal session) **hangs
