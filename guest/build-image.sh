@@ -51,7 +51,7 @@ GUEST_PACKAGES="alpine-baselayout alpine-release busybox busybox-suid musl musl-
                 openssh openssh-server openssh-client openssh-keygen openssh-sftp-server
                 qemu-guest-agent ca-certificates
                 e2fsprogs e2fsprogs-extra
-                mandoc man-pages bash zsh shadow vim neovim less curl wget git coreutils
+                mandoc man-pages bash zsh shadow vim neovim less curl wget git coreutils procps-ng
                 libstdc++"
 
 DISK_SIZE_MB=1536

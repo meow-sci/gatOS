@@ -244,6 +244,24 @@ All create/remove via Frame-phase commands and tear down on unload
 
 ---
 
+## Audio playback (`/sim/audio`)
+
+Userland audio through the game's FMOD mixer (GATOS_CUSTOM_AUDIO_PLAN): the game-free
+`AudioStore` (`gatOS.SimFs/Audio/`) holds uploaded clip bytes in memory (per-clip / total / count
+caps) and the channel-status snapshot; the game-side `AudioActuator`
+(`Game/Ksa/Actuators/AudioActuator.cs`) executes `audio.play/set/stop` against the public
+`GameAudio.System` in the Frame-phase drain and ticks per frame (**a fifth game-thread work
+site**: `Mod.DriveAudio` in `OnBeforeUi`, right after the drain — the same thread that pumps
+`System.Update()`), pruning finished channels, enforcing `end=`, releasing evicted FMOD sounds
+deferred, publishing `/sim/audio/status`, and queueing `audio.finished` events that the sampler
+folds into the next snapshot. Uploads run entirely on transport threads (9p writable dir /
+`PUT /v1/audio/file/<name>`) — the store is the only shared object, and FMOD copies clip bytes at
+create, so eviction/re-upload never disturbs playback. Self-gates to a no-op while no channel or
+cached sound exists; torn down by `Mod.TeardownGameCheats`. `audio_enabled=false` removes the
+whole surface.
+
+---
+
 ## Config sections reference
 
 | Section | Key knobs |
@@ -255,6 +273,7 @@ All create/remove via Frame-phase commands and tear down on unload
 | `[mqtt]` | `enabled`, `preferred_port` (1883), `mqtt_field_topics`, `field_feed_hz`, `mqtt_publish_hz` |
 | `[serial]` | `serial_telemetry_port`, `serial_command_port`, `serial_mode`, `serial_interval_ms` |
 | `[display]` | `display_enabled` (off), `display_fps`, `display_width`, `display_height`, `display_encoding` (boot seeds for `/sim/display`) |
+| `[audio]` | `audio_enabled` (on), `audio_max_clip_bytes` (16 MiB), `audio_max_total_bytes` (64 MiB), `audio_max_clips` (64), `audio_max_channels` (16) |
 | `[[mounts]]` | `name`, `path`, `read_only` (array, off by default) |
 
 Config is read from `<GatOsPaths.DataDir>/gatos.toml` (seeded on first run from

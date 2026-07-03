@@ -6,6 +6,7 @@ using gatOS.GameMod.Game.Ksa.ThugLife;
 using gatOS.GameMod.Game.Ksa.Welds;
 using gatOS.Logging;
 using gatOS.SimFs;
+using gatOS.SimFs.Audio;
 using gatOS.SimFs.Snapshots;
 using gatOS.SimFs.Telemetry;
 using KSA;
@@ -36,6 +37,7 @@ internal sealed class TelemetrySampler
     private readonly ValueStat _allocStats;
     private readonly WeldManager _welds;
     private readonly ThugLifeManager _thugLife;
+    private readonly AudioStore? _audio;
     private int _appliedRateHz;
     private IReadOnlyList<double> _warpSpeeds = [];
     private SimSnapshot? _previous;
@@ -62,8 +64,14 @@ internal sealed class TelemetrySampler
     /// <param name="allocStats">Bytes allocated by one <see cref="Sample"/> (the status window reads it).</param>
     /// <param name="welds">The weld registry — projected into the snapshot for the <c>/sim/debug/welds</c> view.</param>
     /// <param name="thugLife">The thug-life registry — projected for the <c>/sim/debug/thug_life</c> view.</param>
+    /// <param name="audio">
+    ///     The audio store — its pending <c>audio.finished</c> events fold into each snapshot's
+    ///     <see cref="SimSnapshot.NewEvents"/> (so they reach <c>/sim/events</c> and every event
+    ///     transport). Null when audio is disabled.
+    /// </param>
     internal TelemetrySampler(SnapshotStore store, TelemetrySettings settings, KsaHealth health,
-        PerfStat sampleStats, ValueStat allocStats, WeldManager welds, ThugLifeManager thugLife)
+        PerfStat sampleStats, ValueStat allocStats, WeldManager welds, ThugLifeManager thugLife,
+        AudioStore? audio = null)
     {
         _store = store;
         _settings = settings;
@@ -74,6 +82,7 @@ internal sealed class TelemetrySampler
         _allocStats = allocStats;
         _welds = welds;
         _thugLife = thugLife;
+        _audio = audio;
     }
 
     /// <summary>
@@ -165,6 +174,9 @@ internal sealed class TelemetrySampler
         var events = _settings.Events
             ? EventDiffer.Diff(_previous, ut, warp, activeId, vessels)
             : [];
+        // Fold in pending audio.finished events (drained even when gated off, so they never pile up).
+        if (_audio?.DrainEvents() is { Count: > 0 } audioEvents && _settings.Events)
+            events = events.Count == 0 ? audioEvents : [.. events, .. audioEvents];
         var snapshot = new SimSnapshot(++_sequence, ut, warp, activeId, vessels, events,
             GameVersion(), _appliedRateHz, _health.Snapshot())
         {

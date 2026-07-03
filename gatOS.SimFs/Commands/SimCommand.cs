@@ -91,4 +91,11 @@ public sealed record SimCommand(
     ///     Null for numeric actions.
     /// </summary>
     public string? Token { get; init; }
+
+    /// <summary>
+    ///     Secondary symbolic payload, for the rare action whose argument shape carries <i>two</i>
+    ///     strings: <c>audio.play</c> uses <see cref="Token"/> for the clip name and this for the
+    ///     caller-chosen channel <c>id=</c> (null = auto-assign). Null everywhere else.
+    /// </summary>
+    public string? Aux { get; init; }
 }

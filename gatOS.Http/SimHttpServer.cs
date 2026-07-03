@@ -8,6 +8,7 @@ using gatOS.Logging;
 using gatOS.NineP.Protocol;
 using gatOS.NineP.Vfs;
 using gatOS.SimFs;
+using gatOS.SimFs.Audio;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
 
@@ -35,6 +36,7 @@ public sealed class SimHttpServer : IAsyncDisposable
     private readonly ICommandSink? _commands;
     private readonly Func<string>? _transports;
     private readonly VfsDirectory? _simRoot;
+    private readonly AudioStore? _audio;
     private readonly CancellationTokenSource _cts = new();
     private TcpListener? _listener;
     private Task? _acceptLoop;
@@ -48,13 +50,19 @@ public sealed class SimHttpServer : IAsyncDisposable
     ///     field-level <c>/v1/fs/&lt;path&gt;</c> endpoints that mirror the filesystem leaf-by-leaf.
     ///     Null disables them (JSON surface only).
     /// </param>
+    /// <param name="audio">
+    ///     The audio clip store (GATOS_CUSTOM_AUDIO_PLAN), enabling the dedicated binary
+    ///     <c>/v1/audio/…</c> routes — the one transport-specific surface, because the field-write
+    ///     path is UTF-8 text and bodies cap at 1 MiB. Null (audio disabled) = 404.
+    /// </param>
     public SimHttpServer(SnapshotStore store, ICommandSink? commands = null, Func<string>? transports = null,
-        VfsDirectory? simRoot = null)
+        VfsDirectory? simRoot = null, AudioStore? audio = null)
     {
         _store = store;
         _commands = commands;
         _transports = transports;
         _simRoot = simRoot;
+        _audio = audio;
     }
 
     /// <summary>The bound TCP port (valid after <see cref="StartAsync"/>).</summary>
@@ -196,6 +204,14 @@ public sealed class SimHttpServer : IAsyncDisposable
         if (seg.Length >= 2 && seg[1] == "fs")
         {
             await HandleFsAsync(stream, request, ct).ConfigureAwait(false);
+            return;
+        }
+
+        // /v1/audio/… — the dedicated binary clip routes (upload/delete/list). Handled before the
+        // GET-only gate: uploads are PUT/POST and eviction is DELETE.
+        if (seg.Length >= 2 && seg[1] == "audio")
+        {
+            await HandleAudioAsync(stream, request, ct).ConfigureAwait(false);
             return;
         }
 
@@ -460,6 +476,88 @@ public sealed class SimHttpServer : IAsyncDisposable
         }
     }
 
+    // ---- audio binary routes (/v1/audio — GATOS_CUSTOM_AUDIO_PLAN) ------------------------
+
+    /// <summary>
+    ///     The dedicated binary audio routes — the one deliberate transport-specific surface
+    ///     (field writes are UTF-8-only and bodies cap at 1 MiB, so uploads get raw-body routes):
+    ///     <list type="bullet">
+    ///         <item><c>GET /v1/audio/files</c> — JSON clip list (name, bytes, version, ready).</item>
+    ///         <item><c>PUT|POST /v1/audio/file/&lt;name&gt;[?offset=N][&amp;complete=0|1]</c> —
+    ///             raw body appended at <c>offset</c> (default 0 = start fresh). <c>complete</c>
+    ///             defaults to 1 (single-shot upload); chunked uploads pass <c>complete=0</c> on
+    ///             every chunk but the last. Bodies stay under the server's 1 MiB request cap.</item>
+    ///         <item><c>DELETE /v1/audio/file/&lt;name&gt;</c> — evict the clip.</item>
+    ///     </list>
+    ///     Everything else about audio (play/set/stop, status/info) rides the shared surfaces:
+    ///     the <c>/v1/fs/audio/…</c> field mirror and <c>POST /v1/command</c>.
+    /// </summary>
+    private async Task HandleAudioAsync(Stream stream, HttpRequestLine request, CancellationToken ct)
+    {
+        if (_audio is not { } audio)
+        {
+            await WriteJsonAsync(stream, 404, Error("ENOENT", "audio is not enabled"), ct).ConfigureAwait(false);
+            return;
+        }
+
+        var seg = request.Segments;
+        if (request.Method == "GET" && seg is ["v1", "audio", "files"])
+        {
+            var clips = audio.List()
+                .Select(c => new { name = c.Name, bytes = c.Bytes, version = c.Version, ready = c.Ready });
+            await WriteRawJsonAsync(stream, 200, Serialize(clips), ct).ConfigureAwait(false);
+            return;
+        }
+
+        if (seg is not ["v1", "audio", "file", var name])
+        {
+            await WriteJsonAsync(stream, 404, Error("ENOENT", "not found"), ct).ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            switch (request.Method)
+            {
+                case "PUT" or "POST":
+                {
+                    long offset = 0;
+                    if (request.Query.TryGetValue("offset", out var offsetText)
+                        && (!long.TryParse(offsetText, NumberStyles.Integer, CultureInfo.InvariantCulture,
+                                out offset) || offset < 0))
+                    {
+                        await WriteJsonAsync(stream, 400, Error("EINVAL", "invalid 'offset'"), ct)
+                            .ConfigureAwait(false);
+                        return;
+                    }
+
+                    var complete = !request.Query.TryGetValue("complete", out var completeText)
+                                   || completeText != "0";
+                    audio.HttpUpload(name, offset, request.Body, complete);
+                    var json = Serialize(new
+                    {
+                        outcome = "ok", name, bytes = offset + request.Body.Length, ready = complete,
+                    });
+                    await WriteRawJsonAsync(stream, 200, json, ct).ConfigureAwait(false);
+                    return;
+                }
+                case "DELETE":
+                    audio.Delete(name);
+                    await WriteRawJsonAsync(stream, 200, "{\"outcome\":\"ok\"}", ct).ConfigureAwait(false);
+                    return;
+                default:
+                    await WriteJsonAsync(stream, 405, Error("EINVAL", "method not allowed"), ct)
+                        .ConfigureAwait(false);
+                    return;
+            }
+        }
+        catch (VfsErrorException ex)
+        {
+            await WriteJsonAsync(stream, StatusForErrno(ex.Errno), Error(LinuxErrno.Name(ex.Errno), ex.Message), ct)
+                .ConfigureAwait(false);
+        }
+    }
+
     /// <summary>Encodes a (possibly multi-line) value as one SSE event, one <c>data:</c> line per line.</summary>
     private static byte[] SseData(string value)
     {
@@ -475,7 +573,11 @@ public sealed class SimHttpServer : IAsyncDisposable
         LinuxErrno.EINVAL => 400,
         LinuxErrno.ENOENT => 404,
         LinuxErrno.EACCES => 403,
+        LinuxErrno.EPERM => 403,
         LinuxErrno.EBUSY => 409,
+        LinuxErrno.EEXIST => 409,
+        LinuxErrno.EFBIG => 413,
+        LinuxErrno.ENOSPC => 507,
         LinuxErrno.ETIMEDOUT => 504,
         LinuxErrno.EOPNOTSUPP => 501,
         _ => 500,
@@ -539,7 +641,8 @@ public sealed class SimHttpServer : IAsyncDisposable
         if (root.TryGetProperty("values", out var arr) && arr.ValueKind == JsonValueKind.Array)
             values = arr.EnumerateArray().Select(e => e.GetDouble()).ToArray();
         var token = GetString(root, "token");
-        return new SimCommand(vessel, action, ordinal, value) { Values = values, Token = token };
+        var aux = GetString(root, "aux");
+        return new SimCommand(vessel, action, ordinal, value) { Values = values, Token = token, Aux = aux };
     }
 
     private static string? GetString(JsonElement root, string name)
@@ -597,8 +700,9 @@ public sealed class SimHttpServer : IAsyncDisposable
     private static string Reason(int status) => status switch
     {
         200 => "OK", 400 => "Bad Request", 403 => "Forbidden", 404 => "Not Found",
-        405 => "Method Not Allowed", 409 => "Conflict", 500 => "Internal Server Error",
-        501 => "Not Implemented", 504 => "Gateway Timeout", _ => "OK",
+        405 => "Method Not Allowed", 409 => "Conflict", 413 => "Payload Too Large",
+        500 => "Internal Server Error", 501 => "Not Implemented", 504 => "Gateway Timeout",
+        507 => "Insufficient Storage", _ => "OK",
     };
 
     /// <inheritdoc />

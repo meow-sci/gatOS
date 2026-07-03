@@ -16,7 +16,8 @@ namespace gatOS.GameMod.Game.Ksa;
 ///     thrown KSA call into a degraded sensor (EOPNOTSUPP) instead of a crash. Always invoked on
 ///     the game thread by <see cref="CommandQueue.Drain"/>; never throws (faults are returned).
 /// </summary>
-internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager welds, ThugLifeManager thugLife)
+internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager welds, ThugLifeManager thugLife,
+    AudioActuator? audio = null)
     : ICommandExecutor
 {
     /// <inheritdoc />
@@ -46,6 +47,14 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
             // add), so all of it is handled vessel-agnostically here, before the per-vessel resolution.
             if (command.Action.StartsWith("debug.thug_life", StringComparison.Ordinal))
                 return Finish(accessor, ThugLife(command));
+
+            // Userland audio playback (GATOS_CUSTOM_AUDIO_PLAN): vessel-agnostic — the target is a
+            // clip/channel, never a vehicle, so it bypasses vehicle resolution and the authority gate.
+            // Unsupported (EOPNOTSUPP) when [audio] enabled=false left the actuator unwired.
+            if (command.Action.StartsWith("audio.", StringComparison.Ordinal))
+                return Finish(accessor, audio is { } audioActuator
+                    ? audioActuator.Execute(command)
+                    : new CommandResult(CommandOutcome.Unsupported, "audio is disabled in gatos.toml"));
 
             // camera.focus targets ANY astronomical (vessel or celestial) named by id and only moves
             // the view — no vessel mutation, so it bypasses the vehicle-only resolution and the

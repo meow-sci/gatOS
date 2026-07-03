@@ -1,6 +1,7 @@
 using Brutal.ImGuiApi;
 using gatOS.GameMod.Game;
 using gatOS.GameMod.Game.Ksa;
+using gatOS.GameMod.Game.Ksa.Actuators;
 using gatOS.GameMod.Game.Ksa.Render;
 using gatOS.GameMod.Game.Ksa.ThugLife;
 using gatOS.GameMod.Game.Ksa.Welds;
@@ -86,6 +87,12 @@ public sealed partial class Mod
     // UpdateThugLife (OnBeforeUi) validates entries each frame and self-gates to nothing when empty.
     private ThugLifeManager? _thugLife;
     private bool _thugLifeDead;
+
+    // The audio playback actuator (GATOS_CUSTOM_AUDIO_PLAN): owns the FMOD Sound cache + channel
+    // table over the game-free _audioStore. Created lazily on the game thread with the other control
+    // objects (null when [audio] enabled=false), ticked per frame by DriveAudio, torn down at unload.
+    private AudioActuator? _audioActuator;
+    private bool _audioDead;
 
     // The Harmony patch draining solver-phase commands (G4). Installed in OnFullyLoaded, removed at
     // Unload; null when the solver hook could not be installed (solver commands then never drain).
@@ -184,7 +191,7 @@ public sealed partial class Mod
             _weldManager ??= new WeldManager();
             _thugLife ??= new ThugLifeManager();
             _telemetry ??= new TelemetrySampler(store, _telemetrySettings, _health, _sampleStats,
-                _sampleAllocStats, _weldManager, _thugLife);
+                _sampleAllocStats, _weldManager, _thugLife, _audioStore);
             // Sample only while something can actually read /sim: the VM is up, or a host-side
             // transport client is connected (9p / HTTP / MQTT). Otherwise the sampler idles for free.
             var state = CurrentVmStatus.State;
@@ -230,7 +237,32 @@ public sealed partial class Mod
         _health ??= new KsaHealth();
         _weldManager ??= new WeldManager();
         _thugLife ??= new ThugLifeManager();
-        _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels, _weldManager, _thugLife);
+        if (_audioActuator is null && _audioStore is { } audioStore)
+            _audioActuator = new AudioActuator(audioStore, Config.AudioMaxChannels);
+        _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels, _weldManager, _thugLife, _audioActuator);
+    }
+
+    /// <summary>
+    ///     Ticks the audio actuator on the game thread, right after the command drain (threading
+    ///     rule 1 — the same thread that pumps FMOD): prunes finished channels, enforces
+    ///     <c>end=</c>, releases evicted sounds and publishes the <c>/sim/audio/status</c>
+    ///     snapshot. Self-gates to nothing while no channel or cached sound exists; a failure
+    ///     disables audio for the session (one error log).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void DriveAudio()
+    {
+        if (_audioDead || _audioActuator is not { } audio || audio.IsEmpty)
+            return;
+        try
+        {
+            audio.Tick();
+        }
+        catch (Exception ex)
+        {
+            _audioDead = true;
+            ModLog.Log.Error($"gatOS audio disabled after a tick error: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -285,6 +317,15 @@ public sealed partial class Mod
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     partial void TeardownGameCheats()
     {
+        try
+        {
+            _audioActuator?.Shutdown(); // stops every channel, releases every FMOD Sound, clears the store
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS audio teardown error: {ex.Message}");
+        }
+
         try
         {
             _weldManager?.Clear();

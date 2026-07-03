@@ -236,6 +236,42 @@ assumptions + the new render-DLL references: [`ksa-assets-and-versions.md`](ksa-
 
 ---
 
+## Userland audio playback — `AudioActuator` (Frame phase, vessel-agnostic) {#audio}
+
+`Game/Ksa/Actuators/AudioActuator.cs` over the game-free `gatOS.SimFs/Audio/AudioStore` (the shared
+clip store — GATOS_CUSTOM_AUDIO_PLAN). **Not** part of `debug.*`: gated by `[audio] audio_enabled`
+(off ⇒ the `/sim/audio` surface vanishes and `audio.*` answers `EOPNOTSUPP`), plus the
+`control_enabled` master like every write. Vessel-agnostic — `KsaCatalog.Execute` routes `audio.*`
+**before** vehicle resolution (the target is a clip/channel, never a vehicle), so the authority gate
+never applies. Drives **FMOD Core directly** via the public `GameAudio.System` (the game's
+higher-level `SoundReference`/`MusicPlayList` API is asset-file-bound and useless for runtime bytes),
+but reuses the game's channel groups so the in-game Sfx/Music/UI volume sliders govern playback.
+
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4750 |
+|---|---|---|---|---|---|---|
+| `audio/play` | `audio.play` | `AudioActuator.Play` (+ `CreateOrGetSound` on first play of a clip version) | `GameAudio.System` (public static `FmodSystem`); `Fmod.TryCreateSound(bytes, Mode.OpenMemory\|_2d\|CreateSample/CreateCompressedSample, in CreateSoundExInfo{Length}, out Sound)` — the game's own in-memory recipe (`GameAudio.CreateFmodSound`); `Fmod.TryPlaySound(sound, group, paused:true, out Channel)`; `GameAudio.GetChannelGroup(ChannelGroupType.{Sfx,Music,Ui})`; `Channel.TrySet{Position,Mode,LoopCount,LoopPoints,Volume,Pan,Pitch,Paused}`; `Sound.TryGetLength` | `KSA/GameAudio.cs`, `KSA/ChannelGroupType.cs`, `Brutal.FmodApi/Fmod.cs`, `Brutal.FmodApi/Mode.cs` | Low (FMOD Core P/Invoke surface is upstream-stable; `GameAudio.System`/`GetChannelGroup` are plain public statics) | ✅ |
+| `audio/set` | `audio.set` | `AudioActuator.Set` | `Channel.TrySet{Volume,Pan,Pitch,Paused,Position}` | `Brutal.FmodApi/Fmod.cs` | Low | ✅ |
+| `audio/stop` | `audio.stop` | `AudioActuator.Stop` | `Channel.TryStop` | `Brutal.FmodApi/Fmod.cs` | Low | ✅ |
+
+**Runtime coupling beyond the writes:** the per-frame tick (`Mod.DriveAudio` → `AudioActuator.Tick`,
+`OnBeforeUi` right after the command drain — the same thread that pumps `GameAudio.UpdateAudio` /
+`System.Update()`) prunes finished channels (`Channel.TryIsPlaying`), enforces `end=`
+(`Channel.TryGetPosition`), releases evicted FMOD sounds (`Sound.TryRelease` — deferred: never while
+a channel plays), publishes the `/sim/audio/status` snapshot into the store, and stamps
+`audio.finished` events with `Universe.GetElapsedSimTime().Seconds()`. gatOS never calls
+`System.Update/Close/Release` — the game owns the system lifecycle; gatOS owns only the `Sound`s it
+creates (all released at unload via `Mod.TeardownGameCheats` → `AudioActuator.Shutdown`). The
+uploads/caps/status files themselves are **game-free** (`gatOS.SimFs/Audio/**` — see
+[`non-ksa-surface.md`](non-ksa-surface.md)). Deliberate: playback ignores the game's >10× warp SFX
+mute (a raw-Core channel bypasses `GameAudio.PlaySound`'s gate — a master alarm that mutes at warp
+defeats the purpose). New game-DLL reference: `Brutal.Fmod.dll`
+([`ksa-assets-and-versions.md`](ksa-assets-and-versions.md)). Errnos: `ENOENT` (unknown clip /
+no matching channel), `EBUSY` (clip still uploading / channel table full), `EINVAL` (grammar/range),
+`EIO` (FMOD refused the bytes / could not start a channel), `EOPNOTSUPP` (audio disabled). Anchors
+verified `2026-07-02` against `2026.6.9.4750`.
+
+---
+
 ## ✅ Docking pushoff (G1 FIXED, 2026-06-27) {#docking}
 
 **Was a compile break.** `DockingActuator.cs` did `ports[ordinal].PushoffForce = (float)newtons;` and the

@@ -6,6 +6,9 @@ namespace gatOS.NineP.Protocol;
 /// </summary>
 public static class LinuxErrno
 {
+    /// <summary>Operation not permitted (a mutation the node categorically refuses, e.g. mkdir in /sim/audio/file).</summary>
+    public const uint EPERM = 1;
+
     /// <summary>No such file or directory.</summary>
     public const uint ENOENT = 2;
 
@@ -40,7 +43,10 @@ public static class LinuxErrno
     /// <summary>Invalid argument (malformed but parseable requests).</summary>
     public const uint EINVAL = 22;
 
-    /// <summary>No space left on the host device (a write to a full host mount).</summary>
+    /// <summary>File too large (a write past a per-file size cap, e.g. the audio clip cap).</summary>
+    public const uint EFBIG = 27;
+
+    /// <summary>No space left on the host device (a write to a full host mount or a full in-memory store).</summary>
     public const uint ENOSPC = 28;
 
     /// <summary>Read-only file system (a write to a read-only host mount).</summary>
@@ -61,6 +67,7 @@ public static class LinuxErrno
     /// <summary>The conventional symbolic name for an errno (e.g. <c>2 → "ENOENT"</c>); EIO for unknown.</summary>
     public static string Name(uint errno) => errno switch
     {
+        EPERM => nameof(EPERM),
         ENOENT => nameof(ENOENT),
         EIO => nameof(EIO),
         EBADF => nameof(EBADF),
@@ -71,6 +78,7 @@ public static class LinuxErrno
         ENOTDIR => nameof(ENOTDIR),
         EISDIR => nameof(EISDIR),
         EINVAL => nameof(EINVAL),
+        EFBIG => nameof(EFBIG),
         ENOSPC => nameof(ENOSPC),
         EROFS => nameof(EROFS),
         ENOTEMPTY => nameof(ENOTEMPTY),

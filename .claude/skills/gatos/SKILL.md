@@ -93,6 +93,7 @@ vessels/active/…  (alias of the controlled vessel)   vessels/by-id/<id>/
          attitude_mode,attitude_frame,attitude_target,burn,focus}
 events
 status/{game_version,sampler,accessors,transports}
+audio/{file/<name>,play,set,stop,status,info}         (userland audio; audio_enabled=true)
 debug/                                  (only when debug_namespace=true)
     vessels/<id>/{teleport,refill_fuel,refill_battery,docking/<n>/pushoff_impulse,
                   weld,weld_here,unweld}
@@ -116,6 +117,19 @@ frame). Full arg shapes, action keys, and errnos are in [SPEC §3.7](../../../SP
 worked `weld_here` example is in [`recipes.md` §9](recipes.md) and a `thug_life` example in
 [`recipes.md` §10](recipes.md). The render-side internals (how the quad is drawn into KSA's scene) are
 documented in the **ksa skill's `quad.md`**.
+
+**Audio playback (`/sim/audio`, gated by `audio_enabled=true` — NOT a debug cheat):** play real
+audio (mp3/ogg/wav/flac) through the game's speakers. Upload with `cat clip.mp3 >
+/sim/audio/file/clip.mp3` (in-memory, playable once the `cat` finishes; `rm` evicts), then
+`echo 'clip.mp3' > /sim/audio/play` — optional `key=value` tokens `start=`/`end=` (ms range),
+`vol=` (0..1), `loop=0|1`, `group=sfx|music|ui` (which in-game volume slider governs it),
+`id=` (a handle for later `set`/`stop`; auto `#N` otherwise), `pan=`, `pitch=`. Live control:
+`echo 'bgm vol=0.15' > /sim/audio/set` (also `pause=1`/`resume=1`/`seek=ms`); stop with
+`echo 'bgm' > /sim/audio/stop` (or `all`). `cat /sim/audio/status` lists live channels;
+`audio.finished` events land on `/sim/events` (`grep -m1` for completion instead of polling).
+Keeps playing at any time-warp (deliberate — alarms must not mute). Host-side binary upload:
+`curl -T clip.mp3 http://127.0.0.1:4242/v1/audio/file/clip.mp3`. Full grammar, caps, errnos:
+[SPEC §3.9](../../../SPEC_9P_FILESYSTEM.md).
 
 **First-class per-vessel nodes (NOT under `/sim/debug`; also ported from `unscience`):**
 `vessels/by-id/<id>/scale` — write any finite value `> 0` to uniformly rescale the whole vessel model

@@ -165,6 +165,12 @@
             <HintPath>$(KSAFolder)/Brutal.Concurrency.dll</HintPath>
             <Private>false</Private>
         </Reference>
+        <!-- FMOD Core binding (Brutal.FmodApi: Fmod/FmodSystem/Sound/Channel/Mode) — the /sim/audio
+             playback actuator (Game/Ksa/Actuators/AudioActuator) drives GameAudio.System through it. -->
+        <Reference Include="Brutal.Fmod" Condition="Exists('$(KSAFolder)/Brutal.Fmod.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Fmod.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
         <Reference Include="Brutal.ImGui" Condition="Exists('$(KSAFolder)/Brutal.ImGui.dll')">
             <HintPath>$(KSAFolder)/Brutal.ImGui.dll</HintPath>
             <Private>false</Private>

@@ -318,6 +318,25 @@ this matrix and the code are the truth):
 - **`solar/<n>/tracker/{angle,active}` shape** (plan §4.6) — surfaced as a flat `tracker_angle` file
   (no `active`, no subdir) when `HasTracker`; the subdir/`active` split is deferred.
 
+## Audio playback (GATOS_CUSTOM_AUDIO_PLAN — `/sim/audio`)
+
+Userland audio through the game's FMOD Core system. **Vessel-agnostic** (routed before vehicle
+resolution — the target is a clip/channel) and **outside** `debug.*`: gated by `[audio]
+audio_enabled` (off ⇒ the surface vanishes; `audio.*` via `/v1/command`/`gatos/command` answers
+`EOPNOTSUPP`). The upload store, grammars, status/info files and caps are **game-free**
+(`gatOS.SimFs/Audio/**`); only the three anchors below touch the game. gatOS never calls
+`System.Update/Close/Release` (the game owns the FMOD system and pumps it on the same thread the
+drain + tick run on); gatOS owns every `Sound` it creates and releases them deferred (never while a
+channel plays) and at unload (`Mod.TeardownGameCheats` → `AudioActuator.Shutdown`). Deliberate:
+playback ignores the >10× warp SFX mute (raw-Core channels bypass `GameAudio.PlaySound`'s gate).
+New condition-guarded reference: **`Brutal.Fmod.dll`**.
+
+| Anchor (`Game/Ksa/Actuators/AudioActuator.cs`) | KSA / Brutal members | Risk | Notes |
+|---|---|---|---|
+| `Play` | `GameAudio.System` (public static `FmodSystem`); `GameAudio.GetChannelGroup(ChannelGroupType.{Sfx,Music,Ui})`; `Fmod.TryPlaySound(sound, group, paused, out Channel)`; `Channel.TrySet{Position,Mode,LoopCount,LoopPoints,Volume,Pan,Pitch,Paused}` | L | The game's own anti-pop idiom (play paused → configure → unpause). Group routing puts the channel under the matching in-game volume slider (the groups are *siblings* — the Master slider does not cascade). |
+| `CreateOrGetSound` | `Fmod.TryCreateSound(bytes, Mode.OpenMemory \| _2d \| CreateSample/CreateCompressedSample, in CreateSoundExInfo{Length}, out Sound)`; `Sound.TryGetLength/TryRelease` | L | The in-memory recipe `GameAudio.CreateFmodSound` itself uses — FMOD copies the buffer and sniffs the container (mp3/ogg/wav/flac). ≤ 1 MiB ⇒ `CreateSample` (full decode); larger ⇒ `CreateCompressedSample` (decode during mix — cheap create, ≈ file-size memory, concurrent plays OK). Cached per (clip, version). |
+| `Tick` | `Channel.TryIsPlaying/TryGetPosition/TryStop`; `Sound.TryRelease`; `Universe.GetElapsedSimTime().Seconds()` (event stamps) | L | Per-frame (`Mod.DriveAudio`, `OnBeforeUi` after the drain): prunes finished channels (a recycled FMOD handle answers non-Ok — that *is* the completion signal), enforces `end=`, releases evicted sounds, publishes `/sim/audio/status`, emits `audio.finished`. |
+
 ## Screen stream (STREAM_PLAN.md)
 
 The one KSA binding for the `/sim/display` screen stream — a render-thread GPU readback, not a

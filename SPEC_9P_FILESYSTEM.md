@@ -97,6 +97,16 @@ listing order; empty/`.`/`..` become `_`/`_.`/`_..`. In KSA a vessel's **name *i
 | `ETIMEDOUT` | 504 | game thread didn't drain the command within `command_timeout_ms` (paused/loading) |
 | `EOPNOTSUPP` | 501 | accessor latched degraded after a prior fault |
 
+The **audio clip store** (§3.9) adds four VFS-level errnos on its upload surface (thrown by the
+write itself, mid-stream — not by a command):
+
+| errno | HTTP | Meaning |
+|---|---|---|
+| `EFBIG` | 413 | a clip write past the `audio_max_clip_bytes` per-clip cap |
+| `ENOSPC` | 507 | the `audio_max_total_bytes` store cap or `audio_max_clips` count cap is full |
+| `EEXIST` | 409 | 9P `Tlcreate` of a clip name that is already taken |
+| `EPERM` | 403 | `mkdir`/`rename` inside `audio/file/` (flat clip files only) |
+
 ### 2.5 Config gates (`gatos.default.toml` → live `gatos.toml`)
 
 | Key | Default | Effect |
@@ -119,6 +129,11 @@ listing order; empty/`.`/`..` become `_`/`_.`/`_..`. In KSA a vessel's **name *i
 | `display_enabled` | `false` | boot seed for `/sim/display/enabled` — the screen stream (§3.8); **off by default** |
 | `display_fps` / `display_width` / `display_height` | `15` / `320` / `180` | boot seeds for the stream cadence + downscale size (runtime control is the `/sim/display/*` files) |
 | `display_encoding` | `rgba-zlib` | boot seed for the frame encoding (`rgba-zlib` \| `rgba`; zlib needs purrTTY's 2026-07-02+ native — §3.8) |
+| `audio_enabled` | `true` | serve `/sim/audio` (§3.9) — userland audio playback; `false` removes the surface (and the `/v1/audio` routes) entirely |
+| `audio_max_clip_bytes` | `16777216` | per-clip upload cap (`EFBIG` past it; clamped 4 KiB..256 MiB) |
+| `audio_max_total_bytes` | `67108864` | store-wide byte cap (`ENOSPC`; clamped ≥ clip cap..1 GiB) |
+| `audio_max_clips` | `64` | clip-count cap (`ENOSPC`; clamped 1..1024) |
+| `audio_max_channels` | `16` | concurrent playback channels (`EBUSY` past it; clamped 1..64) |
 
 ---
 
@@ -420,6 +435,11 @@ to enumerate) but **not** stable across vehicle edits — `instance_id` is the s
 `situation-change`, `engine-state`, `flameout`, `docked`, `undocked`, `decoupled`,
 `animation-complete`, `battery-depleted`, `battery-charged`, vessel appeared/vanished.
 
+Playback completion emits **`audio.finished`** (global; `detail` = `<id> <clip> <reason>` with
+reason ∈ `ended` (played out or hit `end=`) | `stopped` (explicit `stop`) | `replaced` (its `id=`
+was reused)) — so a program can `grep -m1` for completion instead of polling `audio/status` (§3.9).
+Audio events ride the next telemetry sample, so they honor the `telemetry_events` gate.
+
 ### 3.6 `/status` *(present whenever the command sink is wired)*
 
 | Path | A | Format | Meaning |
@@ -516,6 +536,45 @@ Out-of-range writes to the numeric controls **clamp** (and succeed), matching th
 > per pair on the feed. It is the tier-1/2 validation harness from STREAM_PLAN.md §11 (used to
 > corner the 2026-07 purrTTY libghostty `o=z` corruption); normal builds leave it unset.
 
+### 3.9 `/audio` *(userland audio playback — GATOS_CUSTOM_AUDIO_PLAN; present when `audio_enabled=true`)*
+
+Play **real audio** (mp3 / ogg / wav / flac) through the game's speakers with nothing more exotic
+than file writes: upload a clip's bytes into the writable `file/` directory, then `echo` a play
+line. Clips are held **in-memory on the mod side** (never touch disk); FMOD sniffs the container
+header, so the filename extension is for humans only. Playback routes into the game's own mixer
+groups, so the matching in-game volume slider (Sfx / Music / UI) governs it. Deliberately, gatOS
+audio **keeps playing at any time-warp** (the game mutes its own SFX above 10× — a master alarm
+that mutes at warp defeats the purpose).
+
+```sh
+cat alarm.mp3 > /sim/audio/file/alarm.mp3        # upload (bytes live in mod memory)
+echo 'alarm.mp3' > /sim/audio/play               # play the whole clip
+echo 'music.ogg id=bgm loop=1 vol=0.4 group=music' > /sim/audio/play
+echo 'bgm vol=0.15' > /sim/audio/set             # live-adjust
+echo 'bgm' > /sim/audio/stop                     # stop one; `all` stops everything
+cat /sim/audio/status                            # live channels
+rm /sim/audio/file/alarm.mp3                     # evict
+```
+
+| Path | A | Format / Write | Meaning |
+|---|---|---|---|
+| `audio/file/` | dir (writable) | — | The clip store: `Tlcreate` + chunked writes accumulate an upload that becomes playable **on close (clunk)** — partial uploads are invisible to `play` (`EBUSY` if raced). Re-upload (`cat >`, O_TRUNC) truncates and replaces, bumping the clip's version on close; append (`>>`) extends. `mkdir`/`mv` inside ⇒ `EPERM`. |
+| `audio/file/<name>` | — | binary | One uploaded clip. Name: single component, ≤ 64 chars, `[A-Za-z0-9._-]` (`EINVAL` otherwise). Reads return the stored bytes (`md5sum` both sides matches). `rm` evicts immediately (playing channels finish naturally — FMOD holds its own copy). Caps: per-clip `EFBIG`, total bytes / clip count `ENOSPC` — enforced **mid-write** so the failing `write(2)` carries the errno. |
+| `audio/play` | **St** | `<name> [start=<ms>] [end=<ms>] [vol=<0..1>] [loop=0\|1] [group=sfx\|music\|ui] [id=<token>] [pan=<-1..1>] [pitch=<mult>]` | Start playback on a new channel (action `audio.play`). Defaults: whole clip, `vol=1`, no loop, `group=sfx`, auto id `#1`,`#2`,… `start`/`end` play a range in ms (`end` past the clip clamps; `end<=start` ⇒ `EINVAL`); `loop=1` loops forever (a range loops that range). `id=` names the channel for `set`/`stop`; reusing a live id **replaces** it (old channel stopped first); the `#` prefix is reserved for auto ids. `pitch` is a speed multiplier (0 < pitch ≤ 100). Read = empty. Errnos: `ENOENT` unknown clip, `EBUSY` uploading / channel table full, `EINVAL` bad grammar/values, `EIO` FMOD refused the bytes (corrupt/unsupported), `EOPNOTSUPP` audio disabled. |
+| `audio/set` | **St** | `<id-or-name> [vol=] [pan=] [pitch=] [pause=0\|1] [resume=1] [seek=<ms>]` | Live-adjust a playing channel (action `audio.set`). Target resolution: exact channel id first, else **every** channel playing the clip of that name. `pause=1` pauses, `pause=0`/`resume=1` resumes. At least one adjustment required. `ENOENT` when nothing matches (an already-finished channel is `ENOENT` — by design, not worth scripting around). |
+| `audio/stop` | **St** | `all` \| `<id-or-name>` | Stop matching channel(s) (action `audio.stop`). `all` is idempotent (never fails); a named target with no match ⇒ `ENOENT`. |
+| `audio/status` | S | one line per live channel | Columns (stable order): `id name state pos_ms len_ms vol loop group`, state ∈ `playing`\|`paused`, `pos_ms` quantized to ~100 ms (keeps the changed-only MQTT mirror calm). Backed by a snapshot the game thread publishes once per frame — reads never touch game state. |
+| `audio/info` | S | `enabled=1 clips=… clips_max=… bytes=… bytes_max=… clip_bytes_max=… channels=… channels_max=…` | Store usage + caps + live channel count, one line. |
+
+**Engine notes (what the actuator does):** clips ≤ 1 MiB are fully decoded at first play
+(`CreateSample` — instant, tiny); larger clips decode during mix (`CreateCompressedSample` —
+create stays cheap, memory ≈ file size, concurrent plays fine). FMOD **copies** the buffer at
+create, and each committed upload is a fresh immutable byte array, so re-upload/eviction never
+disturbs a playing channel; the FMOD copy is released only once its clip version is evicted *and*
+its channels finished (never mid-playback). `end=` is enforced on the per-frame tick (~16 ms
+precision, correct under `pitch=`). Memory worst case ≈ store bytes + one FMOD copy per cached
+clip version (≈ file size; ≤ 1 MiB clips decode to PCM) — bounded by the caps.
+
 ---
 
 ## 4. The atomic `telemetry` document
@@ -564,8 +623,9 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `action` | string | the action key (table below). |
 | `ordinal` | int | module index (engine/rcs/light/animation/decoupler/docking); `-1` for vessel-level. |
 | `value` | number | scalar arg: `0`/`1` flag, `0..1` fraction, or number. |
-| `values` | number[] | vector arg: quaternion (4), burn `ut dvx dvy dvz` (4), color `r g b` (3), teleport `px py pz vx vy vz` (6). |
-| `token` | string | symbolic arg: attitude mode/frame token, or a target id for focus/control. |
+| `values` | number[] | vector arg: quaternion (4), burn `ut dvx dvy dvz` (4), color `r g b` (3), teleport `px py pz vx vy vz` (6), the audio play slots / set pairs (§3.9 notes below). |
+| `token` | string | symbolic arg: attitude mode/frame token, a target id for focus/control, the audio clip name (`audio.play`) or channel target (`audio.set`/`audio.stop`). |
+| `aux` | string | secondary symbolic arg — only `audio.play` uses it: the caller-chosen channel `id=` (omit ⇒ auto `#N`). |
 
 ### 5.1 Action key catalog (the complete write surface)
 
@@ -615,6 +675,9 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `debug.thug_life_rotation` | entry id | values `[pitch,yaw,roll]` | Frame | `debug/thug_life/<id>/rotation` | id in `ordinal` |
 | `debug.thug_life_size` | entry id | values `[width,height]` | Frame | `debug/thug_life/<id>/size` | id in `ordinal` |
 | `debug.thug_life_visible` | entry id | value `0`/`1` | Frame | `debug/thug_life/<id>/visible` | id in `ordinal` |
+| `audio.play` | — | token = clip name; aux = channel id (optional); values `[start_ms, end_ms, vol, loop, pan, pitch, group]` (defaults `[0,0,1,0,0,1,0]`; `end_ms` 0 = whole clip; group `0`=sfx `1`=music `2`=ui) | Frame | `audio/play` | vessel-agnostic; not a `debug.*` action but gated by `audio_enabled` (`EOPNOTSUPP` when off) |
+| `audio.set` | — | token = channel id or clip name; values = flat `[key, value, …]` pairs (keys: `0`=vol `1`=pan `2`=pitch `3`=paused(0/1) `4`=seek_ms) | Frame | `audio/set` | vessel-agnostic |
+| `audio.stop` | — | token = `all` \| channel id \| clip name | Frame | `audio/stop` | vessel-agnostic |
 
 ### 5.2 Writing over each transport
 
@@ -692,6 +755,22 @@ guest over 9p.
 | GET | `/v1/events` | SSE of `{ut,type,vessel?,detail}`. |
 | GET | `/v1/vessels/{id}/stream` | SSE of the per-vessel telemetry stream line. |
 | GET | `/v1/time/wait?until=<ut>` | long-poll; blocks until sim time ≥ `until`, returns `{"reached_ut":…}`. |
+| GET | `/v1/audio/files` | JSON clip list `[{name,bytes,version,ready}]` (requires `audio_enabled`). |
+| PUT/POST | `/v1/audio/file/{name}[?offset=N][&complete=0\|1]` | **binary** clip upload: the raw body lands at `offset` (default `0` = start a fresh, truncated upload). `complete` defaults to `1` (single-shot commits immediately); chunked uploads send `complete=0` on every chunk but the last, each chunk's `offset` = bytes sent so far (out-of-order ⇒ `EINVAL` 400). Bodies ≤ 1 MiB (the server's request cap) — chunk anything larger. → `{"outcome":"ok","name":…,"bytes":…,"ready":…}`. |
+| DELETE | `/v1/audio/file/{name}` | evict a clip → `{"outcome":"ok"}` (404 when absent). |
+
+The audio **control** surface needs no dedicated routes: `POST /v1/fs/audio/play` (body = the same
+line the 9P file takes), likewise `set`/`stop`; `GET /v1/fs/audio/status|info` (+ `?stream=1` SSE);
+`POST /v1/command` with the `audio.*` actions. MQTT mirrors the same leaves (`gatos/sim/audio/*` +
+`gatos/sim/audio/play/set` etc.) and accepts `audio.*` on `gatos/command`. The dedicated binary
+upload routes above are the **one deliberate transport-parity exception** (the field-write path is
+UTF-8 text with a 1 MiB body cap); MQTT gets **no** upload at all (text payloads + retained-topic
+memory make it a bad fit) — like the display stream, documented rather than mirrored. Example:
+
+```sh
+curl -T alarm.mp3 "http://127.0.0.1:4242/v1/audio/file/alarm.mp3"       # upload (≤ 1 MiB)
+curl -X POST --data 'alarm.mp3 vol=0.8' "http://127.0.0.1:4242/v1/fs/audio/play"
+```
 
 ---
 

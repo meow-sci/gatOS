@@ -350,7 +350,8 @@ public sealed class SimMqttBroker : IAsyncDisposable
         if (root.TryGetProperty("values", out var arr) && arr.ValueKind == JsonValueKind.Array)
             values = arr.EnumerateArray().Select(e => e.GetDouble()).ToArray();
         var token = GetString(root, "token");
-        return new SimCommand(vessel, action, ordinal, value) { Values = values, Token = token };
+        var aux = GetString(root, "aux");
+        return new SimCommand(vessel, action, ordinal, value) { Values = values, Token = token, Aux = aux };
     }
 
     private static string? GetString(JsonElement root, string name)
