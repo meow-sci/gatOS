@@ -79,7 +79,9 @@ The generic write is `POST /v1/command` with `{vessel_id, action, ordinal?, valu
 time/{ut,warp,sim_dt,warp_speeds,auto_warp,alarm}
 system/{name,home,sun}
 bodies/<id>/{id,class,parent,children,mass,radius,mu,soi,rotation_rate,
-             position/ecl, velocity/ecl, orbit/*, atmosphere/*, ocean/*, focus}
+             position/ecl, velocity/ecl,
+             orientation/{cci_to_ecl,ccf_to_ecl,pole_ecl,vernal_ecl},
+             orbit/*, atmosphere/*, ocean/*, focus}
 vessels/active/…  (alias of the controlled vessel)   vessels/by-id/<id>/
     id name situation parent controlled com telemetry stream
     position/{cci,ecl,lat,lon}  velocity/{orbital,surface,inertial,cci}

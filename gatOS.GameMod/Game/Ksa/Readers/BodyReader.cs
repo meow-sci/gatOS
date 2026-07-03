@@ -72,7 +72,10 @@ internal static class BodyReader
             Vec(c.GetVelocityEcl()),
             orbit,
             Atmosphere(c.GetAtmosphereReference()),
-            Ocean(c.GetOceanReference()));
+            Ocean(c.GetOceanReference()))
+        {
+            Orientation = Orientation(c),
+        };
     }
 
     [KsaAnchor("StellarBody.{Id,Mass,MeanRadius,SphereOfInfluence,GetAngularVelocity}; IParentBody.Mu",
@@ -93,7 +96,27 @@ internal static class BodyReader
             Vec(s.GetVelocityEcl()),
             Orbit: null,
             Atmosphere(s.GetAtmosphereReference()),
-            Ocean(s.GetOceanReference()));
+            Ocean(s.GetOceanReference()))
+        {
+            Orientation = Orientation((IParentBody)s),
+        };
+
+    [KsaAnchor("IParentBody.GetCci2Cce()/GetCcf2Cce() (== Celestial._cci2Cce/_ccf2Cce); CCE shares ECL axes",
+        SourceFile = "KSA/Celestial.cs / KSA/IParentBody.cs", Verified = "2026-06-18", Risk = ChurnRisk.Low,
+        Notes = "cci_to_ecl is the inertial (fixed) frame; ccf_to_ecl is the body-fixed frame (rotates each "
+                + "tick — converts inertial dirs to geographic lat/lon). pole/vernal = the body's +Z/+X in ECL. "
+                + "For the home body CCI is the real-world equatorial frame (RA/Dec) — see ASTROTERM_PLAN.md.")]
+    private static OrientationSnapshot Orientation(IParentBody body)
+    {
+        var cci2Ecl = body.GetCci2Cce(); // CCE shares ECL axes; this is the CCI→ECL orientation (fixed).
+        var ccf2Ecl = body.GetCcf2Cce(); // the body-fixed frame, rotating with the body this tick.
+        var pole = double3.Transform(double3.UnitZ, cci2Ecl);
+        var vernal = double3.Transform(double3.UnitX, cci2Ecl);
+        return new OrientationSnapshot(Quat(cci2Ecl), Quat(ccf2Ecl), Vec(pole), Vec(vernal));
+    }
+
+    private static QuatSnap Quat(doubleQuat q)
+        => new(Sanitize.Finite(q.X), Sanitize.Finite(q.Y), Sanitize.Finite(q.Z), Sanitize.Finite(q.W));
 
     private static AtmosphereSnapshot? Atmosphere(AtmosphereReference? reference)
     {

@@ -359,7 +359,33 @@ public sealed record BodySnapshot(
     double3Snap VelocityEcl,
     OrbitSnapshot? Orbit,
     AtmosphereSnapshot? Atmosphere,
-    OceanSnapshot? Ocean);
+    OceanSnapshot? Ocean)
+{
+    /// <summary>
+    ///     The body's inertial orientation (CCI↔ECL); null until sampled. For the home body the CCI
+    ///     frame is the real-world equatorial frame, so a CCI direction reads out as right
+    ///     ascension / declination — the bridge a star-map program needs (<c>ASTROTERM_PLAN.md</c>).
+    /// </summary>
+    public OrientationSnapshot? Orientation { get; init; }
+}
+
+/// <summary>
+///     A body's orientation. <see cref="CciToEcl"/> rotates a vector from the body's <b>inertial</b>
+///     CCI frame (Z = north pole / spin axis, X = vernal point) into the system ecliptic (CCE/ECL)
+///     axes — i.e. <c>v_ecl = transform(v_cci, CciToEcl)</c>; its inverse maps ECL → CCI. It is fixed
+///     (CCI does not spin). <see cref="CcfToEcl"/> is the analogous rotation for the body-<b>fixed</b>
+///     CCF frame (Z = north pole, X = prime meridian), so it <i>rotates with the body each tick</i>;
+///     it is what converts an inertial direction into the body's geographic latitude/longitude
+///     (<c>v_ccf = transform(v_ecl, inverse(CcfToEcl))</c> → lat = asin z, lon = atan2 y x).
+///     <see cref="PoleEcl"/> and <see cref="VernalEcl"/> are the body's +Z and +X axes in ECL
+///     (derived from <see cref="CciToEcl"/>), for inspection / dot-product consumers.
+/// </summary>
+/// <param name="CciToEcl">Body CCI → ECL/CCE rotation quaternion (inertial; fixed).</param>
+/// <param name="CcfToEcl">Body CCF → ECL/CCE rotation quaternion (body-fixed; rotates with the body).</param>
+/// <param name="PoleEcl">Body north pole (CCI +Z) as a unit vector in ECL.</param>
+/// <param name="VernalEcl">Body vernal point (CCI +X) as a unit vector in ECL.</param>
+public sealed record OrientationSnapshot(
+    QuatSnap CciToEcl, QuatSnap CcfToEcl, double3Snap PoleEcl, double3Snap VernalEcl);
 
 /// <summary>A body's atmosphere reference.</summary>
 /// <param name="HeightM">Atmosphere boundary height above the surface, meters.</param>

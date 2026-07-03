@@ -84,7 +84,12 @@ internal static class TestData
                     7.3e-5, new double3Snap(0, 0, 0), new double3Snap(0, 0, 0),
                     new OrbitSnapshot(13_600_000, 13_600_000, 0, 0, 13_600_000, 9_200_000),
                     new AtmosphereSnapshot(70000, 5600, 101325, 1.2),
-                    new OceanSnapshot(1000)),
+                    new OceanSnapshot(1000))
+                {
+                    Orientation = new OrientationSnapshot(
+                        new QuatSnap(0, 0.3, 0, 0.95), new QuatSnap(0, 0, 0.6, 0.8),
+                        new double3Snap(0, 0.4, 0.9), new double3Snap(1, 0, 0)),
+                },
             ],
         };
 

@@ -156,6 +156,10 @@ vessel). Directories marked *(detail)* require `telemetry_vessel_detail=true`; *
 | `bodies/<id>/rotation_rate` | S | scalar | Sidereal rotation rate about +Z (CCF/CCI north), rad/s. |
 | `bodies/<id>/position/ecl` | S | vector | Position in the system **ECL** (ecliptic) frame, meters. |
 | `bodies/<id>/velocity/ecl` | S | vector | Velocity in **ECL**, m/s. |
+| `bodies/<id>/orientation/cci_to_ecl` | S | quat | Rotation **CCI→ECL** (`x y z w`): apply to a vector in this body's **inertial** CCI frame (Z = north pole, X = vernal point) to express it in ECL/CCE axes; the inverse maps ECL→CCI. Fixed (CCI does not spin). For the **home** body the CCI frame is the real-world equatorial frame, so a CCI direction is `(RA, Dec)`. |
+| `bodies/<id>/orientation/ccf_to_ecl` | S | quat | Rotation **CCF→ECL** (`x y z w`) for the **body-fixed** frame (Z = north pole, X = prime meridian). Unlike `cci_to_ecl` it **rotates with the body each tick**; `inverse(ccf_to_ecl)` maps an ECL/inertial direction into CCF, whose `lat=asin z, lon=atan2 y x` is the geographic latitude/longitude. |
+| `bodies/<id>/orientation/pole_ecl` | S | vector | Body north pole (CCI +Z) as a unit vector in **ECL** (= `cci_to_ecl` · ẑ). |
+| `bodies/<id>/orientation/vernal_ecl` | S | vector | Body vernal point (CCI +X) as a unit vector in **ECL** (= `cci_to_ecl` · x̂). |
 | `bodies/<id>/orbit/apoapsis` | S | scalar | Apoapsis **altitude** above the parent surface, meters. |
 | `bodies/<id>/orbit/periapsis` | S | scalar | Periapsis altitude, meters. |
 | `bodies/<id>/orbit/ecc` | S | scalar | Eccentricity. |

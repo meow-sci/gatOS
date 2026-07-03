@@ -187,6 +187,8 @@ public sealed class SimFsTreeTests
             // celestial catalog
             "system/name", "bodies/Kerth/mass", "bodies/Kerth/orbit/sma",
             "bodies/Kerth/atmosphere/height", "bodies/Kerth/ocean/density", "bodies/Kerth/focus",
+            "bodies/Kerth/orientation/cci_to_ecl", "bodies/Kerth/orientation/ccf_to_ecl",
+            "bodies/Kerth/orientation/pole_ecl", "bodies/Kerth/orientation/vernal_ecl",
             // debug namespace
             "debug/vessels/test-1/teleport", "debug/vessels/test-1/refill_fuel",
             "debug/vessels/test-1/refill_battery", "debug/vessels/test-1/docking/0/pushoff_force",
@@ -204,6 +206,9 @@ public sealed class SimFsTreeTests
             Assert.That(files["vessels/by-id/test-1/docking/0/pushoff_force"], Is.EqualTo("7000\n"));
             Assert.That(files["debug/vessels/test-1/docking/0/pushoff_force"], Is.EqualTo("7000\n"));
             Assert.That(files["bodies/Kerth/atmosphere/height"], Is.EqualTo("70000\n"));
+            Assert.That(files["bodies/Kerth/orientation/cci_to_ecl"], Is.EqualTo("0 0.3 0 0.95\n"));
+            Assert.That(files["bodies/Kerth/orientation/ccf_to_ecl"], Is.EqualTo("0 0 0.6 0.8\n"));
+            Assert.That(files["bodies/Kerth/orientation/pole_ecl"], Is.EqualTo("0 0.4 0.9\n"));
             // The active alias mirrors the control surface too.
             Assert.That(files.Keys, Does.Contain("vessels/active/ctl/ignite"));
         });
@@ -337,7 +342,12 @@ public sealed class SimFsTreeTests
         var body = new BodySnapshot("Kerth", "Planet", "Sun", ["Mun"], 5.29e22, 600000, 3.5e12, 8.4e7,
             2.9e-4, new double3Snap(1, 2, 3), new double3Snap(4, 5, 6),
             new OrbitSnapshot(1000, 2000, 0.01, 0, 7e9, 9e6) { LanDeg = 10, ArgPeDeg = 20 },
-            new AtmosphereSnapshot(70000, 5000, 101325, 1.225), new OceanSnapshot(1000));
+            new AtmosphereSnapshot(70000, 5000, 101325, 1.225), new OceanSnapshot(1000))
+        {
+            Orientation = new OrientationSnapshot(
+                new QuatSnap(0, 0.3, 0, 0.95), new QuatSnap(0, 0, 0.6, 0.8),
+                new double3Snap(0, 0.4, 0.9), new double3Snap(1, 0, 0)),
+        };
         _store.Publish(TestData.Snapshot(1, TestData.Vessel()) with
         {
             Bodies = [body],
@@ -352,6 +362,14 @@ public sealed class SimFsTreeTests
         Assert.That(await ReadFileAsync("bodies", "Kerth", "atmosphere", "sea_level_pressure"),
             Is.EqualTo("101325\n"));
         Assert.That(await ReadFileAsync("bodies", "Kerth", "ocean", "density"), Is.EqualTo("1000\n"));
+        Assert.That(await ReadFileAsync("bodies", "Kerth", "orientation", "cci_to_ecl"),
+            Is.EqualTo("0 0.3 0 0.95\n"));
+        Assert.That(await ReadFileAsync("bodies", "Kerth", "orientation", "ccf_to_ecl"),
+            Is.EqualTo("0 0 0.6 0.8\n"));
+        Assert.That(await ReadFileAsync("bodies", "Kerth", "orientation", "pole_ecl"),
+            Is.EqualTo("0 0.4 0.9\n"));
+        Assert.That(await ReadFileAsync("bodies", "Kerth", "orientation", "vernal_ecl"),
+            Is.EqualTo("1 0 0\n"));
     }
 
     [Test]

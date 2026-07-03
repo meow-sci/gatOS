@@ -167,6 +167,8 @@ public static class SimFsTree
                     DelegateDirectory.Fixed("velocity", Qid($"{p}/velocity"),
                         Line($"{p}/velocity/ecl", "ecl", () => Formats.Vector(Body(bodyId).VelocityEcl))),
                 };
+                if (body.Orientation is not null)
+                    children.Add(OrientationDir(p, bodyId));
                 if (body.Orbit is not null)
                     children.Add(BodyOrbitDir(p, bodyId));
                 if (body.Atmosphere is not null)
@@ -184,6 +186,21 @@ public static class SimFsTree
                 return children;
             });
         }
+
+        // The body's orientation. cci_to_ecl = the inertial frame (fixed); ccf_to_ecl = the body-fixed
+        // frame (rotates each tick — converts inertial dirs to geographic lat/lon). pole_ecl/vernal_ecl
+        // are the +Z/+X axes in ECL, for cat-and-eyeball inspection. For the home body the CCI frame is
+        // the real-world equatorial frame, so a CCI direction is (RA, Dec) — see ASTROTERM_PLAN.md.
+        private VfsDirectory OrientationDir(string p, string bodyId)
+            => DelegateDirectory.Fixed("orientation", Qid($"{p}/orientation"),
+                Line($"{p}/orientation/cci_to_ecl", "cci_to_ecl",
+                    () => Formats.Quat(BodyOrientation(bodyId).CciToEcl)),
+                Line($"{p}/orientation/ccf_to_ecl", "ccf_to_ecl",
+                    () => Formats.Quat(BodyOrientation(bodyId).CcfToEcl)),
+                Line($"{p}/orientation/pole_ecl", "pole_ecl",
+                    () => Formats.Vector(BodyOrientation(bodyId).PoleEcl)),
+                Line($"{p}/orientation/vernal_ecl", "vernal_ecl",
+                    () => Formats.Vector(BodyOrientation(bodyId).VernalEcl)));
 
         private VfsDirectory BodyOrbitDir(string p, string bodyId)
             => DelegateDirectory.Fixed("orbit", Qid($"{p}/orbit"),
@@ -215,6 +232,10 @@ public static class SimFsTree
         private OrbitSnapshot BodyOrbit(string bodyId)
             => Body(bodyId).Orbit
                ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"body '{bodyId}' has no orbit");
+
+        private OrientationSnapshot BodyOrientation(string bodyId)
+            => Body(bodyId).Orientation
+               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"body '{bodyId}' has no orientation");
 
         private static List<(string Name, BodySnapshot Item)> SanitizedBodies(SimSnapshot snapshot)
             => SanitizeNames(snapshot.Bodies, b => b.Id);

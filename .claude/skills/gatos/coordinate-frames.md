@@ -19,6 +19,16 @@ landing program (`examples/land-o-matic`).
 | **CCF** (Celestial-Centered Fixed) | a body | Z = north pole (spin axis); X = prime-meridian∩equator; rotates with the body | **no** | latitude/longitude live here (`position/lat`, `position/lon`) |
 | **CCI** (Celestial-Centered Inertial) | a body | Z = north pole (spin axis); **X = vernal point (fixed)**; Y = Z×X | yes | **the main I/O frame**: `position/cci`, `velocity/cci`, `attitude/quat` (Body→CCI), `debug/teleport`, `ctl/burn` Δv |
 
+**Each body publishes its orientation** at `bodies/<id>/orientation/`: `cci_to_ecl` (the `x y z w`
+quaternion rotating an **inertial** CCI vector into ECL/CCE axes — its inverse maps ECL→CCI; fixed),
+`ccf_to_ecl` (the same for the **body-fixed** CCF frame — it *rotates with the body each tick*, so
+`inverse(ccf_to_ecl)` turns an inertial direction into CCF, whose `lat=asin z, lon=atan2 y x` is the
+geographic latitude/longitude), plus the derived `pole_ecl` (CCI +Z) and `vernal_ecl` (CCI +X) unit
+vectors in ECL. Together these move a direction between any body's CCI/CCF and the shared ECL frame
+without hardcoding axial tilts or spin phase. For the **home** body the CCI frame is the real-world
+equatorial frame, so a CCI direction is right ascension / declination — the basis of the `astroterm`
+star-map bridge (`ASTROTERM_PLAN.md`).
+
 The relationship that matters most in practice:
 
 - **CCI vs CCF**: same Z (north pole). CCF's X spins with the planet; CCI's X is frozen at the vernal

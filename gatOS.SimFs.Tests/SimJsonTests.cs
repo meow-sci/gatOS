@@ -111,6 +111,11 @@ public sealed class SimJsonTests
         var snapshot = TestData.Snapshot(1).WithCelestials();
         using var bodies = JsonDocument.Parse(SimJson.Serialize(snapshot.Bodies));
         Assert.That(bodies.RootElement[0].GetProperty("id").GetString(), Is.EqualTo("Kerth"));
+        // The body orientation projects through the same generic path → HTTP /v1/bodies + MQTT parity.
+        var orientation = bodies.RootElement[0].GetProperty("orientation");
+        Assert.That(orientation.GetProperty("cci_to_ecl").GetProperty("w").GetDouble(), Is.EqualTo(0.95));
+        Assert.That(orientation.GetProperty("ccf_to_ecl").GetProperty("z").GetDouble(), Is.EqualTo(0.6));
+        Assert.That(orientation.GetProperty("pole_ecl").GetProperty("z").GetDouble(), Is.EqualTo(0.9));
 
         using var system = JsonDocument.Parse(SimJson.Serialize(snapshot.System));
         Assert.That(system.RootElement.GetProperty("home_body_id").GetString(), Is.EqualTo("Kerth"));

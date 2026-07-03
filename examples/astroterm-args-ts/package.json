@@ -1,0 +1,19 @@
+{
+  "name": "astroterm-args-ts",
+  "version": "0.1.0",
+  "description": "Aim astroterm at the same sky the KSA player is looking at, by reading /sim. Computes the (latitude, longitude, datetime) that centers the in-game look direction at astroterm's zenith.",
+  "type": "module",
+  "module": "src/index.ts",
+  "bin": {
+    "astroterm-args": "src/index.ts"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^22.0.0"
+  }
+}

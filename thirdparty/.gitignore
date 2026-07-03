@@ -2,6 +2,7 @@ ksa/
 PEGAS/
 PEGAS-MATLAB/
 G-FOLD/
+astroterm/
 
 # dependencies (bun install)
 node_modules

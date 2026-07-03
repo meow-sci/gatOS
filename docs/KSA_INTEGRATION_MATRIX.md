@@ -115,6 +115,7 @@ core telemetry and the extension dirs vanish (logged once) rather than the sampl
 | `system/{name,home,sun}` | S | `Universe.WorldSun` (names the system), `CelestialSystem.HomeBody` | L |
 | `bodies/<id>/{id,class,parent,children,mass,radius,mu,soi,rotation_rate}` | S | `Celestial`/`StellarBody`; `IParentBody.{Mass,Mu}`, `GetAngularVelocity` | L |
 | `bodies/<id>/position/ecl`, `velocity/ecl` | S | `Astronomical.GetPositionEcl()/GetVelocityEcl()` | L |
+| `bodies/<id>/orientation/{cci_to_ecl,ccf_to_ecl,pole_ecl,vernal_ecl}` | S | `IParentBody.GetCci2Cce()` (inertial) + `GetCcf2Cce()` (body-fixed, per-tick); pole/vernal = `double3.Transform(UnitZ/UnitX, cci2ecl)` | L |
 | `bodies/<id>/orbit/{apoapsis,periapsis,ecc,inc,lan,argpe,sma,period}` | S | `Celestial.Orbit` (radii→altitude about parent; angles rad→deg) | L |
 | `bodies/<id>/atmosphere/{present,height,scale_height,sea_level_pressure,sea_level_density}` | S | `IParentBody.GetAtmosphereReference().Physical.*` (implicit `double`) | M |
 | `bodies/<id>/ocean/{present,density}` | S | `IParentBody.GetOceanReference().Density` | M |
