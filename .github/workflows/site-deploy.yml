@@ -12,7 +12,7 @@ on:
   # Only redeploy when the site (or this workflow) actually changes — the mod
   # build/release workflows own the rest of the repo.
   push:
-    branches: [main]
+    branches: ["main", "feature/site"]
     paths:
       - "site/**"
       - ".github/workflows/site-deploy.yml"
