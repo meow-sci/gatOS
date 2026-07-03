@@ -1,0 +1,86 @@
+name: Deploy site to GitHub Pages
+
+# Builds the Astro/Starlight docs site under site/ and publishes it to GitHub
+# Pages. The meow-sci org uses a custom domain (meow.science.fail), so this repo's
+# project site is served at https://meow.science.fail/gatOS/ (base '/gatOS/' set in
+# site/astro.config.mjs). Sibling project flexo publishes the same way under /flexo/.
+#
+# Repo one-time setup: Settings → Pages → "Build and deployment" → Source =
+# "GitHub Actions" (this workflow uses the artifact flow, not a gh-pages branch).
+
+on:
+  # Only redeploy when the site (or this workflow) actually changes — the mod
+  # build/release workflows own the rest of the repo.
+  push:
+    branches: ["main", "feature/site"]
+    paths:
+      - "site/**"
+      - ".github/workflows/site-deploy.yml"
+  # Allow manual runs from the Actions tab.
+  workflow_dispatch:
+
+# Permissions needed to deploy to GitHub Pages via the artifact flow.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One in-flight deployment at a time; let a newer push supersede an older run.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: site
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # Enables GitHub Pages for the repo (source = GitHub Actions) if it isn't
+      # already, so the deploy job's create-deployment call doesn't 404. Requires
+      # the pages: write permission below. If org policy blocks auto-enablement,
+      # enable it once manually: Settings → Pages → Source = "GitHub Actions".
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: site/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # site + base ('/gatOS/') live in astro.config.mjs; output goes to site/dist.
+      - name: Build
+        run: pnpm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

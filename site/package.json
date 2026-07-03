@@ -1,0 +1,26 @@
+{
+  "name": "gatOS",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.41.2",
+    "astro": "7.0.6",
+    "sharp": "0.35.3"
+  },
+  "devDependencies": {
+    "eslint-plugin-react-hooks": "7.1.1",
+    "oxfmt": "0.57.0",
+    "oxlint": "1.72.0"
+  }
+}

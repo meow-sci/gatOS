@@ -145,6 +145,9 @@ docs/ARCHITECTURE.md            runtime architecture, port allocation, telemetry
 docs/KSA_INTEGRATION_MATRIX.md per-point KSA API reference (G1–G4 + documented deferrals)
 docs/VALIDATION.md              in-game validation record (T6.6/T6.7 checklists + results)
 docs/KSA_CELESTIAL_COORDINATE_FRAMES.md details on the KSA games coordinate frame systems for frames of reference 
+docs/TUTORIAL_DATA_REFERENCE.md the /sim data + file↔HTTP correspondence the site/ tutorials are built
+                                from (flight-computer controls, frames, telemetry, pacing/gating);
+                                paired with the `tutorials` skill (the authoring guide). Lockstep w/ SPEC.
 scope/                          game-integration scope catalog (scope/FULL_SCOPE.md entrypoint + the
                                 ksa-*/non-ksa-surface pages): EVERY gatOS feature ↔ its KSA binding,
                                 with decompiled-source + Content-asset paths and the game-update
@@ -152,6 +155,11 @@ scope/                          game-integration scope catalog (scope/FULL_SCOPE
                                 gatOS, and where?" Kept in lockstep with the code (see the mandate).
 plans/                          active execution plans (e.g. FIX_CURRENT_GAPS_PLAN.md — the gaps a
                                 game update introduced and how to close them)
+site/                           Astro/Starlight docs site — the progressive `guides/` tutorial series
+                                teaching flight programs against /sim (+ the HTTP /v1 mirror). Author
+                                new tutorials via the `tutorials` skill (.claude/skills/tutorials/):
+                                house style, MDX mechanics, the beginner→advanced ladder, reusable
+                                snippet library; data facts in docs/TUTORIAL_DATA_REFERENCE.md
 LICENSE                         MIT (the mod's own code)
 THIRD-PARTY-NOTICES.md          QEMU GPLv2, Alpine, SSH.NET, Tomlyn, …
 vendor/purrTTY/                 pinned contract DLLs (committed) — see its README for the pin
@@ -170,6 +178,11 @@ tools/                          fetch-qemu.{sh,ps1} + qemu-win64-files.txt (pin 
                                 linux-x64 bundle = unbuilt T11.6). Both built on Linux runners
                                 (meta→build matrix→publish); main → tip prerelease,
                                 release/<v> → release v<v> (T11.4)
+.github/workflows/site-deploy.yml  CI: build the site/ Astro/Starlight docs (pnpm) and publish to
+                                GitHub Pages (artifact flow) — served at
+                                https://meow.science.fail/gatOS/ (base '/gatOS/'). Runs on main
+                                pushes touching site/** (or the workflow) + workflow_dispatch. Repo
+                                setting: Pages source = "GitHub Actions"
 ```
 
 ### Projects and the dependency rule
