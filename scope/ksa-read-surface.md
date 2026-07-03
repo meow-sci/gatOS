@@ -2,7 +2,7 @@
 
 > Every telemetry read gatOS performs against KSA. Each row: the `/sim` path it feeds, the gatOS code
 > site, the KSA member it binds to, the decompiled-source file that defines that member, the unit/format,
-> the churn risk, and the **4750 status** (✅ unaffected · ⚠️ silent semantic/unit drift · ❌ compile break).
+> the churn risk, and the **4826 status** (✅ unaffected · ⚠️ silent semantic/unit drift · ❌ compile break).
 >
 > Source of truth = the `[KsaAnchor]` attributes in the cited files. API catalog = [`SPEC_9P_FILESYSTEM.md`](../SPEC_9P_FILESYSTEM.md).
 > Anchor mirror = [`docs/KSA_INTEGRATION_MATRIX.md`](../docs/KSA_INTEGRATION_MATRIX.md). Decomp paths are
@@ -21,7 +21,7 @@ Performed directly in `gatOS.GameMod/Game/TelemetrySampler.cs` (not in a reader)
 2026-06-27):** the sampler methods now carry `[KsaAnchor]`s, so the census is complete. All `Universe`
 statics (+ `VersionInfo.Current`).
 
-| `/sim` path | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4750 |
+| `/sim` path | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4826 |
 |---|---|---|---|---|---|---|
 | `time/ut` | `TelemetrySampler.cs:92` | `Universe.GetElapsedSimTime().Seconds()` | `KSA/Universe.cs` | seconds, double | Low | ✅ |
 | `time/warp` | `:93` | `Universe.SimulationSpeed` | `KSA/Universe.cs` | factor | Low | ✅ |
@@ -32,7 +32,8 @@ statics (+ `VersionInfo.Current`).
 | (active vessel id) | `:94` | `Program.ControlledVehicle?.Id` | `KSA/Program.cs` | string | Low | ✅ |
 | (vessel set) | `:100` | `Universe.CurrentSystem.All.UnsafeAsList()` | `KSA/Universe.cs`, `KSA/CelestialSystem.cs` | enumeration | Low | ✅ |
 
-> None of these members appear in the 4680→4750 changelog and all compiled clean.
+> Re-verified 2026-07-03 against `2026.7.3.4826` (full decomp diff — `Universe.cs`'s only changes are a
+> `Program.EditorFlag` reset in a system-unload path plus log-line churn; `VersionInfo.cs` unchanged).
 > **G4 (2026-06-27):** these sampler-direct reads were the one un-anchored corner of the KSA surface; they
 > now carry `[KsaAnchor]`s (on `Sample` / `SampleWarpSpeeds` / `SafeAutoWarp*` / `GameVersion`), so the
 > census is complete — a rename errors in the sampler, still caught by the build.
@@ -44,7 +45,7 @@ statics (+ `VersionInfo.Current`).
 `gatOS.GameMod/Game/Ksa/Readers/VesselReader.cs`. Sampled for every vessel regardless of the
 `telemetry_vessel_detail` gate. Anchor: `VesselReader.Sample`.
 
-| `/sim` path (under `vessels/by-id/<id>/`) | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4750 |
+| `/sim` path (under `vessels/by-id/<id>/`) | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4826 |
 |---|---|---|---|---|---|---|
 | `id`, `name` | `:89,90` | `Vehicle.Id` (name = id; KSA has no display name) | `KSA/Vehicle.cs` | string | Low | ✅ |
 | `situation` | `:91` | `Vehicle.Situation.ToString()` | `KSA/Vehicle.cs`, `KSA/Situation*.cs` | string | Low | ⚠️ flags |
@@ -58,9 +59,9 @@ statics (+ `VersionInfo.Current`).
 | `orbit/{apoapsis,periapsis,ecc,inc,sma,period}` | `:75-82` | `Vehicle.Orbit` elements (radii→alt; inc rad→deg) | `KSA/Orbit.cs` | m / – / deg / s | Low | ✅ |
 | `battery/{charge,fraction}` | `:86,339` | `Vehicle.Parts.Batteries.GetState(b).Charge.Value()` ÷ `b.MaximumCapacity.Value()` | `KSA/Battery.cs` | fraction 0..1 | Low | ✅ (G2) |
 | `ctl/lights` (readback) | `:112` | `Vehicle.LightsOn` | `KSA/Vehicle.cs` | 0/1 | Low | ✅ |
-| `ctl/engine` (readback) | `:125` | `Vehicle.IsSet(VehicleEngine.MainIgnite, false)` | `KSA/Vehicle.cs` | 0/1 | Medium | ✅ |
+| `ctl/engine` (readback) | `:125` | `Vehicle.IsSet(VehicleEngine.MainIgnite, false)` | `KSA/Vehicle.cs` | 0/1 | Medium | ✅ ᵈ |
 | `controllable` | `:133` | `Vehicle.IsControllable` (`_overrideIsControllable \|\| Parts.Controls.NumModules > 0`) | `KSA/Vehicle.cs` | 0/1 | Medium | ✅ (G3, new) |
-| `engines/<n>/{active,vac_thrust,isp}` | `:256` | `Vehicle.Parts.Modules.Get<EngineController>()`; `.IsActive`, `.VacuumData.{ThrustMax,MassFlowRateMax}` | `KSA/EngineController.cs` | bool / N / s | Medium | ✅ |
+| `engines/<n>/{active,vac_thrust,isp}` | `:256` | `Vehicle.Parts.Modules.Get<EngineController>()`; `.IsActive`, `.VacuumData.{ThrustMax,MassFlowRateMax}` | `KSA/EngineController.cs` | bool / N / s | Medium | ✅ ᵈ |
 | `tanks/<r>/{amount,capacity,fraction}` | `:312` | `Tank.Moles`; `Parts.Moles.GetState(mole).Mass`; `mole.GetLiquidMass(ContainerVolume)`; `mole.FilledFraction` | `KSA/Tank.cs`, `KSA/Mole.cs` | kg / kg / 0..1 | Low | ✅ |
 | `animations/<n>/{current,state,goal}` | `:596` | `KeyframeAnimationModule.{TimeGoal,Shared.Duration}`; `State.{TimeCurrent,DeploymentState}` via `ModuleStateful` | `KSA/KeyframeAnimationModule.cs` | 0..1 / enum | Medium | ✅ |
 
@@ -74,6 +75,10 @@ a new 4750 regression.
 the strongly-typed `Joules` struct (rev 4681); `.Value()` still returns the joule float, and the reported
 **fraction is unit-independent**, so battery reads are numerically unaffected. See power section below.
 
+**✅ ᵈ post-decouple state inheritance (4826)** — the marked members are unchanged, but a freshly
+decoupled/undocked stage now *inherits* the parent's control state instead of resetting to defaults —
+see the [4826 findings](#4826-findings) below.
+
 ---
 
 ## Vessel detail reads — `VesselReader.BuildFull` (gated by `telemetry_vessel_detail`)
@@ -85,7 +90,7 @@ are cached per vehicle in `Readers/AnimationLinks.cs` (GP3), rebuilt on module-c
 
 ### Position / navball / environment
 
-| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 4750 |
+| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 4826 |
 |---|---|---|---|---|---|
 | `position/ecl`, `velocity/cci`, `com` | `:154-156` | `Vehicle.GetPositionEcl()`, `GetVelocityCci()`, `CenterOfMassAsmb` | `KSA/Vehicle.cs` | Low | ✅ |
 | `navball/{pitch,yaw,roll,twr,deltav,frame,speed}` | `:223` | `Vehicle.NavBallData.{AttitudeAngles(int3 deg),ThrustWeightRatio,DeltaVInVacuum,Frame,Speed}` | `KSA/NavBallData.cs` | Medium | ✅ |
@@ -95,24 +100,24 @@ are cached per vehicle in `Readers/AnimationLinks.cs` (GP3), rebuilt on module-c
 
 ### Writable-setpoint read-backs (so `ctl/*` files report the real state)
 
-| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 4750 |
+| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 4826 |
 |---|---|---|---|---|---|
-| `ctl/throttle` | `:169` | `Vehicle.GetManualThrottle()` | `KSA/Vehicle.cs` (`:824`) | Medium | ✅ |
+| `ctl/throttle` | `:169` | `Vehicle.GetManualThrottle()` | `KSA/Vehicle.cs` (`:824`) | Medium | ✅ ᵈ |
 | `ctl/rcs` | `:170` | any `ThrusterController.IsActive` | `KSA/ThrusterController.cs` | Medium | ✅ |
 | `ctl/attitude_mode` | `:171` | `FlightComputer.AttitudeMode` / `AttitudeTrackTarget` | `KSA/FlightComputer.cs` | Medium | ✅ |
 | `ctl/attitude_frame` | `:172` | `FlightComputer.AttitudeFrame` | `KSA/FlightComputer.cs` | Medium | ✅ |
 
 ### Per-module reads
 
-| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 4750 |
+| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 4826 |
 |---|---|---|---|---|---|
 | `engines/<n>/{throttle,propellant,min_throttle}` | `:278` | `EngineControllerState.{CommandThrottle,IsPropellantAvailable}`; `EngineController.MinimumThrottle` | `KSA/EngineControllerState.cs` | Medium | ✅ |
-| `rcs/<n>/{active,propellant,map}` | `:387` | `ThrusterController.IsActive`; `ThrusterControllerState.{ControlMap,IsPropellantAvailable}` | `KSA/ThrusterController.cs` | Medium | ✅ |
+| `rcs/<n>/{active,propellant,map}` | `:387` | `ThrusterController.IsActive`; `ThrusterControllerState.{ControlMap,IsPropellantAvailable}` | `KSA/ThrusterController.cs` | Medium | ✅ ᵈ |
 | `solar/<n>/{produced,occluded,sun_aoa,efficiency,tracker_angle}` | `:419` | `SolarPanelState.{Produced,IsOccluded,SunAoA,SunEfficiency}`; `SolarTrackerState.CurrentAngle` | `KSA/SolarPanel.cs`, `KSA/SolarTracker.cs`, `KSA/SolarPanelState.cs` | Medium | ✅ (G2: W) |
 | `generators/<n>/{active,produced}` | `:476` | `GeneratorState.{Active,Produced}` | `KSA/Generator.cs`, `KSA/GeneratorState.cs` | Medium | ✅ (G2: W) |
 | `lights/<n>/{on,brightness,color,inner_angle,outer_angle}` | `:500` | `LightModule.Template.{Intensity.Value,ColorRgb,OuterAngle.Value,InnerAngle.Value}`; `Parent.FullPart.LightSwitch.LightIsActive` | `KSA/LightModule.cs` | **High** | ✅ |
 | `docking/<n>/{docked,docked_to,pushoff_impulse}` | `:540` | `DockingPort.{Docked,DockedToPart.Id,PushoffImpulse}` | `KSA/DockingPort.cs` | Medium | ✅ (fixed) |
-| `decouplers/<n>/fired` | `:560` | `Decoupler.IsActive` | `KSA/Decoupler.cs` | Medium | ✅ |
+| `decouplers/<n>/fired` | `:560` | `Decoupler.IsActive` | `KSA/Decoupler.cs` | Medium | ✅ ᵈ |
 | `power/produced` | `:360` | Σ `SolarPanelState.Produced.Value()` + `GeneratorState.Produced.Value()` | `KSA/SolarPanelState.cs`, `KSA/GeneratorState.cs` | Medium | ✅ (G2: W) |
 | `power/consumed` | `:374` | Σ `Vehicle.Parts.PowerConsumers.GetState(c).Consumed.Value()` | `KSA/PowerConsumerState.cs` | Medium | ✅ (G2: W) |
 | `battery/capacity` | `:342` | Σ `Battery.MaximumCapacity.Value()` | `KSA/Battery.cs` | Low | ✅ (G2) |
@@ -129,7 +134,7 @@ on a `Vehicle.Parts.Count` change (the cheap "vehicle was edited" signal — KSA
 version/dirty flag) or every 10 s of sim time. Hot path = one `Parts.Count` read per vehicle per tick.
 Anchor: `PartsReader.cs:28`.
 
-| `/sim` path (under `…/parts/<n>/`) | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4750 |
+| `/sim` path (under `…/parts/<n>/`) | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4826 |
 |---|---|---|---|---|---|---|
 | `instance_id` | `PartsReader.cs:57` | `Part.InstanceId` | `KSA/Part.cs` | uint (the **stable** weld handle) | Low | ✅ |
 | `id` | `:57` | `Part.Id` | `KSA/Part.cs` | string (can collide across instances) | Low | ✅ |
@@ -141,7 +146,10 @@ Anchor: `PartsReader.cs:28`.
 | (enumeration) | `:37,50` | `Vehicle.Parts.{Count,Parts}` | `KSA/Vehicle.cs`, `KSA/PartTree.cs` | span of `Part` | Low | ✅ |
 
 Verified `2026-06-28` against `2026.6.9.4750` (new feature; compiled clean — none of these
-`Part`/`PartTree` members appear in the 4680→4750 changelog).
+`Part`/`PartTree` members appear in the 4680→4750 changelog). Re-verified 2026-07-03 against
+`2026.7.3.4826`: the `Part.cs`/`PartTree.cs` churn (+438/+48) is additive symmetry/sequence-group
+infrastructure (`PartSymmetryInstance`, `SequenceGroup`/`SequenceOrder`, `AlignedConnectors`, a new
+`PartTree.Decouplers` hot-path list) — every bound member above is unchanged.
 
 ---
 
@@ -156,7 +164,7 @@ write side [`ksa-write-surface.md#thug-life`](ksa-write-surface.md#thug-life)). 
 build at the `[KsaAnchor]` site (these are non-reflective), so they are caught at compile time — but
 frame-math is the classic *silent* drift, so re-verify the quad's pose in a live flight after any update.
 
-| read | gatOS site | KSA / Brutal member | Decomp file | Risk | 4750 |
+| read | gatOS site | KSA / Brutal member | Decomp file | Risk | 4826 |
 |---|---|---|---|---|---|
 | camera view-projection | `ThugLifeQuadRenderer.TryComputeModelEgo` | `Program.GetMainCamera()`; `Camera.MVP.viewProjection`; `Program.SetViewport` | `KSA/Program.cs`, `KSA/Camera.cs` | **High** | ✅ |
 | vehicle ego transform | same | `Vehicle.GetMatrixAsmb2Ego(Camera)`; `Vehicle.Asmb2Ego` | `KSA/Vehicle.cs` | **High** | ✅ |
@@ -168,7 +176,9 @@ are a game-free projection of `ThugLifeManager.Snapshot()` (`ThugLifeSnapshot` r
 `TelemetrySampler` copies into `SimSnapshot.ThugLife = _thugLife.Snapshot()`. Verified `2026-06-28` against
 `2026.6.9.4750` (new feature; compiled clean — none of these `Vehicle`/`Part`/`Camera`/`Program` members
 appear in the 4680→4750 changelog, though render internals are not changelog-covered as reliably as the
-gameplay APIs).
+gameplay APIs). Re-verified (static) 2026-07-03 against `2026.7.3.4826`: `Camera.cs` unchanged;
+`Part.PositionEgo`/`Asmb2Ego`, `Vehicle.GetMatrixAsmb2Ego`/`Asmb2Ego` bodies unchanged in the diff —
+live pose check still advised (render internals; see `docs/VALIDATION.md`).
 
 ---
 
@@ -213,6 +223,40 @@ numerically unchanged. Anchor `Notes` re-labelled and bumped to `2026.6.9.4750`.
 
 ---
 
+## ✅ 4826 read-surface findings (detail) {#4826-findings}
+
+Full playbook pass 2026-07-03, `2026.6.9.4750` → `2026.7.3.4826`. Build + full test suite green;
+**no bound member changed name, signature, type, unit, frame, or gating.** The CURRENT `version.json`
+only logs revs 4825–4826 (revs 4751–4823 have **no changelog** in either tree), so this pass was driven
+by the full decomp + Content diff, not the commit log. Findings — all *game-behavior* changes the reads
+report faithfully, none a member drift:
+
+- **ᵈ Post-decouple control-state inheritance** (`ctl/engine`, `ctl/throttle`, `engines/<n>/active`,
+  `rcs/<n>/active`, `decouplers/<n>/fired`, and `navball/twr` via `EngineThrottle`): `Vehicle.Split` now
+  copies `_manualControlInputs` (engine-on + throttle) and the active staging sequence to the separated
+  vehicle, and `Decoupler.Decouple` dropped its cascade that force-`Deactivate()`d every `IActivate`
+  module on the separated stage. A just-decoupled/undocked stage therefore **inherits** the parent's
+  control state instead of reporting off/0. Members and units unchanged; guests observing a fresh stage
+  see different (truthful) values than the 4750 era. The affected anchors carry a `4826:` note.
+- **Gravitation refactor** (`environment/{accel,angular_accel,g_force}`): the multi-body correction moved
+  from `PhysicsStates` into `PhysicsEnvironment.ComputeGravitationBub`. Numerically identical in the
+  single-dominant-body case; near SoI boundaries the acceleration magnitude may shift marginally (a
+  physics-accuracy change, same body-frame m/s² semantics). Live sanity check listed in
+  `docs/VALIDATION.md`.
+- **PatchedConic terrain impact** (`orbit/next_patch`, `encounters`): new `TryFindTerrainImpact` marches
+  impact-bound trajectories against the heightmap and terminates the patch with
+  `PatchTransition.Impact` — which `Vehicle.NextPatchEventTime` ignores (only Escape/Encounter feed
+  `next_patch`), so the read is unaffected. Edge case: an impact-terminated patch can truncate the
+  downstream patch chain, marginally changing which `encounters` exist (improved prediction, not drift).
+- **Power re-confirmed stable**: the `PowerReference.cs`/`PowerManager.cs` churn is a display formatter
+  (`ToNearest` with W/kW/… suffixes) + a span→array refactor — **no re-unit**; the 4750 Watts convention
+  holds.
+- **Content value tweak**: `CoreElectricalAGameData.xml` solar cell `SolarPanelB_CellA`
+  `<Produced W="50"/>` → `W="100"` — same unit, read at runtime, so `solar/<n>/produced` simply reports
+  the new stock value.
+
+---
+
 ## Events {#events}
 `/sim/events` and per-vessel `stream` are **not** direct KSA reads — they are produced by
 `gatOS.SimFs/EventDiffer` and `StreamFile` diffing successive `SimSnapshot`s (KSA has no native event
@@ -229,7 +273,7 @@ differ, only change the values it observes. See [`non-ksa-surface.md`](non-ksa-s
 `gatOS.GameMod/Game/Ksa/Readers/BodyReader.cs`. Most reads go through the `IParentBody` interface
 (implemented by both `Celestial` and `StellarBody`), so a body-type rename surfaces in one place.
 
-| `/sim` path | gatOS site | KSA member | Decomp file | Unit | Risk | 4750 |
+| `/sim` path | gatOS site | KSA member | Decomp file | Unit | Risk | 4826 |
 |---|---|---|---|---|---|---|
 | (catalog) | `:24` | `Universe.CurrentSystem.All.UnsafeAsList()` → `Celestial`; `Universe.WorldSun` (`StellarBody`); `CelestialSystem.HomeBody` | `KSA/CelestialSystem.cs`, `KSA/Universe.cs` | – | Low | ✅ |
 | `system/{name,home,sun}` | `:35` | `WorldSun.Id`, `HomeBody.Id` | `KSA/Universe.cs` | string | Low | ✅ |
@@ -242,6 +286,10 @@ differ, only change the values it observes. See [`non-ksa-surface.md`](non-ksa-s
 
 No body/celestial members appear in the 4680→4750 changelog; all compiled clean. rev 4688 ("particle
 effects parented to the celestial") is render-only and exposes nothing through `BodyReader`.
+Re-verified 2026-07-03 against `2026.7.3.4826`: the `Celestial.cs` +132 lines are **entirely additive**
+terrain-height members for the new terrain-impact prediction (`Min/MaxTerrainHeightApprox`,
+`HasTerrainHeightmap`, `MaxTerrainRadius`, `TrySpawnWaterSplash`); every catalog member above —
+`MeanRadius` included — is untouched.
 
 ---
 

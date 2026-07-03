@@ -250,9 +250,11 @@ internal static class VesselReader
     }
 
     [KsaAnchor("Vehicle.IsSet(VehicleEngine.MainIgnite, false) => _manualControlInputs.EngineOn",
-        SourceFile = "KSA/Vehicle.cs", Verified = "2026-06-14", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Vehicle.cs", Verified = "2026-07-03", GameVersion = "2026.7.3.4826", Risk = ChurnRisk.Medium,
         Notes = "The live ignition master ctl/ignite (MainIgnite) and ctl/shutdown (MainShutdown) toggle; "
-            + "the same state the game's ignite button reads. NOT per-engine IsActive (allowed-to-fire).")]
+            + "the same state the game's ignite button reads. NOT per-engine IsActive (allowed-to-fire). "
+            + "4826: Vehicle.Split now copies _manualControlInputs to the separated vehicle, so a freshly "
+            + "decoupled/undocked stage inherits the parent's engine-on state (was: reset to off).")]
     private static bool ReadEngineOn(Vehicle vehicle) => vehicle.IsSet(VehicleEngine.MainIgnite, false);
 
     [KsaAnchor("Vehicle.IsControllable => _overrideIsControllable || Parts.Controls.NumModules > 0",
@@ -264,9 +266,11 @@ internal static class VesselReader
     private static bool ReadControllable(Vehicle vehicle) => vehicle.IsControllable;
 
     [KsaAnchor("Vehicle.GetManualThrottle(); FlightComputer.{AttitudeMode,AttitudeTrackTarget,AttitudeFrame}",
-        SourceFile = "KSA/Vehicle.cs / KSA/FlightComputer.cs", Verified = "2026-06-13", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Vehicle.cs / KSA/FlightComputer.cs", Verified = "2026-07-03", GameVersion = "2026.7.3.4826", Risk = ChurnRisk.Medium,
         Notes = "Read-back of the writable setpoints. Manual attitude reports \"manual\"; auto reports the "
-                + "track-target name (Prograde/…). Frame is the VehicleReferenceFrame name.")]
+                + "track-target name (Prograde/…). Frame is the VehicleReferenceFrame name. 4826: a freshly "
+                + "split (decoupled/undocked) vehicle inherits the parent's manual throttle (Vehicle.Split "
+                + "copies _manualControlInputs), so the post-split ctl/throttle read-back is no longer 0.")]
     private static (string Mode, string Frame) SampleFlightComputer(Vehicle vehicle)
     {
         var fc = vehicle.FlightComputer;
@@ -356,8 +360,10 @@ internal static class VesselReader
     // ---- engines (M9 core + G3 throttle/propellant, one pass) --------------------------------
 
     [KsaAnchor("vehicle.Parts.Modules.Get<EngineController>(); .IsActive, .VacuumData{ThrustMax,MassFlowRateMax}",
-        SourceFile = "KSA/EngineController.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium,
-        Notes = "Isp computed thrust/(massflow·g0). Index is the vessel-level ordinal the control addresses.")]
+        SourceFile = "KSA/EngineController.cs", Verified = "2026-07-03", GameVersion = "2026.7.3.4826", Risk = ChurnRisk.Medium,
+        Notes = "Isp computed thrust/(massflow·g0). Index is the vessel-level ordinal the control addresses. "
+            + "4826: Decoupler.Decouple no longer force-deactivates the separated stage's IActivate modules, "
+            + "so engines/<n>/active on a just-decoupled vehicle retains its pre-split state (was: false).")]
     [KsaAnchor("EngineControllerState{CommandThrottle,IsPropellantAvailable} via ModuleStateful.TryGetFrom",
         SourceFile = "KSA/EngineControllerState.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium,
         Notes = "Read in the same pass as the module walk (GP3); detail-off skips the state fetch and "
@@ -467,7 +473,9 @@ internal static class VesselReader
     // ---- RCS / solar / generators / lights / docking / decouplers -----------------------------
 
     [KsaAnchor("vehicle.Parts.Modules.Get<ThrusterController>(); .IsActive; ThrusterControllerState{ControlMap,IsPropellantAvailable}",
-        SourceFile = "KSA/ThrusterController.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium)]
+        SourceFile = "KSA/ThrusterController.cs", Verified = "2026-07-03", GameVersion = "2026.7.3.4826", Risk = ChurnRisk.Medium,
+        Notes = "4826: Decoupler.Decouple no longer force-deactivates the separated stage's IActivate modules, "
+            + "so rcs/<n>/active on a just-decoupled vehicle retains its pre-split state (was: false).")]
     private static IReadOnlyList<RcsSnapshot> SampleRcs(Vehicle vehicle)
     {
         var modules = vehicle.Parts.Modules.Get<ThrusterController>();
@@ -630,7 +638,10 @@ internal static class VesselReader
     }
 
     [KsaAnchor("vehicle.Parts.Modules.Get<Decoupler>(); .IsActive (fired, irreversible)",
-        SourceFile = "KSA/Decoupler.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium)]
+        SourceFile = "KSA/Decoupler.cs", Verified = "2026-07-03", GameVersion = "2026.7.3.4826", Risk = ChurnRisk.Medium,
+        Notes = "4826: Decoupler.Decouple dropped its fire-time cascade that walked the separated vehicle "
+            + "deactivating every IActivate module — module active/fired state on the separated stage now "
+            + "persists as-is. IsActive itself (fired, irreversible) is unchanged.")]
     private static IReadOnlyList<DecouplerSnapshot> SampleDecouplers(Vehicle vehicle)
     {
         var modules = vehicle.Parts.Modules.Get<Decoupler>();

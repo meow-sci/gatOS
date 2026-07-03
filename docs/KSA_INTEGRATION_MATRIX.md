@@ -15,11 +15,18 @@ new events) and **G4** (full control surface: throttle/staging/attitude/burn, RC
 they add **no** KSA coupling — every transport speaks the same `SnapshotStore` (reads) and
 `ICommandSink`/`SimCommand` (writes), so this matrix (the KSA-touching surface) is unaffected by them.
 
-**Verified:** **2026-06-27 against `2026.6.9.4750`** (full solution build green + 4680→4750 changelog scan
-+ decomp/XML diff). The anchors touched by the 4750 fix-pass (G1 docking, G2 power, G3 `controllable`,
-G4 sampler reads) were individually re-verified and carry `GameVersion="2026.6.9.4750"`; rows still showing
-an earlier per-member `Verified` date bind to members **unchanged** in 4750 (their compatibility is
-confirmed by the green build + the changelog scan). Live in-flight checklist: `docs/VALIDATION.md`.
+**Verified:** **2026-07-03 against `2026.7.3.4826`** (full solution build green, 0 warnings; full
+decomp + Content **tree diff** against the 2026.6.9.4750 baseline — the 4826 changelog is incremental,
+covering only revs 4824–4826 with 4751–4823 unlogged, so the diff was the discovery mechanism). **Clean
+pass: no bound member, reflection accessor, or Harmony hook target changed** — no code change required.
+The five read anchors touched by the 4826 behavior notes (post-decouple control-state inheritance:
+the `ctl/engine`/`ctl/throttle` read-backs, `engines/<n>/active`, `rcs/<n>/active`,
+`decouplers/<n>/fired` — see the
+[read-surface 4826 findings](../scope/ksa-read-surface.md#4826-findings)) carry
+`GameVersion="2026.7.3.4826"`; rows showing an earlier per-member `Verified` date bind to members
+**unchanged** in 4826 (their compatibility is confirmed by the green build + the tree diff — 13 bound
+decomp files are byte-identical to 4750). Prior pass: 2026-06-27 against `2026.6.9.4750` (the G1–G4
+fix-pass). Live in-flight checklist: `docs/VALIDATION.md`.
 
 ## Transport parity (binding)
 
@@ -195,6 +202,14 @@ on — not gated by the detail pass): `ctl/engine` ← `Vehicle.IsSet(VehicleEng
 the game's ignite button reads). This is distinct from the per-engine `engines/<n>/active`
 "allowed to fire" flag.
 
+> **4826 behavior note (post-decouple inheritance):** `Vehicle.Split` now copies
+> `_manualControlInputs` (engine-on + throttle) and the active staging sequence to the separated
+> vehicle, and `Decoupler.Decouple` no longer force-deactivates the separated stage's `IActivate`
+> modules — so a freshly decoupled/undocked stage reports **inherited** `ctl/engine`, `ctl/throttle`,
+> `engines/<n>/active`, `rcs/<n>/active`, `decouplers/<n>/fired` values instead of off/0. Members and
+> units are unchanged (the reads are faithful); see the
+> [read-surface 4826 findings](../scope/ksa-read-surface.md#4826-findings).
+
 ## Control surface — first-class per-vessel nodes (outside `/sim/debug`)
 
 Anchors in `Game/Ksa/Actuators/ScaleActuator.cs` and `Game/Ksa/Render/VesselForceRender.cs`; routed by
@@ -256,7 +271,9 @@ onto its anchor in `OnAfterUi` (`Mod.DriveWelds`, game thread, after `JobSystems
 — a **third game-thread mutation site** beside the Frame and Solver drains; it self-gates to a no-op
 when no welds exist, so it needs **no** Harmony patch. Both tear down on unload
 (`Mod.TeardownGameCheats`). All weld create/remove/enable/clear and the IVA toggle are **Frame-phase**.
-Anchors verified `2026-06-28` against `2026.6.9.4750`.
+Anchors verified `2026-06-28` against `2026.6.9.4750`; re-verified (static) 2026-07-03 against
+`2026.7.3.4826` (`Vehicle.Teleport`/`JobSystems`/`Orbit.CreateFromStateCci` and the IVA render gate all
+unchanged).
 
 **`thug_life` — gatOS's first custom GPU rendering (⚠️ HIGHEST-CHURN KSA COUPLING).** The
 `debug.thug_life_*` actions (ported from `unscience`, exposed only on gatOS surfaces) anchor a flat,
@@ -287,7 +304,9 @@ each entry per frame; `_thugLife?.Clear()` in `Mod.TeardownGameCheats` tears it 
 assumptions (the `"UnlitMeshVert"/"UnlitMeshFrag"` shader keys, `R8G8B8A8UNorm`, reverse-Z depth,
 `Program.OffScreenPass` MSAA sample count) and the new render-DLL references are catalogued in
 [`../scope/ksa-assets-and-versions.md`](../scope/ksa-assets-and-versions.md). Anchors verified
-`2026-06-28` against `2026.6.9.4750`.
+`2026-06-28` against `2026.6.9.4750`; re-verified (static) 2026-07-03 against `2026.7.3.4826` —
+`RenderMainPass` byte-identical, shader keys/assets and `OffScreenPass` unchanged; the live quad-draw
+check remains pending (`docs/VALIDATION.md`).
 
 Solver-phase commands drain in a Harmony `Priority.First` prefix on
 `Universe.ExecuteNextVehicleSolvers` (`Mod.DrainSolverCommands`), which runs **immediately before** the

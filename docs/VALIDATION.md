@@ -277,3 +277,21 @@ pending a live flight.**
 | 11 | Audio keeps playing at **any time-warp** (incl. > 10×) and while paused-into-menus; `cat /sim/audio/info` matches the loaded clips/caps/channels | ☐ | deliberate warp-mute bypass |
 | 12 | From the **host**: `curl -T alarm.mp3 http://127.0.0.1:4242/v1/audio/file/curl.mp3` then `curl -X POST --data 'curl.mp3' http://127.0.0.1:4242/v1/fs/audio/play` plays it; `curl http://127.0.0.1:4242/v1/audio/files` lists it; `curl -X DELETE …/v1/audio/file/curl.mp3` evicts it | ☐ | HTTP binary routes + field-mirror control |
 | 13 | Mod unload (quit) with channels playing → **immediate silence**, clean unload, no FMOD errors in the log; `[audio] audio_enabled=false` → `/sim/audio` absent and `audio.*` via `/v1/command` answers `EOPNOTSUPP` 501 | ☐ | `TeardownGameCheats` + config gate |
+
+## KSA 2026.7.3.4826 upgrade — live re-check items — **NOT YET RUN**
+
+The 2026.6.9.4750 → 2026.7.3.4826 playbook pass (2026-07-03) was **clean** — build + tests green, full
+decomp/Content diff found no bound-member change (see `scope/FULL_SCOPE.md` §0 and the
+`scope/ksa-read-surface.md` 4826 findings). These are the residual items static review cannot settle;
+they can ride any of the pending passes above (none blocks the others). **All items pending a live
+flight on 4826.**
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | `/sim/status/accessors` shows no degraded accessor after normal flying + a `ctl/throttle` write + a `lights/<n>/brightness` write | ☐ | reflection accessors (manual throttle, light-template clone) are compile-blind; decomp can lag the binary |
+| 2 | thug_life quad still draws correctly (add an entry, check pose/depth/MSAA vs the scene) | ☐ | `RenderMainPass` byte-identical + shaders unchanged statically, but Vulkan render-pass compatibility is only provable by drawing |
+| 3 | `/sim/display` still streams (enable + open a reader; frames advance) | ☐ | `RenderGame` two-`End()` structure unchanged, shifted ~12 lines — transpiler should absorb it |
+| 4 | KittenEva `scale` write still visibly resizes the avatar | ☐ | reflected `_renderable._characterAvatar.Core.Scale` chain; `KittenEva.cs` unchanged but chain types live elsewhere |
+| 5 | `environment/g_force` sanity near an SoI boundary (no jump vs 4750 expectations) | ☐ | gravitation refactor folded the multi-body correction into `ComputeGravitationBub` |
+| 6 | Decouple/undock a stage with engines on + throttle up: the new stage's `ctl/engine`/`ctl/throttle`/`engines/<n>/active` read back the **inherited** parent state (expected new 4826 behavior, not a gatOS bug) | ☐ | `Vehicle.Split` control-input inheritance + `Decoupler.Decouple` cascade removal |
+| 7 | `solar/<n>/produced` on a stock small cell reads ~100 W in sunlight (stock value doubled from 50 W) | ☐ | `CoreElectricalAGameData.xml` value change, same unit |

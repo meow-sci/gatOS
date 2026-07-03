@@ -27,14 +27,26 @@ Two checkouts are kept side by side for diffing:
 
 | Checkout dir | Build | Date | Revisions | Role |
 |---|---|---|---|---|
-| `…/ksa-game-assemblies` | **2026.6.9.4750** | 2026-06-27 | 4680 → 4750 | **current / verified baseline** — gatOS builds + tests green against it after the G1–G4 fix-pass (2026-06-27); `KSAFolder` default resolves here |
-| `…/ksa-game-assemblies_2026.6.8.4680` | 2026.6.8.4680 | 2026-06-19 | 4631 → 4680 | **prior baseline** (what gatOS was originally built against, pre-4750-update) |
+| `…/ksa-game-assemblies` | **2026.7.3.4826** | 2026-07-03 | logs only 4824 → 4826 (see the changelog-gap note below) | **current / verified baseline** — full playbook pass 2026-07-03: build + tests green, full decomp + Content diff clean (no code change needed); `KSAFolder` default resolves here |
+| `…/ksa-game-assemblies_prev` | 2026.6.9.4750 | 2026-06-27 | 4680 → 4750 | **prior baseline** (the G1–G4 fix-pass target; what the 4826 pass diffed against) |
 
 gatOS was originally built against the 4680-era sources (most `[KsaAnchor]` `Verified` dates span
-2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27 (commit log in
-`…/ksa-game-assemblies/current/version.json`); the touched anchors now carry `GameVersion="2026.6.9.4750"`,
-and the whole surface is build-green + changelog-clean against 4750 (see
-[`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)). 4750 is now the verified baseline.
+2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27; the touched
+anchors carry `GameVersion="2026.6.9.4750"` (see
+[`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)).
+
+**The 4750 → 4826 pass (2026-07-03) — clean, no code changes.** ⚠️ **Changelog gap:** the 4826
+checkout's `version.json` is an *incremental* log covering only revs 4824→4826 (the terrain-sampling
+perf work) — **revs 4751–4823 have no changelog in either checkout**, so the pass was driven by a full
+`git diff --no-index` of the two `decomp/` + `Content/` trees instead of the commit log (playbook step 1
+is blind for this jump). Result: `gatOS.GameMod` + the full solution compile 0-warning against the 4826
+DLLs, all tests green, and **no bound member changed name, signature, type, unit, frame, or gating** —
+13 bound decomp files are byte-identical to 4750, and the heavy churn (staging editor rework, `Part.cs`
+symmetry infrastructure, terrain-impact prediction, ice/wetness FX) misses the gatOS surface. Findings
+(all game-behavior notes, no drift): post-decouple control-state inheritance
+([read 4826 findings](ksa-read-surface.md#4826-findings)), the `Decoupler.Decouple` deactivation-cascade
+removal, a near-SoI gravitation-refactor nuance, and the solar-cell stock value 50→100 W (below). No
+`plans/` gap plan was needed. Live re-check items: `docs/VALIDATION.md`. 4826 is now the verified baseline.
 
 > The ksa skill (`.claude/skills/ksa/`) also points at decompiled sources under `decomp/ksa/` (and a
 > working copy lives at `…/unscience/decomp/ksa`). Any of these decomp trees is readable; for
@@ -64,15 +76,15 @@ and the whole surface is build-green + changelog-clean against 4750 (see
 
 gatOS does not read Content XML directly, but these files **define** the runtime values its sensors
 report and the field names the KSA modules expect. They are the ground truth for units and stock values —
-and the fastest way to confirm a 4750 rename actually landed. Concrete files (current/4750):
+and the fastest way to confirm a rename actually landed. Concrete files (current/4826):
 
 | gatOS integration point | Asset file (`current/Content/…`) | Relevant XML | Confirms |
 |---|---|---|---|
 | Docking pushoff / latching | `Core/CoreCouplingAGameData.xml` | `<DockingPort><LatchingKineticEnergy J="50"/><PushoffImpulse Ns="7000"/></DockingPort>` | rev 4683 rename + units: pushoff is **N·s** (impulse), latching is **J** (kinetic energy). Stock value numerically 7000 but now N·s. |
 | Battery capacity | `Core/CoreElectricalAGameData.xml` | `<Battery HasStatusLight="true"><MaximumCapacity J="1000"/></Battery>` (also 3000/100/500) | capacity is **Joules** — `battery/capacity` unit unchanged. |
-| Solar / generator production | `Core/CoreElectricalAGameData.xml` | `<SolarPanel><Produced W="200"/></SolarPanel>` (cells `W="50"`) | rev 4681: production authored in **Watts** — confirms `power/produced`, `solar/<n>/produced` are now instantaneous W. |
+| Solar / generator production | `Core/CoreElectricalAGameData.xml` | `<SolarPanel><Produced W="200"/></SolarPanel>` (cells `W="100"` — 4826 doubled the stock `SolarPanelB_CellA` value from `W="50"`, same unit) | rev 4681: production authored in **Watts** — confirms `power/produced`, `solar/<n>/produced` are instantaneous W. |
 | Control authority (`IsControllable`) | `Core/CoreCommandAGameData.xml` | `CoreCommandA_Prefab_MediumCapsuleVariantA` has `<Control />` | rev 4699: the new Control Module is on the capsule in XML; vehicles without `<Control />` are not controllable. |
-| Engines / tanks / lights / RCS / decouplers / animations | `Core/Core*GameData.xml` (Propulsion, Electrical, Coupling, …) | `<EngineController>`, `<Tank>`/`<Mole>`, `<LightModule>`, `<ThrusterController>`, `<Decoupler>`, `<KeyframeAnimation>` | the module element names the readers/actuators bind to; no 4750 changes. |
+| Engines / tanks / lights / RCS / decouplers / animations | `Core/Core*GameData.xml` (Propulsion, Electrical, Coupling, …) | `<EngineController>`, `<Tank>`/`<Mole>`, `<LightModule>`, `<ThrusterController>`, `<Decoupler>`, `<KeyframeAnimation>` | the module element names the readers/actuators bind to; no 4750 changes; 4826 adds only `<ConnectorRef>`/`<Aligned>` (the new symmetry connectors) + `<CombustionProcess>` entries — no module element gatOS binds changed. |
 | Part template ids (dynamic add) | `Core/Core*GameData.xml` `PartGameData Id="…"` | e.g. `CoreCouplingA_Prefab_DockingPort1WA` | the string ids `ModLibrary.Get<PartTemplate>(id)` resolves (not used by `/sim` reads; reference). |
 | **`thug_life` quad shaders** | `Core/Shaders/Mesh/UnlitMesh.{vert,frag}` | the `"UnlitMeshVert"`/`"UnlitMeshFrag"` `ShaderReference` keys `ThugLifeQuadRenderer.BuildPipeline` resolves via `ModLibrary.Get<ShaderReference>(...)` | the world-space quad reuses KSA's stock unlit-mesh shaders; if these keys/assets are renamed/removed the pipeline build fails (caught, feature self-disables). |
 
@@ -106,10 +118,17 @@ breaks the draw — re-verify live):
 
 Full anchor list: [`ksa-read-surface.md#thug-life`](ksa-read-surface.md#thug-life) (anchor math),
 [`ksa-write-surface.md#thug-life`](ksa-write-surface.md#thug-life) (the seven actions),
-[`../docs/KSA_INTEGRATION_MATRIX.md`](../docs/KSA_INTEGRATION_MATRIX.md) (render set). **Current build
-verified `2026-06-28` against `2026.6.9.4750`** (compiled clean against the new render DLLs; render
+[`../docs/KSA_INTEGRATION_MATRIX.md`](../docs/KSA_INTEGRATION_MATRIX.md) (render set). **Verified
+`2026-06-28` against `2026.6.9.4750`; re-verified (static) 2026-07-03 against `2026.7.3.4826`**:
+`RenderMainPass(CommandBuffer)` byte-identical (the `SuperMeshRenderSystem.cs` diff only swaps
+`AddMacroDefinition` overloads in `Setup*Renderers`), the `UnlitMesh.{vert,frag}` assets and
+`"UnlitMeshVert"`/`"UnlitMeshFrag"` keys unchanged, `Program.OffScreenPass`/`RenderPassState` unchanged,
+and the `Part` ego members untouched by the `Part.cs` symmetry churn. The 4826 shader-compiler churn
+(`Brutal.ShaderCApi` delegates, `GlobalShaderBindings` "Frost" global binding, the new
+`NormalTextureForSampling` pre-pass G-buffer) does not reach the quad's own descriptor set/pipeline.
+Vulkan render-pass *compatibility* at draw time is only provable live — render
 internals are not as reliably changelog-covered as the gameplay APIs, so this set leans on the
-build-as-alarm + live re-verification).
+build-as-alarm + live re-verification (`docs/VALIDATION.md`).
 
 ---
 
@@ -144,6 +163,10 @@ When a changelog line mentions a subsystem, open these. (Decomp paths relative t
 
 1. **Changelog scan** — the commit log lives at `…/ksa-game-assemblies/current/version.json` (`commits[]`,
    each with `rev`, `date`, `author`, `lines[]`). Read it; flag any line matching a subsystem above.
+   ⚠️ **Check `fromRevision` first**: the log can be *incremental* (the 4826 checkout only covers
+   4824→4826, leaving 4751–4823 unlogged). If `fromRevision` > the previous baseline's `toRevision`,
+   the changelog is gapped — fall back to a full tree diff
+   (`git diff --no-index <prev>/current/decomp <new>/current/decomp`) as the discovery mechanism.
 2. **Decomp diff** — for each flagged subsystem, compare the file in both trees:
    ```
    …/ksa-game-assemblies/current/decomp/KSA/<File>.cs            (new)
@@ -158,3 +181,6 @@ When a changelog line mentions a subsystem, open these. (Decomp paths relative t
    `docs/VALIDATION.md`.
 
 The applied 4680→4750 result: [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md).
+The applied 4750→4826 result: clean pass, no code changes — recorded in the checkout table above, the
+[read](ksa-read-surface.md#4826-findings) / [write](ksa-write-surface.md) 4826 findings sections, and
+the matrix header; live re-check items in [`../docs/VALIDATION.md`](../docs/VALIDATION.md).

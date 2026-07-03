@@ -44,6 +44,12 @@ welds/IVA/parts, thug_life, per-vessel scale/always_render and `/sim/audio` chec
 require a live KSA flight; checklists are in [`docs/VALIDATION.md`](docs/VALIDATION.md). The
 purrTTY tip release is now cut.
 
+> **KSA baseline: `2026.7.3.4826`** (upgrade-ksa playbook pass 2026-07-03, from 4750): **clean — no
+> code changes needed**; build + tests green, full decomp/Content diff found no bound-member drift.
+> Behavior notes (post-decouple control-state inheritance) + the pass record live in
+> [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope pages; live re-check items appended to
+> [`docs/VALIDATION.md`](docs/VALIDATION.md).
+
 > **Whole-mod perf pass (2026-07-02):** all seven plans of
 > [`plans/GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md`](plans/GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md)
 > (GP1–GP7) are landed — zero-steady-state-alloc sampler (+"Sample alloc" tripwire in the status
