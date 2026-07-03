@@ -35,6 +35,11 @@ internal static class OpenApi
               "post": { "summary": "Write one /sim field (the `echo value > file` shape; control/debug points actuate, errno on failure)", "parameters": [{ "name": "path", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "text/plain": { "schema": { "type": "string" } } } }, "responses": { "200": { "description": "{outcome:ok}" }, "400": { "description": "EINVAL" }, "403": { "description": "EACCES" }, "404": { "description": "ENOENT" }, "409": { "description": "EBUSY" }, "501": { "description": "EOPNOTSUPP" }, "504": { "description": "ETIMEDOUT" } } }
             },
             "/events": { "get": { "summary": "Server-Sent Events stream of sim events", "responses": { "200": { "description": "text/event-stream" } } } },
+            "/audio/files": { "get": { "summary": "Uploaded audio clips (name, bytes, version, ready)", "responses": { "200": { "description": "clip list" }, "404": { "description": "audio disabled" } } } },
+            "/audio/file/{name}": {
+              "put": { "summary": "Binary clip upload (raw body; ?offset=N appends by position for chunking, ?complete=0 keeps the upload open — default commits). POST is an alias.", "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } }, { "name": "complete", "in": "query", "schema": { "type": "integer", "default": 1 } }], "requestBody": { "required": true, "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } } }, "responses": { "200": { "description": "{outcome:ok,name,bytes,ready}" }, "400": { "description": "EINVAL (bad name / non-sequential offset)" }, "413": { "description": "EFBIG (per-clip cap)" }, "507": { "description": "ENOSPC (store/count cap)" } } },
+              "delete": { "summary": "Evict a clip (playing channels finish naturally)", "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "{outcome:ok}" }, "404": { "description": "ENOENT" } } }
+            },
             "/command": {
               "post": {
                 "summary": "Submit one control command (synchronous; errno on failure)",
@@ -47,7 +52,8 @@ internal static class OpenApi
                     "ordinal": { "type": "integer", "default": -1 },
                     "value": { "type": "number" },
                     "values": { "type": "array", "items": { "type": "number" } },
-                    "token": { "type": "string" }
+                    "token": { "type": "string" },
+                    "aux": { "type": "string", "description": "secondary symbolic arg (audio.play channel id)" }
                   }
                 } } } },
                 "responses": {

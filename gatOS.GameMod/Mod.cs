@@ -7,6 +7,7 @@ using gatOS.Mqtt;
 using gatOS.NineP.Server;
 using gatOS.NineP.Vfs;
 using gatOS.SimFs;
+using gatOS.SimFs.Audio;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Display;
 using gatOS.SimFs.Snapshots;
@@ -68,6 +69,12 @@ public sealed partial class Mod
     // worker + the /sim/display/stream feed. Game-free (from gatOS.SimFs); the render-thread capture
     // (Game/Ksa/FrameCapture) feeds it. Null until init; default-off so it idles until a client enables it.
     private DisplaySurface? _displaySurface;
+
+    // The audio clip store (GATOS_CUSTOM_AUDIO_PLAN): in-memory uploaded clips + the channel-status
+    // snapshot behind /sim/audio. Game-free (from gatOS.SimFs); shared between the VFS/HTTP upload
+    // surface and the game-thread FMOD actuator (Game/Ksa/Actuators/AudioActuator). Null when
+    // [audio] enabled=false — the /sim/audio surface then does not exist on any transport.
+    private AudioStore? _audioStore;
 
     // Timing of one telemetry sample (game thread, written by the sampler; read by the status
     // window). Allocation-free; owned here so the status window can read it before the sampler
@@ -186,7 +193,11 @@ public sealed partial class Mod
             // 1 PNG + .kitty pair per second instead of publishing Kitty bytes — the tier-1/2
             // capture/encode validation used to corner the 2026-07 libghostty o=z corruption.
             _displaySurface.Start();
-            _simRoot = SimFsTree.Build(_simStore, _commandQueue, SimTransportsStatus, _displaySurface);
+            if (_config.AudioEnabled)
+                _audioStore = new AudioStore(_config.AudioMaxClipBytes, _config.AudioMaxTotalBytes,
+                    _config.AudioMaxClips, _config.AudioMaxChannels);
+            _simRoot = SimFsTree.Build(_simStore, _commandQueue, SimTransportsStatus, _displaySurface,
+                _audioStore);
             StartSimServer(port: 0);
             StartHttpServer();
             StartMqttBroker();
@@ -252,6 +263,7 @@ public sealed partial class Mod
     {
         SampleTelemetry(dt);
         DrainCommands();
+        DriveAudio(); // right after the drain: prune finished channels, enforce end=, publish status
         UpdateThugLife(); // validate/re-resolve thug-life anchors on the game thread, before the scene renders
     }
 
@@ -495,7 +507,7 @@ public sealed partial class Mod
         try
         {
             var server = new SimHttpServer(store, _commandQueue, SimTransportsStatus,
-                _config.HttpFieldEndpoints ? _simRoot : null);
+                _config.HttpFieldEndpoints ? _simRoot : null, _audioStore);
             server.StartAsync(_config.HttpPreferredPort).GetAwaiter().GetResult();
             _httpServer = server;
             ModLog.Log.Info($"gatOS HTTP API listening on 127.0.0.1:{server.Port} "
@@ -813,6 +825,7 @@ public sealed partial class Mod
     partial void DrawGameUi();
     partial void SampleTelemetry(double dt);
     partial void DrainCommands();
+    partial void DriveAudio();
     partial void InstallDisplayHook();
     partial void DisposeDisplayCapture();
     partial void DriveWelds(double dt);

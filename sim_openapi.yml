@@ -371,6 +371,122 @@ paths:
         "501": { $ref: "#/components/responses/CommandError" }
         "504": { $ref: "#/components/responses/CommandError" }
 
+  /audio/files:
+    get:
+      tags: [audio]
+      operationId: listAudioClips
+      summary: List the uploaded audio clips
+      description: |
+        The `/sim/audio/file/` store as JSON (requires `audio_enabled=true` — otherwise `404`).
+        `ready=false` marks a clip whose upload has not committed yet.
+      responses:
+        "200":
+          description: The clip list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    bytes: { type: integer }
+                    version: { type: integer }
+                    ready: { type: boolean }
+                  required: [name, bytes, version, ready]
+        "404":
+          description: Audio is disabled (`audio_enabled=false`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /audio/file/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: The clip name (single component, ≤ 64 chars, `[A-Za-z0-9._-]`).
+        schema: { type: string }
+    put:
+      tags: [audio]
+      operationId: uploadAudioClip
+      summary: Upload clip bytes (raw binary body; POST is an alias)
+      description: |
+        The one deliberately transport-specific route — the `/v1/fs` field write is UTF-8 text and
+        bodies cap at 1 MiB, so binary clip bytes get a raw-body route. A plain upload (no query)
+        replaces the clip and commits immediately. Files over the 1 MiB request cap upload in
+        chunks: every chunk passes `complete=0` except the last, and each chunk's `offset` must
+        equal the bytes sent so far (append-by-position; out-of-order → `400 EINVAL`). The commit
+        (`complete=1`, the default) mirrors the 9p clunk: only then does the clip become playable.
+      parameters:
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+          description: Byte position of this chunk; `0` starts a fresh (truncated) upload.
+        - name: complete
+          in: query
+          required: false
+          schema: { type: integer, default: 1, enum: [0, 1] }
+          description: "`0` keeps the upload open for more chunks; `1` (default) commits."
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: Chunk accepted (and committed when `complete=1`).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  outcome: { type: string, const: "ok" }
+                  name: { type: string }
+                  bytes: { type: integer }
+                  ready: { type: boolean }
+                required: [outcome, name, bytes, ready]
+        "400": { $ref: "#/components/responses/CommandError" }
+        "413":
+          description: EFBIG — the clip would exceed `audio_max_clip_bytes`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "507":
+          description: ENOSPC — the store byte cap or clip-count cap is full.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      tags: [audio]
+      operationId: uploadAudioClipPost
+      summary: Alias of PUT (same raw-body upload)
+      parameters:
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+        - name: complete
+          in: query
+          required: false
+          schema: { type: integer, default: 1, enum: [0, 1] }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200": { description: "As PUT." }
+    delete:
+      tags: [audio]
+      operationId: deleteAudioClip
+      summary: Evict a clip
+      description: The name frees immediately; channels already playing it finish naturally.
+      responses:
+        "200": { $ref: "#/components/responses/CommandOk" }
+        "404": { $ref: "#/components/responses/CommandError" }
+
   /openapi.json:
     get:
       tags: [meta]
@@ -480,7 +596,10 @@ components:
           description: Vector argument (e.g. `attitude_target` quaternion `[x,y,z,w]`, `color` `[r,g,b]`, `teleport` `[x,y,z,vx,vy,vz]`).
         token:
           type: string
-          description: Symbolic-token argument (e.g. an `attitude_mode`/`attitude_frame` name, or a `camera.focus`/`control_vessel` target id).
+          description: Symbolic-token argument (e.g. an `attitude_mode`/`attitude_frame` name, a `camera.focus`/`control_vessel` target id, or the audio clip/channel target).
+        aux:
+          type: string
+          description: Secondary symbolic argument — only `audio.play` uses it (the caller-chosen channel `id=`; omit for an auto `#N` id).
       required: [vessel_id, action]
 
     ActionKey:
@@ -491,6 +610,7 @@ components:
       enum:
         - vessel.ignite
         - vessel.shutdown
+        - vessel.engine
         - vessel.stage
         - vessel.throttle
         - vessel.lights
@@ -499,22 +619,42 @@ components:
         - vessel.attitude_frame
         - vessel.attitude_target
         - vessel.burn
+        - vessel.scale
+        - vessel.always_render
         - engine.active
         - engine.min_throttle
         - rcs.active
         - light.on
         - light.brightness
         - light.color
+        - light.outer_angle
+        - light.inner_angle
         - decoupler.fire
         - docking.undock
         - camera.focus
         - animation.goal
+        - audio.play
+        - audio.set
+        - audio.stop
         - debug.warp
         - debug.control_vessel
         - debug.teleport
         - debug.refill_fuel
         - debug.refill_battery
         - debug.docking_pushoff
+        - debug.always_render_iva
+        - debug.weld_create
+        - debug.weld_here
+        - debug.weld_remove
+        - debug.weld_enable
+        - debug.weld_clear
+        - debug.thug_life_add
+        - debug.thug_life_remove
+        - debug.thug_life_clear
+        - debug.thug_life_position
+        - debug.thug_life_rotation
+        - debug.thug_life_size
+        - debug.thug_life_visible
 
     AttitudeMode:
       type: string

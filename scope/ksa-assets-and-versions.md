@@ -134,6 +134,7 @@ When a changelog line mentions a subsystem, open these. (Decomp paths relative t
 | Decouplers | `KSA/Decoupler.cs` | `Core/CoreCouplingAGameData.xml` | reads, writes |
 | Animations / solar deploy | `KSA/KeyframeAnimationModule.cs`, `KSA/SolarTracker.cs` | `Core/…` | reads, writes |
 | Camera / menu hooks | `KSA/Program.cs`, `KSA/Camera.cs` | — | writes, runtime |
+| **Audio (FMOD playback — `/sim/audio`)** | `KSA/GameAudio.cs` (`System`, `GetChannelGroup`, the in-memory `CreateFmodSound` recipe), `KSA/ChannelGroupType.cs`; `Brutal.FmodApi/{Fmod,Mode,TimeUnit,CreateSoundExInfo,Sound,Channel,ChannelGroup}.cs` — **new `Brutal.Fmod.dll` reference** (`<Private>false</Private>`, condition-guarded like the rest) | — | writes ([`ksa-write-surface.md#audio`](ksa-write-surface.md#audio)); Low churn (FMOD Core P/Invoke mirrors upstream FMOD 5) |
 | **Render internals (`thug_life` quad)** | `KSA/SuperMeshRenderSystem.cs`, `KSA/Program.cs` (`GetRenderer`/`OffScreenPass`/`SetViewport`), `KSA/Camera.cs`, `KSA/Part.cs` (ego transforms); **Planet.Render.Core**, **Brutal.Vulkan(.Abstractions/.Vma)**, **Brutal.Core.Memory** | `Core/Shaders/Mesh/UnlitMesh.{vert,frag}` | reads (anchor math), writes (actions), runtime (render postfix) — **deepest / highest-churn coupling**; see [render refs](#render-refs) |
 | Numerics | `Brutal.Core.Numerics/` (decomp), `Brutal.Core.Numerics.dll` | — | runtime |
 

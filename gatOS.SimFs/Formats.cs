@@ -64,6 +64,15 @@ public static class Formats
            + $"{Scalar(t.Width)} {Scalar(t.Height)}";
 
     /// <summary>
+    ///     One <c>/sim/audio/status</c> row — space-separated, stable column order:
+    ///     <c>id name state pos_ms len_ms vol loop group</c> (state ∈ <c>playing</c>|<c>paused</c>).
+    /// </summary>
+    public static string AudioChannelLine(Audio.AudioChannelStatus c)
+        => $"{c.Id} {c.ClipName} {(c.Paused ? "paused" : "playing")} "
+           + $"{c.PositionMs.ToString(CultureInfo.InvariantCulture)} "
+           + $"{c.LengthMs.ToString(CultureInfo.InvariantCulture)} {Scalar(c.Volume)} {Flag(c.Loop)} {c.Group}";
+
+    /// <summary>
     ///     One NDJSON stream line for a vessel (OS_PLAN.md T8.3 shape), UTF-8 with a trailing
     ///     LF: <c>{"seq":…,"ut":…,"sit":…,"alt":{…},"vel":{…},"att":{…},"mass":{…}}</c>.
     /// </summary>

@@ -37,10 +37,12 @@ and the decisions locked in (Part 1).
 > Full per-milestone detail, class names, and as-built notes → **[`docs/MILESTONES.md`](docs/MILESTONES.md)**
 
 **All milestones through M9, plus G1–G7 (HTTP/serial/TypeScript SDK), the embedded MQTT
-transport, host folder mounts (`/mnt/<name>`), and the welds / `always_render_iva` / parts-listing
-cheats ported from `unscience`, are code-complete.** The only pending work is a set of in-game passes
-(T6.6/T9.3/G1–G4, plus the welds/IVA/parts checklist) that require a live KSA flight; checklists are in
-[`docs/VALIDATION.md`](docs/VALIDATION.md). The purrTTY tip release is now cut.
+transport, host folder mounts (`/mnt/<name>`), the welds / `always_render_iva` / parts-listing
+cheats ported from `unscience`, and the `/sim/audio` userland playback feature, are
+code-complete.** The only pending work is a set of in-game passes (T6.6/T9.3/G1–G4, plus the
+welds/IVA/parts, thug_life, per-vessel scale/always_render and `/sim/audio` checklists) that
+require a live KSA flight; checklists are in [`docs/VALIDATION.md`](docs/VALIDATION.md). The
+purrTTY tip release is now cut.
 
 | Milestone | Status | Key entry points |
 |---|---|---|
@@ -63,6 +65,7 @@ cheats ported from `unscience`, are code-complete.** The only pending work is a 
 | Welds + `always_render_iva` + parts (ex-`unscience`) | Code DONE; in-game pending | `Game/Ksa/Welds/`, `Game/Ksa/Render/IvaForceRender.cs`, `Game/Ksa/Readers/PartsReader.cs` |
 | Per-vessel `scale` + `always_render` nodes (ex-`unscience` garrys-torch scaling / i-feel-seen) | Code DONE; in-game pending | `Game/Ksa/Actuators/ScaleActuator.cs`, `Game/Ksa/Render/VesselForceRender.cs` — first-class vessel nodes outside `/sim/debug`, authority-gate-exempt (`KsaCatalog.AnyVesselActions`) |
 | `thug_life` sunglasses quad (ex-`unscience`) | Code DONE; in-game pending | `Game/Ksa/ThugLife/` (GPU quad renderer + dynamic render postfix), `SimFs` `debug/thug_life` |
+| Custom audio (`/sim/audio` — userland playback through the game's FMOD; plans/GATOS_CUSTOM_AUDIO_PLAN.md P1–P3) | Code DONE; in-game pending | `gatOS.SimFs/Audio/` (store + writable `file/` dir + play/set/stop grammar), `Game/Ksa/Actuators/AudioActuator.cs` (FMOD Sound cache/channels/tick over `GameAudio.System`; new `Brutal.Fmod.dll` ref), HTTP `/v1/audio` binary upload routes, `audio.finished` events; gated by `[audio] audio_enabled` |
 | Screen stream (`/sim/display`) | Code DONE; misrender **root-caused + fixed** (purrTTY libghostty `o=z` corruption → default `rgba`, + purrTTY content-hash re-decode; STREAM_PLAN.md §11); **perf/stability P0–P7 of [`plans/PERF_IMPROVEMENT_PLAN.md`](plans/PERF_IMPROVEMENT_PLAN.md) landed 2026-07-02, confirmed working in-game (informal pass)** (SSH read-pump, a=t keyframes, GPU blit downscale, zero-alloc encoder, demand pacing, 9p pooling + msize 512 KiB/guest v15, purrtty consumption fixes, P6: the purrTTY native rebuilt from ghostty main + `purrtty/vt-video-fixes` — the zig-0.15.2 `o=z` flate corruption and the placement-pin leak are FIXED, so `display_encoding` defaults to `rgba-zlib` again, 3–10× less wire; and P7: the native APC bulk lane, 82→1185 MiB/s consumption throughput); formal S6/S9 + P8 soak checklists still open | `SimFs/Display/`, `Game/Ksa/FrameCapture.cs` + `DisplayRenderPatch.cs` (in-band render-hook capture), `STREAM_PLAN.md` |
 | T11.1 — QEMU win-x64 | DONE | `tools/fetch-qemu.*`, `vendor/qemu/win-x64/` |
 | M10+ | **Not yet implemented** | — |
@@ -178,7 +181,11 @@ gatOS.SimFs    → NineP, Logging                       /sim tree, snapshots, st
                                                       Vector/Enum/Number/Token control files — G1+G4, built);
                                                       Display/ (the /sim/display screen stream: DisplaySettings,
                                                       KittyEncoder, DisplaySurface, DisplayStreamFile +
-                                                      control files — STREAM_PLAN.md, built; capture in GameMod)
+                                                      control files — STREAM_PLAN.md, built; capture in GameMod);
+                                                      Audio/ (the /sim/audio clip store: AudioStore caps/versioning,
+                                                      writable AudioDirectory + upload handles, AudioCommands
+                                                      play/set/stop grammar — GATOS_CUSTOM_AUDIO_PLAN, built;
+                                                      the FMOD calls live in GameMod's AudioActuator)
 gatOS.Http     → SimFs, Logging                       magic HTTP /v1 server (raw TcpListener; G5, built)
 gatOS.Bus      → SimFs, Logging                       serial/bus framing CCSDS/NMEA/SCPI + the gatos.serial
                                                       SerialBridge/Connector over QEMU virtio-serial (G7, built)
@@ -189,7 +196,8 @@ gatOS.GameMod  → Ssh, SimFs, Http, Mqtt, Bus, Vm, Logging, vendor/purrTTY,
                   KSA DLLs, StarMap.API, Lib.Harmony, ModMenu.Attributes, Tomlyn   the KSA mod (M6, built)
                   (+ the Brutal.Vulkan(.Abstractions/.Vma) + Planet.Render.Core + Brutal.Core.Memory game
                    DLLs and AllowUnsafeBlocks, for the Game/Ksa/ThugLife GPU quad renderer and the
-                   Game/Ksa/FrameCapture screen-stream readback)
+                   Game/Ksa/FrameCapture screen-stream readback; + Brutal.Fmod for the
+                   Game/Ksa/Actuators/AudioActuator FMOD playback)
 ```
 `examples/sdk-ts/` is a standalone TypeScript/Bun example SDK (G6, built — not part of the .NET
 solution); it talks to either transport behind one typed API.
@@ -284,7 +292,12 @@ host.
    that records a textured-quad draw per entry; it + its Vulkan GPU resources are installed lazily on the
    first entry and torn down on the last. A fourth game-thread work site, `Mod.UpdateThugLife` (run in
    `OnBeforeUi`), validates/re-resolves entry anchors before the scene renders, self-gating to a no-op when
-   empty. The **per-vessel `always_render` override** (`Game/Ksa/Render/VesselForceRender.cs`) follows the
+   empty. A fifth game-thread work site is the **audio tick** (`Mod.DriveAudio` → `AudioActuator.Tick`,
+   run in `OnBeforeUi` right after the command drain — the same thread that pumps FMOD via
+   `GameAudio.UpdateAudio`): it prunes finished channels, enforces `end=`, releases evicted FMOD sounds
+   and publishes the `/sim/audio/status` snapshot into the game-free `AudioStore`; all FMOD calls
+   (create/play/set/stop + the tick) happen only there and in the Frame-phase drain, and it self-gates
+   to a no-op while no channel or cached sound exists. Audio teardown rides `Mod.TeardownGameCheats`. The **per-vessel `always_render` override** (`Game/Ksa/Render/VesselForceRender.cs`) follows the
    same discipline: dynamic `Harmony("gatos.always_render")` prefixes on `Vehicle.GetWorldMatrix`/
    `UpdateRenderData` (the sub-pixel cull bypass) installed **only while ≥ 1 vessel is marked** and removed
    on the last unmark/despawn-prune/unload; its registry is mutated only on the game thread and read by the

@@ -103,6 +103,15 @@ public sealed class GatOsConfig
                 + "(raw fallback). rgba-zlib needs purrTTY's 2026-07-02+ native — older pins crash\n"
                 + "on compressible o=z payloads (purrtty gotcha 34, fixed)."),
         }),
+        ("AUDIO — userland playback through the game's speakers (/sim/audio)", new[]
+        {
+            ("audio_enabled", "Serve /sim/audio: upload clips (cat x.mp3 > /sim/audio/file/x.mp3) and play\n"
+                + "them through the game's FMOD mixer. false removes the surface entirely."),
+            ("audio_max_clip_bytes", "Per-clip size cap in bytes (a write past it fails EFBIG)."),
+            ("audio_max_total_bytes", "Store-wide byte cap across all clips (uploads past it fail ENOSPC)."),
+            ("audio_max_clips", "Maximum number of uploaded clips (ENOSPC past it)."),
+            ("audio_max_channels", "Maximum concurrent playback channels (play past it fails EBUSY)."),
+        }),
     };
 
     /// <summary>Schema version of the file (readers reject anything but <see cref="CurrentSchema"/>).</summary>
@@ -248,6 +257,23 @@ public sealed class GatOsConfig
     ///     memory-corrupts on <c>o=z</c> payloads of compressible data (purrtty gotcha 34).
     /// </summary>
     public string DisplayEncoding { get; set; } = "rgba-zlib";
+
+    // ---- AUDIO: userland playback through the game's FMOD (/sim/audio; GATOS_CUSTOM_AUDIO_PLAN). ----
+
+    /// <summary>Serve the <c>/sim/audio</c> surface; <c>false</c> removes it from every transport.</summary>
+    public bool AudioEnabled { get; set; } = true;
+
+    /// <summary>Per-clip byte cap for uploaded audio (EFBIG past it; clamped 4 KiB..256 MiB).</summary>
+    public int AudioMaxClipBytes { get; set; } = 16 * 1024 * 1024;
+
+    /// <summary>Store-wide byte cap across all uploaded clips (ENOSPC past it; never below the clip cap).</summary>
+    public int AudioMaxTotalBytes { get; set; } = 64 * 1024 * 1024;
+
+    /// <summary>Maximum number of uploaded clips (ENOSPC past it; clamped 1..1024).</summary>
+    public int AudioMaxClips { get; set; } = 64;
+
+    /// <summary>Maximum concurrent playback channels (EBUSY past it; clamped 1..64).</summary>
+    public int AudioMaxChannels { get; set; } = 16;
 
     // ---- MOUNTS: host folders shared into the guest under /mnt/<name>. ----
 
@@ -450,6 +476,11 @@ public sealed class GatOsConfig
         DisplayFps = Clamp(nameof(DisplayFps), DisplayFps, 1, 60);
         DisplayWidth = Clamp(nameof(DisplayWidth), DisplayWidth, 16, 1920);
         DisplayHeight = Clamp(nameof(DisplayHeight), DisplayHeight, 16, 1920);
+        AudioMaxClipBytes = Clamp(nameof(AudioMaxClipBytes), AudioMaxClipBytes, 4096, 256 * 1024 * 1024);
+        AudioMaxTotalBytes = Clamp(nameof(AudioMaxTotalBytes), AudioMaxTotalBytes,
+            AudioMaxClipBytes, 1024 * 1024 * 1024);
+        AudioMaxClips = Clamp(nameof(AudioMaxClips), AudioMaxClips, 1, 1024);
+        AudioMaxChannels = Clamp(nameof(AudioMaxChannels), AudioMaxChannels, 1, 64);
 
         var displayEncoding = DisplayEncoding.Trim().ToLowerInvariant();
         if (displayEncoding is not ("rgba-zlib" or "rgba"))

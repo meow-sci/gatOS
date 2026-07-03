@@ -45,6 +45,9 @@ telemetry_enabled = true
 # Sample per-vessel detail (navball/environment/per-module); off = core only.
 telemetry_vessel_detail = true
 
+# Sample the per-vessel top-level parts list (/sim/.../parts; the welds anchor picker).
+telemetry_vessel_parts = true
+
 # Sample the celestial-body catalog + system summary (/sim/bodies, /sim/system).
 telemetry_bodies = true
 
@@ -128,6 +131,24 @@ display_height = 180
 # (raw fallback). rgba-zlib needs purrTTY's 2026-07-02+ native — older pins crash
 # on compressible o=z payloads (purrtty gotcha 34, fixed).
 display_encoding = "rgba-zlib"
+
+# ===== AUDIO — userland playback through the game's speakers (/sim/audio) =====
+
+# Serve /sim/audio: upload clips (cat x.mp3 > /sim/audio/file/x.mp3) and play
+# them through the game's FMOD mixer. false removes the surface entirely.
+audio_enabled = true
+
+# Per-clip size cap in bytes (a write past it fails EFBIG).
+audio_max_clip_bytes = 16777216
+
+# Store-wide byte cap across all clips (uploads past it fail ENOSPC).
+audio_max_total_bytes = 67108864
+
+# Maximum number of uploaded clips (ENOSPC past it).
+audio_max_clips = 64
+
+# Maximum concurrent playback channels (play past it fails EBUSY).
+audio_max_channels = 16
 
 # ===== MOUNTS — host folders shared into the guest under /mnt/<name> =====
 

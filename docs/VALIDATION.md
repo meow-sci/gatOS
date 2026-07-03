@@ -252,3 +252,28 @@ and `docs/KSA_INTEGRATION_MATRIX.md` (per-vessel nodes). **All items pending a l
 | 8 | The mark **survives a scene rebuild** (staging/undock — same vessel id); despawning the vessel (recover/destroy) drops the mark automatically (`cat` of a re-spawned same-id vessel reads `0`… unless it truly is the same id, in which case still marked — verify the prune only fires on despawn) | ☐ | id-keyed registry + sampler prune |
 | 9 | With **no** vessel marked, no `gatos.always_render` patches are installed (repeated mark/unmark cycles → no double-patch, no leak); quit with marks active → clean unload | ☐ | dynamic patch lifecycle; `TeardownGameCheats` |
 | 10 | An EVA kitten marked `always_render` is **not** force-rendered (documented limitation — its `UpdateRenderData` override bypasses the patched base) | ☐ | virtual-method limitation |
+
+## `/sim/audio` (userland audio playback) — validation pass — **NOT YET RUN**
+
+Prereq: the T6.6 pass. `[audio] audio_enabled = true` and `[control] control_enabled = true` (both
+default). Bring a few real audio files (an mp3, an ogg, a wav; one of them > 1 MiB for the
+compressed-sample path). The game-free half (store, caps, grammars, tree, HTTP routes) is covered by
+`gatOS.SimFs.Tests/Audio/**`; these items exercise the FMOD half that needs a live game. See
+`SPEC_9P_FILESYSTEM.md` §3.9 and `docs/KSA_INTEGRATION_MATRIX.md` (audio playback). **All items
+pending a live flight.**
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | `cat alarm.mp3 > /sim/audio/file/alarm.mp3` from the guest; `ls -l /sim/audio/file/` shows name+size; `md5sum` of the guest file and a read-back of `/sim/audio/file/alarm.mp3` match | ☐ | chunked 9p upload + read-back |
+| 2 | `echo alarm.mp3 > /sim/audio/play` → the clip plays through the game's speakers (exit 0); repeat for an `.ogg` and a `.wav` | ☐ | container sniffing (extension irrelevant) |
+| 3 | `echo 'alarm.mp3 start=0 end=1200 vol=0.5' > /sim/audio/play` plays ~1.2 s at half volume then stops on its own | ☐ | range + tick-based `end=` |
+| 4 | `echo 'music.ogg id=bgm loop=1 vol=0.4 group=music' > /sim/audio/play` loops; the in-game **Music** slider changes its loudness while the **SFX** slider does not; a `group=sfx` play follows the SFX slider | ☐ | channel-group routing |
+| 5 | `echo 'bgm vol=0.1' > /sim/audio/set`, `pause=1`, `resume=1`, `seek=30000` each act audibly/immediately; `cat /sim/audio/status` reflects state/pos/vol per channel | ☐ | live channel control + status snapshot |
+| 6 | A clip **> 1 MiB** plays with no audible create-stall and no command timeout; two concurrent plays of that same big clip both sound | ☐ | `CreateCompressedSample` path |
+| 7 | `echo bgm > /sim/audio/stop` stops one; `echo all > /sim/audio/stop` silences everything (exit 0 even when idle); re-playing an existing `id=` restarts it (old channel replaced) | ☐ | stop/replace semantics |
+| 8 | While `music.ogg` plays: `rm /sim/audio/file/music.ogg` — playback **continues** to its natural end; re-uploading a clip mid-play never glitches the playing channel | ☐ | FMOD copy + deferred Sound release |
+| 9 | Caps produce shell-visible errnos: a clip past `audio_max_clip_bytes` fails **mid-`cat`** with `EFBIG`; filling the store → `ENOSPC`; playing while still uploading → `EBUSY`; `echo 'nope.mp3' > play` → `ENOENT`; a corrupt/garbage file plays → `EIO` | ☐ | errno vocabulary end-to-end |
+| 10 | `tail -f /sim/events` (or `grep -m1 audio.finished`) shows `audio.finished` with `<id> <clip> ended` when a clip plays out and `… stopped` on an explicit stop | ☐ | events ride the sampler |
+| 11 | Audio keeps playing at **any time-warp** (incl. > 10×) and while paused-into-menus; `cat /sim/audio/info` matches the loaded clips/caps/channels | ☐ | deliberate warp-mute bypass |
+| 12 | From the **host**: `curl -T alarm.mp3 http://127.0.0.1:4242/v1/audio/file/curl.mp3` then `curl -X POST --data 'curl.mp3' http://127.0.0.1:4242/v1/fs/audio/play` plays it; `curl http://127.0.0.1:4242/v1/audio/files` lists it; `curl -X DELETE …/v1/audio/file/curl.mp3` evicts it | ☐ | HTTP binary routes + field-mirror control |
+| 13 | Mod unload (quit) with channels playing → **immediate silence**, clean unload, no FMOD errors in the log; `[audio] audio_enabled=false` → `/sim/audio` absent and `audio.*` via `/v1/command` answers `EOPNOTSUPP` 501 | ☐ | `TeardownGameCheats` + config gate |

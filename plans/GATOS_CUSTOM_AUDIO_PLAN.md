@@ -1,5 +1,18 @@
 # GATOS_CUSTOM_AUDIO_PLAN.md — `/sim/audio`: userland audio playback through the game's FMOD
 
+> **STATUS (2026-07-02): P1–P3 LANDED (code-complete; in-game pass pending).** The store + writable
+> `file/` dir + play/set/stop grammars (`gatOS.SimFs/Audio/`), the FMOD actuator with Sound cache /
+> channel table / per-frame tick (`Game/Ksa/Actuators/AudioActuator.cs`, new `Brutal.Fmod.dll`
+> reference), ids + `set` + `status`, the HTTP binary upload routes, `audio.finished` events, config
+> `[audio]`, 100 unit tests, and the full docs lockstep (SPEC §3.9/§5.1/§7, scope, matrix,
+> VALIDATION checklist, both OpenAPI docs, gatos skill) are all in. Implementation choices made at
+> the decision points left open below: `Mode.CreateCompressedSample` **exists** in the binding (no
+> stream fallback needed); the `id=` slot became the new optional `SimCommand.Aux` string (the
+> plan's preferred option); `end=` stays tick-based (GetPosition — correct under `pitch=`, so the
+> P3 DSP-clock upgrade was deliberately not taken); HTTP uploads default `complete=1` (chunked
+> callers pass `complete=0`). P4 (spatial `at=`, raw PCM, procedural feeds) remains unbuilt
+> stretch. Remaining work: the `docs/VALIDATION.md` `/sim/audio` in-game checklist.
+
 ## Goal
 
 Let ordinary gatOS userland programs play **real audio** (mp3 / ogg / wav / flac) through the

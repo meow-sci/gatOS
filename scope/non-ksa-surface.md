@@ -61,6 +61,7 @@ Ports + disk layout table: [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md#port
 | Control files | `Commands/{ControlFile,TriggerFile,VectorControlFile,EnumControlFile,NumberControlFile,TokenControlFile}.cs` | the writable `/sim` leaves |
 | JSON / formats | `SimJson.cs`, `Formats.cs`, `Sanitize.cs` | the one read projection HTTP+MQTT share; 9p file formats; NaN/Inf scrub |
 | Telemetry gating | `TelemetrySettings.cs` | runtime-mutable cadence + per-stream gates (read by the sampler each tick) |
+| Audio clip store | `Audio/AudioStore.cs`, `AudioDirectory.cs`, `AudioCommands.cs` | in-memory uploaded clips behind `/sim/audio` (caps, versioning, ready-on-clunk), the writable `file/` VFS dir + upload handles, the `play`/`set`/`stop` grammars, the channel-status snapshot and the bounded `audio.finished` event queue — the FMOD calls themselves are the write surface's concern ([`ksa-write-surface.md#audio`](ksa-write-surface.md#audio)) |
 
 > `SimSnapshot` and `SimCommand` are the **firewall**: KSA types stop here. `EventDiffer` only diffs
 > snapshots, so it inherits — but never widens — the KSA reads. See

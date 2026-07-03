@@ -707,6 +707,59 @@ always on, not detail-gated); `SimFsTree` `NumberControl`/`FlagControl` nodes be
 
 ---
 
+## Custom audio playback: `/sim/audio` (GATOS_CUSTOM_AUDIO_PLAN P1–P3): Code DONE; in-game pass pending
+
+Userland audio through the game's speakers, landed 2026-07-02 — upload real mp3/ogg/wav/flac bytes
+with plain file writes and play them through KSA's own FMOD mixer. `cat alarm.mp3 >
+/sim/audio/file/alarm.mp3; echo 'alarm.mp3' > /sim/audio/play`. This supersedes (and drops) the
+purrTTY terminal-escape audio plan — no terminal protocol, no bells.
+
+**Game-free half** (`gatOS.SimFs/Audio/`): `AudioStore` — in-memory clip table (name → immutable
+committed `byte[]` + version) under one lock, with per-clip (`EFBIG`) / total-bytes / clip-count
+(`ENOSPC`) caps enforced **per write** so the failing `write(2)` carries the errno; ready-on-commit
+semantics (a clip is invisible to `play` until its upload clunks / HTTP `complete=1`); the
+volatile-swapped channel-status snapshot the game thread publishes; a bounded (64) `audio.finished`
+event queue the sampler drains; and the session-less HTTP chunked-upload state. `AudioDirectory` /
+`AudioClipFile` — the writable `file/` dir (9p `Tlcreate` + chunked `Twrite`s + clunk-commit,
+`O_TRUNC` truncate-replace with version bump, `O_APPEND` via ready-bytes seeding, `Tunlinkat` evict,
+binary read-back; `IsStreaming=true` opts clips out of the scalar field mirrors). `AudioCommands` —
+the `play`/`set`/`stop` grammars parsed fully in SimFs (EINVAL at the write; unit-testable game-free)
+into `audio.*` `SimCommand`s: play carries the fixed 7-slot values array + the clip name in `Token` +
+the optional `id=` in the **new `SimCommand.Aux`** slot (the one optional aux string the plan called
+for); set carries (key,value) pairs; stop a bare target token. New errnos `EPERM`/`EFBIG` added to
+`LinuxErrno`.
+
+**Game half** (`Game/Ksa/Actuators/AudioActuator.cs`, 3 `[KsaAnchor]`s; new condition-guarded
+`Brutal.Fmod.dll` reference): drives `GameAudio.System` (public static) with the game's own idioms —
+`TryCreateSound(bytes, OpenMemory|_2d|CreateSample≤1MiB / CreateCompressedSample>1MiB, exInfo{Length})`
+(FMOD copies + sniffs the container; cached per clip-version), `TryPlaySound(paused:true)` → configure
+(position/loop/loop-points/volume/pan/pitch) → unpause, channel-group routing so the in-game
+Sfx/Music/UI sliders govern playback. Channel table keyed by caller `id=` or auto `#N` (id reuse
+replaces; `audio_max_channels` → `EBUSY`). Per-frame tick (`Mod.DriveAudio`, `OnBeforeUi` after the
+drain — the **fifth game-thread work site**, self-gating when empty, `_audioDead` session latch):
+prune finished channels (a recycled FMOD handle answering non-Ok *is* the completion signal), enforce
+`end=` by position (~16 ms, correct under `pitch=`), release evicted sounds only once unreferenced
+(never mid-playback), publish status (pos quantized 100 ms), emit `audio.finished` (`ended`/`stopped`/
+`replaced`) — folded into `SimSnapshot.NewEvents` by the sampler (honors the `telemetry_events` gate).
+Deliberate: playback ignores the >10× warp SFX mute. `KsaCatalog` routes `audio.*` vessel-agnostically
+before vehicle resolution (`EOPNOTSUPP` when disabled); teardown via `TeardownGameCheats` →
+`Shutdown()` (stop all, release all, clear store).
+
+**Transports:** play/set/stop/status/info ride the shared machinery (field mirror + `/v1/command` +
+`gatos/command` — the `aux` field added to both JSON command parsers and both OpenAPI docs). The
+**one deliberate parity exception**: dedicated binary upload routes `PUT/POST
+/v1/audio/file/<name>[?offset&complete]` (chunked, append-by-position, commit mirrors clunk) +
+`DELETE` + `GET /v1/audio/files` (the field-write path is UTF-8/1 MiB-capped); MQTT gets no upload.
+Config `[audio]`: `audio_enabled` (off ⇒ the surface is absent everywhere) + the four caps, clamped
+in `Normalize()`. Tests: `gatOS.SimFs.Tests/Audio/{AudioStoreTests,AudioCommandsTests,AudioTreeTests}`
+(100 tests: caps/versioning/ready, chunked offsets, grammar → exact commands, errnos on the 9p wire,
+status/info rendering, field-mirror exclusion, HTTP chunk semantics). Catalog: `SPEC_9P_FILESYSTEM.md`
+§3.9 + §5.1 + §7; `scope/ksa-write-surface.md#audio`; `docs/KSA_INTEGRATION_MATRIX.md` (audio
+playback). **Pending: the in-game pass** (checklist in `docs/VALIDATION.md`) — the FMOD half cannot
+be exercised headlessly.
+
+---
+
 ## Suite totals and pending work
 
 **Full non-IT suite**: green, zero warnings.
@@ -715,9 +768,9 @@ always on, not detail-gated); `SimFsTree` `NumberControl`/`FlagControl` nodes be
 (including the 43 additional tests from the 2026-06-13 hardening review). The
 `HostMountIntegrationTests` fixture requires guest v10 to be published.
 
-**Still pending: the in-game passes** — T6.6/T9.3/G1–G4 and the welds/IVA/parts, thug_life, and
-per-vessel `scale`/`always_render` checklists in `docs/VALIDATION.md` are runnable now that the
-purrTTY tip release is cut, but need a live KSA flight to complete.
+**Still pending: the in-game passes** — T6.6/T9.3/G1–G4 and the welds/IVA/parts, thug_life,
+per-vessel `scale`/`always_render`, and `/sim/audio` checklists in `docs/VALIDATION.md` are runnable
+now that the purrTTY tip release is cut, but need a live KSA flight to complete.
 
 **Next**: M10 (persistence & savegame shape). Everything past M9 is not yet implemented, with
 the single exception of T11.1 (QEMU win-x64 bundle) which was pulled forward and is done.

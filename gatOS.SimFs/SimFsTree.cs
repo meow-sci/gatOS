@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using gatOS.NineP.Protocol;
 using gatOS.NineP.Vfs;
+using gatOS.SimFs.Audio;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Display;
 using gatOS.SimFs.Snapshots;
@@ -69,9 +70,16 @@ public static class SimFsTree
     ///     <c>encoding</c> control files and the binary <c>stream</c> feed). Supplied by the game mod,
     ///     which owns the render-thread capture.
     /// </param>
+    /// <param name="audio">
+    ///     Optional audio clip store (GATOS_CUSTOM_AUDIO_PLAN): when supplied the tree gains the
+    ///     <c>/sim/audio/</c> surface — the writable <c>file/</c> clip directory, the
+    ///     <c>play</c>/<c>set</c>/<c>stop</c> controls (with a command sink), and the
+    ///     <c>status</c>/<c>info</c> reads. Null (audio disabled in config) removes the surface
+    ///     entirely so the SPEC stays truthful.
+    /// </param>
     public static VfsDirectory Build(SnapshotStore store, ICommandSink? commands, Func<string>? transports,
-        DisplaySurface? display = null)
-        => new Builder(store, commands, transports, display).BuildRoot();
+        DisplaySurface? display = null, AudioStore? audio = null)
+        => new Builder(store, commands, transports, display, audio).BuildRoot();
 
     private sealed class Builder
     {
@@ -79,16 +87,18 @@ public static class SimFsTree
         private readonly ICommandSink? _commands;
         private readonly Func<string>? _transports;
         private readonly DisplaySurface? _display;
+        private readonly AudioStore? _audio;
         private readonly ConcurrentDictionary<string, ulong> _qids = new();
         private long _nextQid;
 
         internal Builder(SnapshotStore store, ICommandSink? commands, Func<string>? transports,
-            DisplaySurface? display)
+            DisplaySurface? display, AudioStore? audio)
         {
             _store = store;
             _commands = commands;
             _transports = transports;
             _display = display;
+            _audio = audio;
         }
 
         internal VfsDirectory BuildRoot()
@@ -121,6 +131,10 @@ public static class SimFsTree
             // The screen stream (STREAM_PLAN.md): present whenever a display surface is wired.
             if (_display is not null)
                 children.Add(DisplayDir());
+
+            // Userland audio playback (GATOS_CUSTOM_AUDIO_PLAN): present whenever a store is wired.
+            if (_audio is not null)
+                children.Add(AudioDir());
 
             var fixedChildren = children.ToArray();
             return new DelegateDirectory("/", Qid("/"), () => fixedChildren);
@@ -280,6 +294,49 @@ public static class SimFsTree
                 Line("display/format", "format",
                     () => $"{settings.Width}x{settings.Height}@{settings.Fps} {settings.Encoding.Token()}"),
                 new DisplayStreamFile("stream", Qid("display/stream"), _display!));
+        }
+
+        // ---- audio (userland playback through the game's FMOD — GATOS_CUSTOM_AUDIO_PLAN) ----
+
+        /// <summary>
+        ///     The <c>/sim/audio</c> surface: the writable <c>file/</c> clip directory (upload with
+        ///     <c>cat clip.mp3 &gt; file/&lt;name&gt;</c>, evict with <c>rm</c>), the
+        ///     <c>play</c>/<c>set</c>/<c>stop</c> line controls (present only when a command sink is
+        ///     wired — they actuate FMOD on the game thread), and the <c>status</c>/<c>info</c>
+        ///     reads off the actuator-published snapshot (never game state).
+        /// </summary>
+        private VfsDirectory AudioDir()
+        {
+            var store = _audio!;
+            var children = new List<VfsNode>
+            {
+                new AudioDirectory("file", Qid("audio/file"), store, Qid),
+                new StaticTextFile("status", Qid("audio/status"),
+                    () => string.Concat(store.Channels.Select(c => Formats.AudioChannelLine(c) + "\n"))),
+                Line("audio/info", "info", () => AudioInfoLine(store)),
+            };
+            if (_commands is { } sink)
+            {
+                children.Add(LineControlFile.Create("play", Qid("audio/play"), sink,
+                    () => "", AudioCommands.ParsePlay));
+                children.Add(LineControlFile.Create("set", Qid("audio/set"), sink,
+                    () => "", AudioCommands.ParseSet));
+                children.Add(LineControlFile.Create("stop", Qid("audio/stop"), sink,
+                    () => "", AudioCommands.ParseStop));
+            }
+
+            return DelegateDirectory.Fixed("audio", Qid("audio"), children.ToArray());
+        }
+
+        /// <summary>The <c>/sim/audio/info</c> summary line (store usage + caps + live channel count).</summary>
+        private static string AudioInfoLine(AudioStore store)
+        {
+            var (clips, bytes) = store.Usage();
+            return $"enabled=1 clips={clips} clips_max={store.MaxClips} "
+                   + $"bytes={bytes.ToString(CultureInfo.InvariantCulture)} "
+                   + $"bytes_max={store.MaxTotalBytes.ToString(CultureInfo.InvariantCulture)} "
+                   + $"clip_bytes_max={store.MaxClipBytes.ToString(CultureInfo.InvariantCulture)} "
+                   + $"channels={store.Channels.Count} channels_max={store.MaxChannels}";
         }
 
         /// <summary>Applies a <c>0</c>/<c>1</c> (or true/false/on/off) token; false = EINVAL.</summary>
