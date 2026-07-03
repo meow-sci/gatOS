@@ -31,6 +31,14 @@ polished `.mdx` page. It does **not** teach the sim — that's the `gatos` skill
 | Sidecar | When |
 |---|---|
 | [`authoring.md`](authoring.md) | **Starlight/MDX mechanics**: frontmatter, file placement, sidebar, the components (asides, `<Tabs>`, `<Steps>`, `<Code>`, `<Card>`), the synced dual-transport tabs pattern, linking, the dev server, build/preview |
+
+> **Component/framework depth:** `authoring.md` is the tutorial-focused digest. For the full
+> component + frontmatter + syntax reference, use the [`starlight`](../starlight/SKILL.md) skill (every
+> built-in component's exact props: `Aside`, `Tabs`, `Steps`, `FileTree`, `Card`/`CardGrid`,
+> `LinkCard`, `LinkButton`, `Badge`, `Icon`, `Code`; the frontmatter schema; asides + Expressive-Code
+> syntax) and the [`astro`](../astro/SKILL.md) skill (the framework under it: MDX mechanics, content
+> collections, the `/gatOS/` base-prefix link rule, build/dev). Reach for those when a page needs a
+> component `authoring.md` doesn't spell out.
 | [`curriculum.md`](curriculum.md) | **the tutorial ladder** — the ordered beginner→advanced series, each entry's goal, prerequisites, `/sim` surface, and gotchas. Consult before writing *any* tutorial so it fits the progression |
 | [`snippets.md`](snippets.md) | **the reusable helper library** every tutorial copies — connection/transport-select, read/write, the verbatim Body→CCI quaternion, vector math, gating, sim-time pacing — in Python (in-guest), Bun/TS (host), and shell |
 

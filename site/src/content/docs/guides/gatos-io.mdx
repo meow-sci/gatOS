@@ -1,0 +1,259 @@
+---
+title: Your gatOS Toolkit
+description: Before writing any flight programs, build two tiny reusable Python modules — one for reading and writing /sim, one for the frame math — so every later tutorial stays short.
+sidebar:
+  label: Your gatOS toolkit
+  order: 3
+---
+
+import { FileTree, Steps, Aside, LinkCard } from "@astrojs/starlight/components";
+
+Every program you write in gatOS starts the same way: open a file under `/sim`, read a number,
+maybe write one back. That's the whole API. There's no SDK to install, no client to configure — the
+_live simulation is a filesystem_, and `open()` is your spacecraft's control panel.
+
+The catch is that "open a file, split the text into numbers" gets old fast when you copy-paste it into
+every script. So before we fly anything, we're going to spend ten minutes building a **tiny toolkit**:
+two little Python files full of the boring-but-essential plumbing. Do it once here, and every tutorial
+after this gets to skip straight to the fun part.
+
+## Before you start
+
+- **Python in the guest.** If you haven't already: `apk add python3`.
+- **A rough feel for CCI.** We'll read a position in the CCI frame at the end. If "CCI" makes you
+  squint, take five minutes with [Reference Frames](/gatOS/guides/reference-frames/) first — it's the
+  gentle, no-math version. You don't _need_ it to follow along, but it'll make the payoff land.
+
+## Why a toolkit, and not one giant script
+
+You could absolutely cram everything into a single file and never look back. Plenty of people do. But
+the programs in this series build on each other, and they _all_ need the same two things:
+
+- a way to **talk to `/sim`** — read a value, write a control, without fussing over text parsing;
+- a bit of **vector and quaternion math** — the stuff that turns "point over there" into numbers the
+  flight computer understands.
+
+So we'll split those into two files you'll `import` everywhere: `gatos_io.py` and `gatos_frames.py`.
+Think of them as the ship's wiring. You lay it down once; after that you just flip switches.
+
+<Aside type="note" title="These aren't for a fancy IDE">
+  These are gatOS scripts — you'll write and run them in a terminal, over SSH, probably in `vi`. So
+  the code stays deliberately lean: short single-line comments, no sprawling docstrings. The _real_
+  explanation lives here on the page, where you've got room to read it. The code just does the thing.
+</Aside>
+
+## The folder we'll work in
+
+Keep everything for this series in one directory so the imports Just Work — Python looks for imported
+modules right next to the script that's running. We'll use `~/flight`:
+
+<FileTree>
+
+- ~/
+  - flight/
+    - gatos_io.py       read & write `/sim`
+    - gatos_frames.py   vectors + the Body→CCI quaternion
+    - whereami.py       our first tiny program
+    - ...               (every later tutorial's program lands here too)
+
+</FileTree>
+
+Make it and hop in:
+
+```sh
+mkdir -p ~/flight && cd ~/flight
+```
+
+## File 1 — `gatos_io.py`, talking to the sim
+
+Here's the whole thing. Drop it in `~/flight/gatos_io.py`:
+
+```python title="~/flight/gatos_io.py"
+# Read and write the gatOS /sim filesystem. Everything in /sim is plain text.
+
+SIM = "/sim"
+
+# Read a /sim path (relative to /sim) and hand back the raw text, trimmed.
+def read(path):
+    with open(f"{SIM}/{path}") as f:
+        return f.read().strip()
+
+# A scalar is one number on a line.
+def read_scalar(path):
+    return float(read(path))
+
+# A vector is "x y z" (a quaternion is "x y z w") — split into a list of floats.
+def read_vec(path):
+    return [float(t) for t in read(path).split()]
+
+# Writing a ctl/ file actuates the game on the newline. A rejected command comes
+# back as a real errno (EACCES if control is off, EINVAL for a bad value, ...),
+# which Python raises as OSError — so a failed write is loud, not silent.
+def write(path, value):
+    with open(f"{SIM}/{path}", "w") as f:
+        f.write(str(value) + "\n")
+
+# Write a vector/quaternion back as space-separated values.
+def write_vec(path, values):
+    write(path, " ".join(str(v) for v in values))
+```
+
+What's actually going on here, in slightly more words than the comments allow:
+
+- **Reading is just reading.** `/sim` hands you plain text with a trailing newline, so `.strip()`
+  tidies it and `float(...)` or a `.split()` turns it into numbers. `read_scalar` is for a single
+  value like `mass/total`; `read_vec` is for anything with several numbers on one line — a position,
+  a velocity, a quaternion.
+- **Writing is where the magic (and the danger) is.** When you write to a `ctl/` file, gatOS doesn't
+  just store your text — it _acts_ on it the moment the newline lands: throttles the engine, swings
+  the ship, whatever that file controls. And if the game refuses (you're not the active vessel,
+  control's disabled, the value's nonsense), the write fails with a genuine Linux errno. Because we
+  use a normal `open(...).write(...)`, that surfaces as an `OSError` you can catch — no silent
+  no-ops. We'll lean on this hard once we start actuating things.
+- **`write_vec` is a convenience** so we never hand-format `"0.1 0.2 0.3 0.9"` by hand. It'll pay off
+  the instant we send the flight computer a quaternion.
+
+That's the entire "how do I talk to the simulation" problem, solved once.
+
+## File 2 — `gatos_frames.py`, the math we keep needing
+
+The second file holds the geometry. Most of it is the vector arithmetic you'd expect in any 3D
+frame — because CCI _is_ just a normal right-handed 3D frame. The one piece worth staring at is the
+quaternion builder at the bottom; more on that below. Save this as `~/flight/gatos_frames.py`:
+
+```python title="~/flight/gatos_frames.py"
+# Vector math and the Body->CCI attitude quaternion. CCI is an ordinary
+# right-handed 3D frame, so the vector helpers are the usual textbook ones.
+import math
+
+def cross(a, b): return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]
+def dot(a, b):   return sum(x*y for x, y in zip(a, b))
+def norm(a):     return math.sqrt(dot(a, a))          # length of a vector
+def unit(a):     n = norm(a); return [c/n for c in a] # same direction, length 1
+def neg(a):      return [-c for c in a]               # flip a vector around
+
+# Build the Body->CCI quaternion [x, y, z, w] from the three body axes written
+# in CCI (as rows). This is a VERBATIM port of KSA's own
+# doubleQuat.CreateFromRotationMatrix (Shepperd's method) — a generic quaternion
+# library uses a different sign convention and steers the wrong way.
+def from_rows(r0, r1, r2):
+    m00, m01, m02 = r0
+    m10, m11, m12 = r1
+    m20, m21, m22 = r2
+    tr = m00 + m11 + m22
+    if tr > 0.0:
+        s = math.sqrt(tr + 1.0); w = 0.5 * s; s = 0.5 / s
+        return [(m12 - m21) * s, (m20 - m02) * s, (m01 - m10) * s, w]
+    elif m00 >= m11 and m00 >= m22:
+        s = math.sqrt(1.0 + m00 - m11 - m22); inv = 0.5 / s
+        return [0.5 * s, (m01 + m10) * inv, (m02 + m20) * inv, (m12 - m21) * inv]
+    elif m11 > m22:
+        s = math.sqrt(1.0 + m11 - m00 - m22); inv = 0.5 / s
+        return [(m10 + m01) * inv, 0.5 * s, (m21 + m12) * inv, (m20 - m02) * inv]
+    else:
+        s = math.sqrt(1.0 + m22 - m00 - m11); inv = 0.5 / s
+        return [(m20 + m02) * inv, (m21 + m12) * inv, 0.5 * s, (m01 - m10) * inv]
+
+# Body->CCI quaternion that points body +X (the nose/thrust axis) along `aim`.
+# `roll_ref` only pins the otherwise-free spin about that axis.
+def body_to_cci(aim, roll_ref):
+    x = unit(aim)                                     # +X: where the nose points
+    c = cross(x, roll_ref)
+    if norm(c) < 1e-9:                                # aim parallel to roll_ref: roll is free
+        a = [1.0, 0.0, 0.0] if abs(x[0]) < 0.9 else [0.0, 1.0, 0.0]
+        y = unit(cross(x, a))
+    else:
+        y = unit(c)
+    z = unit(cross(x, y))                             # +Z completes a right-handed triad
+    return from_rows(x, y, z)
+```
+
+The vector helpers (`cross`, `dot`, `norm`, `unit`, `neg`) are exactly what they say on the tin, and
+you'll use them constantly. Don't overthink them.
+
+The two functions at the bottom are the reason this file exists, and they deserve a word of warning:
+
+<Aside type="caution" title="Borrow this quaternion, don't reinvent it">
+  `from_rows` looks like something you could grab from any math library — and that's the trap. It is a
+  **line-for-line port of the arithmetic KSA itself uses** to turn an orientation into a quaternion. A
+  generic library (gl-matrix, a kOS-style convention, whatever) uses a different sign or handedness,
+  _looks_ correct, and then steers your ship the wrong way. Copy this one as-is and you'll never think
+  about it again. That's the whole point of putting it in a module.
+</Aside>
+
+`body_to_cci` is the friendly front door: you hand it a direction you want the nose pointing, and it
+returns the quaternion the flight computer wants. We won't dwell on _how_ it packs the three axes
+together — the next tutorial puts it to work, and that's when it'll click.
+
+## Take it for a spin
+
+Two modules, zero programs — let's fix that. We'll write the smallest thing that proves the toolkit
+works: read where a vessel is, right now, and report it.
+
+Save this as `~/flight/whereami.py`:
+
+```python title="~/flight/whereami.py"
+#!/usr/bin/env python3
+# Read a vessel's CCI position and report it. Run: python3 whereami.py <VesselId>
+import sys
+from gatos_io import read_vec
+from gatos_frames import norm
+
+vessel = sys.argv[1]                                  # a vessel's name IS its id, e.g. "Hunter"
+pos = read_vec(f"vessels/by-id/{vessel}/position/cci")
+
+# Diagnostics go to stderr, so stdout stays clean for real output you might pipe.
+print(f"{vessel} is at {pos} in CCI", file=sys.stderr)
+print(f"  {norm(pos):.0f} m from the parent body's center", file=sys.stderr)
+```
+
+Look how little there is. The two `import` lines pull in the plumbing, and the actual program is one
+read and two prints. _That's_ the toolkit earning its keep — and every tutorial from here on gets to
+be this short.
+
+A couple of things worth noticing:
+
+- **`vessels/by-id/<name>/position/cci`** is the vessel's position in CCI — the arrow from the parent
+  body's center out to the ship, in meters. `read_vec` turns `"6578100 0 0"` into `[6578100.0, 0.0,
+  0.0]`, and `norm` tells us how far out that is.
+- **We print to `stderr`, on purpose.** In a Unix world, `stdout` is for _data_ — the stuff you might
+  pipe into `jq`, redirect to a file, or feed to another program. Chatty human-readable status
+  belongs on `stderr`, where it won't pollute that stream. It's a small habit that pays off the moment
+  you start chaining gatOS scripts together, so we're building it in from day one.
+
+## Run it
+
+Find a vessel id, then point `whereami.py` at it:
+
+```sh title="~/flight"
+ls /sim/vessels/by-id        # see what's flying
+python3 whereami.py Hunter   # swap in a real id
+```
+
+You should see something like:
+
+```
+Hunter is at [6578100.0, 0.0, 0.0] in CCI
+  6578100 m from the parent body's center
+```
+
+Numbers on your screen that came straight out of a running spacecraft, read with nothing but
+`open()`. The toolkit works. That's the foundation for everything else.
+
+<Aside type="tip" title="The same files, from your own machine">
+  Everything here reads `/sim` from _inside_ the guest, which is the simplest place to start. gatOS
+  also mirrors that exact filesystem over HTTP, so a program on your host can fetch the same values
+  with a plain web request. We'll stick with in-guest Python through these early tutorials; just know
+  the door's there when you want it.
+</Aside>
+
+## What's next
+
+You've got a working toolkit and a program that reads live state. The obvious next move is to _write_
+some — to reach into `gatos_frames.py`, aim a ship, and hand the result to its flight computer.
+
+<LinkCard
+  title="Next: Point at Parent"
+  href="/gatOS/guides/vessel-control-point-at-parent/"
+  description="Use the toolkit you just built to swing a vessel's nose around to face the planet it's orbiting — your first program that actually flies something."
+/>

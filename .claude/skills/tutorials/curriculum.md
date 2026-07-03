@@ -16,7 +16,25 @@ rungs lean on. They deliberately skip the dual-transport/code machinery (nothing
 
 | Slug (`guides/…`) | Teaches | Feeds | Status |
 |---|---|---|---|
-| `frames` | KSA reference frames in plain language, focused on **CCI** (the frame gatOS I/O lives in); uses the KSA devs' diagrams (copied into `site/src/assets/frames/`) + one custom SVG for the "aim = −position" trick | rungs 4, 5, 7, 12 | **done** |
+| `reference-frames` | KSA reference frames in plain language, focused on **CCI** (the frame gatOS I/O lives in); uses the KSA devs' diagrams (copied into `site/src/assets/frames/`) + one custom SVG for the "aim = −position" trick | the toolkit + every flight rung | **done** |
+
+## Setup — the reusable toolkit (a pre-tutorial every later rung imports)
+
+Before the actuating rungs, one **setup page** builds the shared Python toolkit the whole series
+reuses, so later tutorials stay short (read → decide → write, plumbing already done). It's a real
+(tiny) program, not a concept primer — it ends by reading a live CCI value and printing it to stderr.
+
+| Slug (`guides/…`) | Builds | Feeds | Status |
+|---|---|---|---|
+| `gatos-io` (**"Your gatOS Toolkit"**) | two importable modules in `~/flight/`: **`gatos_io.py`** (`read`/`read_scalar`/`read_vec`/`write`/`write_vec` over `/sim`) and **`gatos_frames.py`** (`cross`/`dot`/`norm`/`unit`/`neg` + the verbatim `from_rows`/`body_to_cci` quaternion) | every flight rung from `point-at-parent` on | **done** |
+
+**The module split is the convention now:** published tutorials `from gatos_io import …` /
+`from gatos_frames import …` rather than re-pasting I/O and quaternion code. The two files mirror the
+Python half of [`snippets.md`](snippets.md) (still the canonical source of the helper text) — split
+into an **I/O** module and a **frames/math** module. When you write a new rung, import the toolkit;
+only paste a helper inline if it's genuinely new, then also add it to the relevant module here and in
+`snippets.md`. Keep the code lean (short single-line comments, **no docstrings** — these are run in a
+terminal/`vi`, not a big IDE); put the real explanation in the page prose.
 
 ## The ladder at a glance
 
@@ -27,7 +45,7 @@ rungs lean on. They deliberately skip the dual-transport/code machinery (nothing
 | 2 | `throttle-and-ignite` | first writes: actuate + read the errno | 1 | to write |
 | 3 | `staging-and-modules` | one-shots, master toggles, per-module files | 2 | to write |
 | 4 | `attitude-modes` | the onboard flight computer via **named modes** (no math) | 2 | to write |
-| 5 | `point-at-parent` | CCI frame + custom **Body→CCI quaternion** | 4 | **WIP page exists** |
+| 5 | `vessel-control-point-at-parent` | CCI frame + custom **Body→CCI quaternion**, via the toolkit | `gatos-io`, `reference-frames` | **done** |
 | 6 | `wait-in-sim-time` | pace in **sim time**, not wall time | 1 | to write |
 | 7 | `hold-a-lock` | the **control loop** + gating (pause/warp/stale) | 5, 6 | to write |
 | 8 | `orbital-math` | constants + the vis-viva / circular-orbit cheat-sheet | 1 | to write |
@@ -80,14 +98,18 @@ rungs lean on. They deliberately skip the dual-transport/code machinery (nothing
 - **Both transports:** `echo Prograde > …/ctl/attitude_mode` vs `POST /v1/fs/…`.
 - **Gotchas:** **solver-phase latency** (~10 Hz, a tick late) — introduce it here; `manual` releases.
 
-### 5. `point-at-parent` — a custom direction (**WIP page already exists**)
+### 5. `vessel-control-point-at-parent` — a custom direction (**done**)
 - **Goal:** aim the nose at the parent body with a computed quaternion.
 - **Surface:** `position/cci`, `ctl/attitude_target`.
 - **New idea:** the **CCI frame** (origin = body center → aim = `-position/cci`); the **Body→CCI
   quaternion** (body +X = thrust axis); why to use KSA's exact arithmetic, not a generic lib.
 - **Note:** the page [`vessel-control-point-at-parent.mdx`](../../../site/src/content/docs/guides/vessel-control-point-at-parent.mdx)
-  is the model for the whole series — finish/polish it (add the HTTP transport tab) rather than
-  rewrite. Contrast with rung 4's shortcut (`RadialIn` does this for free) in a `:::tip`.
+  is the **model for the whole series' house style**. It now **imports the `gatos-io` toolkit**
+  (`from gatos_io import read_vec, write_vec` / `from gatos_frames import neg, body_to_cci`), so the
+  program is ~4 meaningful lines and the explanation lives in the prose. It opens with a
+  prerequisites `<Steps>` linking `reference-frames` + `gatos-io`. Contrast with rung 4's shortcut
+  (`RadialIn` does this for free) in the closing `:::tip`. (A future polish could add the HTTP
+  transport tab; today it's in-guest Python to match the toolkit.)
 
 ### 6. `wait-in-sim-time` — pace correctly
 - **Goal:** do something, wait 300 sim-seconds, do the next thing — correctly under warp/pause.

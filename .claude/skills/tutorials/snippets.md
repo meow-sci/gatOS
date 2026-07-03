@@ -13,8 +13,19 @@ The quaternion is a verbatim port of KSA's own arithmetic (see the caution at th
 
 ## Python — in-guest (`/sim` file I/O)
 
+> **Published convention: this Python toolkit ships as two importable modules, not one paste.** The
+> [`gatos-io` setup tutorial](../../../site/src/content/docs/guides/gatos-io.mdx) has the reader build
+> **`gatos_io.py`** (the I/O half — `read`/`read_scalar`/`read_vec`/`write`/`write_vec`) and
+> **`gatos_frames.py`** (the math half — `cross`/`dot`/`norm`/`unit`/`neg` + `from_rows`/`body_to_cci`)
+> in `~/flight/`, and later rungs `from gatos_io import …` / `from gatos_frames import …` instead of
+> re-pasting. The block below is the **canonical source of those helpers' bodies** (keep it in sync);
+> the modules are just this text split I/O-vs-frames. In the *modules* the comments are trimmed to
+> terse one-liners (no docstrings — they run in a terminal, not an IDE); the fuller explanation lives
+> in the tutorial prose. `time`-based pacing lives with the sim-time rung, not the two base modules.
+
 ```python
-# gatos.py — the in-guest toolkit. Import into any tutorial program.
+# The in-guest toolkit, shown as one block. In the published tutorials this is split into
+# gatos_io.py (reads/writes) + gatos_frames.py (vectors + quaternion) — see the note above.
 import math, time, json
 
 SIM = "/sim"
