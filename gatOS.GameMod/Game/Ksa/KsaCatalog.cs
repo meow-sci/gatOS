@@ -1,5 +1,6 @@
 using Brutal.Numerics;
 using gatOS.GameMod.Game.Ksa.Actuators;
+using gatOS.GameMod.Game.Ksa.Render;
 using gatOS.GameMod.Game.Ksa.ThugLife;
 using gatOS.GameMod.Game.Ksa.Welds;
 using gatOS.SimFs.Commands;
@@ -66,10 +67,10 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
                 return new CommandResult(CommandOutcome.NotFound, $"vessel '{targetId}' is gone");
 
             // Authority gate (G-D1): with all_vessels=false only the controlled vehicle is commandable.
-            // The cheat namespace is exempt — it is its own opt-in (G-D2). vessel.scale is likewise
-            // exempt: a deliberate per-vessel operation that works on any addressed vessel (the first
-            // control moved out of the /sim/debug namespace).
-            var anyVessel = isDebug || command.Action == "vessel.scale";
+            // The cheat namespace is exempt — it is its own opt-in (G-D2) — and so is the
+            // AnyVesselActions set: deliberate per-vessel operations that work on any addressed
+            // vessel (the controls moved out of the /sim/debug namespace).
+            var anyVessel = isDebug || AnyVesselActions.Contains(command.Action);
             if (!anyVessel && !allVessels && Program.ControlledVehicle?.Id != vehicle.Id)
                 return new CommandResult(CommandOutcome.Denied, "control is restricted to the active vessel");
 
@@ -81,6 +82,15 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
             return new CommandResult(CommandOutcome.Fault, ex.Message);
         }
     }
+
+    /// <summary>
+    ///     The first-class per-vessel controls exempt from the active-vessel authority gate: each is a
+    ///     deliberate by-id operation on an arbitrary vessel, placed under the regular vessel area
+    ///     rather than <c>/sim/debug</c>. This is a GameMod authority policy — the SimFs layer never
+    ///     sees it.
+    /// </summary>
+    private static readonly HashSet<string> AnyVesselActions =
+        new(StringComparer.Ordinal) { "vessel.scale", "vessel.always_render" };
 
     private CommandResult Finish(string accessor, CommandResult result)
     {
@@ -109,8 +119,9 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
         "vessel.attitude_target" => FlightComputerActuator.SetAttitudeTarget(vehicle, c.Values ?? []),
         "vessel.burn" => FlightComputerActuator.SetBurn(vehicle, c.Values ?? []),
 
-        // Model scaling — a first-class vessel node (any-vessel; see the authority gate above).
+        // First-class per-vessel nodes (any-vessel — see AnyVesselActions above).
         "vessel.scale" => ScaleActuator.Set(vehicle, c.Value),
+        "vessel.always_render" => VesselForceRender.Set(vehicle, c.Value > 0.5),
 
         // Per-module (G4)
         "rcs.active" => RcsActuator.SetActive(vehicle, c.Ordinal, c.Value > 0.5),

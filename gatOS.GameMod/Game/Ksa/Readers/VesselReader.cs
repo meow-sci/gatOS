@@ -1,5 +1,6 @@
 using Brutal.Numerics;
 using gatOS.GameMod.Game.Ksa.Actuators;
+using gatOS.GameMod.Game.Ksa.Render;
 using gatOS.Logging;
 using gatOS.SimFs.Snapshots;
 using gatOS.SimFs.Telemetry;
@@ -74,6 +75,7 @@ internal static class VesselReader
         public double? BatteryFraction, BatteryCapacity;
         public bool Controlled, Controllable, EngineOn, LightsMasterOn;
         public double Scale;
+        public bool AlwaysRender;
     }
 
     private static Basics ReadBasics(Vehicle vehicle, string? activeVesselId)
@@ -124,6 +126,8 @@ internal static class VesselReader
             // Rides the always-sampled core (not the gated detail pass): one cheap Part.Scale.X
             // read, and the scale node stays truthful with telemetry_vessel_detail off.
             Scale = ScaleActuator.Read(vehicle),
+            // gatOS-owned registry lookup (no KSA read) — the always_render read-back.
+            AlwaysRender = VesselForceRender.IsMarked(vehicle.Id),
         };
     }
 
@@ -160,6 +164,7 @@ internal static class VesselReader
             Controllable = b.Controllable,
             EngineOn = b.EngineOn,
             Scale = b.Scale,
+            AlwaysRender = b.AlwaysRender,
         };
     }
 
@@ -219,6 +224,7 @@ internal static class VesselReader
             Controllable = b.Controllable,
             EngineOn = b.EngineOn,
             Scale = b.Scale,
+            AlwaysRender = b.AlwaysRender,
             PositionEcl = Vec(vehicle.GetPositionEcl()),
             VelocityCci = Vec(vehicle.GetVelocityCci()),
             CenterOfMass = Vec(vehicle.CenterOfMassAsmb),

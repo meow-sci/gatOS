@@ -32,9 +32,9 @@ caller — the whole solution still builds without the game DLLs (CLAUDE.md depe
 
 gatOS installs **three permanent** Harmony patches, all via `AccessTools.Method(...)` with a null-check
 and try/catch (or a degrade-to-no-injection transpiler) so a missing/renamed target **disables that one
-feature with a logged warning instead of crashing** (two further dynamic instances — `gatos.iva` for the
-IVA cheat and `gatos.thug_life` for the world-space quad cheat — are each installed only while their
-feature is active; see below):
+feature with a logged warning instead of crashing** (three further dynamic instances — `gatos.iva` for
+the IVA cheat, `gatos.thug_life` for the world-space quad cheat, and `gatos.always_render` for the
+per-vessel render-distance override — are each installed only while their feature is active; see below):
 
 | Patch | KSA target | Decomp file | Purpose | If target moves |
 |---|---|---|---|---|
@@ -60,6 +60,26 @@ default-off state carries **zero** IVA patches. The patch targets are `[KsaAncho
 `IvaForceRender` (Risk Medium; verified `2026-06-28` / `2026.6.9.4750`); a ctor/`AddInstance` signature
 change surfaces at install time (caught, logged). (Un)patching runs on the game thread (the command
 drain / unload). Torn down by `Mod.TeardownGameCheats`.
+
+### Dynamic vessel force-render patches (`gatos.always_render`) {#always-render-patches}
+
+The per-vessel `vessels/by-id/<id>/always_render` node (`Game/Ksa/Render/VesselForceRender.cs`, ported
+from `unscience` i-feel-seen) bypasses KSA's sub-pixel cull — a vehicle whose projected diameter falls
+under one pixel (`Camera.GetObjectDiameterPixelsAsDouble < 1.0`) is normally not drawn. It installs
+**two more** Harmony patches on its **own** `Harmony("gatos.always_render")` instance — prefixes on
+`Vehicle.GetWorldMatrix(Camera)` and `Vehicle.UpdateRenderData(Viewport,int)`, each reproducing the
+stock body minus the cull check — but **only while ≥ 1 vessel is marked**: the first mark installs, the
+last unmark (write `0`, despawn prune, or unload) removes, so the default-off state carries **zero**
+patches. The registry is mutated only on the game thread (Frame drain / sampler prune / unload) and the
+prefixes read one volatile immutable id set, safe on the render-prep path at two hash lookups per
+vehicle per frame. Marks key on the vessel **id** (survive scene rebuilds); despawned ids are pruned by
+`VesselForceRender.Prune`, riding the sampler's vehicle enumeration. The patch targets + reproduced
+members are `[KsaAnchor]`-documented in `VesselForceRender` (Risk Medium; verified `2026-07-02` /
+`2026.6.9.4750`); a missing target throws at install time (caught by `KsaCatalog` → the actuator
+latches degraded, EOPNOTSUPP), and a prefix fault logs once and falls back to the stock cull.
+`UpdateRenderData` is **virtual** — the patch binds `Vehicle`'s implementation, so overrides (KittenEva
+renders via its own `KittenRenderable`) are **not** force-rendered, same as the unscience original.
+Torn down by `Mod.TeardownGameCheats`.
 
 ### Welds per-frame driver (no patch) {#welds-driver}
 
@@ -140,6 +160,10 @@ degrades to no-injection; a capture-time managed fault latches the feature off f
   `gatos.thug_life` render postfix on `SuperMeshRenderSystem.RenderMainPass`, plus a per-frame
   `UpdateThugLife()` anchor-revalidation in `OnBeforeUi` (the fourth game-thread work site,
   [`#thug-life-patch`](#thug-life-patch) above). All on the main thread.
+- **always_render prefixes** — *not* a `CommandQueue` phase: read-only prefixes on the render-prep path
+  (`Vehicle.GetWorldMatrix`/`UpdateRenderData`) consulting a volatile immutable id set — they mutate no
+  game state beyond what the stock methods do ([`#always-render-patches`](#always-render-patches) above);
+  the `vessel.always_render` registry write itself is an ordinary Frame-phase command.
 
 Threading rules 1–5 (CLAUDE.md): game state read+mutated **only** on the game thread; 9p/HTTP/MQTT
 threads only enqueue `SimCommand` and read the last published snapshot; `VmHost` is one-semaphore async;

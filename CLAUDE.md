@@ -68,6 +68,7 @@ cheats ported from `unscience`, are code-complete.** The only pending work is a 
 | MQTT transport | DONE | `gatOS.Mqtt/` |
 | Host folder mounts | DONE | `NineP/Vfs/HostDirectory.cs`, `HostFile.cs` |
 | Welds + `always_render_iva` + parts (ex-`unscience`) | Code DONE; in-game pending | `Game/Ksa/Welds/`, `Game/Ksa/Render/IvaForceRender.cs`, `Game/Ksa/Readers/PartsReader.cs` |
+| Per-vessel `scale` + `always_render` nodes (ex-`unscience` garrys-torch scaling / i-feel-seen) | Code DONE; in-game pending | `Game/Ksa/Actuators/ScaleActuator.cs`, `Game/Ksa/Render/VesselForceRender.cs` — first-class vessel nodes outside `/sim/debug`, authority-gate-exempt (`KsaCatalog.AnyVesselActions`) |
 | `thug_life` sunglasses quad (ex-`unscience`) | Code DONE; in-game pending | `Game/Ksa/ThugLife/` (GPU quad renderer + dynamic render postfix), `SimFs` `debug/thug_life` |
 | Screen stream (`/sim/display`) | Code DONE; misrender **root-caused + fixed** (purrTTY libghostty `o=z` corruption → default `rgba`, + purrTTY content-hash re-decode; STREAM_PLAN.md §11); **perf/stability P0–P7 of [`plans/PERF_IMPROVEMENT_PLAN.md`](plans/PERF_IMPROVEMENT_PLAN.md) landed 2026-07-02, confirmed working in-game (informal pass)** (SSH read-pump, a=t keyframes, GPU blit downscale, zero-alloc encoder, demand pacing, 9p pooling + msize 512 KiB/guest v15, purrtty consumption fixes, P6: the purrTTY native rebuilt from ghostty main + `purrtty/vt-video-fixes` — the zig-0.15.2 `o=z` flate corruption and the placement-pin leak are FIXED, so `display_encoding` defaults to `rgba-zlib` again, 3–10× less wire; and P7: the native APC bulk lane, 82→1185 MiB/s consumption throughput); formal S6/S9 + P8 soak checklists still open | `SimFs/Display/`, `Game/Ksa/FrameCapture.cs` + `DisplayRenderPatch.cs` (in-band render-hook capture), `STREAM_PLAN.md` |
 | T11.1 — QEMU win-x64 | DONE | `tools/fetch-qemu.*`, `vendor/qemu/win-x64/` |
@@ -290,7 +291,12 @@ host.
    that records a textured-quad draw per entry; it + its Vulkan GPU resources are installed lazily on the
    first entry and torn down on the last. A fourth game-thread work site, `Mod.UpdateThugLife` (run in
    `OnBeforeUi`), validates/re-resolves entry anchors before the scene renders, self-gating to a no-op when
-   empty. All cheats are torn down by `Mod.TeardownGameCheats` at `Unload`.
+   empty. The **per-vessel `always_render` override** (`Game/Ksa/Render/VesselForceRender.cs`) follows the
+   same discipline: dynamic `Harmony("gatos.always_render")` prefixes on `Vehicle.GetWorldMatrix`/
+   `UpdateRenderData` (the sub-pixel cull bypass) installed **only while ≥ 1 vessel is marked** and removed
+   on the last unmark/despawn-prune/unload; its registry is mutated only on the game thread and read by the
+   prefixes through one volatile immutable set (despawn pruning rides the sampler's vehicle enumeration).
+   All cheats are torn down by `Mod.TeardownGameCheats` at `Unload`.
 2. **9p server threads never touch game state** — they read the latest published snapshot, and for
    writes they only *enqueue* an immutable `SimCommand` and await its result (never executing it).
 3. SSH I/O runs on SSH.NET's threads; `OutputReceived` may fire on any thread (purrTTY tolerates

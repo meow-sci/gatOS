@@ -195,6 +195,26 @@ on — not gated by the detail pass): `ctl/engine` ← `Vehicle.IsSet(VehicleEng
 the game's ignite button reads). This is distinct from the per-engine `engines/<n>/active`
 "allowed to fire" flag.
 
+## Control surface — first-class per-vessel nodes (outside `/sim/debug`)
+
+Anchors in `Game/Ksa/Actuators/ScaleActuator.cs` and `Game/Ksa/Render/VesselForceRender.cs`; routed by
+`KsaCatalog` and **exempt from the active-vessel authority gate** (`KsaCatalog.AnyVesselActions`) —
+each is a deliberate by-id operation on an arbitrary vessel, intentionally placed under the regular
+vessel area rather than `/sim/debug`. Both ported from `unscience` (garrys-torch scaling /
+i-feel-seen).
+
+| Path | A | Write | KSA anchor | Risk | Phase |
+|---|---|---|---|---|---|
+| `vessels/by-id/<id>/scale` | St | value > 0 | `ScaleActuator.Set`: recursive `Part.Scale = (f,f,f)` over `Vehicle.Parts.Parts`/`Part.SubParts` (public `double3` setter; invalidates cached transform matrices), one-shot — KSA resets it on vessel rebuild; KittenEva avatar via reflected `_renderable._characterAvatar.Core.Scale = f*0.01f` (0.01 == 1:1) | H (reflection + `GetType().Name` gate) | Frame |
+| `vessels/by-id/<id>/always_render` | St | `0`/`1` | `VesselForceRender.Set`: registry op; installs **two Harmony prefixes on its own `Harmony("gatos.always_render")` instance only while ≥ 1 vessel is marked** — `Vehicle.GetWorldMatrix(Camera)` + `Vehicle.UpdateRenderData(Viewport,int)` — reproducing the stock bodies minus the `GetObjectDiameterPixelsAsDouble < 1.0` sub-pixel cull (`Camera.GetPositionEgo`, `Vehicle.Body2Cce`, `Vehicle.GetMatrixAsmb2Ego`, `PartTree.UpdateRenderData`, `Vehicle.IsEditedVehicle`) | M (dynamic Harmony; `UpdateRenderData` is virtual — KittenEva's override renders via its own path and is **not** affected) | Frame |
+
+Read-backs are sampled in `VesselReader.SampleCore` (always on — not gated by the detail pass):
+`scale` ← a representative `Part.Scale.X` (best-effort, `1.0` fallback; anchor `ScaleActuator.Read`);
+`always_render` ← the gatOS-owned `VesselForceRender` registry (no KSA read). `always_render` marks
+key on the vessel **id** (they survive scene rebuilds; `scale` does not — KSA resets `Part.Scale` on
+rebuild) and are pruned when the vessel despawns (`VesselForceRender.Prune`, riding the sampler's
+vehicle enumeration; pruning the last mark also removes the patches).
+
 `/sim/debug/` (G-D2; gated by `[control] debug_namespace`):
 
 | Path | A | Write | KSA anchor | Risk | Phase |

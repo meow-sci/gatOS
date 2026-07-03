@@ -161,6 +161,12 @@ public sealed record VesselSnapshot(
     /// <summary>Uniform vessel model scale factor (<c>scale</c> read; best-effort). 1.0 = unscaled.</summary>
     public double Scale { get; init; } = 1.0;
 
+    /// <summary>
+    ///     Whether this vessel is force-rendered at any distance (<c>always_render</c> read): the
+    ///     render-distance override that bypasses KSA's sub-pixel cull. Off by default.
+    /// </summary>
+    public bool AlwaysRender { get; init; }
+
     /// <summary>The flight computer's attitude track-target name (<c>ctl/attitude_mode</c> read).</summary>
     public string AttitudeMode { get; init; } = "";
 

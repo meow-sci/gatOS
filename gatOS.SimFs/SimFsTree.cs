@@ -471,6 +471,12 @@ public static class SimFsTree
                     // whole model (action vessel.scale, one-shot, exempt from the authority gate).
                     NumberControl($"{p}/scale", "scale", vesselId, "vessel.scale", SimCommand.NoOrdinal,
                         () => Formats.Scalar(Vessel(vesselId).Scale)),
+                    // Render-distance override, likewise a first-class vessel node (NOT under
+                    // /sim/debug). Read = current mark; write 1 to keep this vessel rendered at any
+                    // distance (bypasses KSA's sub-pixel cull), 0 to restore the stock cull (action
+                    // vessel.always_render, exempt from the authority gate).
+                    FlagControl($"{p}/always_render", "always_render", vesselId, "vessel.always_render",
+                        SimCommand.NoOrdinal, () => Formats.Flag(Vessel(vesselId).AlwaysRender)),
                     // Byte-provider form (GP1): the JSON doc is built as UTF-8 once per snapshot —
                     // the old string form built bytes, decoded, concatenated "\n", re-encoded.
                     new SnapshotTextFile("telemetry", Qid($"{p}/telemetry"), _store,

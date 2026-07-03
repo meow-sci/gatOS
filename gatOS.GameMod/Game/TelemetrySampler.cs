@@ -151,6 +151,11 @@ internal sealed class TelemetrySampler
                 }
             }
 
+            // Drop force-render marks whose vessel despawned (tears the render patches down when the
+            // last one goes) — the welds/thug_life validation discipline, riding the vehicle
+            // enumeration that just happened instead of a per-frame hook. Self-gates when unmarked.
+            VesselForceRender.Prune(vessels);
+
             if (_settings.Bodies)
                 (bodies, systemSummary) = SampleBodiesPaced(system);
             else

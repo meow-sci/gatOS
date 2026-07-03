@@ -128,6 +128,25 @@ and verified against 4750 — see the docking section below.
 
 ---
 
+## First-class per-vessel nodes (Frame phase, authority-exempt) {#per-vessel-nodes}
+
+`Game/Ksa/Actuators/ScaleActuator.cs` + `Game/Ksa/Render/VesselForceRender.cs`. Both ported from
+`unscience` (garrys-torch scaling / i-feel-seen) and **deliberately placed under the regular vessel
+area** (`vessels/by-id/<id>/…`), not `/sim/debug` — the per-vessel controls migrated out of the debug
+namespace. Exempt from the active-vessel authority gate via `KsaCatalog.AnyVesselActions` (each is a
+deliberate by-id operation on an arbitrary vessel). Gated only by the `control_enabled` master.
+
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4750 |
+|---|---|---|---|---|---|---|
+| `vessels/by-id/<id>/scale` | `vessel.scale` | `ScaleActuator.Set` (one-shot; > 0 only, `EINVAL` otherwise; KSA resets on vessel rebuild) | recursive `Part.Scale = (f,f,f)` over `Vehicle.Parts.Parts`/`Part.SubParts` (public `double3` setter); KittenEva avatar via reflected `_renderable._characterAvatar.Core.Scale = f*0.01f` | `KSA/Part.cs`, `KSA/PartTree.cs`, `KSA/KittenEva.cs` | **High** (reflection + `GetType().Name` gate) | ✅ |
+| `vessels/by-id/<id>/always_render` | `vessel.always_render` | `VesselForceRender.Set` (registry op; installs/removes the `gatos.always_render` prefixes — patches exist **only while ≥ 1 vessel is marked**) | prefixes on `Vehicle.GetWorldMatrix(Camera)` + `Vehicle.UpdateRenderData(Viewport,int)` reproduce the stock bodies minus the `< 1 px` cull: `Camera.GetPositionEgo`, `Vehicle.Body2Cce`, `Vehicle.GetMatrixAsmb2Ego`, `PartTree.UpdateRenderData`, `Vehicle.IsEditedVehicle` | `KSA/Vehicle.cs`, `KSA/Camera.cs`, `KSA/PartTree.cs` | Medium (dynamic Harmony; KittenEva override unaffected) | ✅ |
+
+Read-backs ride `VesselReader.SampleCore` (always on): `scale` ← representative `Part.Scale.X`
+(best-effort, `1.0` fallback), `always_render` ← the gatOS registry (no KSA read). The patch lifecycle
+detail lives in [`ksa-runtime-coupling.md#always-render-patches`](ksa-runtime-coupling.md#always-render-patches).
+
+---
+
 ## `/sim/debug` cheat surface {#debug}
 
 `Game/Ksa/Actuators/DebugActuator.cs` + `DockingActuator.SetPushoffImpulse`. Gated by `[control]

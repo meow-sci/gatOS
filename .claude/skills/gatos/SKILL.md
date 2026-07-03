@@ -81,7 +81,7 @@ system/{name,home,sun}
 bodies/<id>/{id,class,parent,children,mass,radius,mu,soi,rotation_rate,
              position/ecl, velocity/ecl, orbit/*, atmosphere/*, ocean/*, focus}
 vessels/active/…  (alias of the controlled vessel)   vessels/by-id/<id>/
-    id name situation parent controlled controllable com telemetry stream
+    id name situation parent controlled controllable com scale always_render telemetry stream
     position/{cci,ecl,lat,lon}  velocity/{orbital,surface,inertial,cci}
     attitude/{quat,rates}  altitude/{barometric,radar}  mass/{total,dry,propellant}
     orbit/*  navball/*  environment/*  battery/*  power/*
@@ -117,12 +117,22 @@ worked `weld_here` example is in [`recipes.md` §9](recipes.md) and a `thug_life
 [`recipes.md` §10](recipes.md). The render-side internals (how the quad is drawn into KSA's scene) are
 documented in the **ksa skill's `quad.md`**.
 
+**First-class per-vessel nodes (NOT under `/sim/debug`; also ported from `unscience`):**
+`vessels/by-id/<id>/scale` — write any finite value `> 0` to uniformly rescale the whole vessel model
+one-shot (`echo 50000 > scale` = planet-sized; `echo 1 >` restores; `0`/negative → `EINVAL`; KSA
+reverts it when it rebuilds the vessel). `vessels/by-id/<id>/always_render` — write `1` to keep that
+vessel rendered at **any** distance (bypasses the sub-pixel cull that normally hides far vessels; the
+mark survives scene rebuilds and auto-drops when the vessel despawns; EVA kittens are unaffected).
+Both work on **any vessel by id** even with `control_all_vessels=false` (deliberately
+authority-exempt). SPEC §3.4.1 has the full semantics.
+
 ## Gotchas that cause silent failures
 
 - A vessel's **name is its id** (`Hunter`, `Polaris` are literal ids). Ids in `/sim` paths are
   sanitized (non-`[A-Za-z0-9._-]` → `_`).
 - `control_enabled=false` → all writes `EACCES`. `control_all_vessels=false` → only the controlled
-  vessel is commandable. `debug_namespace=false` → `/sim/debug/**` is gone. All default on.
+  vessel is commandable (`camera.focus`, `vessel.scale`, `vessel.always_render` and `debug.*` stay
+  exempt). `debug_namespace=false` → `/sim/debug/**` is gone. All default on.
 - **`debug.teleport` sets a CCI state about the vessel's *current* parent body** — the vessel must
   already be in the intended body's SOI. See [SPEC §6](../../../SPEC_9P_FILESYSTEM.md).
 - Mass is **kg**; gravity is **μ/r²** (never 9.8); ground-referenced velocity is `v_cci − ω×r`.
