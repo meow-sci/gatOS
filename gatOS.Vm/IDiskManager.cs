@@ -16,6 +16,17 @@ public sealed record InstalledGuest(
     string PrivateKeyPath);
 
 /// <summary>
+///     A bootable pairing of a profile's overlay disk with the guest artifacts of the version the
+///     overlay was created on. The pairing matters: a kernel from one guest version booted over a
+///     rootfs from another leaves the kernel without its module tree, so <c>modprobe 9p</c> fails
+///     inside the guest and <c>/sim</c> silently never mounts (while SSH — served by the matching
+///     initramfs's virtio — keeps working).
+/// </summary>
+/// <param name="OverlayPath">The profile's overlay disk.</param>
+/// <param name="Guest">The installed guest artifacts matching the overlay's guest version.</param>
+public sealed record GuestBoot(string OverlayPath, InstalledGuest Guest);
+
+/// <summary>
 ///     The disk surface <c>VmHost</c> boots against — extracted as an interface so the VmHost
 ///     state machine is unit-testable without qemu-img (OS_PLAN.md T3.6).
 /// </summary>
@@ -29,6 +40,16 @@ public interface IDiskManager
 
     /// <summary>Returns the overlay disk for <paramref name="profile"/>, creating it if absent.</summary>
     string GetOrCreateOverlay(string profile);
+
+    /// <summary>
+    ///     Returns the overlay <b>plus the guest artifacts it must boot with</b>. A fresh (or
+    ///     current-version) profile pairs with the bundled guest; a profile created on an older,
+    ///     still-installed guest version stays <b>pinned</b> to that version's kernel/initrd/
+    ///     manifest (mixing versions breaks in-guest module loading — see <see cref="GuestBoot"/>);
+    ///     an overlay whose guest version is no longer installed is archived and recreated fresh.
+    ///     "Reset Disk" upgrades a pinned profile to the current guest.
+    /// </summary>
+    GuestBoot GetOrCreateBoot(string profile);
 
     /// <summary>
     ///     Grows the overlay's virtual block-device size to at least <paramref name="minBytes"/>,

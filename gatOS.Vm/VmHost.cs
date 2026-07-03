@@ -165,8 +165,10 @@ public sealed class VmHost : IAsyncDisposable
         IQemuProcess? process = null;
         try
         {
-            var installed = _disks.EnsureBaseInstalled();
-            var overlay = _disks.GetOrCreateOverlay(_options.Profile);
+            // Overlay + the guest artifacts of ITS version (an older profile stays pinned to its
+            // own kernel/initrd — a version-mixed boot leaves the guest kernel without its module
+            // tree, so /sim silently never mounts; see GuestBoot).
+            var (overlay, installed) = _disks.GetOrCreateBoot(_options.Profile);
             diskLock = _disks.AcquireOverlayLock(_options.Profile);
 
             // Grow the overlay to the configured size while we hold the lock and before QEMU opens

@@ -51,15 +51,27 @@ guest's `/etc/hosts` aliases `10.0.2.2` as `sim`, so scripts can use `$GATOS_HTT
 `DiskManager` maintains versioned artifacts under the runtime data dir:
 
 ```
-<GatOsPaths.DataDir>/disks/guest-v<N>/
-    base-v<N>.qcow2          partitionless ext4, zstd-compressed base image
-    vmlinuz-virt             kernel
-    initramfs-virt           trimmed initramfs
-    manifest.toml            host boot contract (cmdline template, ssh user/key, host-key pin)
-    id_ed25519               SSH client key (committed static key, loopback-only)
+<GatOsPaths.DataDir>/disks/
+    base-v<N>.qcow2          partitionless ext4, zstd-compressed base images, one per installed version
+    guest-v<N>/              per-version boot artifacts (never deleted by a newer install):
+        vmlinuz-virt           kernel
+        initramfs-virt         trimmed initramfs
+        manifest.toml          host boot contract (cmdline template, ssh user/key, host-key pin)
+        id_ed25519             SSH client key (committed static key, loopback-only)
     <profile>.qcow2          per-save overlay (backing ref = base-v<N>.qcow2, bare relative)
-    <profile>.pid            PID lock file (stale reclaim on process-absent check)
+    <profile>.toml           sidecar recording the guest version the overlay was created on
+    <profile>.lock           lock file (stale reclaim on process-absent check)
 ```
+
+**Version-pinned boots.** A profile always boots the kernel/initrd/manifest of the guest version
+its overlay was created on (`GuestBoot`): the sidecar's `guest_version` selects `guest-v<N>/`, so a
+guest upgrade shipping with the mod never mixes a new kernel with an old rootfs — a mixed boot
+leaves the kernel without its `/lib/modules` tree, `modprobe 9p` fails in the guest, and `/sim`
+silently never mounts (while SSH, served by the initramfs's virtio, keeps working). An
+older-version profile keeps working and logs a WARN suggesting **Reset Disk** (which recreates the
+overlay on the current base = the guest upgrade, wiping in-guest data). If an overlay's guest
+version is no longer installed at all, the overlay is set aside as
+`<profile>.orphaned-v<N>.qcow2` and a fresh current-version disk is created.
 
 The host-key pin is read from the *installed* `manifest.toml` (not the dist copy) so a
 re-keyed rebuild of the same version can't cause a pin mismatch on an existing installation.

@@ -120,6 +120,92 @@ public sealed partial class DiskManager : IDiskManager
     }
 
     /// <inheritdoc/>
+    public GuestBoot GetOrCreateBoot(string profile)
+    {
+        ValidateProfileName(profile);
+        var current = EnsureBaseInstalled(); // installs the bundled version's artifacts if needed
+        var overlayPath = OverlayPath(profile);
+        if (!File.Exists(overlayPath))
+            return new GuestBoot(CreateOverlay(profile), current);
+
+        // Pair the overlay with the guest version it was created on. Booting the newest kernel
+        // over an older rootfs leaves the kernel without its /lib/modules tree — modprobe 9p fails
+        // in the guest and /sim never mounts, while SSH (initramfs virtio) keeps working, which is
+        // exactly how the mismatch presents in-game.
+        var overlayVersion = ReadProfileGuestVersion(profile);
+        if (overlayVersion is null || overlayVersion == current.Manifest.GuestVersion)
+            return new GuestBoot(overlayPath, current);
+
+        if (TryLoadInstalledVersion(overlayVersion.Value) is { } pinned)
+        {
+            ModLog.Log.Warn($"Profile '{profile}' was created on guest v{overlayVersion} — booting that "
+                            + $"version so the guest stays consistent (v{current.Manifest.GuestVersion} is "
+                            + "installed). Use 'Reset Disk...' to upgrade; it wipes data inside the guest.");
+            return new GuestBoot(overlayPath, pinned);
+        }
+
+        // The overlay's guest version is gone (base or version dir removed) — it cannot boot
+        // consistently. Keep the data aside for manual recovery and start factory-fresh.
+        var archive = Path.Combine(GatOsPaths.DisksDir, $"{profile}.orphaned-v{overlayVersion}.qcow2");
+        File.Move(overlayPath, archive, overwrite: true);
+        var tomlArchive = Path.ChangeExtension(archive, ".toml");
+        if (File.Exists(ProfileTomlPath(profile)))
+            File.Move(ProfileTomlPath(profile), tomlArchive, overwrite: true);
+        ModLog.Log.Warn($"Profile '{profile}' was created on guest v{overlayVersion}, whose artifacts are "
+                        + $"no longer installed; its disk was set aside as '{Path.GetFileName(archive)}' and a "
+                        + $"fresh v{current.Manifest.GuestVersion} disk was created.");
+        return new GuestBoot(CreateOverlay(profile), current);
+    }
+
+    /// <summary>The guest version recorded when the profile's overlay was created; null when unknown.</summary>
+    private int? ReadProfileGuestVersion(string profile)
+    {
+        var path = ProfileTomlPath(profile);
+        if (!File.Exists(path))
+            return null;
+        foreach (var line in File.ReadLines(path))
+        {
+            var parts = line.Split('=', 2);
+            if (parts.Length == 2 && parts[0].Trim() == "guest_version"
+                && int.TryParse(parts[1].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v))
+                return v;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    ///     Loads an already-installed guest version's artifacts (older versions are never deleted by
+    ///     installs — existing overlays back onto them), or null when any piece is missing.
+    /// </summary>
+    private static InstalledGuest? TryLoadInstalledVersion(int version)
+    {
+        var disksDir = GatOsPaths.DisksDir;
+        var versionDir = Path.Combine(disksDir, $"guest-v{version}");
+        var manifestPath = Path.Combine(versionDir, "manifest.toml");
+        if (!File.Exists(manifestPath))
+            return null;
+        GuestManifest manifest;
+        try
+        {
+            manifest = GuestManifest.Load(manifestPath);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            ModLog.Log.Warn($"Installed guest v{version} manifest is unreadable: {ex.Message}");
+            return null;
+        }
+
+        var basePath = Path.Combine(disksDir, BaseImageName(version));
+        var kernelPath = Path.Combine(versionDir, manifest.Kernel);
+        var initrdPath = Path.Combine(versionDir, manifest.Initrd);
+        var keyPath = Path.Combine(versionDir, manifest.SshKey);
+        return File.Exists(basePath) && File.Exists(kernelPath) && File.Exists(initrdPath) && File.Exists(keyPath)
+            ? new InstalledGuest(manifest, basePath, kernelPath, initrdPath, keyPath)
+            : null;
+    }
+
+    /// <inheritdoc/>
     public long EnsureOverlaySize(string profile, long minBytes)
     {
         ValidateProfileName(profile);

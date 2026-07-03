@@ -24,6 +24,9 @@ internal sealed class FakeDiskManager : IDiskManager
 
     public string GetOrCreateOverlay(string profile) => $"/fake/{profile}.qcow2";
 
+    public GuestBoot GetOrCreateBoot(string profile)
+        => new(GetOrCreateOverlay(profile), EnsureBaseInstalled());
+
     public long ResizedToBytes = -1;
     public int ResizeCalls;
 

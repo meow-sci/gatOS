@@ -155,16 +155,76 @@ public sealed class DiskManagerTests
         Assert.Throws<ArgumentException>(() => manager.GetOrCreateOverlay(bad));
     }
 
+    [Test]
+    public void GetOrCreateBoot_FreshProfile_PairsWithTheBundledGuest()
+    {
+        var qemu = TestEnv.RequireQemu();
+        WriteFakeAssets(realQcow2: qemu.QemuImg);
+        var manager = new DiskManager(_assetsDir, () => qemu.QemuImg);
+
+        var boot = manager.GetOrCreateBoot("default");
+        Assert.Multiple(() =>
+        {
+            Assert.That(File.Exists(boot.OverlayPath), Is.True);
+            Assert.That(boot.Guest.Manifest.GuestVersion, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public void GetOrCreateBoot_OlderProfile_StaysPinnedToItsOwnGuestVersion()
+    {
+        // The in-game "/sim is empty" regression shape: a v1-era overlay must NOT be booted with a
+        // v2 kernel (the v1 rootfs has no module tree for it — modprobe 9p fails in the guest).
+        var qemu = TestEnv.RequireQemu();
+        WriteFakeAssets(realQcow2: qemu.QemuImg);
+        var v1Overlay = new DiskManager(_assetsDir, () => qemu.QemuImg).GetOrCreateBoot("default").OverlayPath;
+
+        WriteFakeAssets(realQcow2: qemu.QemuImg, version: 2); // the mod ships a newer guest
+        var boot = new DiskManager(_assetsDir, () => qemu.QemuImg).GetOrCreateBoot("default");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(boot.OverlayPath, Is.EqualTo(v1Overlay), "the profile's data is kept");
+            Assert.That(boot.Guest.Manifest.GuestVersion, Is.EqualTo(1),
+                "the overlay boots the guest version it was created on");
+            Assert.That(boot.Guest.KernelPath, Does.Contain("guest-v1"));
+            Assert.That(File.Exists(Path.Combine(GatOsPaths.DisksDir, "base-v2.qcow2")), Is.True,
+                "the new base is still installed (fresh profiles and Reset Disk use it)");
+        });
+    }
+
+    [Test]
+    public void GetOrCreateBoot_OrphanedProfile_IsArchived_AndRecreatedFresh()
+    {
+        var qemu = TestEnv.RequireQemu();
+        WriteFakeAssets(realQcow2: qemu.QemuImg);
+        new DiskManager(_assetsDir, () => qemu.QemuImg).GetOrCreateBoot("default");
+
+        // Simulate a v1 install that was cleaned away: the overlay's guest version is gone.
+        Directory.Delete(Path.Combine(GatOsPaths.DisksDir, "guest-v1"), recursive: true);
+        WriteFakeAssets(realQcow2: qemu.QemuImg, version: 2);
+        var boot = new DiskManager(_assetsDir, () => qemu.QemuImg).GetOrCreateBoot("default");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(boot.Guest.Manifest.GuestVersion, Is.EqualTo(2), "a fresh current-version disk");
+            Assert.That(File.Exists(Path.Combine(GatOsPaths.DisksDir, "default.orphaned-v1.qcow2")), Is.True,
+                "the unbootable overlay is kept aside for manual recovery");
+            Assert.That(File.ReadAllText(Path.Combine(GatOsPaths.DisksDir, "default.toml")),
+                Does.Contain("guest_version = 2"));
+        });
+    }
+
     /// <summary>
     ///     Lays down a guest-assets dir matching the manifest contract. When
     ///     <paramref name="realQcow2"/> is given (a qemu-img path), base.qcow2 is a real qcow2
     ///     (overlay creation opens the backing file); otherwise placeholder bytes suffice.
     /// </summary>
-    private void WriteFakeAssets(string? realQcow2 = null)
+    private void WriteFakeAssets(string? realQcow2 = null, int version = 1)
     {
-        File.WriteAllText(Path.Combine(_assetsDir, "manifest.toml"), """
+        File.WriteAllText(Path.Combine(_assetsDir, "manifest.toml"), $"""
             schema = 1
-            guest_version = 1
+            guest_version = {version}
             alpine_version = "3.24.0"
             kernel = "vmlinuz-virt"
             initrd = "initramfs-virt"
