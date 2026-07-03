@@ -41,6 +41,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # Enables GitHub Pages for the repo (source = GitHub Actions) if it isn't
+      # already, so the deploy job's create-deployment call doesn't 404. Requires
+      # the pages: write permission below. If org policy blocks auto-enablement,
+      # enable it once manually: Settings → Pages → Source = "GitHub Actions".
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
