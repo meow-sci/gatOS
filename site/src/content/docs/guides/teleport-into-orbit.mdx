@@ -1,0 +1,266 @@
+---
+title: Teleport a Fleet into Orbit
+description: Build a small argparse program that drops one — or a whole formation of — vessels into a circular or eccentric orbit around any body, by handing the game a single six-number state vector.
+sidebar:
+  label: Teleport Fleet
+  order: 5
+---
+
+import { Steps, Aside } from "@astrojs/starlight/components";
+
+This is the one where we play god a little.
+
+Instead of flying a ship somewhere, we're going to _teleport_ it — pluck it up and set it down in a
+clean, exact orbit of our choosing. One vessel, or a tidy little formation of them strung out along
+the same orbit. Around Earth, around Luna, around whatever body you point it at.
+
+And because we want to _reuse_ this — different bodies, different heights, circular one day and a
+stretched-out ellipse the next — we'll wrap it in a proper command-line program with `argparse`, so
+setting up a scenario is one line in the terminal.
+
+## Before you start
+
+<Steps>
+
+1. **[Reference Frames](/gatOS/guides/reference-frames/)** — we place the orbit in **CCI**, the parent
+   body's own frame. You just need the one idea from that page: CCI's origin sits at the body's
+   center, and its X–Y plane is the body's equator.
+
+2. **[Basic gatOS I/O Toolkit](/gatOS/guides/gatos-io/)** — we import `read`, `read_scalar`, and
+   `write_nums` from `gatos_io.py`. If you built the toolkit already, you've got them (and if you
+   built it a while ago, note `write_nums` is a recent addition — grab the latest version of that
+   file).
+
+</Steps>
+
+## The big idea: an orbit is just a point and a push
+
+Here's the thing that makes this whole program short. To put a ship in an orbit, you don't feed the
+game a list of orbital elements — "apoapsis this, periapsis that, inclination the other." You hand it
+**one** thing: a **state vector**. That's just _where the ship is_ and _how fast it's going_, right
+now — a position and a velocity, six numbers in total.
+
+From those six numbers the game rebuilds the _entire_ orbit. The whole ellipse — its size, its shape,
+where it's high (apoapsis) and where it's low (periapsis) — all falls out of a single point and a single push. That's
+Kepler's insight, and it's the trick everything below rests on: if we can pick a position and a
+velocity that _belong_ to the orbit we want, the shape takes care of itself.
+
+The teleport control file wants that state vector in **CCI**, the parent body's frame:
+
+> `/sim/debug/vessels/<id>/teleport` ← `px py pz vx vy vz`
+
+(position in meters, velocity in m/s). So our real job is just: **compute those six numbers.**
+
+### Picking the six numbers
+
+We get to choose _where_ on the orbit to drop the ship, so we make life easy on ourselves. We lay the
+orbit flat in CCI's X–Y plane — the body's equator — with its **lowest point (periapsis) sitting on
+the +X axis**, going the normal way round (prograde). With that setup, the textbook orbit equations
+hand us the state vector directly, no rotating anything:
+
+- **How far out we are** at an angle $\theta$ around the orbit ($\theta$ is the _true anomaly_ — fancy
+  name for "how far past the low point we are"): $r = \dfrac{p}{1 + e\cos\theta}$
+- **Position:** $(r\cos\theta,\; r\sin\theta,\; 0)$ — flat in the equatorial plane.
+- **Velocity:** $(-k\sin\theta,\; k\,(e + \cos\theta),\; 0)$ where $k = \sqrt{\mu/p}$.
+
+Two ingredients feed those: `e`, the **eccentricity** (0 for a circle; bigger stretches the far side
+out), and `p`, the **semi-latus rectum** — a size number we get from our altitude.
+
+### Altitude means the _low point_
+
+We treat `--altitude` as the height of the orbit's **lowest point** (periapsis). It's the most
+intuitive anchor: "the closest I ever get to the surface is this high." Two nice consequences:
+
+- The low point is $r_{pe} = R + \text{altitude}$ (body radius + altitude), which is _always_ above the
+  surface — so cranking up eccentricity can never accidentally bury your periapsis underground. It
+  only pushes the _far_ side higher.
+- When $e = 0$, everything collapses into a plain circle at that altitude, and the eccentric formulas
+  above become the circular ones automatically ($p$ becomes $r_{pe}$, and $k$ becomes the circular
+  speed $\sqrt{\mu/r}$). **One code path covers both cases** — there's no "if circular else ellipse" branch
+  to write.
+
+The size number is then just $p = r_{pe}(1 + e)$.
+
+<Aside type="note" title="Where do μ and R come from?">
+Straight out of `/sim`. Every body publishes its gravity $\mu$ (`bodies/<id>/mu`, the "how hard it
+pulls" number) and its surface radius (`bodies/<id>/radius`). We read them with `read_scalar` — no
+hard-coded planet constants, so the exact same program works around Earth, the Luna, or anything else.
+</Aside>
+
+### Spacing a formation: meters, not degrees
+
+The last flourish is `--spread`. You give it a repeatable `--vessel`, and each extra ship gets nudged
+a few meters _ahead_ along the orbit so they don't all spawn on top of each other. But you think in
+**meters** ("space them 25 m apart"), while the orbit math thinks in **angle**. The bridge is the
+oldest trick in geometry:
+
+> arc length $= r\theta$, so angle $= \dfrac{\text{meters}}{\text{radius}}$
+
+So vessel _i_ starts at your chosen true anomaly plus $\dfrac{i \times \text{spread}}{r}$ radians. Tiny
+distances over a multi-million-meter radius means a tiny angle — a gentle along-track shuffle, exactly
+what a formation wants.
+
+## The program
+
+Save this as `~/tutorials/teleport-into-orbit.py`, next to your toolkit modules:
+
+```python title="~/tutorials/teleport-into-orbit.py"
+#!/usr/bin/env python3
+# Teleport one or more vessels into a shared circular/eccentric orbit around a body.
+# e.g.  python3 teleport-into-orbit.py --parent Earth --vessel Hunter --vessel Polaris --altitude 120000
+import argparse, math, sys
+from gatos_io import read, read_scalar, write_nums
+
+ap = argparse.ArgumentParser(description="Place vessels into an orbit via debug teleport.")
+ap.add_argument("--parent", required=True, help="body they orbit, e.g. Earth (must already be their parent)")
+ap.add_argument("--vessel", required=True, action="append", metavar="ID", help="a vessel id; repeat for a formation")
+ap.add_argument("--altitude", required=True, type=float, help="periapsis (low-point) height above the surface, meters")
+ap.add_argument("--eccentricity", type=float, default=0.0, help="0 = circular (default); 0..1 stretches the far side out")
+ap.add_argument("--true-anomaly", type=float, default=0.0, help="where to start on the orbit, degrees (0 = the low point)")
+ap.add_argument("--spread", type=float, default=25.0, help="along-track spacing between vessels, meters (default 25)")
+args = ap.parse_args()
+
+# Sanity-check the inputs before we touch the game.
+if not (0.0 <= args.eccentricity < 1.0):
+    sys.exit(f"--eccentricity must be in [0, 1); got {args.eccentricity}")
+if args.altitude <= 0.0:
+    sys.exit(f"--altitude must be positive; got {args.altitude}")
+
+# The body's gravity and size come straight from /sim — no hard-coded constants.
+mu = read_scalar(f"/sim/bodies/{args.parent}/mu")          # gravity parameter, m^3/s^2
+R  = read_scalar(f"/sim/bodies/{args.parent}/radius")      # surface radius, m
+
+# Describe the orbit with two numbers: its low point, and how stretched it is.
+e    = args.eccentricity
+r_pe = R + args.altitude          # periapsis radius: --altitude is the LOW point, always above ground
+p    = r_pe * (1.0 + e)           # semi-latus rectum (size). For e=0 this is just r_pe.
+k    = math.sqrt(mu / p)          # speed constant √(mu/p); for e=0 it's the circular speed
+
+# Radius at our starting angle — we space the formation in meters, so we need it to
+# convert meters-of-arc into radians (angle = meters / radius).
+th0  = math.radians(args.true_anomaly)
+r0   = p / (1.0 + e * math.cos(th0))
+
+# One true anomaly -> one CCI state vector. Orbit lies in the equatorial (X-Y) plane,
+# low point on +X, going prograde (+Z is north). Textbook, no rotations needed.
+def state_at(th: float):
+    r  = p / (1.0 + e * math.cos(th))                   # how far out we are at this angle
+    px, py = r * math.cos(th), r * math.sin(th)         # position in the equatorial plane
+    vx, vy = -k * math.sin(th), k * (e + math.cos(th))  # velocity, prograde
+    return (px, py, 0.0, vx, vy, 0.0)                   # px py pz vx vy vz
+
+# --- PLAN: do all the thinking now -------------------------------------------
+# Work out every vessel's endpoint + state vector up front. Every read and every
+# calculation lives here, so the actuation step below can be pure writes.
+plan = []  # a list of (teleport_path, state_vector) pairs, one per vessel
+for i, vessel in enumerate(args.vessel):
+    # Teleport sets state about the vessel's CURRENT parent, so it must already be --parent.
+    have = read(f"/sim/vessels/by-id/{vessel}/parent")
+    if have != args.parent:
+        sys.exit(f"{vessel} orbits '{have}', not '{args.parent}'. Teleport can't move a vessel between "
+                 f"bodies — get it into {args.parent}'s sphere of influence first.")
+    th = th0 + (i * args.spread) / r0                    # nudge vessel i ahead by i*spread meters
+    plan.append((f"/sim/debug/vessels/{vessel}/teleport", state_at(th)))
+    print(f"planned {vessel}: {i * args.spread:.0f} m along-track", file=sys.stderr)
+
+# --- ACTUATE: now fire, as fast as possible ----------------------------------
+# Nothing but writes here — no reads, no math between them — so every vessel
+# lands in as tight a window as possible (ideally the same physics tick).
+for path, state in plan:
+    write_nums(path, state)
+
+shape = "circular" if e == 0.0 else f"e={e:g} elliptical"
+print(f"placed {len(plan)} vessel(s) in a {args.altitude:,.0f} m {shape} orbit of {args.parent}",
+      file=sys.stderr)
+```
+
+The program falls into two clearly separated halves, and that split is the whole point:
+
+- **Plan** — read the two constants, check each vessel's parent, and compute every state vector into
+  the `plan` list. _All_ the reads and _all_ the math happen here, before a single ship moves.
+- **Actuate** — a loop that does nothing but write, one vessel after another, with no reads or math in
+  between to slow it down.
+
+The heart of the math is still the tiny `state_at` function — four lines turning "how far around the
+orbit" into the six numbers the game wants, with no special-casing for circular vs. eccentric (`e = 0`
+just flows through and comes out a circle). But the _structure_ around it — think first, then act fast
+— is what makes the formation land cleanly, and here's why that matters.
+
+<Aside type="caution" title="Compute first, then write fast — the ships are moving">
+  These vessels orbit at **kilometers per second**. If you interleave a slow read (like checking a
+  parent) _between_ teleports, the simulation keeps ticking in those gaps — so the first ship flies a
+  little way down its orbit before the next one is even placed. At ~7.8 km/s, a stagger of just 20
+  milliseconds smears the formation by over 150 meters — far more than the 25 m spacing you asked for!
+
+  That's why we do every read and every calculation in the **plan** phase, then let the **actuate**
+  phase be nothing but back-to-back writes. Fired that tightly, all the teleports land in the same
+  (or nearly the same) physics tick, so the whole formation appears as one clean snapshot instead of a
+  smear. It's a habit worth keeping for _any_ program that commands several things at once:
+  **decide everything first, then actuate as fast as you can.**
+</Aside>
+
+## Run it
+
+```sh title="~/tutorials"
+# see who's around
+ls /sim/vessels/by-id
+
+# one ship, plain 120 km circular orbit of Earth
+python3 teleport-into-orbit.py --parent Earth --vessel Hunter --altitude 120000
+
+# a stretched orbit: 120 km at the low point, e=0.3 bulging out the far side
+python3 teleport-into-orbit.py --parent Earth --vessel Hunter --altitude 120000 --eccentricity 0.3
+
+# a three-ship formation, 50 m apart, starting a quarter way round the orbit
+python3 teleport-into-orbit.py --parent Earth \
+  --vessel Hunter --vessel Polaris --vessel Kestrel \
+  --altitude 200000 --true-anomaly 90 --spread 50
+```
+
+You'll see the ships blink into place. Open the map view and there's your orbit — a clean circle, or a
+tidy ellipse, exactly the size you asked for, with the formation strung out along it like beads on a
+wire.
+
+<Aside type="caution" title="It orbits whatever it already orbits">
+  Teleport sets a state vector **about the vessel's current parent body** — it does _not_ move a ship
+  into a different body's sphere of influence. That's why the program reads each vessel's `parent` and
+  refuses (with a clear message) if it doesn't match `--parent`. So to orbit Earth, the vessel must
+  already be _in_ Earth's SOI (sitting on the pad counts). `--parent` is really doing two jobs: it
+  tells us which body's $\mu$ and radius to use, _and_ it's an assertion about where each ship already is.
+</Aside>
+
+<Aside type="tip" title="e = 0 is the default, on purpose">
+  Leave `--eccentricity` off and you get a perfect circle — the common case, one fewer thing to think
+  about. The stretched-orbit math is _there_ the moment you want it, but it never gets in your way when
+  you don't. That "the simple case is the default, the advanced case is one flag away" shape is worth
+  copying into your own programs.
+</Aside>
+
+<Aside type="note" title="Equatorial only — for now">
+  We laid the orbit flat in the equator (inclination 0), because that keeps the state vector to a
+  clean one-liner. Real inclined orbits just take one more step: rotate the `(position, velocity)` pair
+  about CCI's +X axis by the inclination angle before teleporting. That's exactly what `scale`, `add`,
+  and the `cross` product in your `gatos_frames.py` toolkit are for — a natural extension once you're
+  comfortable here.
+</Aside>
+
+<Aside type="note" title="How high can the far side go?">
+  Eccentricity pushes apoapsis (the high point) out to $r_{pe}\,\dfrac{1 + e}{1 - e}$, which climbs _fast_
+  as $e$ nears 1. Keep it comfortably inside the body's sphere of influence (`bodies/<id>/soi`) or the
+  ship will wander out of the body's grip. For a first play, stay under $e \approx 0.5$ and you'll be fine.
+</Aside>
+
+<Aside type="tip" title="Same teleport, from your own machine">
+  Everything here writes the `/sim` file from inside the guest. The exact same teleport is one HTTP
+  call from your host — `POST /v1/command` with
+  `{"vessel_id":"Hunter","action":"debug.teleport","values":[px,py,pz,vx,vy,vz]}` — or one line with
+  the TypeScript SDK. Same six numbers, same result; only the plumbing differs.
+</Aside>
+
+## What's next
+
+You can now _stage_ a scenario — drop ships exactly where you want them and start from a known
+setup instead of flying everything up from the pad every time. That's the perfect launchpad (pun
+intended) for the next rung: now that a formation exists, point them at each other, hold a relative
+position, or schedule a burn to nudge one onto a slightly different orbit — and watch the geometry you
+just built come to life.

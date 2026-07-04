@@ -205,4 +205,44 @@ in-game result *is* the payoff, described in the "Run it" section.
 - [ ] A "Run it" section with the exact command and the in-game result to look for.
 - [ ] Asides for the caveat / shortcut / footgun; every path & route checked against the SPEC.
 - [ ] Links back to the prior rung and forward to the next.
-- [ ] `pnpm build` passes.
+- [ ] Any equations use KaTeX math (`$…$` / `$$…$$`), not ASCII in backticks (§8).
+- [ ] `pnpm build` passes (it hard-fails on broken math — see §8).
+
+---
+
+## 8. Math (LaTeX → MathML, via KaTeX)
+
+The site renders math with **remark-math → rehype-katex**, configured in `astro.config.mjs` to emit
+**MathML only** (`output: "mathml"`) — browser-native, with **no** KaTeX CSS / web-fonts / JS shipped.
+Write ordinary LaTeX in the standard delimiters (works in both `.md` and `.mdx`):
+
+- **Inline:** `$…$` — e.g. `$r = \dfrac{p}{1 + e\cos\theta}$`.
+- **Block / display:** `$$…$$` on their own lines.
+
+KaTeX's full vocabulary is available — `\frac`/`\dfrac`, `\sqrt`, sub/superscripts, Greek (`\theta`,
+`\mu`), `\times`/`\cdot`/`\approx`, `\text{…}`, thin spaces `\,`/`\;`, `aligned`/`cases` environments,
+and so on. The [KaTeX support table](https://katex.org/docs/supported.html) is authoritative.
+
+> **Broken math fails the build — on purpose.** rehype-katex does *not* throw on a bad macro; left to
+> itself it renders the raw TeX in a color and carries on, so a typo'd/unsupported command would still
+> ship (just colored). A `rehypeKatexStrict` guard in `astro.config.mjs` scans the output for KaTeX's
+> error sentinel and **throws**, stopping `pnpm build` with the offending TeX in the log. So: you can't
+> ship broken math, but you also can't trust "it looked fine in `astro dev`" for a macro KaTeX rejects
+> — **run `pnpm build`** before calling a math-bearing page done. (This replaced an earlier
+> `@webc.site/math-remark` pipeline that silently leaked any unsupported macro — notably it had **no
+> `\frac`** — as plain text. If you see that pattern in git history, KaTeX is the fix.)
+
+**What is math, and what is code** (the distinction that keeps pages honest):
+
+- **Real equations and symbols → math.** A fraction, `\sqrt`, θ, μ, $r_{pe}$, a state-vector formula.
+- **Code identifiers, `/sim` paths, control values, filenames → backticks.** `position/cci` is a
+  *filesystem path*, not a vector symbol — don't LaTeX it; `ctl/attitude_target`, `write_nums`,
+  `--eccentricity` stay code.
+- **Diagram labels inside an inline `<svg>` are not math.** MathML doesn't apply inside SVG `<text>`;
+  leave those alone (see `reference-frames.mdx`'s `aim = −position` label).
+- Prefer `\dfrac` for a standalone fraction in a callout/blockquote; `\frac` reads better inline in a
+  sentence where line-height matters. Both compile.
+
+The worked model for tutorial math is
+[`teleport-into-orbit.mdx`](../../../site/src/content/docs/guides/teleport-into-orbit.mdx) (the orbit
+equations).

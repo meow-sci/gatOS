@@ -15,8 +15,8 @@ The quaternion is a verbatim port of KSA's own arithmetic (see the caution at th
 
 > **Published convention: this Python toolkit ships as two importable modules, not one paste.** The
 > [`gatos-io` setup tutorial](../../../site/src/content/docs/guides/gatos-io.mdx) has the reader build
-> **`gatos_io.py`** (the I/O half — `read`/`read_scalar`/`read_vec`/`read_quat`/`write`/`write_vec`)
-> and **`gatos_frames.py`** (the math half — `cross`/`dot`/`norm`/`unit`/`neg` + `from_rows`/`body_to_cci`)
+> **`gatos_io.py`** (the I/O half — `read`/`read_scalar`/`read_vec`/`read_quat`/`write`/`write_vec`/`write_nums`)
+> and **`gatos_frames.py`** (the math half — `cross`/`dot`/`norm`/`unit`/`neg`/`scale`/`add`/`sub` + `from_rows`/`body_to_cci`)
 > in `~/tutorials/`, and later rungs `from gatos_io import …` / `from gatos_frames import …` instead of
 > re-pasting. The block below is the **canonical source of those helpers' bodies** (keep it in sync);
 > the modules are just this text split I/O-vs-frames. In the *modules* the comments are trimmed to
@@ -64,6 +64,9 @@ def write(path: str, text) -> None:
 def write_vec(path: str, values: Vec3 | Quat) -> None:
     write(path, " ".join(str(v) for v in values))
 
+def write_nums(path: str, values) -> None:    # any-length numeric line (teleport state = 6 numbers)
+    write(path, " ".join(str(v) for v in values))
+
 # --- tiny vector math (CCI is a normal right-handed 3D frame) ----------------
 def cross(a: Vec3, b: Vec3) -> Vec3: return (a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0])
 def dot(a: Vec3, b: Vec3) -> float:  return sum(x*y for x, y in zip(a, b))
@@ -71,6 +74,8 @@ def norm(a: Vec3) -> float:          return math.sqrt(dot(a, a))
 def unit(a: Vec3) -> Vec3:           n = norm(a); return tuple(c/n for c in a)
 def scale(a: Vec3, s: float) -> Vec3: return tuple(c*s for c in a)
 def neg(a: Vec3) -> Vec3:            return tuple(-c for c in a)
+def add(a: Vec3, b: Vec3) -> Vec3:  return (a[0]+b[0], a[1]+b[1], a[2]+b[2])
+def sub(a: Vec3, b: Vec3) -> Vec3:  return (a[0]-b[0], a[1]-b[1], a[2]-b[2])
 
 # --- gating (never fly blind) ------------------------------------------------
 def is_paused() -> bool:   return read_scalar("/sim/time/sim_dt") == 0.0
@@ -235,6 +240,7 @@ The same operation, both ways — the two tabs a tutorial shows:
 | `write("/sim/vessels/active/ctl/attitude_mode", "Prograde")` | `command({vessel_id:"Hunter", action:"vessel.attitude_mode", token:"Prograde"})` |
 | `write_vec("/sim/vessels/active/ctl/attitude_target", q)` | `command({vessel_id:"Hunter", action:"vessel.attitude_target", values:q})` |
 | `read_json("/sim/vessels/active/telemetry")` | `getJson<Telemetry>("vessels/active/telemetry")` |
+| `write_nums("/sim/debug/vessels/Hunter/teleport", state)` | `command({vessel_id:"Hunter", action:"debug.teleport", values:state})` |
 | `sleep_sim(300)` | `await sleepSim(300)` |
 
 ---

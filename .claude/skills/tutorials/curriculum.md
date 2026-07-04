@@ -26,7 +26,7 @@ reuses, so later tutorials stay short (read → decide → write, plumbing alrea
 
 | Slug (`guides/…`) | Builds | Feeds | Status |
 |---|---|---|---|
-| `gatos-io` (**"Basic gatOS I/O Toolkit"**) | two importable modules in `~/tutorials/`: **`gatos_io.py`** (`read`/`read_scalar`/`read_vec`/`read_quat`/`write`/`write_vec` over `/sim`, fully type-hinted with `Vec3`/`Quat` aliases) and **`gatos_frames.py`** (`cross`/`dot`/`norm`/`unit`/`neg` + the verbatim `from_rows`/`body_to_cci` quaternion) | every flight rung from `point-at-parent` on | **done** |
+| `gatos-io` (**"Basic gatOS I/O Toolkit"**) | two importable modules in `~/tutorials/`: **`gatos_io.py`** (`read`/`read_scalar`/`read_vec`/`read_quat`/`write`/`write_vec`/`write_nums` over `/sim`, fully type-hinted with `Vec3`/`Quat` aliases) and **`gatos_frames.py`** (`cross`/`dot`/`norm`/`unit`/`neg`/`scale`/`add`/`sub` + the verbatim `from_rows`/`body_to_cci` quaternion) | every flight rung from `point-at-parent` on | **done** |
 
 **The module split is the convention now:** published tutorials `from gatos_io import …` /
 `from gatos_frames import …` rather than re-pasting I/O and quaternion code. The two files mirror the
@@ -50,7 +50,7 @@ terminal/`vi`, not a big IDE); put the real explanation in the page prose.
 | 7 | `hold-a-lock` | the **control loop** + gating (pause/warp/stale) | 5, 6 | to write |
 | 8 | `orbital-math` | constants + the vis-viva / circular-orbit cheat-sheet | 1 | to write |
 | 9 | `schedule-a-burn` | **maneuver nodes** — `ctl/burn` with a CCI Δv | 4, 8 | to write |
-| 10 | `teleport-a-scenario` | set up state with `debug/teleport` (CCI state vector) | 8 | to write |
+| 10 | `teleport-into-orbit` | set up state with `debug/teleport` (CCI state vector) — an argparse program placing an N-vessel formation into a circular/eccentric orbit | `gatos-io`, `reference-frames` | **done** |
 | 11 | `react-to-events` | event-driven control (`/sim/events`, `grep -m1`, SSE) | 2 | to write |
 | 12 | `closed-loop-guidance` | full autopilot architecture (pure core, ENU, abort) | 7, 9 | capstone |
 
@@ -139,12 +139,25 @@ terminal/`vi`, not a big IDE); put the real explanation in the page prose.
 - **Both transports:** `echo "$ut …" > ctl/burn` vs `POST /v1/command {action:"vessel.burn",values:[…]}`.
 - **Gotchas:** solver-phase; Δv is a CCI vector, not a scalar.
 
-### 10. `teleport-a-scenario` — set the stage
-- **Goal:** place a vessel in a known 120 km circular orbit (and a second one 50 m ahead).
-- **Surface:** `debug/vessels/<id>/teleport` (CCI state `px py pz vx vy vz`).
-- **New idea:** the CCI **state vector**; teleport is about the **current parent** (must already orbit
-  it); equatorial circular `[r,0,0,0,v,0]`; along-track offset via Δθ = d/r.
-- **Gotchas:** needs `debug_namespace` (default on); worked in `examples/` and `recipes.md §1`.
+### 10. `teleport-into-orbit` — set the stage (**done**)
+- **Goal:** an `argparse` program that drops one *or a formation of* vessels into a circular **or
+  eccentric** orbit of any body: `--parent`, repeatable `--vessel`, `--altitude` (periapsis),
+  `--eccentricity`, `--true-anomaly`, `--spread` (along-track meters).
+- **Surface:** `bodies/<id>/{mu,radius}`, `vessels/by-id/<id>/parent`, `debug/vessels/<id>/teleport`
+  (CCI state `px py pz vx vy vz`).
+- **New idea:** an orbit **is** a state vector (a point + a push); the perifocal→CCI equatorial state
+  `r = p/(1+e·cosθ)`, `pos = (r cosθ, r sinθ, 0)`, `vel = (−k sinθ, k(e+cosθ), 0)`, `k=√(μ/p)`,
+  `p = r_pe(1+e)` — which **collapses to the circular case at e=0** (one code path); `--altitude`
+  anchors to **periapsis** (never buries the low point); along-track spacing via angle = meters ÷
+  radius; teleport is about the **current parent** (validate `parent` first). Also teaches
+  **compute-then-actuate**: split into a *plan* phase (all reads + math) and a bare *write* phase, so
+  the N teleports fire back-to-back and land in one physics tick — interleaving a read between writes
+  lets the sim tick and smears the formation at orbital speed.
+- **Self-contained:** teaches the orbit math inline, so it does **not** depend on the (unwritten) rung
+  8 `orbital-math`. Adds `write_nums` + `scale`/`add`/`sub` to the toolkit; page is
+  [`teleport-into-orbit.mdx`](../../../site/src/content/docs/guides/teleport-into-orbit.mdx).
+- **Gotchas:** needs `debug_namespace` (default on); keep apoapsis inside the parent's `soi`; also
+  worked (host/TS, two-vessel circular) in `recipes.md §1`.
 
 ### 11. `react-to-events` — event-driven control
 - **Goal:** wait for launch/flameout/SOI-change and act, without polling.

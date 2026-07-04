@@ -1,6 +1,9 @@
 // @ts-check
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import { KATEX_ERROR_COLOR, rehypeKatexStrict } from "./rehype-katex-strict.mjs";
 
 // https://astro.build/config
 export default defineConfig({
@@ -16,9 +19,7 @@ export default defineConfig({
         baseUrl: "https://github.com/meow-sci/gatOS/edit/main/",
       },
       title: "gatOS",
-      customCss: [
-        "./src/styles/custom.css",
-      ],
+      customCss: ["./src/styles/custom.css"],
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/meow-sci/gatOS" }],
       sidebar: [
         {
@@ -32,4 +33,15 @@ export default defineConfig({
       ],
     }),
   ],
+  markdown: {
+    // math pipeline: remark-math parses $…$ (inline) and $$…$$ (block); rehype-katex compiles
+    // them with KaTeX's full LaTeX vocabulary (\frac, \sqrt, environments, spacing, Greek, …).
+    //
+    // outputs MathML (native in all browsers)
+    remarkPlugins: [remarkMath],
+    rehypePlugins: [
+      [rehypeKatex, { output: "mathml", errorColor: KATEX_ERROR_COLOR }],
+      rehypeKatexStrict,
+    ],
+  },
 });

@@ -120,6 +120,11 @@ def write(path: str, value: str) -> None:
 # Write a vector or quaternion back as space-separated values
 def write_vec(path: str, values: Vec3 | Quat) -> None:
     write(path, " ".join(str(v) for v in values))
+
+# Write *any* list of numbers space-separated — some control files want more than
+# three or four (a teleport state vector is six: "px py pz vx vy vz")
+def write_nums(path: str, values) -> None:
+    write(path, " ".join(str(v) for v in values))
 ```
 
 What's actually going on here, in slightly more words than the comments allow:
@@ -139,6 +144,9 @@ What's actually going on here, in slightly more words than the comments allow:
   should be no silent no-ops. We'll lean on this once we start actuating things.
 - **`write_vec` is a convenience** so we never hand-format `"0.1 0.2 0.3 0.9"` by hand. It takes
   either shape — a `Vec3` or a `Quat` — since on the wire they're both just space-separated numbers.
+  **`write_nums`** is the same idea with the type hint dropped, for the occasional control file that
+  wants a longer list — like the six-number teleport state vector we'll meet later. Same "numbers,
+  space-separated, one newline" wire format; it just doesn't insist on exactly three or four.
 
 That's the entire "how do I talk to the simulation" problem, solved once.
 
@@ -174,6 +182,15 @@ def unit(a: Vec3) -> Vec3:
 
 def neg(a: Vec3) -> Vec3:
     return tuple(-c for c in a) # flip a vector around
+
+def scale(a: Vec3, s: float) -> Vec3:
+    return tuple(c*s for c in a) # stretch/shrink a vector by a factor
+
+def add(a: Vec3, b: Vec3) -> Vec3:
+    return (a[0]+b[0], a[1]+b[1], a[2]+b[2]) # a + b, tip-to-tail
+
+def sub(a: Vec3, b: Vec3) -> Vec3:
+    return (a[0]-b[0], a[1]-b[1], a[2]-b[2]) # a - b, the arrow from b to a
 
 # Build the Body -> CCI quaternion (x, y, z, w) from the three body axes written
 # in CCI (as rows).
@@ -212,8 +229,10 @@ def body_to_cci(aim: Vec3, roll_ref: Vec3) -> Quat:
     return from_rows(x, y, z)
 ```
 
-The vector helpers (`cross`, `dot`, `norm`, `unit`, `neg`) are exactly what they say on the tin, and
-you'll use them constantly, no need to overthink them.
+The vector helpers (`cross`, `dot`, `norm`, `unit`, `neg`, `scale`, `add`, `sub`) are exactly what
+they say on the tin, and you'll use them constantly, no need to overthink them. They're just the
+everyday arithmetic of 3D arrows — flip one, stretch one, add two together — and later tutorials lean
+on them the way this one leans on `neg`.
 
 The two functions at the bottom are the reason this file exists, and they deserve a word of warning:
 
