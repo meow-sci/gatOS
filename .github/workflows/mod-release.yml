@@ -31,11 +31,16 @@ name: Mod release
 # KSA.dll), so the checkout is unconditional — access needs the KSA_GAME_ASSEMBLIES_PAT
 # repo secret (fine-grained read-only Contents, same pattern as purrtty / build.yml).
 
+# Skip when a push touches ONLY the docs site (site/**) — that's site-deploy.yml's job.
+# A mixed commit that also touches code still cuts a release; workflow_dispatch is
+# unaffected.
 on:
   push:
     branches:
       - main
       - 'release/**'
+    paths-ignore:
+      - 'site/**'
   workflow_dispatch:
 
 permissions:

@@ -16,13 +16,20 @@ name: Build and test
 # game-free, so CI stays meaningful. Configure the secret to restore
 # full-fidelity GameMod compilation against the real game DLLs.
 
+# Skip when a push/PR touches ONLY the docs site (site/**) — that's site-deploy.yml's
+# job. A mixed commit that also touches code still runs (at least one changed path is
+# not ignored); workflow_dispatch is unaffected, so manual runs always work.
 on:
   push:
     branches:
       - main
       - 'release/**'
       - 'feature/**'
+    paths-ignore:
+      - 'site/**'
   pull_request:
+    paths-ignore:
+      - 'site/**'
   workflow_dispatch:
 
 permissions:
