@@ -365,3 +365,50 @@ Notes:
 - Errnos: `ENOENT` (vessel/part/id gone), `EINVAL` (bad arity/values), `EIO` (renderer unavailable).
 - Entries are **runtime-only** (never persisted); cleared on mod unload. With no entries the render hook is
   removed entirely (zero per-frame cost).
+
+---
+
+## 11. Kick a vessel with a one-shot impulse (the `impulse` cheat)
+
+**Task:** *change a vessel's velocity instantly — no propellant, no pointing, no waiting.* Cheat-tier
+(`debug_namespace`, default on). Write `x y z [cci|body] [ns|dv]` to `debug/vessels/<id>/impulse`:
+the vector defaults to an **impulse in newton-seconds** in the **parent-CCI frame**; Δv = J ÷ the
+vessel's live total mass (the same math as KSA's own docking-separation impulse). Two optional
+keywords, any order after the numbers: `body` reads the vector in the vessel frame (+X = nose, same
+convention as `attitude/quat`); `dv` skips the mass division and applies the vector **directly as Δv
+in m/s** — `ctl/burn` semantics minus the autopilot. Full semantics:
+[SPEC §6](../../../SPEC_9P_FILESYSTEM.md).
+
+```sh
+# In-guest shell twins (against the /sim mount):
+echo "50000 0 0 body"  > /sim/debug/vessels/Hunter/impulse   # 50 kN·s shove off the nose
+echo "10 0 0 body dv"  > /sim/debug/vessels/Hunter/impulse   # exactly +10 m/s forward
+echo "0 0 -25 dv"      > /sim/debug/vessels/Hunter/impulse   # -25 m/s along CCI -Z (southward)
+
+# Prograde +100 m/s without the flight computer: kick along the velocity unit vector (CCI).
+v=$(cat /sim/vessels/Hunter/velocity/cci)                     # "vx vy vz"
+set -- $v; mag=$(echo "sqrt($1*$1+$2*$2+$3*$3)" | bc -l)
+echo "$(echo "100*$1/$mag" | bc -l) $(echo "100*$2/$mag" | bc -l) $(echo "100*$3/$mag" | bc -l) dv" \
+  > /sim/debug/vessels/Hunter/impulse
+```
+
+```ts
+// impulse.ts  —  run with:  bun impulse.ts
+import { command } from "./gatos.ts";
+// 5 kN·s pushoff along the nose (like an undock separation, aimed by attitude):
+await command({ vessel_id: "Hunter", action: "debug.impulse", values: [5000, 0, 0], token: "body" });
+// Precise +10 m/s prograde-ish forward kick (Δv mode):
+await command({ vessel_id: "Hunter", action: "debug.impulse", values: [10, 0, 0], token: "body", aux: "dv" });
+```
+
+Notes:
+- **JSON shape:** `values` = the 3-vector, `token` = frame (`cci`/`body`, omit ⇒ `cci`), `aux` = unit
+  (`ns`/`dv`, omit ⇒ `ns`).
+- The kick is **instantaneous and non-physical** — the orbit is rebuilt at the current CCI position
+  with the bumped velocity (the teleport machinery), so it works on-rails, in the physics bubble, and
+  at any magnitude. A landed vessel gets launched exactly as the math says.
+- To *predict* the Δv of an `ns` kick, read `mass/total` first: Δv = J/m. Or just use `dv`.
+- Frame phase (one command per tick): to kick a formation simultaneously, batch the writes through
+  `/sim/ctl/batch` exactly like the formation teleport (§8-batch).
+- Errnos: `EINVAL` (bad arity/keyword/non-finite), `EBUSY` (no parent body / mass unavailable),
+  `ENOENT` (vessel gone), `EACCES` (debug namespace off).

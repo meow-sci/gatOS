@@ -253,6 +253,24 @@ and `docs/KSA_INTEGRATION_MATRIX.md` (per-vessel nodes). **All items pending a l
 | 9 | With **no** vessel marked, no `gatos.always_render` patches are installed (repeated mark/unmark cycles → no double-patch, no leak); quit with marks active → clean unload | ☐ | dynamic patch lifecycle; `TeardownGameCheats` |
 | 10 | An EVA kitten marked `always_render` is **not** force-rendered (documented limitation — its `UpdateRenderData` override bypasses the patched base) | ☐ | virtual-method limitation |
 
+## `debug/vessels/<id>/impulse` (one-shot impulsive kick) — validation pass — **NOT YET RUN**
+
+Prereq: the T6.6 pass. `[control] debug_namespace = true` (default). Run during a real flight —
+one vessel in a stable orbit, plus (for item 6) a landed one. The game-free half (grammar parse,
+EINVAL boundary, command shape/phase) is covered by `gatOS.SimFs.Tests/Commands/VesselImpulseTests.cs`;
+these items exercise the game half (`DebugActuator.Impulse`). See `SPEC_9P_FILESYSTEM.md` §3.7/§6 and
+`docs/KSA_INTEGRATION_MATRIX.md` (debug table). **All items pending a live flight.**
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | Note `velocity/orbital`, then `echo "10 0 0 body dv" > /sim/debug/vessels/<id>/impulse` — the vessel gains ~10 m/s along its nose (orbit visibly changes; speed delta matches when pointed prograde) | ☐ | `dv` + `body`: rotate by `GetBody2Cci`, no mass division |
+| 2 | Read `mass/total` (m, kg), compute `J = 5·m`, then `echo "$J 0 0" > impulse` (no keywords) — `velocity/cci` X gains ~5 m/s | ☐ | default `ns` unit + default `cci` frame: Δv = J/`TotalMass` |
+| 3 | `echo "0 0 0" > impulse` succeeds silently (no-op); `cat impulse` reads `0 0 0` | ☐ | zero kick short-circuits before the teleport |
+| 4 | Kicking a **non-active** vessel by id works (debug namespace is authority-exempt); with `debug_namespace = false` the file is gone | ☐ | gate behavior |
+| 5 | On-rails at warp > 1: the kick still applies cleanly (orbit updates, no NaN/explosion) | ☐ | orbit-rebuild path is rails-safe by construction — confirm |
+| 6 | A **landed** vessel kicked hard vertically (`body`, +X up or `dv` along +r̂) actually launches; a gentle kick just re-settles | ☐ | documented "it's a cheat" semantics |
+| 7 | A huge N·s kick on a tiny vessel (Δv ≫ escape) produces a hyperbolic orbit, not a crash/NaN | ☐ | `CreateFromStateCci` handles hyperbolic states (teleport precedent) |
+
 ## `/sim/audio` (userland audio playback) — validation pass — **NOT YET RUN**
 
 Prereq: the T6.6 pass. `[audio] audio_enabled = true` and `[control] control_enabled = true` (both

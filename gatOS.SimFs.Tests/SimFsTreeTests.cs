@@ -194,7 +194,8 @@ public sealed class SimFsTreeTests
             "system/name", "bodies/Kerth/mass", "bodies/Kerth/orbit/sma",
             "bodies/Kerth/atmosphere/height", "bodies/Kerth/ocean/density", "bodies/Kerth/focus",
             // debug namespace
-            "debug/vessels/test-1/teleport", "debug/vessels/test-1/refill_fuel",
+            "debug/vessels/test-1/teleport", "debug/vessels/test-1/impulse",
+            "debug/vessels/test-1/refill_fuel",
             "debug/vessels/test-1/refill_battery", "debug/vessels/test-1/docking/0/pushoff_impulse",
             "debug/time/warp", "debug/focus", "debug/control_vessel",
         ];

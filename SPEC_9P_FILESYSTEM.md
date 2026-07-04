@@ -457,6 +457,7 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | Path | A | Write | Action key | Phase | Meaning |
 |---|---|---|---|---|---|
 | `debug/vessels/<id>/teleport` | **St** | `px py pz vx vy vz` | `debug.teleport` | Frame | Set the vessel's **CCI state vector** (position m, velocity m/s) about its **current parent body**. See §6. |
+| `debug/vessels/<id>/impulse` | **St** | `x y z [cci\|body] [ns\|dv]` | `debug.impulse` | Frame | One-shot impulsive kick: a 3-vector **impulse in N·s** (default; Δv = J ÷ live vessel mass, the `Vehicle.Split` separation-impulse math) or a direct **Δv in m/s** (`dv`), in the parent-**CCI** frame (default) or the **vessel body frame** (`body`; +X = nose/thrust axis). The two keywords may follow the numbers in any order. No propellant is spent; the orbit is rebuilt at the current CCI position with the bumped velocity (the teleport pattern), so it works on-rails and in the physics bubble alike. Zero vector = no-op success. Read = `0 0 0` (no read-back). See §6. |
 | `debug/vessels/<id>/refill_fuel` | T | `1` | `debug.refill_fuel` | **Solver** | Refill all consumables. |
 | `debug/vessels/<id>/refill_battery` | T | `1` | `debug.refill_battery` | **Solver** | Refill all batteries. |
 | `debug/vessels/<id>/docking/<n>/pushoff_impulse` | **St** | number (N·s ≥0) | `debug.docking_pushoff` | Frame | Override a docking port's undock separation impulse (`DockingPort.PushoffImpulse`). |
@@ -678,9 +679,9 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `action` | string | the action key (table below). |
 | `ordinal` | int | module index (engine/rcs/light/animation/decoupler/docking); `-1` for vessel-level. |
 | `value` | number | scalar arg: `0`/`1` flag, `0..1` fraction, or number. |
-| `values` | number[] | vector arg: quaternion (4), burn `ut dvx dvy dvz` (4), color `r g b` (3), teleport `px py pz vx vy vz` (6), the audio play slots / set pairs (§3.9 notes below). |
-| `token` | string | symbolic arg: attitude mode/frame token, a target id for focus/control, the audio clip name (`audio.play`) or channel target (`audio.set`/`audio.stop`). |
-| `aux` | string | secondary symbolic arg — only `audio.play` uses it: the caller-chosen channel `id=` (omit ⇒ auto `#N`). |
+| `values` | number[] | vector arg: quaternion (4), burn `ut dvx dvy dvz` (4), color `r g b` (3), teleport `px py pz vx vy vz` (6), impulse `x y z` (3), the audio play slots / set pairs (§3.9 notes below). |
+| `token` | string | symbolic arg: attitude mode/frame token, a target id for focus/control, the audio clip name (`audio.play`) or channel target (`audio.set`/`audio.stop`), the impulse frame keyword (`cci`/`body`; omit ⇒ `cci`). |
+| `aux` | string | secondary symbolic arg — `audio.play` uses it for the caller-chosen channel `id=` (omit ⇒ auto `#N`); `debug.impulse` for the unit keyword (`ns`/`dv`; omit ⇒ `ns`). |
 
 ### 5.1 Action key catalog (the complete write surface)
 
@@ -713,6 +714,7 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `camera.focus` | — | token = id | Frame | `ctl/focus`, `bodies/<id>/focus`, `debug/focus` | view-only; no authority gate |
 | `debug.control_vessel` | — | token = id | Frame | `debug/control_vessel` | grants control |
 | `debug.teleport` | — | values `[px,py,pz,vx,vy,vz]` | Frame | `debug/vessels/<id>/teleport` | CCI about current parent |
+| `debug.impulse` | — | values `[x,y,z]`; token = frame (`cci`\|`body`, omit ⇒ `cci`); aux = unit (`ns`\|`dv`, omit ⇒ `ns`) | Frame | `debug/vessels/<id>/impulse` | one-shot kick; N·s ⇒ Δv = J ÷ live mass; `dv` ⇒ Δv m/s as-is |
 | `debug.refill_fuel` | — | value `1` | **Solver** | `debug/vessels/<id>/refill_fuel` | |
 | `debug.refill_battery` | — | value `1` | **Solver** | `debug/vessels/<id>/refill_battery` | |
 | `debug.docking_pushoff` | docking n | value N·s | Frame | `debug/vessels/<id>/docking/<n>/pushoff_impulse` | |
@@ -764,7 +766,7 @@ Response `200 {"outcome":"ok"}`, or `{ "errno": "...", "message": "..." }` with 
 
 ---
 
-## 6. Teleport semantics (read carefully)
+## 6. Teleport & impulse semantics (read carefully)
 
 `debug.teleport` takes a **6-component CCI state vector** `px py pz vx vy vz` (position meters,
 velocity m/s) and applies it **about the vessel's *current* parent body** via
@@ -788,6 +790,25 @@ velocity m/s) and applies it **about the vessel's *current* parent body** via
 
 `mu` and `radius` come from `/sim/bodies/<parent>/{mu,radius}` (or SDK `bodies()` → `mu`,
 `mean_radius`). See `.claude/skills/gatos/recipes.md` for a complete teleport program.
+
+**Impulse** (`debug.impulse`) rides the same machinery — it reads the current CCI state, bumps only
+the **velocity**, and re-teleports at the same position — so everything above about the frame applies:
+
+- The default vector frame is the **current parent's CCI**; `+Z` kicks toward the parent's north pole,
+  and a kick along the velocity unit vector is prograde. The `body` keyword instead reads the vector in
+  the **vessel body frame** (+X = nose/thrust axis, the same convention as `attitude/quat`) and rotates
+  it through the live Body→CCI attitude at application time — `100000 0 0 body` kicks straight
+  "forward" wherever the vessel points.
+- Units: the default is an **impulse in newton-seconds** — Δv = J ÷ the vessel's live total mass, the
+  same math as KSA's own docking-separation impulse (cf. `pushoff_impulse`, stock 5000–7000 N·s). The
+  `dv` keyword skips the mass division and applies the vector **directly as Δv in m/s** — handy when
+  you've done the orbital math and just want the velocity change (`ctl/burn` semantics, minus the
+  autopilot, the propellant, and the waiting).
+- It is **instantaneous and non-physical**: no propellant is spent, no engine needs to point anywhere,
+  and the change lands in one tick regardless of magnitude. A landed vessel gets kicked exactly like an
+  orbiting one (the resulting "orbit" may immediately intersect the ground — that's your problem, it's
+  a cheat). Zero vectors succeed as a no-op. Errnos: `EINVAL` (bad arity/keyword/non-finite),
+  `EBUSY` (no parent body, or mass unavailable for an N·s kick), `ENOENT` (vessel gone).
 
 ---
 

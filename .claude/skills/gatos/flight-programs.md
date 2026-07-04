@@ -190,6 +190,7 @@ writing your own guidance law.
 | wait for a time / phase angle | `time/alarm` (or `GET /v1/time/wait`); pace in sim time |
 | read everything consistently | one read of `vessels/<id>/telemetry` |
 | place a vessel exactly | `debug/vessels/<id>/teleport` (CCI state) — see [recipes.md](recipes.md) |
+| kick a vessel without burning | `debug/vessels/<id>/impulse` = `x y z [cci\|body] [ns\|dv]` (one-shot Δv cheat; no propellant, no pointing) |
 | run a closed loop safely | bracket it at 1× warp; gate on pause/warp/stale; abort path ready |
 
 Concrete end-to-end programs (including the teleport task): [`recipes.md`](recipes.md).

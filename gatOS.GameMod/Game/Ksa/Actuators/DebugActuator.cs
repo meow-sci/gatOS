@@ -6,7 +6,7 @@ namespace gatOS.GameMod.Game.Ksa.Actuators;
 
 /// <summary>
 ///     The cheat-tier actuators behind <c>/sim/debug</c> (KSA_GAME_INTEGRATION_PLAN §5.3, G-D2):
-///     teleport, instant refills, warp-set and vessel switch. Fenced off from the "realistic
+///     teleport, one-shot impulse, instant refills, warp-set and vessel switch. Fenced off from the "realistic
 ///     hardware" surface and gated by <c>[control] debug_namespace</c>. The refills run in the
 ///     <b>solver phase</b> (the proven unscience <c>eternal-flame</c> pattern); the rest run in the
 ///     frame phase. Game-thread only.
@@ -50,6 +50,47 @@ internal static class DebugActuator
         var position = new double3(state[0], state[1], state[2]);
         var velocity = new double3(state[3], state[4], state[5]);
         var orbit = Orbit.CreateFromStateCci(parent, Universe.GetElapsedSimTime(), position, velocity, default);
+        vehicle.Teleport(orbit, null, null);
+        vehicle.UpdatePerFrameData();
+        return CommandResult.Ok;
+    }
+
+    [KsaAnchor("Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,TotalMass,Parent} + Orbit.CreateFromStateCci "
+            + "+ Vehicle.Teleport + Vehicle.UpdatePerFrameData (velocity-bump variant of the teleport pattern)",
+        SourceFile = "KSA/Vehicle.cs / KSA/Orbit.cs", Verified = "2026-07-04", Risk = ChurnRisk.High,
+        Notes = "One-shot impulsive kick: Δv = J/TotalMass — the same math as KSA's own separation impulse "
+            + "(Vehicle.Split) — applied by rebuilding the orbit from the current CCI position and the bumped "
+            + "velocity, so it works on-rails and in the physics bubble alike. 'body' rotates the vector by "
+            + "Body2Cci (body +X = nose); 'dv' skips the mass division and applies the vector as Δv m/s.")]
+    internal static CommandResult Impulse(Vehicle vehicle, IReadOnlyList<double> vector, string? frame, string? unit)
+    {
+        // Re-validate through the shared game-free rules: the HTTP/MQTT command paths reach here
+        // without the 9p control-file parse, so arity/keywords are not pre-checked on that route.
+        if (ImpulseRules.Validate(vector, frame, unit) is { } error)
+            return new CommandResult(CommandOutcome.Invalid, error);
+        if (vehicle.Parent is not { } parent)
+            return new CommandResult(CommandOutcome.Busy, "vessel has no parent body to impulse about");
+
+        var input = new double3(vector[0], vector[1], vector[2]);
+        var cci = ImpulseRules.IsBodyFrame(frame) ? double3.Transform(input, vehicle.GetBody2Cci()) : input;
+        var deltaV = cci;
+        if (!ImpulseRules.IsDeltaV(unit))
+        {
+            double mass = vehicle.TotalMass;
+            if (!double.IsFinite(mass) || mass <= 0)
+                return new CommandResult(CommandOutcome.Busy, "vessel mass unavailable for an N·s impulse");
+            deltaV = cci / mass;
+        }
+
+        if (deltaV.X == 0 && deltaV.Y == 0 && deltaV.Z == 0)
+            return CommandResult.Ok; // zero kick — nothing to apply
+
+        var velocity = vehicle.GetVelocityCci() + deltaV;
+        if (!double.IsFinite(velocity.X) || !double.IsFinite(velocity.Y) || !double.IsFinite(velocity.Z))
+            return new CommandResult(CommandOutcome.Invalid, "resulting velocity is not finite");
+
+        var orbit = Orbit.CreateFromStateCci(parent, Universe.GetElapsedSimTime(),
+            vehicle.GetPositionCci(), velocity, default);
         vehicle.Teleport(orbit, null, null);
         vehicle.UpdatePerFrameData();
         return CommandResult.Ok;

@@ -17,7 +17,7 @@ landing program (`examples/land-o-matic`).
 | **ORB** (perifocal) | focus | in the orbit plane (periapsis on X) | yes | implied by orbital elements |
 | **CCE / STAR** (Celestial-Centered Ecliptic) | a body | **same axes as ECL**, re-centered on the body | yes | vehicle attitude is internally kept here; "STAR" in the KSA UI |
 | **CCF** (Celestial-Centered Fixed) | a body | Z = north pole (spin axis); X = prime-meridian∩equator; rotates with the body | **no** | latitude/longitude live here (`position/lat`, `position/lon`) |
-| **CCI** (Celestial-Centered Inertial) | a body | Z = north pole (spin axis); **X = vernal point (fixed)**; Y = Z×X | yes | **the main I/O frame**: `position/cci`, `velocity/cci`, `attitude/quat` (Body→CCI), `debug/teleport`, `ctl/burn` Δv |
+| **CCI** (Celestial-Centered Inertial) | a body | Z = north pole (spin axis); **X = vernal point (fixed)**; Y = Z×X | yes | **the main I/O frame**: `position/cci`, `velocity/cci`, `attitude/quat` (Body→CCI), `debug/teleport`, `debug/…/impulse` (default frame), `ctl/burn` Δv |
 
 The relationship that matters most in practice:
 
@@ -182,7 +182,9 @@ not radii); add `radius` to get the geocentric radius. Inclination/LAN/argpe/tru
 - **Don't substitute a foreign quaternion library** for the Body→CCI math; use KSA's exact arithmetic.
 - **Attitude/burn writes are solver-phase** (a tick of latency) and want ~1× warp for closed-loop.
 - **Teleport is CCI about the *current* parent** — make sure the vessel is in the intended body's SOI
-  first (see [SPEC §6](../../../SPEC_9P_FILESYSTEM.md) and the recipe).
+  first (see [SPEC §6](../../../SPEC_9P_FILESYSTEM.md) and the recipe). The `debug/…/impulse` kick
+  shares the frame (and can instead take the vector in the vessel **body** frame, +X = nose); its
+  default unit is **N·s** (Δv = J ÷ mass) — append `dv` for straight m/s.
 - **Guard non-finite reads**: a closed gate or absent module can yield `0`; sanitize before using.
 
 ---

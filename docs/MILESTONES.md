@@ -398,7 +398,8 @@ errnos `EBUSY`/`ETIMEDOUT` added.
 **`/sim/debug/`** cheat namespace (gated by
 `[control] debug_namespace`: `vessels/<id>/{teleport,refill_fuel,refill_battery}`,
 `vessels/<id>/docking/<n>/pushoff_impulse`, `time/warp`, `focus` (camera-by-id, vehicle/body),
-`control_vessel` (focus + control)).
+`control_vessel` (focus + control); `vessels/<id>/impulse` joined the namespace 2026-07-04 —
+see its own section below).
 
 **New command archetypes:** `ControlFile.Number`, `VectorControlFile`, `EnumControlFile`,
 `TokenControlFile`; `SimCommand` gained `Values` (vectors) + `Token` (enum/free tokens).
@@ -707,6 +708,35 @@ always on, not detail-gated); `SimFsTree` `NumberControl`/`FlagControl` nodes be
 
 ---
 
+## One-shot vessel impulse: `debug/vessels/<id>/impulse`: Code DONE; in-game pass pending
+
+An impulsive-kick cheat, landed 2026-07-04: write `x y z [cci|body] [ns|dv]` to instantly change a
+vessel's velocity — no propellant, no pointing, no autopilot. Defaults: the vector is an **impulse in
+newton-seconds** (Δv = J ÷ live `Vehicle.TotalMass`, the same math as KSA's own `Vehicle.Split`
+separation impulse) in the **parent-CCI frame**; the `body` keyword reads it in the vessel body frame
+(+X = nose, rotated through `GetBody2Cci()` at application), and `dv` applies it directly as Δv m/s.
+Keywords may follow the numbers in any order; zero vectors succeed as a no-op.
+
+**Game-free half:** `gatOS.SimFs/Commands/ImpulseRules.cs` (the keyword sets + the arity/finite/keyword
+validation both the 9p parse and the actuator share — the `ScaleRules` pattern, so the EINVAL boundary
+is unit-testable); `SimFsTree.ParseImpulse` (a `LineControlFile` beside `teleport` in the debug vessel
+dir) building `SimCommand(id, "debug.impulse", NoOrdinal, 0) { Values=[x,y,z], Token=frame, Aux=unit }`
+— Frame-phase (not in `SolverActions`, the teleport precedent). **Game half:**
+`DebugActuator.Impulse` — the *velocity-bump variant of the teleport pattern*: rotate to CCI if
+`body`, divide by mass unless `dv`, then `Orbit.CreateFromStateCci(parent, now, GetPositionCci(),
+GetVelocityCci() + Δv, default)` → `Vehicle.Teleport` → `UpdatePerFrameData()`, so it works on-rails
+and in the physics bubble alike (KSA has no persistent external-force accumulator — forces are rebuilt
+every solver substep, so an instantaneous velocity change *is* the correct primitive). Errnos:
+`EINVAL` (arity/keyword/non-finite/non-finite result), `EBUSY` (no parent body; mass unavailable for
+an N·s kick), `ENOENT` (vessel gone). HTTP/MQTT get the action + the `/v1/fs`–`gatos/sim` field
+mirror structurally (zero transport code). Tests:
+`gatOS.SimFs.Tests/Commands/VesselImpulseTests.cs` + the `SimFsTreeTests` enumeration list. Catalog:
+`SPEC_9P_FILESYSTEM.md` §3.7/§5.1/§6; anchors mirrored in `docs/KSA_INTEGRATION_MATRIX.md` (debug
+table) and `scope/ksa-write-surface.md#debug`. **Pending: the in-game pass** (checklist in
+`docs/VALIDATION.md`).
+
+---
+
 ## Custom audio playback: `/sim/audio` (GATOS_CUSTOM_AUDIO_PLAN P1–P3): Code DONE; in-game pass pending
 
 Userland audio through the game's speakers, landed 2026-07-02 — upload real mp3/ogg/wav/flac bytes
@@ -769,8 +799,9 @@ be exercised headlessly.
 `HostMountIntegrationTests` fixture requires guest v10 to be published.
 
 **Still pending: the in-game passes** — T6.6/T9.3/G1–G4 and the welds/IVA/parts, thug_life,
-per-vessel `scale`/`always_render`, and `/sim/audio` checklists in `docs/VALIDATION.md` are runnable
-now that the purrTTY tip release is cut, but need a live KSA flight to complete.
+per-vessel `scale`/`always_render`, `debug/vessels/<id>/impulse`, and `/sim/audio` checklists in
+`docs/VALIDATION.md` are runnable now that the purrTTY tip release is cut, but need a live KSA
+flight to complete.
 
 **Next**: M10 (persistence & savegame shape). Everything past M9 is not yet implemented, with
 the single exception of T11.1 (QEMU win-x64 bundle) which was pulled forward and is done.

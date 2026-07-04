@@ -224,6 +224,14 @@ function fileCommand(c: Command): { path: string; payload: string } {
       return { path: `debug/control_vessel`, payload: c.token ?? c.vessel_id };
     case "debug.teleport":
       return { path: `debug/vessels/${c.vessel_id}/teleport`, payload: vec };
+    case "debug.impulse": {
+      // "x y z [cci|body] [ns|dv]" — frame keyword rides in token, unit keyword in aux.
+      const keywords = [c.token, c.aux].filter(Boolean).join(" ");
+      return {
+        path: `debug/vessels/${c.vessel_id}/impulse`,
+        payload: keywords ? `${vec} ${keywords}` : vec,
+      };
+    }
     case "debug.refill_fuel":
       return { path: `debug/vessels/${c.vessel_id}/refill_fuel`, payload: "1" };
     case "debug.refill_battery":

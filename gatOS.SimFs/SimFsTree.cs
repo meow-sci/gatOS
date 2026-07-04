@@ -1141,6 +1141,12 @@ public static class SimFsTree
             {
                 VectorControl($"{q}/teleport", "teleport", vesselId, "debug.teleport", SimCommand.NoOrdinal, 6,
                     () => "0 0 0 0 0 0"),
+                // One-shot impulsive kick. Write: "<x> <y> <z> [cci|body] [ns|dv]" — a 3-vector in
+                // the parent-CCI frame (default) or the vessel body frame (+X = nose), in
+                // newton-seconds (default; Δv = J/mass at application) or directly as Δv m/s.
+                // Keywords may follow the numbers in any order. Read = "0 0 0" (no read-back).
+                LineControlFile.Create("impulse", Qid($"{q}/impulse"), sink,
+                    () => "0 0 0", line => ParseImpulse(vesselId, line)),
                 new TriggerFile("refill_fuel", Qid($"{q}/refill_fuel"), sink,
                     new SimCommand(vesselId, "debug.refill_fuel", SimCommand.NoOrdinal, 1)),
                 new TriggerFile("refill_battery", Qid($"{q}/refill_battery"), sink,
@@ -1577,6 +1583,44 @@ public static class SimFsTree
             {
                 Token = parts[0],
                 Values = [part, lockRot],
+            };
+        }
+
+        /// <summary>
+        ///     Parses an impulse line — <c>"&lt;x&gt; &lt;y&gt; &lt;z&gt; [cci|body] [ns|dv]"</c> (3 finite
+        ///     numbers, then at most one frame keyword and one unit keyword in any order) — into a
+        ///     <c>debug.impulse</c> command: <c>Values</c> = the vector, <c>Token</c> = the frame
+        ///     (null ⇒ cci), <c>Aux</c> = the unit (null ⇒ ns). Returns null (⇒ EINVAL) on any
+        ///     malformed, unknown, or duplicated token.
+        /// </summary>
+        private static SimCommand? ParseImpulse(string vesselId, string line)
+        {
+            var parts = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length is < 3 or > 5)
+                return null;
+            var values = new double[3];
+            for (var i = 0; i < 3; i++)
+                if (!double.TryParse(parts[i], NumberStyles.Float, CultureInfo.InvariantCulture, out values[i])
+                    || !double.IsFinite(values[i]))
+                    return null;
+            string? frame = null, unit = null;
+            for (var i = 3; i < parts.Length; i++)
+                switch (parts[i])
+                {
+                    case ImpulseRules.FrameCci or ImpulseRules.FrameBody when frame is null:
+                        frame = parts[i];
+                        break;
+                    case ImpulseRules.UnitNs or ImpulseRules.UnitDv when unit is null:
+                        unit = parts[i];
+                        break;
+                    default:
+                        return null; // unknown or duplicated keyword
+                }
+            return new SimCommand(vesselId, "debug.impulse", SimCommand.NoOrdinal, 0)
+            {
+                Values = values,
+                Token = frame,
+                Aux = unit,
             };
         }
 

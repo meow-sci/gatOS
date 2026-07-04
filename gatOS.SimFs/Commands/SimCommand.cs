@@ -81,21 +81,23 @@ public sealed record SimCommand(
 
     /// <summary>
     ///     Multi-component numeric payload for vector actions (attitude quaternion, burn
-    ///     <c>ut + Δv</c>, teleport state). Null for scalar/flag/trigger actions, which use
-    ///     <see cref="Value"/>.
+    ///     <c>ut + Δv</c>, teleport state, impulse vector). Null for scalar/flag/trigger actions,
+    ///     which use <see cref="Value"/>.
     /// </summary>
     public IReadOnlyList<double>? Values { get; init; }
 
     /// <summary>
-    ///     Symbolic-token payload for enum actions (attitude mode/frame, vessel-switch target id).
-    ///     Null for numeric actions.
+    ///     Symbolic-token payload for enum actions (attitude mode/frame, vessel-switch target id,
+    ///     the <c>debug.impulse</c> frame keyword). Null for numeric actions.
     /// </summary>
     public string? Token { get; init; }
 
     /// <summary>
     ///     Secondary symbolic payload, for the rare action whose argument shape carries <i>two</i>
     ///     strings: <c>audio.play</c> uses <see cref="Token"/> for the clip name and this for the
-    ///     caller-chosen channel <c>id=</c> (null = auto-assign). Null everywhere else.
+    ///     caller-chosen channel <c>id=</c> (null = auto-assign); <c>debug.impulse</c> uses
+    ///     <see cref="Token"/> for the frame keyword and this for the unit keyword. Null everywhere
+    ///     else.
     /// </summary>
     public string? Aux { get; init; }
 }

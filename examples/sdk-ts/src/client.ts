@@ -231,6 +231,24 @@ export class DebugHandle {
     return this.t.command({ vessel_id: this.id, action: "debug.teleport", values: stateCci });
   }
 
+  /**
+   * One-shot impulsive kick — no propellant, no pointing. The vector is an impulse in **N·s**
+   * (Δv = J ÷ live vessel mass) unless `unit: "dv"` (then it is applied directly as Δv in m/s),
+   * in the parent-CCI frame unless `frame: "body"` (vessel frame, +X = nose).
+   */
+  impulse(
+    vector: [number, number, number],
+    opts?: { frame?: "cci" | "body"; unit?: "ns" | "dv" },
+  ) {
+    return this.t.command({
+      vessel_id: this.id,
+      action: "debug.impulse",
+      values: vector,
+      token: opts?.frame,
+      aux: opts?.unit,
+    });
+  }
+
   /** Move the camera to this vessel (view only — does not change control). */
   focus() {
     return this.t.command({ vessel_id: this.id, action: "camera.focus", token: this.id });

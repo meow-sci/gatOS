@@ -167,12 +167,18 @@ debug_namespace`. Authority-exempt (own opt-in).
 | `debug/control_vessel` | `debug.control_vessel` | Frame | `Program.GetMainCamera().SetFollow(…)`; `Program.ControlledVehicle = vehicle` | `KSA/Program.cs` | Medium | ✅⁶ |
 | `debug/focus` | `camera.focus` | Frame | (same as `ctl/focus`) | `KSA/Program.cs` | Medium | ✅ |
 | `debug/vessels/<id>/teleport` | `debug.teleport` | Frame | `Orbit.CreateFromStateCci` + `Vehicle.Teleport` + `Vehicle.UpdatePerFrameData` | `KSA/Orbit.cs`, `KSA/Vehicle.cs` | **High** | ✅ |
+| `debug/vessels/<id>/impulse` | `debug.impulse` | Frame | `Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,TotalMass,Parent}` + `Orbit.CreateFromStateCci` + `Vehicle.Teleport` + `Vehicle.UpdatePerFrameData` (velocity-bump variant of the teleport pattern; Δv = J/`TotalMass` mirrors `Vehicle.Split`) | `KSA/Vehicle.cs`, `KSA/Orbit.cs` | **High** | ✅⁷ |
 | `debug/vessels/<id>/refill_fuel` | `debug.refill_fuel` | **Solver** | `Vehicle.RefillConsumables()` | `KSA/Vehicle.cs` (`:2300`) | Medium | ✅ |
 | `debug/vessels/<id>/refill_battery` | `debug.refill_battery` | **Solver** | `Battery.Refill(ref state)` via `Batteries.GetModuleAndAllMutableStatesForInitialization` | `KSA/Battery.cs` (`:59`) | Medium | ✅ |
 | `debug/vessels/<id>/docking/<n>/pushoff_impulse` | `debug.docking_pushoff` | Frame | `DockingPort.PushoffImpulse =` (live float, N·s) | `KSA/DockingPort.cs` | Medium | ✅ |
 
 ⁶ `Program.ControlledVehicle` setter may itself reject an uncontrollable target in 4750 (see the
 `IsControllable` concern) — verify in a live flight.
+
+⁷ Added 2026-07-04 (feature was born on 4826): every member is shared with the teleport / welds /
+reader anchors already verified against `2026.7.3.4826`; `Vehicle.Split` (decomp `Vehicle.cs:1081`,
+`Δv = impulse/TotalMass` at `:1151-1159`) is the in-engine precedent the math mirrors. In-game pass
+pending (see `docs/VALIDATION.md`).
 
 ---
 

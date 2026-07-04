@@ -53,7 +53,7 @@ internal static class OpenApi
                     "value": { "type": "number" },
                     "values": { "type": "array", "items": { "type": "number" } },
                     "token": { "type": "string" },
-                    "aux": { "type": "string", "description": "secondary symbolic arg (audio.play channel id)" }
+                    "aux": { "type": "string", "description": "secondary symbolic arg (audio.play channel id; debug.impulse unit ns/dv)" }
                   }
                 } } } },
                 "responses": {

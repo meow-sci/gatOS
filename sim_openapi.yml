@@ -362,6 +362,9 @@ paths:
               refuel:
                 summary: Cheat-refill fuel (debug namespace)
                 value: { vessel_id: "Vessel-1", action: "debug.refill_fuel", value: 1 }
+              impulse:
+                summary: One-shot 50 kN·s kick along the vessel's nose (debug namespace)
+                value: { vessel_id: "Vessel-1", action: "debug.impulse", values: [50000, 0, 0], token: "body" }
       responses:
         "200": { $ref: "#/components/responses/CommandOk" }
         "400": { $ref: "#/components/responses/CommandError" }
@@ -593,13 +596,13 @@ components:
         values:
           type: array
           items: { type: number, format: double }
-          description: Vector argument (e.g. `attitude_target` quaternion `[x,y,z,w]`, `color` `[r,g,b]`, `teleport` `[x,y,z,vx,vy,vz]`).
+          description: Vector argument (e.g. `attitude_target` quaternion `[x,y,z,w]`, `color` `[r,g,b]`, `teleport` `[x,y,z,vx,vy,vz]`, `impulse` `[x,y,z]`).
         token:
           type: string
-          description: Symbolic-token argument (e.g. an `attitude_mode`/`attitude_frame` name, a `camera.focus`/`control_vessel` target id, or the audio clip/channel target).
+          description: Symbolic-token argument (e.g. an `attitude_mode`/`attitude_frame` name, a `camera.focus`/`control_vessel` target id, the audio clip/channel target, or the `debug.impulse` frame keyword `cci`/`body` — omit for `cci`).
         aux:
           type: string
-          description: Secondary symbolic argument — only `audio.play` uses it (the caller-chosen channel `id=`; omit for an auto `#N` id).
+          description: Secondary symbolic argument — `audio.play` uses it for the caller-chosen channel `id=` (omit for an auto `#N` id); `debug.impulse` for the unit keyword `ns`/`dv` (omit for `ns`).
       required: [vessel_id, action]
 
     ActionKey:
@@ -639,6 +642,7 @@ components:
         - debug.warp
         - debug.control_vessel
         - debug.teleport
+        - debug.impulse
         - debug.refill_fuel
         - debug.refill_battery
         - debug.docking_pushoff

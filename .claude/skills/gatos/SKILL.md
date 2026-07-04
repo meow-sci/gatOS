@@ -4,9 +4,9 @@ description: >-
   Write scripts and programs against gatOS — the KSA mod that exposes live Kitten Space Agency
   simulation state as a 9P filesystem at /sim (also over HTTP /v1 and MQTT). Use this when asked to
   read game/celestial/vehicle telemetry, control vehicles (throttle, ignite, staging, attitude,
-  burns, RCS, lights, docking), use game/debug controls (teleport, refuel, time-warp, switch
-  vessel), or write flight-computer / autopilot programs. Covers the full /sim catalog, the command
-  model, KSA coordinate frames, and worked Bun/TypeScript + Rust examples.
+  burns, RCS, lights, docking), use game/debug controls (teleport, impulse kick, refuel, time-warp,
+  switch vessel), or write flight-computer / autopilot programs. Covers the full /sim catalog, the
+  command model, KSA coordinate frames, and worked Bun/TypeScript + Rust examples.
 ---
 
 # gatOS `/sim` programming
@@ -42,7 +42,7 @@ TypeScript/Bun SDK over both transports).
   The atomic per-vessel doc `vessels/<id>/telemetry` is one self-consistent JSON snapshot — prefer it
   for control loops.
 - **Writes** actuate the game: `ctl/…` (per-vessel control), per-module files (`engines/<n>/active`,
-  `lights/<n>/on`, …), and `debug/…` (cheats: teleport/refuel/warp/switch). A write is line-buffered
+  `lights/<n>/on`, …), and `debug/…` (cheats: teleport/impulse/refuel/warp/switch). A write is line-buffered
   and actuates on the newline; failures return `EINVAL`/`EACCES`/`EBUSY`/`ETIMEDOUT`/…
 - **A write blocks until the game thread executes it — one command per frame.** Sequential writes can
   therefore *never* land in the same tick (a formation teleport smears ~100 m per frame gap at orbital
@@ -53,9 +53,10 @@ TypeScript/Bun SDK over both transports).
   the onboard autopilot steers (warp-correct, no math) — *or* compute a **Body→CCI quaternion** and
   write `ctl/attitude_target` for a custom direction. Attitude/burn writes are **solver-phase** (take
   effect next solver step; run ~1× warp for closed loops).
-- **CCI is the working frame:** `position/cci`, `velocity/cci`, `attitude/quat`, `debug/teleport`, and
-  `ctl/burn` Δv are all **Celestial-Centered Inertial about the parent body** (Z = north pole,
-  X = vernal point, equatorial X–Y plane). Constants come from `bodies/<parent>/{mu,radius,rotation_rate}`.
+- **CCI is the working frame:** `position/cci`, `velocity/cci`, `attitude/quat`, `debug/teleport`,
+  `debug/…/impulse` (default frame), and `ctl/burn` Δv are all **Celestial-Centered Inertial about the
+  parent body** (Z = north pole, X = vernal point, equatorial X–Y plane). Constants come from
+  `bodies/<parent>/{mu,radius,rotation_rate}`.
 - **Pace in sim time, not wall time:** block on `time/alarm` (or `GET /v1/time/wait`); gate on
   `time/sim_dt==0` (paused) and `time/warp>1` (warping).
 
@@ -66,6 +67,7 @@ TypeScript/Bun SDK over both transports).
 cat   /sim/vessels/active/telemetry            # read the atomic vessel doc
 echo 0.5 > /sim/vessels/active/ctl/throttle    # actuate (returns errno on failure)
 echo "6578100 0 0 0 7784 0" > /sim/debug/vessels/Hunter/teleport   # CCI state vector
+echo "10 0 0 body dv" > /sim/debug/vessels/Hunter/impulse          # +10 m/s kick off the nose
 
 # On the host (HTTP /v1, default 127.0.0.1:4242; guest: $GATOS_HTTP):
 curl  http://127.0.0.1:4242/v1/vessels/active/telemetry
@@ -101,7 +103,7 @@ status/{game_version,sampler,accessors,transports}
 ctl/batch                               (atomic same-tick command groups — SPEC §3.10)
 audio/{file/<name>,play,set,stop,status,info}         (userland audio; audio_enabled=true)
 debug/                                  (only when debug_namespace=true)
-    vessels/<id>/{teleport,refill_fuel,refill_battery,docking/<n>/pushoff_impulse,
+    vessels/<id>/{teleport,impulse,refill_fuel,refill_battery,docking/<n>/pushoff_impulse,
                   weld,weld_here,unweld}
     welds/{clear,count,<source>/{target,part,offset,rotation,lock_rotation,enabled}}
     thug_life/{add,clear,count,<id>/{vessel,part,position,rotation,size,visible,remove,spec}}
@@ -155,6 +157,9 @@ authority-exempt). SPEC §3.4.1 has the full semantics.
   exempt). `debug_namespace=false` → `/sim/debug/**` is gone. All default on.
 - **`debug.teleport` sets a CCI state about the vessel's *current* parent body** — the vessel must
   already be in the intended body's SOI. See [SPEC §6](../../../SPEC_9P_FILESYSTEM.md).
+- **`debug/…/impulse` defaults to newton-seconds** (Δv = J ÷ live mass), not m/s — append the `dv`
+  keyword to apply the vector directly as Δv, and `body` to read it in the vessel frame (+X = nose):
+  `echo "10 0 0 body dv" > impulse`. Same CCI-about-current-parent frame as teleport otherwise.
 - Mass is **kg**; gravity is **μ/r²** (never 9.8); ground-referenced velocity is `v_cci − ω×r`.
 - Don't substitute a generic quaternion library for the Body→CCI attitude math — use KSA's exact
   convention (`transform(+X, q) == thrust_direction`); see [`coordinate-frames.md`](coordinate-frames.md).

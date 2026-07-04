@@ -86,4 +86,6 @@ export interface Command {
   value?: number;
   values?: number[];
   token?: string;
+  /** Secondary symbolic arg (e.g. the `debug.impulse` unit keyword `ns`/`dv`). */
+  aux?: string;
 }

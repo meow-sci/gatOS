@@ -40,9 +40,9 @@ and the decisions locked in (Part 1).
 transport, host folder mounts (`/mnt/<name>`), the welds / `always_render_iva` / parts-listing
 cheats ported from `unscience`, and the `/sim/audio` userland playback feature, are
 code-complete.** The only pending work is a set of in-game passes (T6.6/T9.3/G1–G4, plus the
-welds/IVA/parts, thug_life, per-vessel scale/always_render and `/sim/audio` checklists) that
-require a live KSA flight; checklists are in [`docs/VALIDATION.md`](docs/VALIDATION.md). The
-purrTTY tip release is now cut.
+welds/IVA/parts, thug_life, per-vessel scale/always_render, debug impulse and `/sim/audio`
+checklists) that require a live KSA flight; checklists are in
+[`docs/VALIDATION.md`](docs/VALIDATION.md). The purrTTY tip release is now cut.
 
 > **KSA baseline: `2026.7.3.4826`** (upgrade-ksa playbook pass 2026-07-03, from 4750): **clean — no
 > code changes needed**; build + tests green, full decomp/Content diff found no bound-member drift.

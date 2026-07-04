@@ -61,6 +61,7 @@ teaching; you now have both approaches.
 | **Stream one field on change** | `tail -f`-style loop on `cat` | `GET /v1/fs/<path>?stream=1` (SSE) |
 | **Stream a vessel telemetry log** | `tail -f /sim/vessels/active/stream` | `GET /v1/vessels/active/stream` (SSE) |
 | **Teleport (set CCI state)** | `echo "$px $py $pz $vx $vy $vz" > /sim/debug/vessels/Hunter/teleport` | `POST /v1/command` `{"vessel_id":"Hunter","action":"debug.teleport","values":[…6…]}` |
+| **One-shot impulse kick** | `echo "$x $y $z [cci\|body] [ns\|dv]" > /sim/debug/vessels/Hunter/impulse` | `POST /v1/command` `{"vessel_id":"Hunter","action":"debug.impulse","values":[x,y,z],"token":"body","aux":"dv"}` |
 | **Many writes in one tick** | write `<path> <value>` lines + a `commit` line to `/sim/ctl/batch` | `POST /v1/fs/ctl/batch` body = the same multi-line text |
 
 Notes that keep a tutorial honest:
@@ -311,6 +312,15 @@ Tutorials often need to *place* a vessel before demonstrating control. `debug/**
   A circular orbit needs `r = radius + altitude`, `v = sqrt(μ/r)`, velocity ⟂ position; `[r,0,0,0,v,0]`
   is equatorial. Full semantics: [SPEC §6](../SPEC_9P_FILESYSTEM.md); worked program:
   [`gatos/recipes.md §1`](../.claude/skills/gatos/recipes.md).
+- **One-shot impulse** — kick a vessel without propellant or pointing: `x y z [cci|body] [ns|dv]`
+  to `/sim/debug/vessels/<id>/impulse`. Defaults: parent-CCI frame, newton-seconds (Δv = J ÷ live
+  mass — KSA's own separation-impulse math). `body` reads the vector in the vessel frame (+X = nose);
+  `dv` applies it directly as Δv m/s:
+  ```sh
+  echo "10 0 0 body dv" > /sim/debug/vessels/Hunter/impulse   # +10 m/s straight off the nose
+  ```
+  Host: `POST /v1/command {"vessel_id":"Hunter","action":"debug.impulse","values":[10,0,0],"token":"body","aux":"dv"}`.
+  Full semantics: [SPEC §6](../SPEC_9P_FILESYSTEM.md).
 - **Refuel / batteries** — `echo 1 > /sim/debug/vessels/<id>/refill_fuel` (and `refill_battery`).
 - **Set time-warp** — `echo 100 > /sim/debug/time/warp`.
 - **Switch controlled vessel** — `echo Polaris > /sim/debug/control_vessel` (focuses + takes control).

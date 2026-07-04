@@ -145,6 +145,8 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
         // Cheat namespace (G4 / G-D2)
         "debug.control_vessel" => DebugActuator.ControlVessel(vehicle),
         "debug.teleport" => DebugActuator.Teleport(vehicle, c.Values ?? []),
+        // One-shot impulsive kick (frame keyword rides in Token, unit keyword in Aux).
+        "debug.impulse" => DebugActuator.Impulse(vehicle, c.Values ?? [], c.Token, c.Aux),
         "debug.refill_fuel" => DebugActuator.RefillFuel(vehicle),
         "debug.refill_battery" => DebugActuator.RefillBattery(vehicle),
         "debug.docking_pushoff" => DockingActuator.SetPushoffImpulse(vehicle, c.Ordinal, c.Value),

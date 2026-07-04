@@ -235,6 +235,7 @@ vehicle enumeration; pruning the last mark also removes the patches).
 | Path | A | Write | KSA anchor | Risk | Phase |
 |---|---|---|---|---|---|
 | `debug/vessels/<id>/teleport` | T | `px py pz vx vy vz` | `Orbit.CreateFromStateCci`+`Vehicle.Teleport`+`UpdatePerFrameData` | H | Frame |
+| `debug/vessels/<id>/impulse` | St | `x y z [cci\|body] [ns\|dv]` | `Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,TotalMass,Parent}` + `Orbit.CreateFromStateCci`+`Vehicle.Teleport`+`UpdatePerFrameData` — the velocity-bump variant of the teleport pattern; Δv = J/`TotalMass` (the `Vehicle.Split` separation-impulse math); `body` rotates via `double3.Transform(v, GetBody2Cci())` | H | Frame |
 | `debug/vessels/<id>/refill_fuel` | T | `1` | `Vehicle.RefillConsumables()` | M | **Solver** |
 | `debug/vessels/<id>/refill_battery` | T | `1` | `Battery.Refill(ref state)` via `GetModuleAndAllMutableStatesForInitialization` | M | **Solver** |
 | `debug/vessels/<id>/docking/<n>/pushoff_impulse` | St | N·s (≥0) | `DockingPort.PushoffImpulse` (live float; stock 7000 N·s from XML; 4750/rev 4683 rename, was `PushoffForce` N) | M | Frame |
