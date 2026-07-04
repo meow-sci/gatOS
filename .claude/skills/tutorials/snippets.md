@@ -15,7 +15,7 @@ The quaternion is a verbatim port of KSA's own arithmetic (see the caution at th
 
 > **Published convention: this Python toolkit ships as two importable modules, not one paste.** The
 > [`gatos-io` setup tutorial](../../../site/src/content/docs/guides/gatos-io.mdx) has the reader build
-> **`gatos_io.py`** (the I/O half — `read`/`read_scalar`/`read_vec`/`read_quat`/`write`/`write_vec`/`write_nums`)
+> **`gatos_io.py`** (the I/O half — `read`/`read_scalar`/`read_vec`/`read_quat`/`write`/`write_vec`/`write_nums`/`write_batch`)
 > and **`gatos_frames.py`** (the math half — `cross`/`dot`/`norm`/`unit`/`neg`/`scale`/`add`/`sub` + `from_rows`/`body_to_cci`)
 > in `~/tutorials/`, and later rungs `from gatos_io import …` / `from gatos_frames import …` instead of
 > re-pasting. The block below is the **canonical source of those helpers' bodies** (keep it in sync);
@@ -66,6 +66,10 @@ def write_vec(path: str, values: Vec3 | Quat) -> None:
 
 def write_nums(path: str, values) -> None:    # any-length numeric line (teleport state = 6 numbers)
     write(path, " ".join(str(v) for v in values))
+
+def write_batch(commands) -> None:            # (path, values) pairs -> ONE atomic tick via /sim/ctl/batch
+    lines = [path + " " + " ".join(str(v) for v in values) for path, values in commands]
+    write("/sim/ctl/batch", "\n".join(lines + ["commit"]))
 
 # --- tiny vector math (CCI is a normal right-handed 3D frame) ----------------
 def cross(a: Vec3, b: Vec3) -> Vec3: return (a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0])
@@ -241,6 +245,7 @@ The same operation, both ways — the two tabs a tutorial shows:
 | `write_vec("/sim/vessels/active/ctl/attitude_target", q)` | `command({vessel_id:"Hunter", action:"vessel.attitude_target", values:q})` |
 | `read_json("/sim/vessels/active/telemetry")` | `getJson<Telemetry>("vessels/active/telemetry")` |
 | `write_nums("/sim/debug/vessels/Hunter/teleport", state)` | `command({vessel_id:"Hunter", action:"debug.teleport", values:state})` |
+| `write_batch([(pathA, a), (pathB, b)])` (one atomic tick) | `putFs("ctl/batch", "<pathA> <a…>\n<pathB> <b…>\ncommit")` |
 | `sleep_sim(300)` | `await sleepSim(300)` |
 
 ---

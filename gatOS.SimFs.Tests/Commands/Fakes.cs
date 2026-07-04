@@ -11,11 +11,25 @@ internal sealed class FakeCommandSink : ICommandSink
     public SimCommand? Last { get; private set; }
     public int Submits { get; private set; }
 
+    /// <summary>The last group given to <see cref="SubmitBatchAsync"/> (null = none yet).</summary>
+    public IReadOnlyList<SimCommand>? LastBatch { get; private set; }
+
     public Task<CommandResult> SubmitAsync(SimCommand command, CancellationToken ct)
     {
         if (!ControlEnabled)
             return Task.FromResult(new CommandResult(CommandOutcome.Denied, "disabled"));
         Last = command;
+        Submits++;
+        return Task.FromResult(Result);
+    }
+
+    // Overrides the interface default so tests can assert a batch arrived as ONE group.
+    public Task<CommandResult> SubmitBatchAsync(IReadOnlyList<SimCommand> commands, CancellationToken ct)
+    {
+        if (!ControlEnabled)
+            return Task.FromResult(new CommandResult(CommandOutcome.Denied, "disabled"));
+        LastBatch = commands;
+        Last = commands[^1];
         Submits++;
         return Task.FromResult(Result);
     }
@@ -29,12 +43,19 @@ internal sealed class FakeCommandExecutor : ICommandExecutor
     public SimCommand? Last { get; private set; }
     public int Count { get; private set; }
 
+    /// <summary>Every executed command, in order (for batch ordering asserts).</summary>
+    public List<SimCommand> All { get; } = [];
+
+    /// <summary>Optional per-command result override; falls back to <see cref="Result"/>.</summary>
+    public Func<SimCommand, CommandResult>? OnExecute { get; set; }
+
     public CommandResult Execute(SimCommand command)
     {
         Last = command;
+        All.Add(command);
         Count++;
         if (Throw)
             throw new InvalidOperationException("boom");
-        return Result;
+        return OnExecute?.Invoke(command) ?? Result;
     }
 }

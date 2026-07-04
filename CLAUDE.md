@@ -204,7 +204,9 @@ gatOS.SimFs    → NineP, Logging                       /sim tree, snapshots, st
                                                       HTTP/MQTT both serve — transport parity; UTF-8
                                                       byte variants for the MQTT push path);
                                                       Commands/ (SimCommand, CommandQueue, Control/Trigger/
-                                                      Vector/Enum/Number/Token control files — G1+G4, built);
+                                                      Vector/Enum/Number/Token control files — G1+G4, built;
+                                                      + BatchFile: /sim/ctl/batch atomic same-tick command
+                                                      groups, drained as ONE unit — SPEC §3.10);
                                                       Display/ (the /sim/display screen stream: DisplaySettings,
                                                       KittyEncoder, DisplaySurface, DisplayStreamFile +
                                                       control files — STREAM_PLAN.md, built; capture in GameMod);

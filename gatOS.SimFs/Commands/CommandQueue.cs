@@ -34,13 +34,39 @@ public sealed class CommandQueue : ICommandSink
     public bool DebugEnabled { get; }
 
     /// <inheritdoc />
-    public async Task<CommandResult> SubmitAsync(SimCommand command, CancellationToken ct)
+    public Task<CommandResult> SubmitAsync(SimCommand command, CancellationToken ct)
+        => EnqueueAsync([command], command.Phase, ct);
+
+    /// <summary>
+    ///     The atomic batch submit (<c>/sim/ctl/batch</c>): the whole group rides one
+    ///     <see cref="Pending"/>, so the game thread executes it in order inside a single
+    ///     <see cref="Drain"/> — same tick, never split. All commands must share one phase
+    ///     (the mixed case cannot mean "same tick": the two phases drain at different points).
+    /// </summary>
+    public Task<CommandResult> SubmitBatchAsync(IReadOnlyList<SimCommand> commands, CancellationToken ct)
+    {
+        if (commands.Count == 0)
+            return Task.FromResult(new CommandResult(CommandOutcome.Invalid, "empty batch"));
+
+        var group = commands.ToArray();
+        var phase = group[0].Phase;
+        foreach (var command in group)
+        {
+            if (command.Phase != phase)
+                return Task.FromResult(new CommandResult(CommandOutcome.Invalid,
+                    "batch commands must all share one phase (Frame or Solver)"));
+        }
+
+        return EnqueueAsync(group, phase, ct);
+    }
+
+    private async Task<CommandResult> EnqueueAsync(SimCommand[] group, CommandPhase phase, CancellationToken ct)
     {
         if (!ControlEnabled)
             return new CommandResult(CommandOutcome.Denied, "control is disabled in gatos.toml");
 
-        var pending = new Pending(command);
-        (command.Phase == CommandPhase.Solver ? _solver : _frame).Enqueue(pending);
+        var pending = new Pending(group);
+        (phase == CommandPhase.Solver ? _solver : _frame).Enqueue(pending);
 
         try
         {
@@ -59,45 +85,59 @@ public sealed class CommandQueue : ICommandSink
     /// <summary>
     ///     Game-thread only: executes up to <paramref name="maxCommands"/> pending commands of the
     ///     given <paramref name="phase"/> through <paramref name="executor"/>, completing each
-    ///     awaiting submit. Abandoned (timed-out) commands are dropped without executing. Returns
-    ///     the number executed.
+    ///     awaiting submit. Abandoned (timed-out) commands are dropped without executing. A batch
+    ///     group always executes in full once dequeued — same-tick atomicity is its whole point —
+    ///     so the bound can overshoot by the size of the final group. Returns the number executed.
     /// </summary>
     public int Drain(CommandPhase phase, ICommandExecutor executor, int maxCommands)
     {
         var queue = phase == CommandPhase.Solver ? _solver : _frame;
         var executed = 0;
-        for (var i = 0; i < maxCommands && queue.TryDequeue(out var pending); i++)
+        while (executed < maxCommands && queue.TryDequeue(out var pending))
         {
             if (pending.Abandoned)
                 continue;
 
-            CommandResult result;
-            try
+            var commands = pending.Commands;
+            CommandResult? failure = null;
+            var result = CommandResult.Ok;
+            for (var i = 0; i < commands.Length; i++)
             {
-                result = executor.Execute(pending.Command);
-            }
-            catch (Exception ex)
-            {
-                // The executor contracts not to throw; treat a leak as an integration fault.
-                ModLog.Log.Debug($"command executor threw for '{pending.Command.Action}': {ex.Message}");
-                result = new CommandResult(CommandOutcome.Fault, ex.Message);
+                try
+                {
+                    result = executor.Execute(commands[i]);
+                }
+                catch (Exception ex)
+                {
+                    // The executor contracts not to throw; treat a leak as an integration fault.
+                    ModLog.Log.Debug($"command executor threw for '{commands[i].Action}': {ex.Message}");
+                    result = new CommandResult(CommandOutcome.Fault, ex.Message);
+                }
+
+                executed++;
+                // Batch commands are independent: a failure does not stop the rest, and the
+                // submitter gets the FIRST failure, annotated with which command it was.
+                if (!result.IsSuccess && failure is null)
+                    failure = commands.Length == 1
+                        ? result
+                        : new CommandResult(result.Outcome,
+                            $"command {i + 1}/{commands.Length} ({commands[i].Action}): {result.Message ?? "no detail"}");
             }
 
-            pending.Completion.TrySetResult(result);
-            executed++;
+            pending.Completion.TrySetResult(failure ?? (commands.Length == 1 ? result : CommandResult.Ok));
         }
 
         return executed;
     }
 
-    private sealed class Pending(SimCommand command)
+    private sealed class Pending(SimCommand[] commands)
     {
         // RunContinuationsAsynchronously: the awaiting transport thread must never resume inline
         // on the game thread inside Drain (threading rule 5 — nothing blocks the game thread).
         internal TaskCompletionSource<CommandResult> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        internal SimCommand Command { get; } = command;
+        internal SimCommand[] Commands { get; } = commands;
         internal volatile bool Abandoned;
     }
 }

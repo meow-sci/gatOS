@@ -25,6 +25,7 @@ namespace gatOS.SimFs;
 ///         tanks/&lt;resource&gt;/{amount,capacity}
 ///         stream
 ///     /events
+///     /ctl/batch                         (atomic same-tick command groups; with a sink)
 ///     </code>
 ///     Every scalar file snapshots its value at open (<c>cache=none</c> makes consecutive
 ///     opens live); a vessel that vanished between walk and open answers ENOENT. Dynamic
@@ -91,6 +92,10 @@ public static class SimFsTree
         private readonly ConcurrentDictionary<string, ulong> _qids = new();
         private long _nextQid;
 
+        // The finished root, captured so ctl/batch can resolve its lines' paths against the same
+        // tree; assigned at the end of BuildRoot, read only lazily (at batch-write time).
+        private VfsDirectory? _root;
+
         // Cached per-entity subtrees (GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md GP1): the node
         // objects are snapshot-agnostic (their delegates read _store.Current at access time), so a
         // vessel/body dir — and everything under it — is built ONCE instead of materialized on
@@ -155,6 +160,13 @@ public static class SimFsTree
             if (_commands is not null)
                 children.Add(StatusDir());
 
+            // The global control surface (/sim/ctl): controls that are not per-vessel — today the
+            // atomic batch. Its lines resolve against this very root, so it reaches exactly the
+            // control files (incl. debug/, when enabled) a direct write would.
+            if (_commands is { } sink)
+                children.Add(DelegateDirectory.Fixed("ctl", Qid("ctl"),
+                    new BatchFile("batch", Qid("ctl/batch"), sink, () => _root!)));
+
             // The /sim/debug cheat namespace (G-D2): only when a sink is wired and debug is enabled.
             if (_commands is { DebugEnabled: true })
                 children.Add(DebugDir());
@@ -168,7 +180,8 @@ public static class SimFsTree
                 children.Add(AudioDir());
 
             var fixedChildren = children.ToArray();
-            return new DelegateDirectory("/", Qid("/"), () => fixedChildren);
+            _root = new DelegateDirectory("/", Qid("/"), () => fixedChildren);
+            return _root;
         }
 
         // ---- time (KSA_GAME_INTEGRATION_PLAN §4.2) ----------------------------------------

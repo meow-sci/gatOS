@@ -125,6 +125,13 @@ def write_vec(path: str, values: Vec3 | Quat) -> None:
 # three or four (a teleport state vector is six: "px py pz vx vy vz")
 def write_nums(path: str, values) -> None:
     write(path, " ".join(str(v) for v in values))
+
+# Fire several control writes as ONE atomic batch through /sim/ctl/batch — every
+# (path, values) pair becomes a "<path> v0 v1 ..." line and a trailing "commit"
+# fires them all in the SAME physics tick (a plain loop lands at best one write per tick)
+def write_batch(commands) -> None:
+    lines = [path + " " + " ".join(str(v) for v in values) for path, values in commands]
+    write("/sim/ctl/batch", "\n".join(lines + ["commit"]))
 ```
 
 What's actually going on here, in slightly more words than the comments allow:
@@ -147,6 +154,13 @@ What's actually going on here, in slightly more words than the comments allow:
   **`write_nums`** is the same idea with the type hint dropped, for the occasional control file that
   wants a longer list — like the six-number teleport state vector we'll meet later. Same "numbers,
   space-separated, one newline" wire format; it just doesn't insist on exactly three or four.
+- **`write_batch` is the "all at once" write.** Every write above blocks until the game applies it,
+  which means back-to-back writes land in _consecutive_ ticks — one per frame. Usually fine, but when
+  you need several writes to take effect in the _same_ instant (a whole formation teleporting together,
+  say), that one-per-frame stagger smears them. `write_batch` fixes it: hand it a list of
+  `(path, values)` pairs and it writes them as a single group to the special `/sim/ctl/batch` file,
+  which the game applies **atomically in one physics tick**. We'll reach for it the moment we place a
+  formation.
 
 That's the entire "how do I talk to the simulation" problem, solved once.
 

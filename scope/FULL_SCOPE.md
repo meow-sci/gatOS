@@ -151,6 +151,7 @@ KSA game update have any chance of breaking it.
 | G | VM/QEMU lifecycle, disks, ports, guest image, SSH | No | [`non-ksa-surface.md`](non-ksa-surface.md) |
 | G | 9P server + VFS, host folder mounts | No | [`non-ksa-surface.md`](non-ksa-surface.md) |
 | G | SimFs tree, snapshot/command model, telemetry gating | No | [`non-ksa-surface.md`](non-ksa-surface.md) |
+| G | `/sim/ctl/batch` atomic same-tick command groups (SPEC §3.10; reuses the existing drain + per-file parsers, no new KSA binding) | No | [`non-ksa-surface.md`](non-ksa-surface.md) |
 | G | HTTP `/v1`, MQTT, serial/bus transports, TypeScript SDK | No | [`non-ksa-surface.md`](non-ksa-surface.md) |
 
 ---

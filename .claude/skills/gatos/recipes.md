@@ -110,6 +110,19 @@ Notes / variations:
   `(pos, vel)` pair about CCI +X (ascending node) by the inclination, or about +Z by the LAN.
 - **File-write equivalent** (in-guest, no HTTP): `echo "$r 0 0 0 $v 0" > /sim/debug/vessels/Hunter/teleport`.
 - **SDK equivalent:** `await new GatosClient().vessel("Hunter").debug.teleport([r,0,0,0,v,0])`.
+- **Tight formations: batch the teleports.** Each write/command executes in its *own* frame (writes
+  block until the game thread drains them — one per tick), so the two teleports above land a frame
+  apart: Hunter drifts ~`v × frame_dt` (≈100 m at 7.8 km/s / 60 fps) before Polaris is placed. Fine
+  for a 50 m *lead* demo, wrong for exact spacing. For same-tick placement write ONE group to
+  `/sim/ctl/batch` (SPEC §3.10) — in-guest, or `POST /v1/fs/ctl/batch` with the same text:
+
+  ```sh
+  cat > /sim/ctl/batch <<EOF
+  debug/vessels/Hunter/teleport $r 0 0 0 $v 0
+  debug/vessels/Polaris/teleport $px $py 0 $vx $vy 0
+  commit
+  EOF
+  ```
 
 ---
 
@@ -234,11 +247,19 @@ A `/sim` write doesn't return until the next game tick (the 9p thread enqueues t
 thread drains it), so writing one value to many files *sequentially* pays one tick **per file**. (And
 you can't redirect to a glob: `echo 1 > /sim/.../*/on` is an `ambiguous redirect` — `>` is one fd. The
 composable shape is `tee`, which takes the files as args and the value on stdin:
-`echo 1 | tee /sim/.../*/on >/dev/null` — but `tee` writes them sequentially.) Issue the writes
-**concurrently** and they batch into the same tick's drain instead. `examples/kecho` is a tiny *concurrent
-`tee`* that does exactly this — `echo 1 | kecho /sim/vessels/by-id/*/lights/*/on` turns on every light of
-every vessel in one tick. Use it (or the same concurrent-dispatch pattern) for any glob fan-out over
-control files: lights, RCS, throttles, etc.
+`echo 1 | tee /sim/.../*/on >/dev/null` — but `tee` writes them sequentially.) Two fixes:
+
+- **Guaranteed same tick — `/sim/ctl/batch`** (SPEC §3.10): one `<path> <value>` line per write, then
+  `commit`; the group executes atomically in one drain. Shell glob fan-out is one loop:
+
+  ```sh
+  { for f in /sim/vessels/by-id/*/lights/*/on; do echo "$f 1"; done; echo commit; } > /sim/ctl/batch
+  ```
+
+- **Concurrent dispatch (probabilistic)**: issue the writes concurrently and they *usually* land in
+  the same tick's drain. `examples/kecho` is a tiny *concurrent `tee`* —
+  `echo 1 | kecho /sim/vessels/by-id/*/lights/*/on`. Still useful past the batch's 64-command cap or
+  when a stray extra frame doesn't matter.
 
 ---
 

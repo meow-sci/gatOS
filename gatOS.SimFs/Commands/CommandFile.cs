@@ -47,6 +47,13 @@ public abstract class CommandFile : VfsFile
     /// </summary>
     protected abstract SimCommand? Parse(string token);
 
+    /// <summary>
+    ///     Parses one value token exactly as a direct write would (trim, then <see cref="Parse"/>),
+    ///     without submitting — the seam <see cref="BatchFile"/> uses to build a same-tick command
+    ///     group from <c>&lt;path&gt; &lt;value&gt;</c> lines. Null = unparseable (⇒ EINVAL).
+    /// </summary>
+    internal SimCommand? ParseToken(string token) => Parse(token.Trim());
+
     private async ValueTask ExecuteLineAsync(string line, CancellationToken ct)
     {
         var token = line.Trim();

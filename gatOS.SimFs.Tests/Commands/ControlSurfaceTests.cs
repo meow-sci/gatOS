@@ -295,6 +295,64 @@ public sealed class ControlSurfaceTests
     }
 
     [Test]
+    public async Task CtlBatch_SubmitsOneAtomicGroup()
+    {
+        // Two Frame-phase controls — a debug teleport and a throttle — land as ONE group, so the
+        // game thread executes them in the same drain (the formation-teleport fix).
+        await WriteAsync(
+            "debug/vessels/test-1/teleport 1 2 3 4 5 6\n"
+            + "vessels/by-id/test-1/ctl/throttle 0.5\n"
+            + "commit\n",
+            "ctl", "batch");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(_sink.LastBatch, Has.Count.EqualTo(2));
+            Assert.That(_sink.LastBatch![0].Action, Is.EqualTo("debug.teleport"));
+            Assert.That(_sink.LastBatch![0].Values, Is.EqualTo(new[] { 1d, 2d, 3d, 4d, 5d, 6d }));
+            Assert.That(_sink.LastBatch![1], Is.EqualTo(
+                new SimCommand("test-1", "vessel.throttle", SimCommand.NoOrdinal, 0.5)));
+        });
+    }
+
+    [Test]
+    public async Task CtlBatch_MixedPhases_FailTheWrite()
+    {
+        var ex = Assert.ThrowsAsync<NinePErrorException>(() => WriteAsync(
+            "debug/vessels/test-1/teleport 1 2 3 4 5 6\n"
+            + "debug/vessels/test-1/refill_fuel 1\n"
+            + "commit\n",
+            "ctl", "batch"));
+        Assert.Multiple(() =>
+        {
+            Assert.That(ex!.Errno, Is.EqualTo(LinuxErrno.EINVAL),
+                "teleport is Frame-phase, refill is Solver-phase — a batch cannot span both");
+            Assert.That(_sink.LastBatch, Is.Null);
+        });
+    }
+
+    [Test]
+    public async Task CtlBatch_ReadsUsageHint()
+    {
+        Assert.That(await ReadAsync("ctl", "batch"), Does.StartWith("#"));
+    }
+
+    [Test]
+    public async Task CtlBatch_IsAbsent_WithoutCommandSink()
+    {
+        var store = new SnapshotStore();
+        await using var server = new NinePServer(SimFsTree.Build(store));
+        await server.StartAsync();
+        store.Publish(TestData.Snapshot(1, TestData.Vessel()));
+        await using var client = await NinePTestClient.ConnectAsync(server.Port);
+        await client.VersionAsync();
+        await client.AttachAsync(0);
+        var ex = Assert.ThrowsAsync<NinePErrorException>(() => client.WalkAsync(0, 1, "ctl"));
+        Assert.That(ex!.Errno, Is.EqualTo(LinuxErrno.ENOENT),
+            "the global control surface rides with the command sink");
+    }
+
+    [Test]
     public async Task DebugNamespace_IsAbsentWhenDisabled()
     {
         var store = new SnapshotStore();

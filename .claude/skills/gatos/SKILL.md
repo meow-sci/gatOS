@@ -44,6 +44,11 @@ TypeScript/Bun SDK over both transports).
 - **Writes** actuate the game: `ctl/…` (per-vessel control), per-module files (`engines/<n>/active`,
   `lights/<n>/on`, …), and `debug/…` (cheats: teleport/refuel/warp/switch). A write is line-buffered
   and actuates on the newline; failures return `EINVAL`/`EACCES`/`EBUSY`/`ETIMEDOUT`/…
+- **A write blocks until the game thread executes it — one command per frame.** Sequential writes can
+  therefore *never* land in the same tick (a formation teleport smears ~100 m per frame gap at orbital
+  speed). To make N writes execute in the **same tick**, write them as one group to `/sim/ctl/batch`:
+  one `<path> <value>` line per command, then a `commit` line (SPEC §3.10). Atomic, in order, one
+  phase per batch, ≤64 commands.
 - **Two attitude paths:** write a named mode to `ctl/attitude_mode` (`Prograde`, `Retrograde`, …) and
   the onboard autopilot steers (warp-correct, no math) — *or* compute a **Body→CCI quaternion** and
   write `ctl/attitude_target` for a custom direction. Attitude/burn writes are **solver-phase** (take
@@ -93,6 +98,7 @@ vessels/active/…  (alias of the controlled vessel)   vessels/by-id/<id>/
          attitude_mode,attitude_frame,attitude_target,burn,focus}
 events
 status/{game_version,sampler,accessors,transports}
+ctl/batch                               (atomic same-tick command groups — SPEC §3.10)
 audio/{file/<name>,play,set,stop,status,info}         (userland audio; audio_enabled=true)
 debug/                                  (only when debug_namespace=true)
     vessels/<id>/{teleport,refill_fuel,refill_battery,docking/<n>/pushoff_impulse,

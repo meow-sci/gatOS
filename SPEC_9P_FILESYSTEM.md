@@ -82,6 +82,7 @@ listing order; empty/`.`/`..` become `_`/`_.`/`_..`. In KSA a vessel's **name *i
 | **S** | SENSOR | current value (one line) | — (read-only; writing fails `EACCES`) |
 | **St** | STATE | current setpoint | `0`/`1` flag, `0..1` fraction, number, vector, or token (idempotent) |
 | **T** | TRIGGER | status (default `0`) | the exact fire token (`1`) — one-shot |
+| **B** | BATCH | usage hint (one line) | `<path> <value>` command lines + a terminating `commit` line — the whole group executes atomically in one game tick (§3.10) |
 | **Sm** | STREAM | growing-log / blocking-event NDJSON | — |
 | **Smb** | BINARY STREAM | continuous raw bytes (binary-safe; blocks for the next item, **never EOF** — `cat` reads it forever) | — |
 
@@ -575,6 +576,60 @@ its channels finished (never mid-playback). `end=` is enforced on the per-frame 
 precision, correct under `pitch=`). Memory worst case ≈ store bytes + one FMOD copy per cached
 clip version (≈ file size; ≤ 1 MiB clips decode to PCM) — bounded by the caps.
 
+### 3.10 `/ctl` *(present whenever the command sink is wired)*
+
+The global (non-per-vessel) control surface. One file today:
+
+| Path | A | Write | Meaning |
+|---|---|---|---|
+| `ctl/batch` | **B** | command lines + `commit` | Execute up to **64** control writes **atomically in one game tick**. Read = a one-line usage hint. |
+
+**Why it exists:** every ordinary control write blocks until the game thread has executed it, so
+back-to-back writes necessarily land in *consecutive* frames — one command per frame, no matter how
+fast the writer. At orbital speed that smears a multi-vessel setup (e.g. formation teleports) by
+~50–150 m per frame gap. A batch is one write → one command group → one drain: zero sim time passes
+between its commands.
+
+**Grammar** — one command per line: `<path> <value>`, where `<path>` is the path of any control
+file (bare `debug/vessels/x/teleport`, `/`-rooted, or `/sim/`-rooted all work) and `<value>` is
+exactly what a direct write to that file would take. The path ends at the **first space or tab**;
+any further run of whitespace before the value is skipped (so columns may be padded for alignment
+— paths themselves never contain whitespace, by ID sanitization §2.2). Leading indentation, blank
+lines, and `#` comment lines are ignored. A line that is exactly `commit` ends the batch and
+fires it.
+
+```sh
+cat > /sim/ctl/batch <<'EOF'
+debug/vessels/Hunter/teleport  -6551000   0 0 0      -7800.382 0
+debug/vessels/Polaris/teleport -6551000 -10 0 0.0119 -7800.382 0
+debug/vessels/Banjo/teleport   -6551000 -20 0 0.0238 -7800.382 0
+commit
+EOF
+```
+
+**Semantics:**
+
+- **All-or-nothing validation.** Every line is resolved and parsed *before* anything is submitted:
+  an unresolvable path fails the write `ENOENT`; a non-control target, unparseable value, empty
+  batch, or over-limit batch fails `EINVAL` — and nothing fires.
+- **Atomic execution.** The group rides the command queue as ONE unit — the game thread executes it
+  in order inside a single drain, never split across ticks. At execution the commands are
+  independent: a failure does not stop the rest; the write returns the **first** failure's errno
+  (the host log names the failing line).
+- **One phase per batch.** All lines must share the action phase (§5.1) — Frame **or** Solver, not
+  both (`EINVAL`): the two phases drain at different points, so "same tick" is unsatisfiable.
+- **Limits:** ≤ **64** commands and ≤ **64 KiB** per batch (`EINVAL`).
+- **Abort for free.** Closing the file without a `commit` line discards the batch. (An
+  *unterminated* trailing `commit` — no final newline — fires best-effort on close, like any
+  control file's unterminated write; prefer a newline-terminated `commit` so the failing
+  `write(2)` carries the real errno.)
+- Debug paths are batchable exactly when `/sim/debug` is being served (the lines resolve against
+  the same tree); per-command authority gating applies unchanged at execution.
+
+**Transports:** `POST /v1/fs/ctl/batch` with the same multi-line text (including the `commit`
+line) as the body, or MQTT publish to `gatos/sim/ctl/batch/set` — the field mirror delivers the
+whole body as one write, so the batch fires exactly like the 9p file.
+
 ---
 
 ## 4. The atomic `telemetry` document
@@ -687,6 +742,15 @@ echo 0.5 > /sim/vessels/active/ctl/throttle
 echo "6578100 0 0 0 7784 0" > /sim/debug/vessels/Hunter/teleport
 ```
 
+**Atomic multi-write** — every write above blocks until the game thread executes it (one command
+per frame); to make N writes land in the **same tick**, group them through `/sim/ctl/batch` (§3.10):
+```sh
+printf '%s\n' \
+  "vessels/by-id/Hunter/ctl/throttle 1" \
+  "vessels/by-id/Polaris/ctl/throttle 1" \
+  commit > /sim/ctl/batch
+```
+
 **HTTP `POST /v1/command`** — JSON body (the canonical generic write):
 ```json
 { "vessel_id": "Hunter", "action": "debug.teleport", "values": [6578100,0,0,0,7784,0] }
@@ -717,6 +781,10 @@ velocity m/s) and applies it **about the vessel's *current* parent body** via
 - "Ahead/behind on the same orbit by `d` meters" = advance/retard the **true anomaly** by
   `Δθ = d / r` (rotate both position and velocity by `Δθ` about the orbit normal). For small `d`
   this is ≈ offsetting position along the velocity unit vector by `d`.
+- **Formations: teleport the whole fleet through `/sim/ctl/batch` (§3.10).** Sequential teleport
+  writes each wait a frame, and one frame at ~7.8 km/s is ~100 m of drift — far more than a
+  few-meter spacing. Batched, all the teleports execute in the same tick and the spacing you
+  computed is the spacing you get.
 
 `mu` and `radius` come from `/sim/bodies/<parent>/{mu,radius}` (or SDK `bodies()` → `mu`,
 `mean_radius`). See `.claude/skills/gatos/recipes.md` for a complete teleport program.

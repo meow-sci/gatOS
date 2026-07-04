@@ -61,6 +61,7 @@ teaching; you now have both approaches.
 | **Stream one field on change** | `tail -f`-style loop on `cat` | `GET /v1/fs/<path>?stream=1` (SSE) |
 | **Stream a vessel telemetry log** | `tail -f /sim/vessels/active/stream` | `GET /v1/vessels/active/stream` (SSE) |
 | **Teleport (set CCI state)** | `echo "$px $py $pz $vx $vy $vz" > /sim/debug/vessels/Hunter/teleport` | `POST /v1/command` `{"vessel_id":"Hunter","action":"debug.teleport","values":[…6…]}` |
+| **Many writes in one tick** | write `<path> <value>` lines + a `commit` line to `/sim/ctl/batch` | `POST /v1/fs/ctl/batch` body = the same multi-line text |
 
 Notes that keep a tutorial honest:
 

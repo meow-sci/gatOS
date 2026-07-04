@@ -27,8 +27,8 @@ setting up a scenario is one line in the terminal.
    center, and its X–Y plane is the body's equator.
 
 2. **[Basic gatOS I/O Toolkit](/gatOS/guides/gatos-io/)** — we import `read`, `read_scalar`, and
-   `write_nums` from `gatos_io.py`. If you built the toolkit already, you've got them (and if you
-   built it a while ago, note `write_nums` is a recent addition — grab the latest version of that
+   `write_batch` from `gatos_io.py`. If you built the toolkit already, you've got them (and if you
+   built it a while ago, note `write_batch` is a recent addition — grab the latest version of that
    file).
 
 </Steps>
@@ -109,7 +109,7 @@ Save this as `~/tutorials/teleport-into-orbit.py`, next to your toolkit modules:
 # Teleport one or more vessels into a shared circular/eccentric orbit around a body.
 # e.g.  python3 teleport-into-orbit.py --parent Earth --vessel Hunter --vessel Polaris --altitude 120000
 import argparse, math, sys
-from gatos_io import read, read_scalar, write_nums
+from gatos_io import read, read_scalar, write_batch
 
 ap = argparse.ArgumentParser(description="Place vessels into an orbit via debug teleport.")
 ap.add_argument("--parent", required=True, help="body they orbit, e.g. Earth (must already be their parent)")
@@ -163,11 +163,11 @@ for i, vessel in enumerate(args.vessel):
     plan.append((f"/sim/debug/vessels/{vessel}/teleport", state_at(th)))
     print(f"planned {vessel}: {i * args.spread:.0f} m along-track", file=sys.stderr)
 
-# --- ACTUATE: now fire, as fast as possible ----------------------------------
-# Nothing but writes here — no reads, no math between them — so every vessel
-# lands in as tight a window as possible (ideally the same physics tick).
-for path, state in plan:
-    write_nums(path, state)
+# --- ACTUATE: fire the whole formation in ONE physics tick -------------------
+# write_batch sends every teleport as a single atomic group to /sim/ctl/batch,
+# so they all take effect in the SAME tick — no vessel drifts before the next
+# is placed. `plan` is already the (path, state) pairs write_batch wants.
+write_batch(plan)
 
 shape = "circular" if e == 0.0 else f"e={e:g} elliptical"
 print(f"placed {len(plan)} vessel(s) in a {args.altitude:,.0f} m {shape} orbit of {args.parent}",
@@ -178,25 +178,27 @@ The program falls into two clearly separated halves, and that split is the whole
 
 - **Plan** — read the two constants, check each vessel's parent, and compute every state vector into
   the `plan` list. _All_ the reads and _all_ the math happen here, before a single ship moves.
-- **Actuate** — a loop that does nothing but write, one vessel after another, with no reads or math in
-  between to slow it down.
+- **Actuate** — one `write_batch(plan)` call that hands the whole formation to the game as a single
+  group, applied together in one physics tick.
 
 The heart of the math is still the tiny `state_at` function — four lines turning "how far around the
 orbit" into the six numbers the game wants, with no special-casing for circular vs. eccentric (`e = 0`
-just flows through and comes out a circle). But the _structure_ around it — think first, then act fast
-— is what makes the formation land cleanly, and here's why that matters.
+just flows through and comes out a circle). But the _structure_ around it — think everything through,
+then place the fleet in one atomic stroke — is what makes the formation land cleanly, and here's why
+that matters.
 
-<Aside type="caution" title="Compute first, then write fast — the ships are moving">
-  These vessels orbit at **kilometers per second**. If you interleave a slow read (like checking a
-  parent) _between_ teleports, the simulation keeps ticking in those gaps — so the first ship flies a
-  little way down its orbit before the next one is even placed. At ~7.8 km/s, a stagger of just 20
-  milliseconds smears the formation by over 150 meters — far more than the 25 m spacing you asked for!
+<Aside type="caution" title="Why one batch, and not a loop of writes">
+  These vessels orbit at **kilometers per second**, and here's the trap: an ordinary `/sim` write
+  doesn't return until the game has _applied_ it on the next physics tick. So a plain loop —
+  `write` Hunter, `write` Polaris, `write` Banjo — places them in three _consecutive_ ticks, not one.
+  In each gap the ships already placed keep flying: at ~7.8 km/s, even a single 16 ms frame is ~125 m
+  of drift — far more than the few-meter spacing you carefully computed. The formation arrives smeared.
 
-  That's why we do every read and every calculation in the **plan** phase, then let the **actuate**
-  phase be nothing but back-to-back writes. Fired that tightly, all the teleports land in the same
-  (or nearly the same) physics tick, so the whole formation appears as one clean snapshot instead of a
-  smear. It's a habit worth keeping for _any_ program that commands several things at once:
-  **decide everything first, then actuate as fast as you can.**
+  `write_batch` sidesteps this entirely. It sends all the teleports as one group to the special
+  `/sim/ctl/batch` file, and the game applies the whole group in a **single tick** — zero sim-time
+  passes between the first ship and the last. The spacing you planned is the spacing you get. That's
+  the habit worth keeping for _any_ program that commands several things that must happen together:
+  **decide everything first, then commit it as one atomic batch.**
 </Aside>
 
 ## Run it
@@ -255,6 +257,10 @@ wire.
   call from your host — `POST /v1/command` with
   `{"vessel_id":"Hunter","action":"debug.teleport","values":[px,py,pz,vx,vy,vz]}` — or one line with
   the TypeScript SDK. Same six numbers, same result; only the plumbing differs.
+
+  The **batch** has a host twin too: `POST /v1/fs/ctl/batch` with the multi-line body (one
+  `<path> <values>` line per vessel, then a `commit` line) — the whole formation still lands in one
+  tick, straight from a script on your machine.
 </Aside>
 
 ## What's next

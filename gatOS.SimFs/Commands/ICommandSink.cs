@@ -22,4 +22,27 @@ public interface ICommandSink
     ///     Honors <paramref name="ct"/> (the write being flushed/aborted).
     /// </summary>
     Task<CommandResult> SubmitAsync(SimCommand command, CancellationToken ct);
+
+    /// <summary>
+    ///     Enqueues a group of commands meant to execute together in one game tick — the
+    ///     <c>/sim/ctl/batch</c> surface (see <see cref="BatchFile"/>). All commands must share one
+    ///     <see cref="SimCommand.Phase"/>. <see cref="CommandQueue"/> overrides this with the real
+    ///     atomic guarantee (the group drains in order inside a single game-thread drain, never
+    ///     split across ticks); this default is a sequential fallback for simple sinks and test
+    ///     doubles, which submits one command at a time with <b>no</b> same-tick guarantee. Every
+    ///     command executes even after a failure (they are independent); the returned result is
+    ///     the first failure, or Ok.
+    /// </summary>
+    async Task<CommandResult> SubmitBatchAsync(IReadOnlyList<SimCommand> commands, CancellationToken ct)
+    {
+        CommandResult? failure = null;
+        foreach (var command in commands)
+        {
+            var result = await SubmitAsync(command, ct).ConfigureAwait(false);
+            if (!result.IsSuccess)
+                failure ??= result;
+        }
+
+        return failure ?? CommandResult.Ok;
+    }
 }
