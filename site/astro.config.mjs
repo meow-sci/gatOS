@@ -13,9 +13,12 @@ export default defineConfig({
   integrations: [
     starlight({
       editLink: {
-        baseUrl: "https://github.com/meow-sci/gatOS/edit/main/"
+        baseUrl: "https://github.com/meow-sci/gatOS/edit/main/",
       },
       title: "gatOS",
+      customCss: [
+        "./src/styles/custom.css",
+      ],
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/meow-sci/gatOS" }],
       sidebar: [
         {

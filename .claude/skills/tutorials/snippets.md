@@ -15,92 +15,105 @@ The quaternion is a verbatim port of KSA's own arithmetic (see the caution at th
 
 > **Published convention: this Python toolkit ships as two importable modules, not one paste.** The
 > [`gatos-io` setup tutorial](../../../site/src/content/docs/guides/gatos-io.mdx) has the reader build
-> **`gatos_io.py`** (the I/O half — `read`/`read_scalar`/`read_vec`/`write`/`write_vec`) and
-> **`gatos_frames.py`** (the math half — `cross`/`dot`/`norm`/`unit`/`neg` + `from_rows`/`body_to_cci`)
-> in `~/flight/`, and later rungs `from gatos_io import …` / `from gatos_frames import …` instead of
+> **`gatos_io.py`** (the I/O half — `read`/`read_scalar`/`read_vec`/`read_quat`/`write`/`write_vec`)
+> and **`gatos_frames.py`** (the math half — `cross`/`dot`/`norm`/`unit`/`neg` + `from_rows`/`body_to_cci`)
+> in `~/tutorials/`, and later rungs `from gatos_io import …` / `from gatos_frames import …` instead of
 > re-pasting. The block below is the **canonical source of those helpers' bodies** (keep it in sync);
 > the modules are just this text split I/O-vs-frames. In the *modules* the comments are trimmed to
 > terse one-liners (no docstrings — they run in a terminal, not an IDE); the fuller explanation lives
 > in the tutorial prose. `time`-based pacing lives with the sim-time rung, not the two base modules.
+> Both modules carry `Vec3`/`Quat` type aliases (`tuple[float, float, float]` / `tuple[float, float,
+> float, float]`) and every function is fully hinted — `read_quat` exists as its own function
+> (rather than a fourth shape of `read_vec`) specifically so its return type says "four numbers" at
+> the call site.
 
 ```python
 # The in-guest toolkit, shown as one block. In the published tutorials this is split into
 # gatos_io.py (reads/writes) + gatos_frames.py (vectors + quaternion) — see the note above.
 import math, time, json
 
-SIM = "/sim"
+Vec3 = tuple[float, float, float]
+Quat = tuple[float, float, float, float]
 
-# --- talking to /sim --------------------------------------------------------
-def read_text(path):
-    with open(f"{SIM}/{path}") as f:
+# --- talking to /sim (every helper takes a full path, e.g. "/sim/time/ut") ---
+def read_text(path: str) -> str:
+    with open(path) as f:
         return f.read().strip()
 
-def read_scalar(path):          # a G9 double, one value + newline
+def read_scalar(path: str) -> float:          # a G9 double, one value + newline
     return float(read_text(path))
 
-def read_vec(path):             # "x y z" (or "x y z w") -> list of floats
-    return [float(t) for t in read_text(path).split()]
+def read_vec(path: str) -> Vec3:              # "x y z" -> a 3-tuple of floats
+    x, y, z = read_text(path).split()
+    return (float(x), float(y), float(z))
 
-def read_json(path):            # the atomic telemetry doc, events, etc.
+def read_quat(path: str) -> Quat:       # "x y z w" -> a 4-tuple, own fn so the type says "4"
+    x, y, z, w = read_text(path).split()
+    return (float(x), float(y), float(z), float(w))
+
+def read_json(path: str):                     # the atomic telemetry doc, events, etc.
     return json.loads(read_text(path))
 
-def write(path, text):
+def write(path: str, text) -> None:
     # A write to a ctl/ or debug/ file actuates on the newline and returns a
     # real Linux errno on failure (EACCES control off, EINVAL bad value,
     # EBUSY one-shot fired, ...). A failed setpoint raises OSError here.
-    with open(f"{SIM}/{path}", "w") as f:
+    with open(path, "w") as f:
         f.write(str(text) + "\n")
 
+def write_vec(path: str, values: Vec3 | Quat) -> None:
+    write(path, " ".join(str(v) for v in values))
+
 # --- tiny vector math (CCI is a normal right-handed 3D frame) ----------------
-def cross(a, b): return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]
-def dot(a, b):   return sum(x*y for x, y in zip(a, b))
-def norm(a):     return math.sqrt(dot(a, a))
-def unit(a):     n = norm(a); return [c/n for c in a]
-def scale(a, s): return [c*s for c in a]
-def neg(a):      return [-c for c in a]
+def cross(a: Vec3, b: Vec3) -> Vec3: return (a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0])
+def dot(a: Vec3, b: Vec3) -> float:  return sum(x*y for x, y in zip(a, b))
+def norm(a: Vec3) -> float:          return math.sqrt(dot(a, a))
+def unit(a: Vec3) -> Vec3:           n = norm(a); return tuple(c/n for c in a)
+def scale(a: Vec3, s: float) -> Vec3: return tuple(c*s for c in a)
+def neg(a: Vec3) -> Vec3:            return tuple(-c for c in a)
 
 # --- gating (never fly blind) ------------------------------------------------
-def is_paused():   return read_scalar("time/sim_dt") == 0.0
-def is_warping():  return read_scalar("time/warp") > 1.0
+def is_paused() -> bool:   return read_scalar("/sim/time/sim_dt") == 0.0
+def is_warping() -> bool:  return read_scalar("/sim/time/warp") > 1.0
 
 # --- pace in sim time, not wall time -----------------------------------------
-def sleep_sim(seconds):
+def sleep_sim(seconds: float) -> None:
     # Warp-correct + pause-safe: park until sim time advances `seconds`.
-    target = read_scalar("time/ut") + seconds
-    write("time/alarm", target)      # arm the alarm
-    read_scalar("time/alarm")        # the read blocks until sim time reaches it
+    target = read_scalar("/sim/time/ut") + seconds
+    write("/sim/time/alarm", target)      # arm the alarm
+    read_scalar("/sim/time/alarm")        # the read blocks until sim time reaches it
 
 # --- the Body->CCI attitude quaternion (KSA's exact arithmetic) --------------
-def from_rows(r0, r1, r2):
+def from_rows(r0: Vec3, r1: Vec3, r2: Vec3) -> Quat:
     """doubleQuat.CreateFromRotationMatrix (Shepperd's method), row-major.
-    Rows are the body X, Y, Z axes in CCI; returns the Body->CCI quat [x,y,z,w]."""
+    Rows are the body X, Y, Z axes in CCI; returns the Body->CCI quat (x,y,z,w)."""
     m00, m01, m02 = r0; m10, m11, m12 = r1; m20, m21, m22 = r2
     tr = m00 + m11 + m22
     if tr > 0.0:
         s = math.sqrt(tr + 1.0); w = 0.5 * s; s = 0.5 / s
-        return [(m12 - m21)*s, (m20 - m02)*s, (m01 - m10)*s, w]
+        return (m12 - m21)*s, (m20 - m02)*s, (m01 - m10)*s, w
     elif m00 >= m11 and m00 >= m22:
         s = math.sqrt(1.0 + m00 - m11 - m22); inv = 0.5 / s
-        return [0.5*s, (m01 + m10)*inv, (m02 + m20)*inv, (m12 - m21)*inv]
+        return 0.5*s, (m01 + m10)*inv, (m02 + m20)*inv, (m12 - m21)*inv
     elif m11 > m22:
         s = math.sqrt(1.0 + m11 - m00 - m22); inv = 0.5 / s
-        return [(m10 + m01)*inv, 0.5*s, (m21 + m12)*inv, (m20 - m02)*inv]
+        return (m10 + m01)*inv, 0.5*s, (m21 + m12)*inv, (m20 - m02)*inv
     else:
         s = math.sqrt(1.0 + m22 - m00 - m11); inv = 0.5 / s
-        return [(m20 + m02)*inv, (m21 + m12)*inv, 0.5*s, (m01 - m10)*inv]
+        return (m20 + m02)*inv, (m21 + m12)*inv, 0.5*s, (m01 - m10)*inv
 
-def body_to_cci(aim, roll_ref):
+def body_to_cci(aim: Vec3, roll_ref: Vec3) -> Quat:
     """Body->CCI quat putting body +X (nose/thrust axis) along `aim`.
     `roll_ref` pins the otherwise-free spin about that axis."""
     x = unit(aim)
     c = cross(x, roll_ref)
     if norm(c) < 1e-9:                       # aim ∥ roll_ref: roll is free, pick any ⟂
-        a = [1.0, 0.0, 0.0] if abs(x[0]) < 0.9 else [0.0, 1.0, 0.0]
+        a = (1.0, 0.0, 0.0) if abs(x[0]) < 0.9 else (0.0, 1.0, 0.0)
         y = unit(cross(x, a))
     else:
         y = unit(c)
     z = unit(cross(x, y))
-    return from_rows(x, y, z)                # [x, y, z, w] for ctl/attitude_target
+    return from_rows(x, y, z)                # (x, y, z, w) for ctl/attitude_target
 ```
 
 Shell equivalents of the I/O (for tutorials that stay in the terminal):
@@ -218,10 +231,10 @@ The same operation, both ways — the two tabs a tutorial shows:
 
 | In-guest (Python / shell) | Host (TS / curl) |
 |---|---|
-| `write("vessels/active/ctl/throttle", 0.5)` | `putFs("vessels/active/ctl/throttle", "0.5")` |
-| `write("vessels/active/ctl/attitude_mode", "Prograde")` | `command({vessel_id:"Hunter", action:"vessel.attitude_mode", token:"Prograde"})` |
-| `write("vessels/active/ctl/attitude_target", " ".join(map(str,q)))` | `command({vessel_id:"Hunter", action:"vessel.attitude_target", values:q})` |
-| `read_json("vessels/active/telemetry")` | `getJson<Telemetry>("vessels/active/telemetry")` |
+| `write("/sim/vessels/active/ctl/throttle", 0.5)` | `putFs("vessels/active/ctl/throttle", "0.5")` |
+| `write("/sim/vessels/active/ctl/attitude_mode", "Prograde")` | `command({vessel_id:"Hunter", action:"vessel.attitude_mode", token:"Prograde"})` |
+| `write_vec("/sim/vessels/active/ctl/attitude_target", q)` | `command({vessel_id:"Hunter", action:"vessel.attitude_target", values:q})` |
+| `read_json("/sim/vessels/active/telemetry")` | `getJson<Telemetry>("vessels/active/telemetry")` |
 | `sleep_sim(300)` | `await sleepSim(300)` |
 
 ---

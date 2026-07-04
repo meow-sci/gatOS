@@ -8,12 +8,16 @@ sidebar:
 
 import { Steps, Aside, LinkCard } from "@astrojs/starlight/components";
 
-This is the one where you actually fly something. We're going to tell a vessel's **flight computer**
-to point its nose at the body it's orbiting — its parent — and then walk away. The flight computer
-takes it from there, swinging the ship around with whatever propulsion it has (RCS, reaction wheels)
-and holding the aim.
+This is the one where we actually fly something!
 
-And thanks to the toolkit you already built, the whole program is going to be _tiny_.
+But first it's important to understand in KSA the game has a flight computer
+
+We're going to tell a vessel's **flight computer** to point its main axis attitude at the body it's orbiting, the parent SOI.
+
+The flight computer takes it from there, swinging the ship around with whatever propulsion it has (RCS, reaction wheels)
+and holding the aim at that attitude
+
+And thanks to the toolkit you already built, the whole program is going to be really _tiny_!
 
 ## Before you start
 
@@ -26,67 +30,75 @@ a lot of head-scratching:
    "where" and "which way." We lean hard on one idea from it (the **CCI** frame), and it's much nicer
    to have met that idea already.
 
-2. **[Your gatOS Toolkit](/gatOS/guides/gatos-io/)** — the two Python modules (`gatos_io.py` and
+2. **[Basic gatOS I/O Toolkit](/gatOS/guides/gatos-io/)** — the two Python modules (`gatos_io.py` and
    `gatos_frames.py`) this program imports. We built them there so this page could be short; make sure
-   they're sitting in your `~/flight` folder.
+   they're sitting in your `~/tutorials` folder.
 
 </Steps>
 
-You'll also want `python3` in the guest (`apk add python3`) and a vessel you can control.
 
-## The idea in one picture
+## The big idea
 
-To aim at the parent body, we need to know which way the body _is_ — and gatOS hands us that almost
-for free, because of the frame the numbers live in.
+To aim at the parent body, we need to know which way the body _is_ — and gatOS gives us that almost
+for free, because of the reference frame the numbers are already in.
 
-`vessels/by-id/<id>/position/cci` is the vessel's position in **CCI**, the parent body's own frame.
+`/sim/vessels/by-id/<id>/position/cci` is the vessel's position in **CCI**, the parent body's own frame.
 Its origin sits _at the body's center_. So that position vector is literally the arrow pointing **from
-the body out to the ship**. Flip it around — negate it — and you've got the arrow pointing **from the
-ship back to the body**. That's our aim direction. No trigonometry, no latitude and longitude, just a
-minus sign:
+the center of the body out to the ship**. 
 
-> **aim direction = `-position/cci`**
+So, if we flip it around (negate it) and you've got the arrow pointing **from the ship back to the body**.
 
-(This is the exact "flip the arrow" trick from the [Reference Frames](/gatOS/guides/reference-frames/)
-page. If it feels like cheating, that's because CCI is doing all the work for us.)
+That's our aim direction. No trig, no latitude and longitude, just a minus sign:
 
-The last step is turning that direction into an orientation the flight computer accepts. A vessel's
-nose — its thrust axis — is **body +X**. "Point at the body" therefore means: find the rotation that
-carries body +X onto our aim direction, and hand it over as a quaternion. That's precisely what
-`body_to_cci` in your toolkit does, so we barely have to think about it.
+> `aim direction = -position/cci`
+
+<Aside type="note">
+This is the exact "flip the arrow" trick from the [Reference Frames](/gatOS/guides/reference-frames/)
+page.
+
+If it feels like cheating, that's because the CCI frame has already done all the work for us.
+</Aside>
+
+The last step is turning that direction into an orientation the flight computer accepts.
+
+A vessel's main axis (its thrust axis) is **body +X**. To "point at the body" therefore means: find the rotation that carries body +X onto our aim direction, 
+and hand it over as a quaternion. 
+
+And that's precisely what `body_to_cci` in our toolkit does!
 
 ## The program
 
-Save this as `~/flight/point-at-parent.py`, right next to the two modules:
+Save this as `~/tutorials/point-at-parent.py`, right next to the two reusable modules:
 
-```python title="~/flight/point-at-parent.py"
+```python title="~/tutorials/point-at-parent.py"
 #!/usr/bin/env python3
-# Aim a vessel's nose/thrust axis at its parent body. Run: python3 point-at-parent.py <VesselId>
+# Aim a vessel's nose/thrust axis at its parent body. Run: python3 point-at-parent.py <vessel id>
 import sys
 from gatos_io import read_vec, write_vec
-from gatos_frames import neg, body_to_cci
+from gatos_frames import Vec3, Quat, neg, body_to_cci
 
-vessel = sys.argv[1]                      # a vessel's name IS its id, e.g. "Hunter"
-base = f"vessels/by-id/{vessel}"
+vessel: str = sys.argv[1] # get the vessel id from $1 arg
+base = f"/sim/vessels/by-id/{vessel}"
 
 # In CCI the origin is the body's center, so position points body -> ship.
-pos = read_vec(f"{base}/position/cci")
+pos: Vec3 = read_vec(f"{base}/position/cci")
 
 # "Toward the body" is just that arrow, reversed.
-aim = neg(pos)
+aim: Vec3 = neg(pos)
 
 # Turn the aim into a Body->CCI quaternion. Aiming straight down the radial line
 # leaves roll unconstrained, so we pass `pos` as a throwaway roll reference.
-q = body_to_cci(aim, pos)
+aimQ: Quat = body_to_cci(aim, pos)
 
 # Hand the setpoint to the onboard flight computer; it steers there and holds.
-write_vec(f"{base}/ctl/attitude_target", q)
+write_vec(f"{base}/ctl/attitude_target", aimQ)
 print(f"{vessel}: flight computer now pointing at parent body", file=sys.stderr)
 ```
 
 That's the entire program. Four meaningful lines — read, flip, convert, write — because all the
-plumbing and the fiddly quaternion math are tucked away in the toolkit. Let's unpack what those four
-lines are really doing:
+plumbing and the fiddly quaternion math are tucked away in the toolkit. 
+
+Let's unpack what those four lines are really doing:
 
 - **Read** the position in CCI. Because of where CCI's origin sits, this vector already _is_ the
   body-to-ship arrow.
@@ -96,39 +108,41 @@ lines are really doing:
   roll reference is arbitrary and we just reuse `pos`. The function hands back the `[x, y, z, w]`
   quaternion the flight computer speaks.
 - **Write** it to `ctl/attitude_target`. The onboard flight computer reads that setpoint and does the
-  actual steering — which is why it keeps working even under time-warp. (Notice we never touch a
-  thruster ourselves. We're mission control; the flight computer is the pilot.)
+  actual steering (which is why it keeps working even under time-warp, the clever KSA devs have programmed
+  the KSA flight computer to account for time compression, we just set an attitude to point at).
 
 ## Run it
 
-```sh title="~/flight"
-python3 point-at-parent.py Hunter   # swap in a real id from: ls /sim/vessels/by-id
+```sh title="~/tutorials"
+# list vessel IDs
+ls /sim/vessels/by-id
+
+# point Hunter at its parent
+python3 point-at-parent.py Hunter
 ```
 
-Watch the vessel swing around until its nose faces the planet. You just read live simulation state,
-did a pinch of geometry, and commanded an autopilot — with nothing but `open()`.
+Watch the vessel swing around until its nose faces the planet.
 
-<Aside type="caution" title="There's a beat before it moves">
-  Writing `attitude_target` doesn't turn the ship the instant your program exits. Attitude setpoints
-  take effect on the next **solver step** (~10 Hz), so expect a tick of lag between the write and the
-  swing. Perfectly fine here; it matters more later, when we run this kind of command in a tight loop.
-</Aside>
+You just read live simulation state, did a bit of geometry, and issued a command to the autopilot, with
+nothing but a bit of file i/o.
 
-<Aside type="note" title="This is a one-shot — it goes stale">
+<Aside type="note" title="This is a one-shot, attitude goes stale">
   The program computes the aim direction _once_ and leaves. As the vessel coasts along its orbit, the
   true direction to the body keeps changing, so that fixed target slowly drifts out of date — great
   for a first look, useless for holding a lock. To actually _track_ the body, you'd wrap the read →
-  flip → convert → write steps in a loop that recomputes every tick (and pace it in sim time so it
-  behaves under warp). That's a later rung on the ladder.
+  flip → convert → write steps in a loop that recomputes every tick (and pace it in simulation time so it
+  behaves under warp). That's a later thing.
 </Aside>
 
-<Aside type="tip" title="Shortcut: let the autopilot name it">
-  Pointing at the parent is common enough that the flight computer has it built in. You can skip the
-  math entirely:
+<Aside type="tip" title="Shortcut: let the autopilot handle it">
+  Pointing at the parent is common enough that the flight computer has built-in targets,
+  so for common scenarios you can skip the custom math:
 
   ```sh
-  echo RadialIn > /sim/vessels/by-id/Hunter/ctl/attitude_mode
+  echo Prograde > /sim/vessels/by-id/Hunter/ctl/attitude_mode
   ```
+
+  See [Attitude Modes](/gatOS/reference/attitude-modes/) for a complete list
 
   The named mode even keeps tracking the body as you orbit. We built the quaternion by hand here to
   show how CCI, the body +X thrust axis, and `ctl/attitude_target` fit together — the same machinery
@@ -140,9 +154,3 @@ did a pinch of geometry, and commanded an autopilot — with nothing but `open()
 You've aimed a ship at a fixed point. The natural next step is to make it _keep_ aiming — to turn this
 one-shot into a loop that re-reads and re-points every tick without drifting or misbehaving under
 warp. That's where the toolkit really starts paying dividends.
-
-<LinkCard
-  title="Back to: Your gatOS Toolkit"
-  href="/gatOS/guides/gatos-io/"
-  description="Revisit the two modules this program leans on — every function used here lives there."
-/>

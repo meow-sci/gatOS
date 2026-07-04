@@ -6,6 +6,8 @@ sidebar:
   order: 1
 ---
 
+import { Aside } from "@astrojs/starlight/components";
+
 gatOS uses [Alpine Linux](https://alpinelinux.org/) as its upstream distro.
 
 Information you find here will be generic Linux oriented (preferable) or Alpine-specific where needed.
@@ -14,14 +16,49 @@ Information you find here will be generic Linux oriented (preferable) or Alpine-
 
 gatOS uses Alpine as its upstream Linux distribution which comes with a first-party package manager **apk** which is fast and efficient.
 
-::NOTE:: afa
+The full list of packages available can be found at [Alpine Linux packages](https://pkgs.alpinelinux.org/packages?branch=v3.24)
+
+Be sure to search the version gatOS uses, which is 3.24 at this time.
+
+```bash title="Install software"
+apk add htop
+```
+
+```bash title="Remove software"
+apk del htop
+```
+
+<Aside type="note" title="Where are the man pages?">
+Alpine Linux is primarily used for containers which aim to be lean, as such, Alpine does not package man pages with
+packages by default.
+
+But there is typically a companion package with a `-doc` suffix which contains the main pages, for example to get htop AND its man pages
+
+```bash
+apk add htop htop-doc
+```
+</Aside>
 
 ## Install language runtimes
 
-
+These are some common language runtimes that you may find useful
 
 ### Python
 
 ```bash
 apk add python3
+```
+
+### NodeJS
+
+```bash
+apk add nodejs
+```
+
+### Bun
+
+Bun does not have a Alpine package, you can find install instructions on [bun.com](https://bun.com/docs/installation), which will probably be:
+
+```bash
+curl -fsSL https://bun.sh/install | bash
 ```

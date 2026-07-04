@@ -26,7 +26,7 @@ reuses, so later tutorials stay short (read → decide → write, plumbing alrea
 
 | Slug (`guides/…`) | Builds | Feeds | Status |
 |---|---|---|---|
-| `gatos-io` (**"Your gatOS Toolkit"**) | two importable modules in `~/flight/`: **`gatos_io.py`** (`read`/`read_scalar`/`read_vec`/`write`/`write_vec` over `/sim`) and **`gatos_frames.py`** (`cross`/`dot`/`norm`/`unit`/`neg` + the verbatim `from_rows`/`body_to_cci` quaternion) | every flight rung from `point-at-parent` on | **done** |
+| `gatos-io` (**"Basic gatOS I/O Toolkit"**) | two importable modules in `~/tutorials/`: **`gatos_io.py`** (`read`/`read_scalar`/`read_vec`/`read_quat`/`write`/`write_vec` over `/sim`, fully type-hinted with `Vec3`/`Quat` aliases) and **`gatos_frames.py`** (`cross`/`dot`/`norm`/`unit`/`neg` + the verbatim `from_rows`/`body_to_cci` quaternion) | every flight rung from `point-at-parent` on | **done** |
 
 **The module split is the convention now:** published tutorials `from gatos_io import …` /
 `from gatos_frames import …` rather than re-pasting I/O and quaternion code. The two files mirror the
