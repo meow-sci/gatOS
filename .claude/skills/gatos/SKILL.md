@@ -41,7 +41,9 @@ TypeScript/Bun SDK over both transports).
   flags, space-separated `x y z` vectors and `x y z w` quaternions, verbatim strings, NDJSON streams.
   The atomic per-vessel doc `vessels/<id>/telemetry` is one self-consistent JSON snapshot — prefer it
   for control loops.
-- **Writes** actuate the game: `ctl/…` (per-vessel control), per-module files (`engines/<n>/active`,
+- **Writes** actuate the game: `ctl/…` (per-vessel control — incl. `ctl/translate`, bang-bang RCS
+  translation by body-axis signs: `1 0 0` = thrust along the nose, latches until `0 0 0`), per-module
+  files (`engines/<n>/active`,
   `lights/<n>/on`, …), and `debug/…` (cheats: teleport/impulse/refuel/warp/switch). A write is line-buffered
   and actuates on the newline; failures return `EINVAL`/`EACCES`/`EBUSY`/`ETIMEDOUT`/…
 - **A write blocks until the game thread executes it — one command per frame.** Sequential writes can
@@ -96,7 +98,7 @@ vessels/active/…  (alias of the controlled vessel)   vessels/by-id/<id>/
     lights/<n>/*  docking/<n>/*  decouplers/<n>/*  animations/<n>/*  encounters
     parts/<n>/{instance_id,id,display_name,template,is_root,subpart_count,position}
                                         (top-level parts; welds anchor picker; telemetry_vessel_parts)
-    ctl/{ignite,shutdown,engine,stage,throttle,lights,rcs,
+    ctl/{ignite,shutdown,engine,stage,throttle,lights,rcs,translate,
          attitude_mode,attitude_frame,attitude_target,burn,focus}
 events
 status/{game_version,sampler,accessors,transports}

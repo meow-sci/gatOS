@@ -123,6 +123,25 @@ def body_to_cci(aim: Vec3, roll_ref: Vec3) -> Quat:
         y = unit(c)
     z = unit(cross(x, y))
     return from_rows(x, y, z)                # (x, y, z, w) for ctl/attitude_target
+
+def _hprod(p: Quat, q: Quat) -> Quat:
+    """KSA's Quaternions.hamilton_product_WZYX — internal to transform."""
+    px, py, pz, pw = p; qx, qy, qz, qw = q
+    return (pw*qx + pz*qy - py*qz + px*qw,
+            pw*qy - pz*qx + py*qw + px*qz,
+            pw*qz + pz*qw + py*qx - px*qy,
+            pw*qw - pz*qz - py*qy - px*qx)
+
+def transform(v: Vec3, q: Quat) -> Vec3:
+    """Rotate a vector by a quaternion — VERBATIM port of KSA's double3.Transform(v, quat)
+    (the conj(q)·v·q sandwich under the WZYX product). With a Body->CCI quat this carries a
+    body/assembly-frame vector into CCI: transform((1,0,0), att_q) is the live nose direction,
+    and transform(part_pos - com, att_q) is a part's world offset from the vessel's position.
+    Invariant (verified): transform(axis_i, from_rows(x,y,z)) == row_i to machine precision."""
+    x, y, z, w = q
+    p2 = _hprod((-x, -y, -z, w), (v[0], v[1], v[2], 1.0))
+    r = _hprod(p2, (x, y, z, w))
+    return (r[0], r[1], r[2])
 ```
 
 Shell equivalents of the I/O (for tutorials that stay in the terminal):
@@ -216,6 +235,20 @@ export function bodyToCci(aim: V, rollRef: V): number[] {
     ? unit(cross(x, Math.abs(x[0]) < 0.9 ? [1,0,0] : [0,1,0]))
     : unit(c);
   return fromRows(x, y, unit(cross(x, y)));
+}
+/** KSA's hamilton_product_WZYX — internal to transform. */
+const hprod = (p: number[], q: number[]): number[] => [
+  p[3]*q[0] + p[2]*q[1] - p[1]*q[2] + p[0]*q[3],
+  p[3]*q[1] - p[2]*q[0] + p[1]*q[3] + p[0]*q[2],
+  p[3]*q[2] + p[2]*q[3] + p[1]*q[0] - p[0]*q[1],
+  p[3]*q[3] - p[2]*q[2] - p[1]*q[1] - p[0]*q[0],
+];
+/** Rotate a vector by a quaternion — verbatim port of KSA double3.Transform(v, quat).
+ *  transform([1,0,0], att_q) = the live nose direction in CCI. */
+export function transform(v: V, q: number[]): V {
+  const p2 = hprod([-q[0], -q[1], -q[2], q[3]], [v[0], v[1], v[2], 1]);
+  const r = hprod(p2, q);
+  return [r[0], r[1], r[2]];
 }
 
 export interface Telemetry {

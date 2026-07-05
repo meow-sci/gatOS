@@ -186,6 +186,8 @@ function fileCommand(c: Command): { path: string; payload: string } {
       return { path: `${v}/ctl/lights`, payload: num };
     case "vessel.rcs":
       return { path: `${v}/ctl/rcs`, payload: num };
+    case "vessel.translate":
+      return { path: `${v}/ctl/translate`, payload: vec };
     case "vessel.attitude_mode":
       return { path: `${v}/ctl/attitude_mode`, payload: c.token ?? "" };
     case "vessel.attitude_frame":

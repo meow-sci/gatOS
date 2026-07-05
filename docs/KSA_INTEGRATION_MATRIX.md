@@ -172,6 +172,7 @@ Anchors in `Game/Ksa/Actuators/**`; routed by `KsaCatalog`. Frame phase unless n
 | `…/ctl/throttle` | St | `0..1` | `Vehicle._manualControlInputs.EngineThrottle` (reflection — no public setter) | H | Frame |
 | `…/ctl/stage` | T | `1` | `Parts.SequenceList.ActivateNextSequence` + `UpdateAfterPartTreeModification` | M | Frame |
 | `…/ctl/rcs` | St | `0`/`1` | `ThrusterController.SetIsActive` over all controllers | M | Frame |
+| `…/ctl/translate` | St | `x y z` (signs) | `Vehicle._manualControlInputs.ThrusterCommandFlags` (reflection — same struct as throttle; translate bits only, rotation bits preserved). `FlightComputer.ComputeRcsControl` consumes the flags each solver step (`Direct` mode → `SelectJetsToFire`); sign→flag mapping verified against the `KittenBackPackSubPart` nozzle geometry (+x=`TranslateForward`, +y=`Right`, +z=`Down`). Latches until rewritten. Added 2026-07-04 | H | Frame |
 | `…/ctl/attitude_mode` | St | token | `FlightComputer.AttitudeMode`/`AttitudeTrackTarget` (`manual` → Manual; else Auto+track) | M | **Solver** |
 | `…/ctl/attitude_frame` | St | token | `FlightComputer.AttitudeFrame` (`VehicleReferenceFrame`) | M | **Solver** |
 | `…/ctl/attitude_target` | St | `x y z w` | `FlightComputer.AttitudeTarget = {Target2Cci,RatesCci}` (+Custom track) | M | **Solver** |
@@ -191,7 +192,8 @@ Anchors in `Game/Ksa/Actuators/**`; routed by `KsaCatalog`. Frame phase unless n
 A STATE control file's **read** returns the current setpoint, so the vessel-level ones need a reader
 that samples it back. These are populated in `VesselReader.BuildFull` (anchor `SampleFlightComputer` +
 `GetManualThrottle`): `ctl/throttle` ← `Vehicle.GetManualThrottle()`, `ctl/rcs` ← any
-`ThrusterController.IsActive`, `ctl/attitude_mode` ← `FlightComputer.AttitudeMode`/`AttitudeTrackTarget`
+`ThrusterController.IsActive`, `ctl/translate` ← `Vehicle.GetThrusterFlags()` decoded to body-axis
+signs (anchor `TranslateActuator.Read`), `ctl/attitude_mode` ← `FlightComputer.AttitudeMode`/`AttitudeTrackTarget`
 (`manual` when Manual, else the track-target name), `ctl/attitude_frame` ← `FlightComputer.AttitudeFrame`.
 (Before this wiring the snapshot reported the record defaults — throttle `0`, attitude `""` — on every
 transport regardless of the real state.)

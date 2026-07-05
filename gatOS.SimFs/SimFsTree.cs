@@ -865,6 +865,12 @@ public static class SimFsTree
                     () => Formats.Flag(Vessel(vesselId).LightsMasterOn)),
                 FlagControl($"{q}/rcs", "rcs", vesselId, "vessel.rcs", SimCommand.NoOrdinal,
                     () => Formats.Flag(Vessel(vesselId).RcsOn)),
+                // Manual RCS translation — the file twin of the player's translate keys. "x y z":
+                // the SIGNS command bang-bang thrust along the body axes (+x = forward/nose,
+                // +y = right, +z = down; 0 = that axis off). LATCHES like a held key until
+                // overwritten — write "0 0 0" to stop. Read = the latched command as signs.
+                VectorControl($"{q}/translate", "translate", vesselId, "vessel.translate",
+                    SimCommand.NoOrdinal, 3, () => Formats.Vector(Vessel(vesselId).TranslateCmd)),
                 EnumControl($"{q}/attitude_mode", "attitude_mode", vesselId, "vessel.attitude_mode",
                     AttitudeModeTokens, () => Vessel(vesselId).AttitudeMode),
                 EnumControl($"{q}/attitude_frame", "attitude_frame", vesselId, "vessel.attitude_frame",

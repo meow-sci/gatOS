@@ -1,0 +1,249 @@
+---
+title: Searchlight — Track a Vessel
+description: Build a program that runs forever — the flight computer keeps one vessel's nose (and its calibrated spotlight) locked onto another vessel as both coast along their orbits.
+sidebar:
+  label: Searchlight Tracker
+  order: 6
+---
+
+import { Steps, Aside } from "@astrojs/starlight/components";
+
+This is the one where the program doesn't exit.
+
+Everything we've written so far computes something, writes it, and leaves. This time we're building a
+**tracker**: a little program that watches two moving ships and keeps one pointed at the other,
+tick after tick, for as long as you let it run. Point `Hunter` at `Polaris`, switch on Hunter's
+spotlight, narrow the beam, and let the flight computer do the swinging — a searchlight that follows
+its target across the sky.
+
+Along the way we'll meet the thing every long-running flight program is made of: the **control
+loop** — read, decide, write, wait, repeat — and the two habits that keep a loop honest (pace it in
+*simulation* time, and *hold* when the sim isn't in a state you want to command).
+
+## Before you start
+
+<Steps>
+
+1. **[Point at Parent](/gatOS/guides/vessel-control-point-at-parent/)** — this page is that one,
+   plus a loop. We reuse its whole idea (aim direction → `body_to_cci` → `ctl/attitude_target`)
+   without re-explaining it.
+
+2. **[Basic gatOS I/O Toolkit](/gatOS/guides/gatos-io/)** — we import from both modules
+   (`gatos_io.py` and `gatos_frames.py`). Have them in `~/tutorials`.
+
+3. **[Teleport a Fleet into Orbit](/gatOS/guides/teleport-into-orbit/)** *(optional but perfect)* —
+   the easiest way to stage this demo is to drop two ships into the same orbit a few hundred meters
+   apart. One command, and you've got a source and a target.
+
+</Steps>
+
+## The big idea: two positions, one subtraction
+
+In [Point at Parent](/gatOS/guides/vessel-control-point-at-parent/) the aim direction was a gift —
+the CCI position *already was* the arrow we needed, just backwards. Aiming at another **vessel** is
+one small step up: read *both* ships' positions and subtract.
+
+`position/cci` is "where am I, measured from the parent body's center." Two vessels orbiting the
+**same body** share that origin and those axes — so the arrow from the source ship to the target
+ship is simply:
+
+$$\vec{aim} = \vec{r}_{target} - \vec{r}_{source}$$
+
+Same frame, same origin, one subtraction. That's the entire geometry of a searchlight.
+
+But a one-shot write of that aim goes stale immediately — both ships are doing kilometers per
+second, each on its own orbit, so the arrow between them swings constantly. The fix is the loop:
+recompute the arrow and hand the flight computer a fresh quaternion every half sim-second or so.
+The autopilot smooths out the in-between.
+
+### The light is a machine, not a math problem
+
+The pointing is only half the job. The source ship's spotlight is a *part*, and parts are physical:
+many light parts carry a little **actuate animation** — a motorized sweep that stows, deploys, or
+swivels the lamp head. gatOS exposes that animation as a file:
+
+> `lights/<n>/goal` ← a fraction `0..1` over the part's mechanical sweep
+
+Write `0` and the animation runs to one end (stowed); write `1` and it runs to the other; write
+`0.62` and it parks 62% of the way through. Here's the catch: **where in that sweep the beam ends up
+parallel to the ship's nose is a fact about the part's 3D model** — nothing in `/sim` can tell you.
+Maybe it's `1.0` (fully deployed = straight ahead). Maybe the arm overshoots and it's `0.85`.
+
+So the program takes it as a **calibration constant** — a `--aim-goal` flag you tune once by eye and
+then reuse forever. Aiming the *ship* is geometry; aiming the *lamp on the ship* is calibration.
+Real spacecraft engineering in one flag.
+
+## The program
+
+Save this as `~/tutorials/searchlight.py`, next to your toolkit modules:
+
+```python title="~/tutorials/searchlight.py"
+#!/usr/bin/env python3
+# Keep <source>'s nose - and its spotlight - locked onto <target>. Runs until Ctrl-C.
+# e.g.  python3 searchlight.py Hunter Polaris --aim-goal 1.0 --beam 6
+import argparse, sys, time
+from gatos_io import read, read_scalar, read_vec, write, write_vec
+from gatos_frames import Vec3, sub, norm, body_to_cci
+
+ap = argparse.ArgumentParser(description="Track a target vessel with the flight computer + a spotlight.")
+ap.add_argument("source", help="the vessel that does the pointing")
+ap.add_argument("target", help="the vessel to track")
+ap.add_argument("--light", type=int, default=0, help="light module index on the source (default 0)")
+ap.add_argument("--aim-goal", type=float, default=1.0,
+                help="CALIBRATION: the animation goal 0..1 where the beam runs parallel to the nose")
+ap.add_argument("--beam", type=float, default=6.0, help="spotlight outer cone half-angle, degrees")
+ap.add_argument("--period", type=float, default=0.5, help="re-aim interval, sim-seconds")
+args = ap.parse_args()
+
+src = f"/sim/vessels/by-id/{args.source}"
+tgt = f"/sim/vessels/by-id/{args.target}"
+
+# CCI is "about MY parent" - two positions only share a frame if the parents match.
+if read(f"{src}/parent") != read(f"{tgt}/parent"):
+    sys.exit(f"{args.source} and {args.target} orbit different bodies; their CCI positions aren't comparable")
+
+# Park until sim time advances `seconds` - warp-correct, and sleeps while paused.
+def sleep_sim(seconds: float) -> None:
+    write("/sim/time/alarm", read_scalar("/sim/time/ut") + seconds)
+    read_scalar("/sim/time/alarm")            # this read blocks until the alarm fires
+
+# A reason to skip commanding this tick, or None to fly.
+def held() -> str | None:
+    if read_scalar("/sim/time/sim_dt") == 0.0: return "paused"
+    if read_scalar("/sim/time/warp") > 1.0:    return "warping"
+    return None
+
+# --- one-time light setup: on, narrow beam, aim animation to the calibrated mark ---
+light = f"{src}/lights/{args.light}"
+try:
+    write(f"{light}/on", 1)
+    write(f"{light}/outer_angle", args.beam)  # a tight spot cone reads as a "beam" in-game
+except OSError:
+    sys.exit(f"{args.source} has no light module {args.light} - try: ls {src}/lights")
+try:
+    write(f"{light}/goal", args.aim_goal)     # drive the deploy/aim sweep to the calibrated spot
+except OSError:
+    print("this light has no aim animation (no goal file) - fixed mount, carrying on", file=sys.stderr)
+
+# --- the tracking loop: read -> gate -> aim -> pace, forever -----------------------
+print(f"tracking {args.target} - Ctrl-C to stop", file=sys.stderr)
+try:
+    while True:
+        if (reason := held()) is not None:
+            print(f"holding ({reason})", file=sys.stderr)
+            time.sleep(0.5)                   # wall-clock nap: no commands while held
+            continue
+        s: Vec3 = read_vec(f"{src}/position/cci")
+        t: Vec3 = read_vec(f"{tgt}/position/cci")
+        aim = sub(t, s)                       # the arrow source -> target, in one shared frame
+        # Roll reference = the source's own radial line, so the ship tracks with a
+        # steady "belly-down" roll instead of corkscrewing as the aim swings.
+        write_vec(f"{src}/ctl/attitude_target", body_to_cci(aim, s))
+        print(f"range to {args.target}: {norm(aim):,.0f} m", file=sys.stderr)
+        sleep_sim(args.period)
+except KeyboardInterrupt:
+    write(f"{src}/ctl/attitude_mode", "manual")   # hand the ship back to its pilot
+    write(f"{light}/on", 0)                       # lights out
+    print("\nreleased", file=sys.stderr)
+```
+
+The loop body is the same four verbs as ever — but arranged in the shape every long-running flight
+program shares:
+
+- **Read** both positions. Two `read_vec` calls, one shared frame (we checked the parents match
+  up front, *before* touching anything).
+- **Gate** first, command second. If the sim is paused or warping, we print a banner, nap, and
+  write *nothing*. A setpoint computed from a paused world is stale the moment time resumes; a
+  per-tick loop at 1000× warp is just noise. Holding costs nothing — the flight computer keeps
+  flying the last good setpoint.
+- **Aim** — `sub` for the arrow, `body_to_cci` for the quaternion, one write to
+  `ctl/attitude_target`. Identical machinery to Point at Parent; only the aim vector is new.
+- **Pace in sim time.** `sleep_sim` arms `/sim/time/alarm` and blocks on the read until the
+  *simulation* clock reaches it. No `time.sleep(0.5)` guesswork against a clock the game can pause —
+  except in the *held* branch, where wall-clock is exactly what we want (sim time may not be moving
+  at all).
+
+And when you Ctrl-C it, the `except` block cleans up after itself: attitude back to `manual`, light
+off. A tracker you can't cleanly stop is a haunting, not a program.
+
+<Aside type="note" title="Finding the calibration by eye">
+The `goal` file is live and instant, so calibrate interactively before you ever pass the flag —
+just poke it from a shell and watch the lamp head move:
+
+```sh
+echo 1.0  > /sim/vessels/by-id/Hunter/lights/0/goal   # fully deployed... beam straight ahead?
+echo 0.85 > /sim/vessels/by-id/Hunter/lights/0/goal   # a touch back down the sweep?
+cat  /sim/vessels/by-id/Hunter/lights/0/state          # Deployed / Deploying / Retracted...
+```
+
+When the beam lines up with the nose, that number is your `--aim-goal`. Every light *part design*
+has its own sweep, so calibrate once per part type, not once per launch. (If reading `goal` gives
+you a file-not-found, that light is bolted on rigid — no animation — and the pointing alone has to
+do the job.)
+</Aside>
+
+## Run it
+
+Stage two ships a few hundred meters apart (this is exactly what the
+[teleport tutorial](/gatOS/guides/teleport-into-orbit/) was built for), then start the tracker:
+
+```sh title="~/tutorials"
+# set the stage: two ships, same 200 km orbit, 400 m apart
+python3 teleport-into-orbit.py --parent Earth --vessel Hunter --vessel Polaris \
+  --altitude 200000 --spread 400
+
+# and light 'em up
+python3 searchlight.py Hunter Polaris --beam 6
+```
+
+```txt
+tracking Polaris - Ctrl-C to stop
+range to Polaris: 400 m
+range to Polaris: 400 m
+...
+```
+
+Watch Hunter swing its nose onto Polaris and *stay* there — nudge the camera around and you'll see
+the tight cone of light pinned on the target while both ships fall around the planet together. Pause
+the game: the loop banners `holding (paused)` and goes quiet. Resume: it picks the lock right back
+up. That's the loop earning its keep.
+
+<Aside type="caution" title="Same parent, or no deal">
+`position/cci` is measured from the vessel's **own parent body**. Subtracting two of them is only
+meaningful while both ships orbit the **same body** — which is why the program refuses to start
+otherwise. Cross-SOI tracking (shine a light at a ship falling around the Moon, from Earth orbit)
+needs both positions in a shared frame like ECL first — a fine exercise once this page feels easy.
+</Aside>
+
+<Aside type="caution" title="Why the loop holds under warp">
+The attitude setpoint lands on the **next solver step** (~10 Hz) — a tick of latency you'll never
+notice at 1× speed. But under heavy time-warp your half-second cadence covers *minutes* of sim time
+per iteration, and a per-tick chase loop degrades into flailing. The named modes are integrated
+*inside* the sim and stay glued at any warp; your out-of-band loop isn't, so the honest move is the
+one the program makes: **hold, and re-engage at normal speed**.
+</Aside>
+
+<Aside type="tip" title="The same tracker from your host machine">
+Every operation here has an HTTP twin, so this whole program ports to a host-side script almost
+line for line: read positions with `GET /v1/fs/vessels/by-id/Hunter/position/cci`, write the
+quaternion with `POST /v1/command` and
+`{"vessel_id":"Hunter","action":"vessel.attitude_target","values":[x,y,z,w]}`, drive the lamp with
+`POST /v1/fs/.../lights/0/goal`, and pace with the long-poll `GET /v1/time/wait?until=<ut>`. Same
+files, same numbers, different doorway.
+</Aside>
+
+<Aside type="note" title="Isn't there a built-in mode for this?">
+The flight computer's [named modes](/gatOS/reference/attitude-modes/) track things the
+*game* knows about — prograde, the radial line, a docking target you've selected in the UI. Our loop
+tracks **any vessel by id**, no in-game selection required — and more importantly, the pattern
+(read → gate → aim → pace) is the skeleton you'll reuse for every direction *no* built-in mode
+covers: a landing site, a computed intercept, the Sun-avoidance vector of a telescope.
+</Aside>
+
+## What's next
+
+You've built your first program that *runs* — a loop that shares the cockpit with the simulation,
+holds when it should, and cleans up when it's done. That skeleton is most of what a real autopilot
+is. From here, two natural directions: put **numbers** under the loop (orbital math — circular
+speeds, vis-viva, time-to-apoapsis) so it can decide *when* to act, or make it **react to events**
+(`/sim/events`) instead of polling. Either way, the searchlight pattern comes with you.

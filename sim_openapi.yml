@@ -618,6 +618,7 @@ components:
         - vessel.throttle
         - vessel.lights
         - vessel.rcs
+        - vessel.translate
         - vessel.attitude_mode
         - vessel.attitude_frame
         - vessel.attitude_target

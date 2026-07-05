@@ -1,0 +1,322 @@
+---
+title: EVA Taxi — Fly a Kitten to a Part
+description: Fly an EVA kitten around a ship's exterior on its backpack jets — compute any part's position in the world, then let a tiny guidance loop point, thrust, flip, and brake its way to a standoff point beside it.
+sidebar:
+  label: EVA Part Taxi
+  order: 7
+---
+
+import { Steps, Aside } from "@astrojs/starlight/components";
+
+This is the one where a kitten commutes.
+
+An EVA kitten has no main engine — no `ctl/throttle`, no `ctl/ignite`, nothing to stage. What it
+*does* have is a backpack: ten little hypergolic jets, six of which push it around (forward, back,
+left, right, up, down) and four of which spin it. In the game you fly it by hand with the
+translation keys. In this tutorial we fly it **by program**: give it a target vessel and the *name
+of a part* on that vessel, and the kitten points itself, thrusts, flips around halfway to brake,
+and pulls up at a polite standoff distance beside that exact part. Run it again with a different
+part and it hops across the hull. A space taxi, fare: one fish.
+
+Two new ideas power it, and they're both keepers: how to find **a part's position in the world**
+(not just a vessel's), and how to fly **RCS translation** through a file.
+
+## Before you start
+
+<Steps>
+
+1. **[Searchlight — Track a Vessel](/gatOS/guides/searchlight-track-a-vessel/)** — this page reuses
+   its whole skeleton (the continuous loop, sim-time pacing, the hold-when-paused gate, Ctrl-C
+   cleanup) without re-explaining it.
+
+2. **[Basic gatOS I/O Toolkit](/gatOS/guides/gatos-io/)** — we import from both modules, including
+   the newest addition to `gatos_frames.py`: **`transform`** (rotate a vector by a quaternion). If
+   your copy predates it, grab the latest version of that file from the toolkit page.
+
+3. **A kitten near a ship.** Send a kitten out an EVA door next to any vessel, or use the
+   [teleport tutorial](/gatOS/guides/teleport-into-orbit/) to place them in the same orbit a few
+   dozen meters apart.
+
+</Steps>
+
+## Big idea #1: where is a part, exactly?
+
+You already know where a *vessel* is — `position/cci`. But a vessel is a whole assembly of parts,
+and "fly to the solar panel" needs the panel, not the ship's average.
+
+gatOS publishes each top-level part under `parts/`, and the key file is `parts/<n>/position` — the
+part's position in the vessel's **assembly frame**. Think of the assembly frame as the ship's
+*blueprint*: a fixed coordinate grid bolted to the hull, in which every part has a permanent seat.
+The blueprint doesn't know or care how the ship is tumbling through space.
+
+Three published facts turn a blueprint seat into a world position:
+
+- `parts/<n>/position` — the part's seat in the blueprint (meters).
+- `com` — the ship's center of mass, *also in the blueprint*. This matters because the vessel's
+  `position/cci` tracks the **center of mass**, not the blueprint's origin.
+- `attitude/quat` — the Body→CCI quaternion: the rotation that carries blueprint directions into
+  world directions. (The body frame and the blueprint share axes; they differ only by where the
+  origin sits.)
+
+So the recipe is: take the part's seat, re-origin it on the center of mass, rotate it into the
+world with the attitude quaternion, and add the ship's position:
+
+$$\vec{p}_{part} = \vec{p}_{vessel} + \operatorname{transform}(\vec{p}_{blueprint} - \vec{com},\; q_{attitude})$$
+
+One subtraction, one `transform`, one add — and it stays correct while the target tumbles, because
+the attitude quaternion is live. (This is, line for line, the same math the game itself uses to
+place things relative to parts.)
+
+We don't fly *to* the part — face-planting into a solar panel is rude — we fly to a **standoff
+point** a few meters outside it, along the line from the ship's center out through the part:
+
+$$\vec{g} = \vec{p}_{part} + s\,\hat{n}, \qquad \hat{n} = \widehat{\vec{p}_{part} - \vec{p}_{vessel}}$$
+
+"Outward through the part" naturally parks you off the hull on the part's side of the ship.
+
+## Big idea #2: flying without a throttle
+
+The backpack jets are RCS thrusters, and gatOS gives you the player's translation keys as a file:
+
+> `ctl/translate` ← `x y z` — the **signs** command thrust along the kitten's own body axes
+> (`+x` = forward along the nose, `+y` = right, `+z` = down). `1 0 0` thrusts forward. `0 0 0`
+> stops. It's **bang-bang** (full thrust or nothing — magnitudes are ignored) and it **latches**
+> like a held key: the jets keep firing until you write `0 0 0`.
+
+Bang-bang thrust plus a steerable nose is all a taxi needs. The guidance law fits in three lines:
+
+1. **Decide how fast you *want* to move toward the goal** — proportional to distance, capped:
+   $\vec{v}_{des} = \hat{e}\cdot\min(v_{max},\, k\,d)$ where $\vec{e}$ is the arrow to the goal.
+   Far away → cruise at $v_{max}$; close in → slow down; there → zero.
+2. **Compare with how you *are* moving** (relative to the target ship):
+   $\Delta\vec{v} = \vec{v}_{des} - \vec{v}_{rel}$. This one subtraction handles approach,
+   braking, and drift correction identically — whatever velocity you have that you shouldn't,
+   $\Delta\vec{v}$ points the fix.
+3. **Point the nose along $\Delta\vec{v}$ and thrust `1 0 0` — but only once actually aligned.**
+   The flight computer swings the kitten (its rotation jets); we check the live nose direction
+   with `transform((1,0,0), attitude)` and hold fire until it agrees with where we want to push.
+
+The emergent behavior is the classic *flip-and-burn*: accelerate nose-first at the goal, and as
+the desired speed drops below the actual speed, $\Delta\vec{v}$ swings behind you — the kitten
+flips 180° and brakes tail-fir… nose-first the other way. Nobody programmed "flip"; it falls out
+of the subtraction.
+
+## The program
+
+Save this as `~/tutorials/eva_taxi.py`, next to your toolkit modules:
+
+```python title="~/tutorials/eva_taxi.py"
+#!/usr/bin/env python3
+# Fly an EVA kitten to a standoff point beside a named part of a target vessel. Ctrl-C to stop.
+# e.g.  python3 eva_taxi.py Hunter Rocket --part "solar" --standoff 3
+#       python3 eva_taxi.py Hunter Rocket --list
+import argparse, math, os, sys, time
+from gatos_io import read, read_scalar, read_vec, read_quat, write, write_vec
+from gatos_frames import sub, add, scale, norm, unit, dot, body_to_cci, transform
+
+ap = argparse.ArgumentParser(description="EVA taxi: fly a kitten to a part of a target vessel.")
+ap.add_argument("eva", help="the EVA kitten (the vessel that flies)")
+ap.add_argument("target", help="the vessel to fly to")
+ap.add_argument("--part", default="0", help="part index, or a display-name fragment (default 0)")
+ap.add_argument("--list", action="store_true", help="list the target's parts and exit")
+ap.add_argument("--standoff", type=float, default=3.0, help="hover distance off the part, m")
+ap.add_argument("--speed", type=float, default=1.0, help="max approach speed, m/s")
+ap.add_argument("--gain", type=float, default=0.25, help="approach speed per meter of distance, 1/s")
+args = ap.parse_args()
+
+src = f"/sim/vessels/by-id/{args.eva}"
+tgt = f"/sim/vessels/by-id/{args.target}"
+parts = f"{tgt}/parts"
+
+def part_indices() -> list[int]:
+    try:
+        return sorted(int(n) for n in os.listdir(parts))
+    except (OSError, ValueError):
+        sys.exit(f"{args.target} has no parts list (telemetry_vessel_parts off, or vessel gone)")
+
+if args.list:
+    for n in part_indices():
+        print(f"{n:3}  {read(f'{parts}/{n}/display_name')}", file=sys.stderr)
+    sys.exit(0)
+
+# Resolve --part: an index, or the first part whose display name contains the fragment.
+def resolve_part(sel: str) -> int:
+    indices = part_indices()
+    if sel.isdigit() and int(sel) in indices:
+        return int(sel)
+    for n in indices:
+        if sel.lower() in read(f"{parts}/{n}/display_name").lower():
+            return n
+    sys.exit(f"no part matching '{sel}' on {args.target} - try --list")
+
+# CCI is "about MY parent" - the two positions only share a frame if the parents match.
+if read(f"{src}/parent") != read(f"{tgt}/parent"):
+    sys.exit(f"{args.eva} and {args.target} orbit different bodies")
+
+part = resolve_part(args.part)
+print(f"flying to part {part} ({read(f'{parts}/{part}/display_name')}) - Ctrl-C to stop", file=sys.stderr)
+write(f"{src}/ctl/rcs", 1)                    # jets on (the master gate)
+
+# The searchlight loop machinery: pace in sim time, hold when paused/warping.
+def sleep_sim(seconds: float) -> None:
+    write("/sim/time/alarm", read_scalar("/sim/time/ut") + seconds)
+    read_scalar("/sim/time/alarm")
+
+def held() -> str | None:
+    if read_scalar("/sim/time/sim_dt") == 0.0: return "paused"
+    if read_scalar("/sim/time/warp") > 1.0:    return "warping"
+    return None
+
+ALIGN = math.cos(math.radians(20))            # thrust only within 20 degrees of the wanted push
+last_cmd = "0 0 0"                            # ctl/translate LATCHES - track what we last wrote
+
+def jets(cmd: str) -> None:                   # write only on change; the command holds by itself
+    global last_cmd
+    if cmd != last_cmd:
+        write(f"{src}/ctl/translate", cmd)
+        last_cmd = cmd
+
+try:
+    arrived = False
+    while True:
+        if (reason := held()) is not None:
+            jets("0 0 0")                     # never leave jets latched while we're not looking
+            print(f"holding ({reason})", file=sys.stderr)
+            time.sleep(0.5)
+            continue
+
+        # Where is the part right now? blueprint seat -> world (big idea #1).
+        pt = read_vec(f"{tgt}/position/cci")
+        qt = read_quat(f"{tgt}/attitude/quat")
+        seat = sub(read_vec(f"{parts}/{part}/position"), read_vec(f"{tgt}/com"))
+        part_world = add(pt, transform(seat, qt))
+
+        # The goal: a standoff point outward from the ship's center through the part.
+        out = sub(part_world, pt)
+        ps = read_vec(f"{src}/position/cci")
+        n_hat = unit(out) if norm(out) > 0.5 else unit(sub(ps, part_world))  # root part: approach side
+        goal = add(part_world, scale(n_hat, args.standoff))
+
+        # The taxi law (big idea #2): desired velocity -> needed velocity change.
+        e = sub(goal, ps)
+        d = norm(e)
+        v_rel = sub(read_vec(f"{src}/velocity/cci"), read_vec(f"{tgt}/velocity/cci"))
+        v_des = scale(unit(e), min(args.speed, args.gain * d)) if d > 0.5 else (0.0, 0.0, 0.0)
+        dv = sub(v_des, v_rel)
+
+        if d < 0.5 and norm(v_rel) < 0.1 and not arrived:
+            arrived = True
+            print(f"arrived - station-keeping {args.standoff:g} m off the part", file=sys.stderr)
+
+        if norm(dv) < 0.05:
+            jets("0 0 0")                     # close enough to the wanted velocity: coast
+        else:
+            aim = unit(dv)
+            # Ask the flight computer to swing the nose onto the push direction...
+            write_vec(f"{src}/ctl/attitude_target", body_to_cci(aim, ps))
+            # ...and only light the forward jets once the LIVE nose actually agrees.
+            nose = transform((1.0, 0.0, 0.0), read_quat(f"{src}/attitude/quat"))
+            jets("1 0 0" if dot(nose, aim) > ALIGN else "0 0 0")
+
+        print(f"dist {d:6.1f} m   closing {-dot(v_rel, unit(e)) if d > 0.5 else 0.0:+5.2f} m/s   "
+              f"jets {'ON ' if last_cmd != '0 0 0' else 'off'}", file=sys.stderr)
+        sleep_sim(0.25)
+except KeyboardInterrupt:
+    pass
+finally:
+    write(f"{src}/ctl/translate", "0 0 0")    # ALWAYS: the command latches; leave nothing firing
+    write(f"{src}/ctl/attitude_mode", "manual")
+    print("\nreleased - jets off, attitude back to manual", file=sys.stderr)
+```
+
+Walking the loop body, the shape is the searchlight skeleton with a smarter middle:
+
+- **The part math is three toolkit calls** — `sub` (re-origin on the center of mass), `transform`
+  (blueprint → world through the live attitude), `add` (onto the ship's position). Re-read every
+  tick, so a tumbling target just works: the goal point rides the hull.
+- **One subtraction is the whole autopilot.** `dv = v_des − v_rel` doesn't distinguish "speed up,"
+  "slow down," or "cancel sideways drift" — they're all just velocity you have that you shouldn't.
+  Point the nose at the fix, push. That it produces a graceful flip-and-burn is geometry, not
+  cleverness.
+- **Thrust is gated on the *live* nose**, not the setpoint. We command an attitude and separately
+  verify it — `transform((1,0,0), attitude)` is the direction the kitten actually faces right now.
+  While the flight computer is still swinging, the jets stay cold; no thrusting sideways because
+  the turn isn't finished. (This is why `transform` earned its place in the toolkit.)
+- **`jets()` writes only on change**, because `ctl/translate` latches. The `finally` block is not
+  optional politeness: a latched command outlives the program, and a kitten you Ctrl-C mid-burn
+  would otherwise keep accelerating into the void until the tank ran dry.
+
+<Aside type="caution" title="The command that doesn't let go">
+`ctl/translate` behaves like a **held key**, and nobody releases it for you. Every exit path of
+your program — success, Ctrl-C, a crash — must write `0 0 0`. That's what the `try/finally` is
+for; copy that structure into anything you build on this control. (If you ever do strand a kitten
+under thrust: `echo "0 0 0" > /sim/vessels/by-id/<id>/ctl/translate` from any shell stops it.)
+</Aside>
+
+## Run it
+
+```sh title="~/tutorials"
+# who's out there, and what can we park next to?
+ls /sim/vessels/by-id
+python3 eva_taxi.py Hunter Rocket --list
+
+# taxi to the solar panel, 3 m standoff
+python3 eva_taxi.py Hunter Rocket --part solar
+
+# hop around the hull: just re-run with another part
+python3 eva_taxi.py Hunter Rocket --part docking --standoff 2
+```
+
+```txt
+flying to part 4 (Solar Panel) - Ctrl-C to stop
+dist   23.4 m   closing +0.00 m/s   jets ON
+dist   22.1 m   closing +0.97 m/s   jets off
+dist   12.3 m   closing +1.01 m/s   jets off
+dist    6.0 m   closing +0.98 m/s   jets ON      <- the flip: braking now
+dist    1.9 m   closing +0.44 m/s   jets ON
+dist    0.4 m   closing +0.08 m/s   jets off
+arrived - station-keeping 3 m off the part
+```
+
+Watch the kitten swing its nose at the panel, puff forward, coast, pirouette halfway there, brake,
+and settle a few meters off the hull — then hold station, giving the occasional correcting puff.
+Ctrl-C hands the controls back and shuts the jets off.
+
+<Aside type="note" title="Tuning the ride">
+`--gain` and `--speed` are the taxi's personality. The defaults (cruise 1 m/s, slow inside ~4 m)
+suit a cautious kitten. Raising `--speed` gets you there faster but the flip happens harder and
+later; raising `--gain` tightens the final approach. If it overshoots and oscillates around the
+goal, your jets are strong relative to the pace — lower `--gain` first. There's no propellant
+math here: the tank is small, and an aggressive tuning genuinely can run it dry mid-hop.
+</Aside>
+
+<Aside type="caution" title="It flies the straight line, hull be damned">
+The taxi aims at the standoff point and flies straight there. If the straight line passes *through*
+the target vessel — hopping from one side of a big station to the other — the kitten will
+cheerfully attempt the shortcut. For cross-ship hops, raise `--standoff` (the goal sits farther off
+the hull) or make two hops via a part on the ship's edge. Teaching it to route around the hull
+(pop out radially, arc over, drop back in) is a lovely exercise: you have every ingredient already.
+</Aside>
+
+<Aside type="note" title="Part indices move; names mostly don't">
+`parts/<n>/` indices are **not stable** across staging or docking — the list is rebuilt as the
+vehicle changes. That's why `--part` prefers a display-name fragment and why `--list` exists.
+(For a permanently stable handle there's `parts/<n>/instance_id`, but names are friendlier here.)
+The parts list needs the `telemetry_vessel_parts` gate, which is on by default.
+</Aside>
+
+<Aside type="tip" title="The same taxi from your host machine">
+Every read has its `GET /v1/fs/...` twin and both writes go through `POST /v1/command` —
+`{"vessel_id":"Hunter","action":"vessel.translate","values":[1,0,0]}` and
+`{"action":"vessel.attitude_target","values":[x,y,z,w]}` — or one call each with the TypeScript
+SDK (`vessel("Hunter").setTranslate([1,0,0])`). Same law, same numbers, different doorway.
+</Aside>
+
+## What's next
+
+You now have the two halves of close-quarters flight: **world-space part geometry** and a
+**velocity-matching controller** on bang-bang jets. Everything harder is a composition of them:
+route around a hull with via-points, face the hull while station-keeping (aim the nose at the part
+instead of along `dv`, and thrust on whichever body axis matches), or chain hops into a full
+exterior inspection tour. And when the vessel being inspected is the one *you're* flying — that's
+what docking is, seen from the other seat.

@@ -97,6 +97,10 @@ named auto modes — see §5.
 > to `ctl/attitude_target` makes the autopilot point body +X along `transform(+X, q)` in CCI.
 > `transform(UnitX, q) == desired_direction_cci` holds by construction.
 
+The full body triad is **aircraft-style: +X = nose, +Y = right, +Z = down** (verified against the
+RCS translation-thruster geometry — `ctl/translate`'s sign convention follows it: `+x` thrusts along
+the nose, `+y` right, `+z` down).
+
 ### To aim the thrust/nose at a desired CCI direction `d̂`
 
 You need a full Body→CCI rotation, i.e. a complete orthonormal body triad expressed in CCI. Body +X

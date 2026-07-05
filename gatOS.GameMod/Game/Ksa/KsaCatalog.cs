@@ -123,6 +123,8 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
         "vessel.throttle" => ThrottleActuator.Set(vehicle, c.Value),
         "vessel.stage" => StagingActuator.Stage(vehicle),
         "vessel.rcs" => RcsActuator.SetMaster(vehicle, c.Value > 0.5),
+        // Manual RCS translation (body-axis signs; latches until rewritten).
+        "vessel.translate" => TranslateActuator.SetTranslation(vehicle, c.Values ?? []),
         "vessel.attitude_mode" => FlightComputerActuator.SetAttitudeMode(vehicle, c.Token ?? ""),
         "vessel.attitude_frame" => FlightComputerActuator.SetAttitudeFrame(vehicle, c.Token ?? ""),
         "vessel.attitude_target" => FlightComputerActuator.SetAttitudeTarget(vehicle, c.Values ?? []),

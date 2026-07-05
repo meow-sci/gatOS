@@ -177,6 +177,13 @@ public sealed record VesselSnapshot(
     public bool RcsOn { get; init; }
 
     /// <summary>
+    ///     The latched manual RCS translation command as body-axis signs (<c>ctl/translate</c>
+    ///     read): each component −1/0/+1 for commanded thrust along body X (+ = forward/nose),
+    ///     Y (+ = right), Z (+ = down). <c>(0,0,0)</c> = no translation commanded.
+    /// </summary>
+    public double3Snap TranslateCmd { get; init; }
+
+    /// <summary>
     ///     Whether the vessel's main engines are ignited — the master that <c>ctl/ignite</c> and
     ///     <c>ctl/shutdown</c> toggle (KSA <c>EngineOn</c>, read via <c>IsSet(VehicleEngine.MainIgnite)</c>).
     ///     The reactive <c>ctl/engine</c> read; not the per-engine "allowed to fire" <c>engines/n/active</c>.

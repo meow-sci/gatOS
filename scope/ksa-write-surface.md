@@ -77,13 +77,15 @@ target in 4750 (verify live). Full record: [`../plans/FIX_CURRENT_GAPS_PLAN.md`]
 
 ## Vessel control surface (G4)
 
-`ThrottleActuator.cs`, `StagingActuator.cs`, `RcsActuator.cs`, `FlightComputerActuator.cs`.
+`ThrottleActuator.cs`, `StagingActuator.cs`, `RcsActuator.cs`, `TranslateActuator.cs`,
+`FlightComputerActuator.cs`.
 
 | `/sim` path | action key | phase | actuator | KSA member | Decomp file | Risk | 4826 |
 |---|---|---|---|---|---|---|---|
 | `ctl/throttle` | `vessel.throttle` | Frame | `ThrottleActuator.Set` | **reflection** `Vehicle._manualControlInputs.EngineThrottle` (no public setter; `GetManualThrottle()` reads it) | `KSA/Vehicle.cs` (`:232,824`) | **High** | ✅² |
 | `ctl/stage` | `vessel.stage` | Frame | `StagingActuator.Stage` | `Vehicle.Parts.SequenceList.ActivateNextSequence(vehicle)` + `Vehicle.UpdateAfterPartTreeModification()` | `KSA/SequenceList.cs`, `KSA/Vehicle.cs` | Medium | ✅³ |
 | `ctl/rcs` | `vessel.rcs` | Frame | `RcsActuator.SetMaster` | `ThrusterController.SetIsActive(vehicle,bool)` over all | `KSA/ThrusterController.cs` | Medium | ✅ |
+| `ctl/translate` | `vessel.translate` | Frame | `TranslateActuator.SetTranslation` | **reflection** `Vehicle._manualControlInputs.ThrusterCommandFlags` (same struct as throttle; translate bits replaced, rotation bits preserved) + `ThrusterMapFlags`; read-back `Vehicle.GetThrusterFlags()`. `FlightComputer.ComputeRcsControl` consumes the flags each solver step (`ManualThrustMode.Direct` → `SelectJetsToFire`; Auto attitude strips only rotation bits, so translation composes with tracking). Sign→flag mapping (+x=`TranslateForward`, +y=`Right`, +z=`Down`) verified against the `KittenBackPackSubPart` nozzle geometry in `Content/Core/PartGameData.xml` | `KSA/Vehicle.cs`, `KSA/ThrusterMapFlags.cs`, `KSA/FlightComputer.cs` (`:454-519,1029`) | **High** | ✅⁴ |
 | `ctl/attitude_mode` | `vessel.attitude_mode` | **Solver** | `FlightComputerActuator.SetAttitudeMode` | `FlightComputer.{AttitudeMode,AttitudeTrackTarget}`; `FlightComputerAttitudeMode`/`...TrackTarget` | `KSA/FlightComputer.cs` | Medium | ✅² |
 | `ctl/attitude_frame` | `vessel.attitude_frame` | **Solver** | `…SetAttitudeFrame` | `FlightComputer.AttitudeFrame` (`VehicleReferenceFrame`) | `KSA/FlightComputer.cs` | Medium | ✅² |
 | `ctl/attitude_target` | `vessel.attitude_target` | **Solver** | `…SetAttitudeTarget` | `FlightComputer.{CustomAttitudeTarget,AttitudeFrame,AttitudeTrackTarget=Custom}`; `VehicleReferenceFrameEx.{GetEclBody2Cci,QuaternionToEulerAngles}` | `KSA/FlightComputer.cs` | Medium | ✅² |
@@ -96,6 +98,13 @@ rev 4732 rename of "Stages"); compiled clean — no change. Re-verified against 
 `_symmetryGroups`→`_sequenceGroups` rename — `ActivateNextSequence` and `Part.ActivateInStage` are
 **byte-identical**; `Vehicle.UpdateAfterPartTreeModification` gained only an additive cosmetic
 `UpdateDistantGlintCurves()` call.
+
+⁴ Added 2026-07-04 (born on 4826): the struct-reflection pattern is the proven throttle anchor; the
+flags path (`ComputeRcsControl`/`SelectJetsToFire`, `WithCanceledOpposingCommands`, the
+`WithNoRotation` strip under Auto attitude) read directly from the 4826 decomp. The command
+**latches** until rewritten (`0 0 0` stops). Only fires thrusters whose `ControlMap` carries
+translation axes (e.g. the EVA kitten backpack's six translation jets); in-game pass pending (see
+`docs/VALIDATION.md`).
 
 > **Why Solver phase?** KSA's async vehicle solver snapshots the whole `FlightComputer` at prepare and
 > restores it at apply (`FlightComputer.CopyFrom`). A frame-phase write to a FC setpoint lands *outside*

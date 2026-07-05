@@ -241,6 +241,24 @@ def body_to_cci(aim: Vec3, roll_ref: Vec3) -> Quat:
         y = unit(c)
     z = unit(cross(x, y)) # +Z completes a right-handed triad
     return from_rows(x, y, z)
+
+# KSA's hamilton product (WZYX component layout) - internal helper for transform below
+def _hprod(p: Quat, q: Quat) -> Quat:
+    px, py, pz, pw = p
+    qx, qy, qz, qw = q
+    return (pw*qx + pz*qy - py*qz + px*qw,
+            pw*qy - pz*qx + py*qw + px*qz,
+            pw*qz + pz*qw + py*qx - px*qy,
+            pw*qw - pz*qz - py*qy - px*qx)
+
+# Rotate a vector by a quaternion - a VERBATIM port of KSA's double3.Transform(v, quat),
+# same warning as from_rows: borrow, don't substitute. With a Body -> CCI quaternion this
+# carries a body-frame vector into CCI: transform((1,0,0), att_q) is the live nose direction
+def transform(v: Vec3, q: Quat) -> Vec3:
+    x, y, z, w = q
+    p2 = _hprod((-x, -y, -z, w), (v[0], v[1], v[2], 1.0))
+    r = _hprod(p2, (x, y, z, w))
+    return (r[0], r[1], r[2])
 ```
 
 The vector helpers (`cross`, `dot`, `norm`, `unit`, `neg`, `scale`, `add`, `sub`) are exactly what
@@ -248,7 +266,8 @@ they say on the tin, and you'll use them constantly, no need to overthink them. 
 everyday arithmetic of 3D arrows — flip one, stretch one, add two together — and later tutorials lean
 on them the way this one leans on `neg`.
 
-The two functions at the bottom are the reason this file exists, and they deserve a word of warning:
+The quaternion functions at the bottom are the reason this file exists, and they deserve a word of
+warning:
 
 <Aside type="caution" title="Borrow this quaternion math, don't reinvent it!">
   `from_rows` looks like something you could grab from any math library, but that's a trap.
@@ -264,6 +283,11 @@ The two functions at the bottom are the reason this file exists, and they deserv
 `body_to_cci` is your friend, you hand it a direction you want the nose pointing, and it
 returns the quaternion the flight computer wants. We won't dwell on _how_ it packs the three axes
 together — the next tutorial puts it to work, and that's when it'll click.
+
+`transform` is the same trip in the other direction: given a quaternion and a vector expressed in
+the *body's* frame, it hands back that vector in CCI. Feed it the attitude quaternion you read from
+`attitude/quat` and `(1, 0, 0)` and you get the direction the nose points *right now* — a later
+tutorial leans on exactly that trick to find a part's place in the world.
 
 ## Take it for a spin
 

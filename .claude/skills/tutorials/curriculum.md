@@ -51,6 +51,8 @@ terminal/`vi`, not a big IDE); put the real explanation in the page prose.
 | 8 | `orbital-math` | constants + the vis-viva / circular-orbit cheat-sheet | 1 | to write |
 | 9 | `schedule-a-burn` | **maneuver nodes** — `ctl/burn` with a CCI Δv | 4, 8 | to write |
 | 10 | `teleport-into-orbit` | set up state with `debug/teleport` (CCI state vector) — an argparse program placing an N-vessel formation into a circular/eccentric orbit | `gatos-io`, `reference-frames` | **done** |
+| 10b | `searchlight-track-a-vessel` | the **continuous control loop** (read → gate → aim → pace, runs until Ctrl-C): track a target vessel with a computed attitude + a spotlight aimed by a **calibrated** animation goal | 5, 10 (staging); teaches pacing/gating inline until 6/7 exist | **done** |
+| 10c | `eva-taxi-to-a-part` | **part→world geometry** (`part_world = pos + transform(seat − com, att_q)`) + **RCS translation flight** (`ctl/translate` bang-bang latching jets; velocity-matching `dv = v_des − v_rel` law → emergent flip-and-burn) | 10b (the loop), `gatos-io` (`transform` addition) | **done** |
 | 11 | `react-to-events` | event-driven control (`/sim/events`, `grep -m1`, SSE) | 2 | to write |
 | 12 | `closed-loop-guidance` | full autopilot architecture (pure core, ENU, abort) | 7, 9 | capstone |
 
@@ -158,6 +160,48 @@ terminal/`vi`, not a big IDE); put the real explanation in the page prose.
   [`teleport-into-orbit.mdx`](../../../site/src/content/docs/guides/teleport-into-orbit.mdx).
 - **Gotchas:** needs `debug_namespace` (default on); keep apoapsis inside the parent's `soi`; also
   worked (host/TS, two-vessel circular) in `recipes.md §1`.
+
+### 10b. `searchlight-track-a-vessel` — the continuous tracker (**done**)
+- **Goal:** a program that *runs forever*: keep a source vessel's nose (and its spotlight) locked on
+  a target vessel — recompute the aim every half sim-second, hold under pause/warp, clean up on
+  Ctrl-C (attitude → `manual`, light off).
+- **Surface:** `vessels/by-id/<id>/position/cci` ×2, `parent` (same-parent guard),
+  `ctl/attitude_target`, `ctl/attitude_mode` (release), `lights/<n>/{on,outer_angle,goal,state}`,
+  `time/{ut,alarm,sim_dt,warp}`.
+- **New idea:** the **control loop** — read → gate → aim → pace — plus aim-between-vessels
+  (`aim = sub(target_pos, source_pos)`; CCI positions share a frame only under the same parent) and
+  the **calibration constant**: `lights/<n>/goal` sweeps the part's aim animation 0..1, but where in
+  that sweep the beam parallels body +X is a fact about the part's model — a `--aim-goal` flag tuned
+  by eye (poke `goal` from a shell, watch, bake the number in).
+- **Self-contained:** rungs 6/7 are unwritten, so it teaches `sleep_sim` (alarm-file pacing) and the
+  paused/warp gate inline (wall-clock nap while held, sim-time pacing while flying) — fold back into
+  those rungs when they're authored. Page:
+  [`searchlight-track-a-vessel.mdx`](../../../site/src/content/docs/guides/searchlight-track-a-vessel.mdx).
+- **Gotchas:** attitude writes are solver-phase (~10 Hz — hold under warp rather than chase);
+  `lights/<n>/goal` exists only when the light part carries an animation (catch `OSError` and carry
+  on); light setup writes are frame-phase (instant); print telemetry to **stderr** so stdout stays
+  pipeable.
+
+### 10c. `eva-taxi-to-a-part` — the EVA part taxi (**done**)
+- **Goal:** fly an EVA kitten (no main engine — backpack RCS only) to a standoff point beside a
+  *named part* of a target vessel; hop the hull by re-running with another part; station-keep on
+  arrival; hard cleanup on every exit path.
+- **Surface:** `parts/<n>/{position,display_name}` (+ `--list` via `os.listdir`), `com`,
+  `attitude/quat`, `position/cci`/`velocity/cci` ×2, **`ctl/translate`** (the RCS translation
+  control this rung motivated — body-axis signs, bang-bang, **latches** until `0 0 0`),
+  `ctl/attitude_target`, `ctl/rcs`, `ctl/attitude_mode` (release).
+- **New ideas:** (1) **part→world**: `part_world = pos_cci + transform(seat − com, att_q)` — the
+  assembly frame is the ship's "blueprint", `com` re-origins it, the live attitude quaternion
+  carries it into CCI (the weld-engine math, and the reason `transform` joined `gatos_frames.py`);
+  (2) **velocity-matching guidance** on bang-bang jets: `v_des = ê·min(v_max, k·d)`,
+  `dv = v_des − v_rel`, point the nose along `dv` (gated on the *live* nose via
+  `transform((1,0,0), att)`), thrust `1 0 0` when aligned — flip-and-burn emerges from the
+  subtraction.
+- **Gotchas:** `ctl/translate` **latches** — every exit path must write `0 0 0` (`try/finally`);
+  thrust must be gated on the live attitude, not the setpoint; straight-line pathing can clip the
+  hull (raise `--standoff`, or via-point around — left as the exercise); part indices are unstable
+  (name-fragment matching; `telemetry_vessel_parts` gate); same-parent CCI guard. Page:
+  [`eva-taxi-to-a-part.mdx`](../../../site/src/content/docs/guides/eva-taxi-to-a-part.mdx).
 
 ### 11. `react-to-events` — event-driven control
 - **Goal:** wait for launch/flameout/SOI-change and act, without polling.

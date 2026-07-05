@@ -97,6 +97,15 @@ export class VesselHandle {
     return this.cmd("vessel.rcs", { value: on ? 1 : 0 });
   }
 
+  /**
+   * Manual RCS translation by body-axis **signs** (+x = forward/nose, +y = right, +z = down;
+   * 0 = axis off). Bang-bang and **latching** — it keeps thrusting until you call
+   * `setTranslate([0, 0, 0])`.
+   */
+  setTranslate(axes: [number, number, number]) {
+    return this.cmd("vessel.translate", { values: axes });
+  }
+
   /** Auto-track an attitude (`prograde`, `retrograde`, …) or `manual`. */
   setAttitudeMode(mode: string) {
     return this.cmd("vessel.attitude_mode", { token: mode });

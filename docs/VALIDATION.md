@@ -253,6 +253,25 @@ and `docs/KSA_INTEGRATION_MATRIX.md` (per-vessel nodes). **All items pending a l
 | 9 | With **no** vessel marked, no `gatos.always_render` patches are installed (repeated mark/unmark cycles → no double-patch, no leak); quit with marks active → clean unload | ☐ | dynamic patch lifecycle; `TeardownGameCheats` |
 | 10 | An EVA kitten marked `always_render` is **not** force-rendered (documented limitation — its `UpdateRenderData` override bypasses the patched base) | ☐ | virtual-method limitation |
 
+## `ctl/translate` (manual RCS translation) — validation pass — **NOT YET RUN**
+
+Prereq: the T6.6 pass. `[control] control_enabled = true` (default). Best exercised on an **EVA
+kitten** (its backpack carries the six translation-mapped jets); a normal rocket with attitude-only
+RCS accepts the write but fires nothing. The game-free half (parse, EINVAL, command shape/phase,
+read-back rendering) is covered by `gatOS.SimFs.Tests/Commands/VesselTranslateTests.cs`; these items
+exercise the reflection + flags path (`TranslateActuator`). See `SPEC_9P_FILESYSTEM.md` §3.4.17 and
+`docs/KSA_INTEGRATION_MATRIX.md` (control surface). **All items pending a live flight.**
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | On a floating EVA kitten: `echo "1 0 0" > ctl/translate` → it accelerates **along its nose**; `echo "0 0 0"` stops the jets | ☐ | sign mapping +x = `TranslateForward` (nozzle geometry) |
+| 2 | `echo "0 1 0"` → moves to its **right**; `echo "0 0 1"` → moves **down** (body frame is X-nose/Y-right/Z-down) | ☐ | +y = `Right`, +z = `Down` |
+| 3 | The command **latches**: jets keep firing across many seconds without re-writing; `cat ctl/translate` reads back the latched signs; program exit without `0 0 0` leaves them firing (documented) | ☐ | held-key semantics |
+| 4 | With an active attitude hold (`ctl/attitude_target` or a named mode), translation fires **while** the hold keeps steering (no fight, no mode drop) | ☐ | Auto attitude strips only rotation bits |
+| 5 | `echo 0 > ctl/rcs` (master off) silences translation too; `1` restores | ☐ | `ThrusterController.IsActive` gate |
+| 6 | In-game keyboard translate keys and the file compose sanely (last writer wins on the translate bits; keyboard rotation unaffected) | ☐ | rotation bits preserved on file writes |
+| 7 | Magnitudes are ignored: `echo "0.2 0 0"` behaves exactly like `1 0 0` (bang-bang) | ☐ | signs only |
+
 ## `debug/vessels/<id>/impulse` (one-shot impulsive kick) — validation pass — **NOT YET RUN**
 
 Prereq: the T6.6 pass. `[control] debug_namespace = true` (default). Run during a real flight —

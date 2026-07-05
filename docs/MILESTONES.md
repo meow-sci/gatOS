@@ -392,7 +392,11 @@ errnos `EBUSY`/`ETIMEDOUT` added.
 
 ### G4 — Full control surface
 
-**Writes:** `ctl/{throttle,stage,rcs,attitude_mode,attitude_frame,attitude_target,burn}`,
+**Writes:** `ctl/{throttle,stage,rcs,translate,attitude_mode,attitude_frame,attitude_target,burn}`
+(`ctl/translate` added 2026-07-04: manual RCS translation by body-axis signs — reflection on
+`_manualControlInputs.ThrusterCommandFlags`, the throttle pattern; bang-bang, latches until `0 0 0`;
+`TranslateActuator` + `VesselSnapshot.TranslateCmd` read-back via `GetThrusterFlags`; enables EVA-kitten
+point-to-point flying, tutorial `site/…/guides/eva-taxi-to-a-part.mdx`),
 `engines/<n>/min_throttle`, `rcs/<n>/active`, `lights/<n>/{on,brightness,color,inner_angle,outer_angle}`,
 `decouplers/<n>/fire`, `docking/<n>/undock`, `ctl/focus` (+ `bodies/<id>/focus`), and the
 **`/sim/debug/`** cheat namespace (gated by
@@ -799,9 +803,9 @@ be exercised headlessly.
 `HostMountIntegrationTests` fixture requires guest v10 to be published.
 
 **Still pending: the in-game passes** — T6.6/T9.3/G1–G4 and the welds/IVA/parts, thug_life,
-per-vessel `scale`/`always_render`, `debug/vessels/<id>/impulse`, and `/sim/audio` checklists in
-`docs/VALIDATION.md` are runnable now that the purrTTY tip release is cut, but need a live KSA
-flight to complete.
+per-vessel `scale`/`always_render`, `debug/vessels/<id>/impulse`, `ctl/translate`, and `/sim/audio`
+checklists in `docs/VALIDATION.md` are runnable now that the purrTTY tip release is cut, but need a
+live KSA flight to complete.
 
 **Next**: M10 (persistence & savegame shape). Everything past M9 is not yet implemented, with
 the single exception of T11.1 (QEMU win-x64 bundle) which was pulled forward and is done.

@@ -408,6 +408,7 @@ to enumerate) but **not** stable across vehicle edits — `instance_id` is the s
 | `ctl/throttle` | **St** | `0..1` | `vessel.throttle` | Frame | Manual throttle fraction; read = current setpoint. |
 | `ctl/lights` | **St** | `0`/`1` | `vessel.lights` | Frame | Master lights. |
 | `ctl/rcs` | **St** | `0`/`1` | `vessel.rcs` | Frame | Master RCS. |
+| `ctl/translate` | **St** | `x y z` | `vessel.translate` | Frame | **Manual RCS translation** — the file twin of the player's translate keys. The **signs** command bang-bang thrust along the **body axes** (+x = forward/nose, −x = backward; +y = right, −y = left; +z = down, −z = up; `0` = that axis off — KSA's body frame is X-nose/Y-right/Z-down). Fires every RCS thruster whose `ControlMap` matches, at full thrust, each solver step (`ManualThrustMode.Direct`); magnitudes are ignored. **Latches like a held key** until overwritten — write `0 0 0` to stop. Composes with an active flight-computer attitude hold (auto-attitude strips only the rotation bits). Read = the latched command as signs. Needs translation-mapped RCS thrusters (e.g. the EVA kitten backpack); vessels without them accept the write but nothing fires. |
 | `ctl/attitude_mode` | **St** | token | `vessel.attitude_mode` | **Solver** | `manual`, or an auto track-target (see §3.4.18). |
 | `ctl/attitude_frame` | **St** | token | `vessel.attitude_frame` | **Solver** | Reference frame for the named modes (see §3.4.18). |
 | `ctl/attitude_target` | **St** | `x y z w` | `vessel.attitude_target` | **Solver** | Custom **Body→CCI** quaternion; the autopilot points body **+X** along it. |
@@ -679,7 +680,7 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `action` | string | the action key (table below). |
 | `ordinal` | int | module index (engine/rcs/light/animation/decoupler/docking); `-1` for vessel-level. |
 | `value` | number | scalar arg: `0`/`1` flag, `0..1` fraction, or number. |
-| `values` | number[] | vector arg: quaternion (4), burn `ut dvx dvy dvz` (4), color `r g b` (3), teleport `px py pz vx vy vz` (6), impulse `x y z` (3), the audio play slots / set pairs (§3.9 notes below). |
+| `values` | number[] | vector arg: quaternion (4), burn `ut dvx dvy dvz` (4), color `r g b` (3), teleport `px py pz vx vy vz` (6), impulse `x y z` (3), translate `x y z` (3, signs), the audio play slots / set pairs (§3.9 notes below). |
 | `token` | string | symbolic arg: attitude mode/frame token, a target id for focus/control, the audio clip name (`audio.play`) or channel target (`audio.set`/`audio.stop`), the impulse frame keyword (`cci`/`body`; omit ⇒ `cci`). |
 | `aux` | string | secondary symbolic arg — `audio.play` uses it for the caller-chosen channel `id=` (omit ⇒ auto `#N`); `debug.impulse` for the unit keyword (`ns`/`dv`; omit ⇒ `ns`). |
 
@@ -694,6 +695,7 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `vessel.throttle` | — | value `0..1` | Frame | `ctl/throttle` | |
 | `vessel.lights` | — | value `0`/`1` | Frame | `ctl/lights` | |
 | `vessel.rcs` | — | value `0`/`1` | Frame | `ctl/rcs` | |
+| `vessel.translate` | — | values `[x,y,z]` | Frame | `ctl/translate` | body-axis signs, bang-bang; latches until rewritten (`0 0 0` stops) |
 | `vessel.attitude_mode` | — | token | **Solver** | `ctl/attitude_mode` | §3.4.18 |
 | `vessel.attitude_frame` | — | token | **Solver** | `ctl/attitude_frame` | §3.4.18 |
 | `vessel.attitude_target` | — | values `[x,y,z,w]` | **Solver** | `ctl/attitude_target` | Body→CCI quaternion |

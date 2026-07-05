@@ -132,7 +132,7 @@ KSA game update have any chance of breaking it.
 | R | Vessel parts list (top-level only; the welds anchor picker; gated by `telemetry_vessel_parts`) | **Yes** | [`ksa-read-surface.md`](ksa-read-surface.md#parts) |
 | **Writes (controls)** | | | |
 | W | Engine ignite/shutdown, per-engine active/min-throttle, manual throttle | **Yes** | [`ksa-write-surface.md`](ksa-write-surface.md) |
-| W | Staging, RCS, flight-computer attitude/frame/target/burn | **Yes** (Solver phase) | [`ksa-write-surface.md`](ksa-write-surface.md) |
+| W | Staging, RCS (master + manual translation `ctl/translate`), flight-computer attitude/frame/target/burn | **Yes** (Solver phase for FC setpoints; translation = reflection on `_manualControlInputs.ThrusterCommandFlags`) | [`ksa-write-surface.md`](ksa-write-surface.md) |
 | W | Lights (master/on/brightness/colour/cone angles), animations/solar/light deploy | **Yes** (High: template) | [`ksa-write-surface.md`](ksa-write-surface.md) |
 | W | Decouplers, docking undock + pushoff | **Yes** (4750: `PushoffImpulse`, N·s — G1 fixed) | [`ksa-write-surface.md`](ksa-write-surface.md#docking) |
 | W | Camera focus (vessel + body) | **Yes** | [`ksa-write-surface.md`](ksa-write-surface.md) |
