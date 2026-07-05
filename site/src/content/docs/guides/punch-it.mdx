@@ -1,0 +1,283 @@
+---
+title: Punch It — Kick a Vessel with an Impulse
+description: >-
+  Build a tiny command-line program that shoves any vessel in a human direction — front, back, left,
+  right, top, or bottom — with a one-shot impulse kick, no engine or propellant required.
+sidebar:
+  label: Punch It
+  order: 8
+  badge: { text: New, variant: tip }
+---
+
+import { Steps, Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
+
+Sometimes you don't want to _fly_ a ship anywhere. You want to reach into the sim and **shove** it —
+a clean, instant kick in a direction you name out loud. "Punch it to the left." "Boot it straight
+up." No engine, no propellant, no pointing the nose first.
+
+That's exactly what the **impulse** cheat does, and it's just one write to a `/sim` file. In this
+rung we'll wrap it in a friendly little program so a shove is one line in the terminal:
+
+```sh
+python3 punch-it.py --vessel Hunter --direction left --force 50000
+```
+
+The whole trick is turning a human word — `front`, `back`, `left`, `right`, `top`, `bottom` — into
+the vector the game wants. And thanks to one keyword, the game does the hard part for us.
+
+## Before you start
+
+<Steps>
+
+1. **[Basic gatOS I/O Toolkit](/gatOS/guides/gatos-io/)** — we import just `write` from `gatos_io.py`
+   to poke the control file. That's the only helper this program needs.
+
+2. **A sense of the vessel's own frame** — the idea below. If you've done
+   [Point at Parent](/gatOS/guides/vessel-control-point-at-parent/) or the
+   [EVA Part Taxi](/gatOS/guides/eva-taxi-to-a-part/) you've already met the body axes; if not, the
+   one picture in the next section is all you need.
+
+</Steps>
+
+The impulse cheat lives under `/sim/debug/…`, so you need the debug namespace on (`debug_namespace`,
+the default). If `/sim/debug` is missing, that's why.
+
+## The idea in one picture: the vessel's own frame
+
+"Left" and "up" only mean something _relative to the ship_. A vessel tumbling through space doesn't
+have a left in any fixed, cosmic sense — but it always has **its own** left, out its port side. So
+that's the frame we work in: the **vessel body frame**, which rides along with the ship wherever it
+points.
+
+KSA lays that frame out aircraft-style. Three axes, fixed to the hull:
+
+```
+        +X  nose   (front)
+         ↑
+         │
+  −Y ←───┼───→ +Y        left  ←  •  →  right
+         │
+         ↓
+        −X  tail   (back)
+
+   third axis, through the belly:   +Z = down (bottom) ,  −Z = up (top)
+```
+
+So each of our six words is just a unit push along one of those axes, scaled by however hard you
+want to hit it. Call the force **F**:
+
+| You say    | Body axis   | Vector      | Which way it goes            |
+| ---------- | ----------- | ----------- | ---------------------------- |
+| `front`    | +X (nose)   | `+F  0   0` | forward, out the nose        |
+| `back`     | −X          | `−F  0   0` | backward, out the tail       |
+| `right`    | +Y          | ` 0 +F   0` | to the vessel's right        |
+| `left`     | −Y          | ` 0 −F   0` | to the vessel's left         |
+| `top`      | −Z          | ` 0  0  −F` | up (yes — up is **−Z**)      |
+| `bottom`   | +Z          | ` 0  0  +F` | down                         |
+
+<Aside type="note" title="Why up is −Z">
+It's the aircraft convention: nose forward (+X), right wing (+Y), and _down_ through the floor (+Z) —
+so "up" is the negative Z direction. It trips everyone up once; after that it's muscle memory. (It's
+the same triad `ctl/translate` uses for RCS jets, so this knowledge carries over.)
+</Aside>
+
+### The one keyword that does the work
+
+Here's the part that makes the program tiny. The impulse control file takes an optional **frame**
+keyword after the numbers:
+
+> `/sim/debug/vessels/<id>/impulse` ← `x y z [cci|body] [ns|dv]`
+
+Write `body` and the game reads your vector **in the vessel's own frame** and rotates it through the
+ship's live attitude for you, at the instant it applies. So `0 -F 0 body` is _always_ a shove to the
+ship's left — whether it's pointing at the Sun, flying backwards, or slowly cartwheeling. We never
+touch a quaternion; the `body` keyword _is_ the rotation.
+
+(Leave it off and the vector is read in **CCI**, the parent body's fixed frame — handy when you've
+done orbital math, but no good for "left".)
+
+## The program
+
+Save this next to your toolkit modules as `~/tutorials/punch-it.py`:
+
+```python title="~/tutorials/punch-it.py"
+#!/usr/bin/env python3
+# Punch a vessel in a human direction with a one-shot impulse.
+# No engine, no propellant, no aiming — one write to the impulse cheat.
+#   python3 punch-it.py --vessel Hunter --direction left --force 50000
+import argparse, sys
+from gatos_io import write
+
+# The vessel body frame is aircraft-style: +X = nose, +Y = right, +Z = DOWN.
+# Each word is a unit push on one axis (remember: "top" = up = -Z).
+DIRECTIONS = {
+    "front":  ( 1.0,  0.0,  0.0),   # forward, along the nose  (+X)
+    "back":   (-1.0,  0.0,  0.0),   # backward, out the tail   (-X)
+    "right":  ( 0.0,  1.0,  0.0),   # to the vessel's right    (+Y)
+    "left":   ( 0.0, -1.0,  0.0),   # to the vessel's left     (-Y)
+    "top":    ( 0.0,  0.0, -1.0),   # up   (+Z is DOWN, so up is -Z)
+    "bottom": ( 0.0,  0.0,  1.0),   # down                     (+Z)
+}
+
+ap = argparse.ArgumentParser(description="Kick a vessel with a one-shot impulse, in its own frame.")
+ap.add_argument("--vessel", required=True, metavar="ID",
+                help="target vessel id (need NOT be the one you're controlling)")
+ap.add_argument("--direction", required=True, choices=DIRECTIONS,
+                help="which way to shove it, in the vessel's own frame")
+ap.add_argument("--force", required=True, type=float,
+                help="impulse magnitude, newton-seconds (N·s)")
+ap.add_argument("--dv", action="store_true",
+                help="treat --force as a direct velocity change in m/s instead of N·s")
+args = ap.parse_args()
+
+if args.force < 0.0:
+    sys.exit(f"--force must be >= 0; got {args.force}")
+
+# Direction word -> unit vector on a body axis -> scale by the magnitude.
+ux, uy, uz = DIRECTIONS[args.direction]
+x, y, z = ux * args.force, uy * args.force, uz * args.force
+
+# Build "x y z body [dv]" and write it. `body` = read the vector in the vessel's
+# own frame (so "left" is always ITS left). Unit is newton-seconds unless --dv,
+# which applies the vector straight as a velocity change in m/s.
+line = f"{x} {y} {z} body"
+if args.dv:
+    line += " dv"
+write(f"/sim/debug/vessels/{args.vessel}/impulse", line)   # errno on failure -> OSError
+
+kind = f"{args.force:g} m/s Δv" if args.dv else f"{args.force:g} N·s"
+print(f"punched {args.vessel} {args.direction} with {kind}", file=sys.stderr)
+```
+
+That's the whole thing. A lookup table, a multiply, and a single `write`. The `body` keyword absorbs
+all the geometry that would otherwise be a page of quaternion math — this is the impulse cheat's whole
+appeal.
+
+## Both ways to throw the punch
+
+Under the program, that one `write` is the same actuation you can do by hand — from inside the guest,
+or over HTTP from your own machine. Pick a transport; the page follows your choice.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    The file twin of the program — shove `Hunter` to its left with a 50 kN·s impulse:
+
+    ```sh
+    echo "0 -50000 0 body" > /sim/debug/vessels/Hunter/impulse
+    ```
+
+    Straight up (−Z), a harder 200 kN·s:
+
+    ```sh
+    echo "0 0 -200000 body" > /sim/debug/vessels/Hunter/impulse
+    ```
+
+    A precise forward nudge of exactly +5 m/s (skip the mass math with `dv`):
+
+    ```sh
+    echo "5 0 0 body dv" > /sim/debug/vessels/Hunter/impulse
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    The file twin takes the **identical line** over HTTP — a shove to the left, 50 kN·s:
+
+    ```sh
+    curl -X POST --data '0 -50000 0 body' \
+      http://127.0.0.1:4242/v1/fs/debug/vessels/Hunter/impulse
+    ```
+
+    Or the structured command, if you prefer JSON (`token` = frame, `aux` = unit):
+
+    ```sh
+    curl -X POST -H 'content-type: application/json' \
+      --data '{"vessel_id":"Hunter","action":"debug.impulse","values":[0,-50000,0],"token":"body"}' \
+      http://127.0.0.1:4242/v1/command
+    ```
+
+    A precise +5 m/s forward nudge adds `"aux":"dv"`:
+
+    ```sh
+    curl -X POST -H 'content-type: application/json' \
+      --data '{"vessel_id":"Hunter","action":"debug.impulse","values":[5,0,0],"token":"body","aux":"dv"}' \
+      http://127.0.0.1:4242/v1/command
+    ```
+
+  </TabItem>
+</Tabs>
+
+## Run it
+
+```sh title="~/tutorials"
+# who's around to punch?
+ls /sim/vessels/by-id
+
+# boot Hunter to its left with a 50 kN·s impulse
+python3 punch-it.py --vessel Hunter --direction left --force 50000
+
+# launch it straight up, hard
+python3 punch-it.py --vessel Hunter --direction top --force 250000
+
+# a precise, engine-free +10 m/s forward jump (--dv reads --force as m/s)
+python3 punch-it.py --vessel Hunter --direction front --force 10 --dv
+```
+
+Watch the ship in the map or flight view: it doesn't spin up an engine or spend a drop of fuel — its
+velocity just **jumps**, in one tick, exactly the way you asked. The orbit redraws itself around the
+new push instantly.
+
+<Aside type="note" title="Newtons, or newton-seconds?">
+A one-shot kick is really an **impulse** — measured in newton-seconds (N·s), not newtons. That's the
+default unit, and it's the same currency the game uses for its own docking-separation shoves (a stock
+pushoff is ~5,000–7,000 N·s, if you want a feel for the scale). The game turns it into a velocity
+change by dividing by the ship's mass: $\Delta v = J / m$. So a fixed `--force` kicks a light probe
+much harder than a heavy station. If you'd rather specify the velocity change **directly** — "give it
+exactly +10 m/s" — pass `--dv` and your number is read straight as m/s, mass be damned.
+</Aside>
+
+<Aside type="caution" title="It's a cheat: instant and non-physical">
+The impulse doesn't fly the ship — it rebuilds the orbit at the current position with the bumped
+velocity (the same machinery as [teleport](/gatOS/guides/teleport-into-orbit/)). So it lands in a
+single tick at _any_ magnitude, spends no propellant, and needs no engine pointed anywhere. It'll
+happily kick a **landed** vessel — and the resulting "orbit" may dive straight back into the ground.
+That's on you; it's a cheat, not a physics engine.
+</Aside>
+
+<Aside type="tip" title="Punch anything, not just your own ship">
+Unlike throttle or attitude commands, the impulse doesn't need the target to be _controllable_ or the
+one you're flying. Any vessel id works — perfect for shoving a piece of debris, nudging a target drone
+into position, or breaking up a formation. The only gate is the debug namespace being on (else
+`EACCES`); a missing vessel gives `ENOENT`, and a bad vector or keyword gives `EINVAL`.
+</Aside>
+
+<Aside type="note" title="Prefer the punch to knock it *away*?">
+This program treats the direction as **where the ship goes** — `left` shoves it leftward. If your
+mental model is instead "a punch _landing_ on the left side, knocking it right," just negate the
+vector (flip every sign in `DIRECTIONS`). Same table, opposite convention — pick whichever reads right
+to you.
+</Aside>
+
+## What's next
+
+You've now got the two halves of playing god with a vessel's state: [teleport](/gatOS/guides/teleport-into-orbit/)
+sets _where it is and how fast_, and this sets _a sudden change to how fast_ — instantly, in any
+direction the ship calls its own.
+
+A couple of natural next moves:
+
+- **Kick a whole formation at once.** A single impulse is frame-phased (one command per tick), so
+  shoving several ships together smears them just like a looped teleport does. The fix is the same:
+  batch the writes through `/sim/ctl/batch` so they all land in one tick (see the
+  [teleport tutorial's batch aside](/gatOS/guides/teleport-into-orbit/)).
+- **Aim in the world frame.** Drop the `body` keyword and your vector is read in **CCI** — so a kick
+  along the velocity unit vector is a pure prograde/retrograde Δv, no flight computer required. That's
+  the bridge to real maneuver planning.
+
+<LinkCard
+  title="Teleport a Fleet into Orbit"
+  href="/gatOS/guides/teleport-into-orbit/"
+  description="The other half of the cheat toolkit: set a vessel's exact position and velocity with a CCI state vector."
+/>
+```

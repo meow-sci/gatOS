@@ -53,6 +53,7 @@ terminal/`vi`, not a big IDE); put the real explanation in the page prose.
 | 10 | `teleport-into-orbit` | set up state with `debug/teleport` (CCI state vector) — an argparse program placing an N-vessel formation into a circular/eccentric orbit | `gatos-io`, `reference-frames` | **done** |
 | 10b | `searchlight-track-a-vessel` | the **continuous control loop** (read → gate → aim → pace, runs until Ctrl-C): track a target vessel with a computed attitude + a spotlight aimed by a **calibrated** animation goal | 5, 10 (staging); teaches pacing/gating inline until 6/7 exist | **done** |
 | 10c | `eva-taxi-to-a-part` | **part→world geometry** (`part_world = pos + transform(seat − com, att_q)`) + **RCS translation flight** (`ctl/translate` bang-bang latching jets; velocity-matching `dv = v_des − v_rel` law → emergent flip-and-burn) | 10b (the loop), `gatos-io` (`transform` addition) | **done** |
+| 10d | `punch-it` | the **impulse cheat** (`debug/vessels/<id>/impulse`) + the **body-frame `body` keyword** doing the rotation for you: map a human word (front/back/left/right/top/bottom) → a body-axis unit push; N·s (Δv=J/m) vs `dv` m/s | `gatos-io` (`write`); body-frame idea from 5/10c | **done** |
 | 11 | `react-to-events` | event-driven control (`/sim/events`, `grep -m1`, SSE) | 2 | to write |
 | 12 | `closed-loop-guidance` | full autopilot architecture (pure core, ENU, abort) | 7, 9 | capstone |
 
@@ -202,6 +203,24 @@ terminal/`vi`, not a big IDE); put the real explanation in the page prose.
   hull (raise `--standoff`, or via-point around — left as the exercise); part indices are unstable
   (name-fragment matching; `telemetry_vessel_parts` gate); same-parent CCI guard. Page:
   [`eva-taxi-to-a-part.mdx`](../../../site/src/content/docs/guides/eva-taxi-to-a-part.mdx).
+
+### 10d. `punch-it` — the impulse cheat, in the vessel's own frame (**done**)
+- **Goal:** a tiny `argparse` program that shoves any vessel in a human direction —
+  `front`/`back`/`left`/`right`/`top`/`bottom` — with a one-shot impulse of a given magnitude; no
+  engine, no propellant, no aiming.
+- **Surface:** `debug/vessels/<id>/impulse` (`x y z [cci|body] [ns|dv]`), written once via `write`.
+- **New ideas:** (1) the **impulse cheat** — a one-shot velocity bump riding the teleport machinery
+  (instant, non-physical, works on any vessel controlled-or-not, gate = `debug_namespace`); (2) the
+  **`body` frame keyword does the rotation** — read the vector in the vessel body triad (aircraft-style
+  **+X nose, +Y right, +Z down**) and the game carries it through the live attitude, so "left" is always
+  the ship's left with *no* quaternion math (contrast eva-taxi 10c, which hand-rolls `transform`); (3)
+  units: default **N·s** (Δv = J/m, same currency as docking pushoff) vs `dv` for direct m/s.
+- **Self-contained:** teaches the body-triad convention inline (the one picture); only imports `write`.
+  Adds no toolkit helpers. Page: [`punch-it.mdx`](../../../site/src/content/docs/guides/punch-it.mdx).
+- **Gotchas:** `+Z` is **down** (up = −Z); frame-phase = one command/tick (batch via `/sim/ctl/batch`
+  to kick a formation together, like the teleport batch); errnos `EACCES` (debug off) / `ENOENT` (gone)
+  / `EINVAL` (bad vector/keyword). The direction=which-way-it-goes convention is a choice — negate to
+  make it "punched *away from*" instead.
 
 ### 11. `react-to-events` — event-driven control
 - **Goal:** wait for launch/flameout/SOI-change and act, without polling.
