@@ -1,0 +1,21 @@
+# the90s soundboard config.
+#
+# title:  shown across the top of both screens.
+# sounds: one entry per button — the key is the display name, the value is the path to the
+#         audio file (mp3 / ogg / wav / flac). Relative paths resolve against this file's
+#         directory. File order is button order. Quote a name that contains ':' or '#'.
+#
+# In the guest, point paths at files you copied in (scp), or — the easy way — at a host folder
+# shared through gatOS's /mnt mounts ([mounts] in gatos.toml), e.g. /mnt/sounds/airhorn.mp3.
+
+title: TOTALLY RAD SOUNDBOARD
+
+sounds:
+  Airhorn: sounds/airhorn.mp3
+  "You've Got Mail": sounds/youve-got-mail.wav
+  Dial-Up: sounds/dialup.ogg
+  Sad Trombone: sounds/sad-trombone.mp3
+  Rimshot: sounds/rimshot.wav
+  Bonk: sounds/bonk.mp3
+  Nokia: sounds/nokia.mp3
+  It's Time To Duel: sounds/duel.ogg
