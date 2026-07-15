@@ -70,21 +70,28 @@ update's blast radius is small and discoverable. The procedure:
    (`EOPNOTSUPP`), logs once, and shows up in `/sim/status/accessors`. The guest sees a failed sensor,
    not a crashed mod. This is the safety net for the things steps 2–3 miss.
 
-> **Current applied result of this playbook:** the **2026.6.9.4750 → 2026.7.3.4826** update was run
-> through it on 2026-07-03 — **clean: no code changes required.** Build + full test suite green against
-> 4826; every bound member, reflection accessor, and Harmony hook target verified unchanged by a full
-> decomp + Content diff (the 4826 `version.json` changelog is gapped — it only logs revs 4824–4826 — so
-> the tree diff was the discovery mechanism; see
+> **Current applied result of this playbook:** the **2026.7.3.4826 → 2026.7.5.4892** update was run
+> through it on 2026-07-14 — **clean: no code changes required.** Build + full test suite green against
+> 4892 (forced non-incremental, 0 warnings); every bound member, reflection accessor, and Harmony hook
+> target verified unchanged by a full decomp + Content diff (the diff was taken between the two drops'
+> git commits inside the assemblies checkout; revs 4827–4859 have **no changelog** in either drop, so
+> the tree diff was again the discovery mechanism; see
 > [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md)). Findings are behavior notes, not drift:
-> post-decouple control-state inheritance (`Vehicle.Split` copies `_manualControlInputs`; the
-> `Decoupler.Decouple` deactivation cascade was removed —
-> [read 4826 findings](ksa-read-surface.md#4826-findings)), a near-SoI gravitation-refactor nuance, and
-> a solar-cell stock value change (50→100 W, same unit). Live re-check items (thug_life quad,
-> `/sim/display`, `/sim/status/accessors`, g-force near SoI) are queued in `docs/VALIDATION.md`.
+> the rev 4884 **combustion→Reactions / tank-affinity refactor** (save-breaking upstream) is *additive*
+> to every gatOS read (`Tank.Moles`/`Mole`/`FilledFraction`/`RefillConsumables` untouched; substance
+> *names* in tank listings change with the new catalog); the FC now **zeroes per-engine
+> `CommandThrottle`/`CommandBurnTime`** when no burn is commanded (honest 0 instead of stale); KSA's
+> `Staging` *window class* was replaced by `ResourceGroups` (gatOS binds `SequenceList.ActivateNextSequence`
+> — intact); the 4866 on-rails changes shift *when* vessels go on-rails at high warp
+> ([read 4892 findings](ksa-read-surface.md#4892-findings)). Live re-check items are queued in
+> `docs/VALIDATION.md`.
 >
-> The prior 2026.6.8.4680 → 2026.6.9.4750 pass found four gaps, all fixed 2026-06-27 (G1 docking
-> `PushoffImpulse` N·s, G2 power `Joules`→`Watts`, G3 the `controllable` read, G4 the sampler reads
-> anchored) — see [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md).
+> The prior 2026.6.9.4750 → 2026.7.3.4826 pass (2026-07-03) was also clean — behavior notes only
+> (post-decouple control-state inheritance, a near-SoI gravitation nuance, solar-cell 50→100 W —
+> [read 4826 findings](ksa-read-surface.md#4826-findings)). The 2026.6.8.4680 → 2026.6.9.4750 pass
+> found four gaps, all fixed 2026-06-27 (G1 docking `PushoffImpulse` N·s, G2 power `Joules`→`Watts`,
+> G3 the `controllable` read, G4 the sampler reads anchored) — see
+> [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md).
 
 ---
 

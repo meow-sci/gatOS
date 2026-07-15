@@ -2,7 +2,7 @@
 
 > Every control gatOS performs against KSA. Each row: the `/sim` control path, the command **action
 > key**, the actuator method, the KSA member it binds to, the threading **phase** (Frame vs Solver), the
-> decomp file, churn risk, and **4826 status** (✅ · ⚠️ · ❌).
+> decomp file, churn risk, and **4892 status** (✅ · ⚠️ · ❌).
 >
 > Source of truth = `[KsaAnchor]` in `gatOS.GameMod/Game/Ksa/Actuators/**` and the dispatch table in
 > `KsaCatalog.cs`. Action keys + arg shapes + errno = [`SPEC_9P_FILESYSTEM.md`](../SPEC_9P_FILESYSTEM.md).
@@ -63,7 +63,7 @@ target in 4750 (verify live). Full record: [`../plans/FIX_CURRENT_GAPS_PLAN.md`]
 
 `Game/Ksa/Actuators/EngineActuator.cs`, `LightActuator.cs`, `AnimationActuator.cs`.
 
-| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4826 |
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4892 |
 |---|---|---|---|---|---|---|
 | `ctl/ignite` | `vessel.ignite` | `EngineActuator.Ignite` | `Vehicle.SetEnum(VehicleEngine.MainIgnite)` | `KSA/Vehicle.cs` | Medium | ✅¹ |
 | `ctl/shutdown` | `vessel.shutdown` | `EngineActuator.Shutdown` | `Vehicle.SetEnum(VehicleEngine.MainShutdown)` | `KSA/Vehicle.cs` | Medium | ✅¹ |
@@ -80,7 +80,7 @@ target in 4750 (verify live). Full record: [`../plans/FIX_CURRENT_GAPS_PLAN.md`]
 `ThrottleActuator.cs`, `StagingActuator.cs`, `RcsActuator.cs`, `TranslateActuator.cs`,
 `FlightComputerActuator.cs`.
 
-| `/sim` path | action key | phase | actuator | KSA member | Decomp file | Risk | 4826 |
+| `/sim` path | action key | phase | actuator | KSA member | Decomp file | Risk | 4892 |
 |---|---|---|---|---|---|---|---|
 | `ctl/throttle` | `vessel.throttle` | Frame | `ThrottleActuator.Set` | **reflection** `Vehicle._manualControlInputs.EngineThrottle` (no public setter; `GetManualThrottle()` reads it) | `KSA/Vehicle.cs` (`:232,824`) | **High** | ✅² |
 | `ctl/stage` | `vessel.stage` | Frame | `StagingActuator.Stage` | `Vehicle.Parts.SequenceList.ActivateNextSequence(vehicle)` + `Vehicle.UpdateAfterPartTreeModification()` | `KSA/SequenceList.cs`, `KSA/Vehicle.cs` | Medium | ✅³ |
@@ -97,7 +97,11 @@ rev 4732 rename of "Stages"); compiled clean — no change. Re-verified against 
 `SequenceList.cs`/`StageList.cs` rework (+796/+472) is editor drag/drop UI + a private
 `_symmetryGroups`→`_sequenceGroups` rename — `ActivateNextSequence` and `Part.ActivateInStage` are
 **byte-identical**; `Vehicle.UpdateAfterPartTreeModification` gained only an additive cosmetic
-`UpdateDistantGlintCurves()` call.
+`UpdateDistantGlintCurves()` call. Re-verified against 4892: the KSA `Staging` *window class* is gone
+(`Staging.cs` deleted; the window is now `ResourceGroups`) — irrelevant to gatOS, which binds
+`SequenceList`; `ActivateNextSequence(Vehicle)` keeps its signature and body, now ending in a batched
+`RemoveSpentSequences()` (rev 4873 perf); sequences are double-buffered for the UI (rev 4880) —
+activation semantics unchanged.
 
 ⁴ Added 2026-07-04 (born on 4826): the struct-reflection pattern is the proven throttle anchor; the
 flags path (`ComputeRcsControl`/`SelectJetsToFire`, `WithCanceledOpposingCommands`, the
@@ -116,7 +120,7 @@ translation axes (e.g. the EVA kitten backpack's six translation jets); in-game 
 
 `LightActuator.cs`, `DecouplerActuator.cs`, `DockingActuator.cs`, `RcsActuator.cs`.
 
-| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4826 |
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4892 |
 |---|---|---|---|---|---|---|
 | `rcs/<n>/active` | `rcs.active` | `RcsActuator.SetActive` | `ThrusterController.SetIsActive` | `KSA/ThrusterController.cs` | Medium | ✅ |
 | `lights/<n>/on` | `light.on` | `LightActuator.SetOn` | `LightModule.Parent.FullPart.LightSwitch.LightIsActive` | `KSA/LightModule.cs` | Medium | ✅ |
@@ -140,7 +144,7 @@ and verified against 4750 — see the docking section below.
 
 ## Camera focus (Frame phase, authority-exempt)
 
-| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4826 |
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4892 |
 |---|---|---|---|---|---|---|
 | `ctl/focus`, `bodies/<id>/focus` | `camera.focus` | `CameraActuator.Focus` | `Program.GetMainCamera().SetFollow(Astronomical, tidalLocking:true, changeControl:false)` | `KSA/Program.cs`, `KSA/Camera.cs` | Medium | ✅ |
 
@@ -154,7 +158,7 @@ area** (`vessels/by-id/<id>/…`), not `/sim/debug` — the per-vessel controls 
 namespace. Exempt from the active-vessel authority gate via `KsaCatalog.AnyVesselActions` (each is a
 deliberate by-id operation on an arbitrary vessel). Gated only by the `control_enabled` master.
 
-| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4826 |
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4892 |
 |---|---|---|---|---|---|---|
 | `vessels/by-id/<id>/scale` | `vessel.scale` | `ScaleActuator.Set` (one-shot; > 0 only, `EINVAL` otherwise; KSA resets on vessel rebuild) | recursive `Part.Scale = (f,f,f)` over `Vehicle.Parts.Parts`/`Part.SubParts` (public `double3` setter); KittenEva avatar via reflected `_renderable._characterAvatar.Core.Scale = f*0.01f` | `KSA/Part.cs`, `KSA/PartTree.cs`, `KSA/KittenEva.cs` | **High** (reflection + `GetType().Name` gate) | ✅ |
 | `vessels/by-id/<id>/always_render` | `vessel.always_render` | `VesselForceRender.Set` (registry op; installs/removes the `gatos.always_render` prefixes — patches exist **only while ≥ 1 vessel is marked**) | prefixes on `Vehicle.GetWorldMatrix(Camera)` + `Vehicle.UpdateRenderData(Viewport,int)` reproduce the stock bodies minus the `< 1 px` cull: `Camera.GetPositionEgo`, `Vehicle.Body2Cce`, `Vehicle.GetMatrixAsmb2Ego`, `PartTree.UpdateRenderData`, `Vehicle.IsEditedVehicle` | `KSA/Vehicle.cs`, `KSA/Camera.cs`, `KSA/PartTree.cs` | Medium (dynamic Harmony; KittenEva override unaffected) | ✅ |
@@ -170,7 +174,7 @@ detail lives in [`ksa-runtime-coupling.md#always-render-patches`](ksa-runtime-co
 `Game/Ksa/Actuators/DebugActuator.cs` + `DockingActuator.SetPushoffImpulse`. Gated by `[control]
 debug_namespace`. Authority-exempt (own opt-in).
 
-| `/sim` path | action key | phase | KSA member | Decomp file | Risk | 4826 |
+| `/sim` path | action key | phase | KSA member | Decomp file | Risk | 4892 |
 |---|---|---|---|---|---|---|
 | `debug/time/warp` | `debug.warp` | Frame | `Universe.SetSimulationSpeed(double, alert:false)` | `KSA/Universe.cs` | Medium | ✅ |
 | `debug/control_vessel` | `debug.control_vessel` | Frame | `Program.GetMainCamera().SetFollow(…)`; `Program.ControlledVehicle = vehicle` | `KSA/Program.cs` | Medium | ✅⁶ |
@@ -201,7 +205,7 @@ per-source weld actions after vehicle resolution; `always_render_iva` and `weld_
 **vessel-agnostically before** resolution; `weld_create`/`weld_here` resolve the **target** from the
 command `Token` (the source is the command's `vessel_id`).
 
-| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4826 |
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4892 |
 |---|---|---|---|---|---|---|
 | `debug/always_render_iva` | `debug.always_render_iva` | `IvaActuator.SetAlwaysRender`→`IvaForceRender.SetEnabled` | `PartModel.Instances`; `PartModel..ctor(PartModelModule.Template)`; `PartModel.AddInstance(PerInstanceData,Viewport,int)`; `PartModel.ViewportData.Get(...).InstanceList`; `PartModelModule.Template.{Internal,RayTracing}`; `PartModelModule.RaytracingMode.ShadowProxy`; `Program.{Editor,MainViewport}`; `Viewport.Mode`; `CameraMode.IVA` (render gate `PartModel.cs:387`) | `KSA/PartModel.cs`, `KSA/PartModelModule.cs`, `KSA/Viewport.cs` | Medium (dynamic `gatos.iva` Harmony — recheck live) | ✅ |
 | `debug/vessels/<id>/weld` | `debug.weld_create` | `WeldManager.Create`→`WeldEngine.UpdateWeld` | `Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,BodyRates,CenterOfMassAsmb,Parent,Orbit,Teleport,UpdatePerFrameData}`; `Orbit.{OrbitLineColor,CreateFromStateCci}`; `IParentBody.GetCci2Cce`; `Universe.GetJobSimStep(double).NextTime`; `Program.GetPlayerDeltaTime`; `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` | `KSA/Vehicle.cs`, `KSA/Orbit.cs`, `KSA/Universe.cs`, `KSA/Part.cs` | **High** (per-frame `Teleport`) | ✅ |
@@ -221,7 +225,11 @@ command — see [`ksa-runtime-coupling.md#welds-driver`](ksa-runtime-coupling.md
 down on unload (`Mod.TeardownGameCheats`). Errnos: `EBUSY` (source==target, or the two orbit different
 bodies), `ENOENT` (target/part gone), `EINVAL` (bad arity/values). Anchors verified `2026-06-28` against
 `2026.6.9.4750`; re-verified (static) 2026-07-03 against `2026.7.3.4826` — `Vehicle.Teleport`, `Orbit.cs`,
-`JobSystems.cs`, `Universe.GetJobSimStep` all unchanged.
+`JobSystems.cs`, `Universe.GetJobSimStep` all unchanged. Re-verified (static) 2026-07-14 against
+`2026.7.5.4892` — `Vehicle.Teleport(Orbit?,doubleQuat?,double3?)` and `Universe.cs` untouched;
+`Orbit.CreateFromStateCci` keeps its signature (the big `Orbit.cs` churn is trajectory-drawing /
+danger-zone visualization); rev 4867's CCI↔CCF angular-velocity corruption fix *benefits* the weld
+teleport path.
 
 ---
 
@@ -237,7 +245,7 @@ highest-churn KSA coupling** — the *write* path below is small (it only edits 
 coupling is the per-frame GPU draw + anchor math, which is **runtime coupling**, not a write command — see
 [`ksa-runtime-coupling.md#thug-life-patch`](ksa-runtime-coupling.md#thug-life-patch).
 
-| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4826 |
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4892 |
 |---|---|---|---|---|---|---|
 | `debug/thug_life/add` | `debug.thug_life_add` | `ThugLifeManager.Create` (resolves the anchor vehicle from `Token`) | `Universe.CurrentSystem.All.UnsafeAsList()`; `Vehicle.Parts.Parts`; `Part.InstanceId` (anchor pick; `0` = vehicle body frame); lazy GPU build (see runtime page) | `KSA/Vehicle.cs`, `KSA/Part.cs`, `KSA/SuperMeshRenderSystem.cs` | **High** (render) | ✅ |
 | `debug/thug_life/clear` | `debug.thug_life_clear` | `ThugLifeManager.Clear` (vessel-agnostic; tears down the render postfix + GPU when last) | (registry + GPU lifecycle — no KSA *write*) | — | Low | ✅ |
@@ -259,8 +267,9 @@ arity/values), `EIO` (renderer unavailable). Entries are **runtime-only** (never
 unload (`Mod.TeardownGameCheats`). Anchors verified `2026-06-28` against `2026.6.9.4750`; re-verified
 (static) 2026-07-03 against `2026.7.3.4826` — the `SuperMeshRenderSystem.cs` diff touches only shader
 macro-definition overloads in `Setup*Renderers`, `RenderMainPass(CommandBuffer)` is byte-identical at
-line 329, and the `UnlitMesh.{vert,frag}` shader assets are unchanged; **live quad-draw check still
-pending** (`docs/VALIDATION.md`). Pipeline
+line 329, and the `UnlitMesh.{vert,frag}` shader assets are unchanged; re-verified (static) 2026-07-14
+against `2026.7.5.4892` — `SuperMeshRenderSystem.cs` entirely untouched, shaders/keys unchanged;
+**live quad-draw check still pending** (`docs/VALIDATION.md`). Pipeline
 assumptions + the new render-DLL references: [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md).
 
 ---
@@ -276,7 +285,7 @@ never applies. Drives **FMOD Core directly** via the public `GameAudio.System` (
 higher-level `SoundReference`/`MusicPlayList` API is asset-file-bound and useless for runtime bytes),
 but reuses the game's channel groups so the in-game Sfx/Music/UI volume sliders govern playback.
 
-| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4826 |
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4892 |
 |---|---|---|---|---|---|---|
 | `audio/play` | `audio.play` | `AudioActuator.Play` (+ `CreateOrGetSound` on first play of a clip version) | `GameAudio.System` (public static `FmodSystem`); `Fmod.TryCreateSound(bytes, Mode.OpenMemory\|_2d\|CreateSample/CreateCompressedSample, in CreateSoundExInfo{Length}, out Sound)` — the game's own in-memory recipe (`GameAudio.CreateFmodSound`); `Fmod.TryPlaySound(sound, group, paused:true, out Channel)`; `GameAudio.GetChannelGroup(ChannelGroupType.{Sfx,Music,Ui})`; `Channel.TrySet{Position,Mode,LoopCount,LoopPoints,Volume,Pan,Pitch,Paused}`; `Sound.TryGetLength` | `KSA/GameAudio.cs`, `KSA/ChannelGroupType.cs`, `Brutal.FmodApi/Fmod.cs`, `Brutal.FmodApi/Mode.cs` | Low (FMOD Core P/Invoke surface is upstream-stable; `GameAudio.System`/`GetChannelGroup` are plain public statics) | ✅ |
 | `audio/set` | `audio.set` | `AudioActuator.Set` | `Channel.TrySet{Volume,Pan,Pitch,Paused,Position}` | `Brutal.FmodApi/Fmod.cs` | Low | ✅ |
@@ -298,7 +307,9 @@ defeats the purpose). New game-DLL reference: `Brutal.Fmod.dll`
 no matching channel), `EBUSY` (clip still uploading / channel table full), `EINVAL` (grammar/range),
 `EIO` (FMOD refused the bytes / could not start a channel), `EOPNOTSUPP` (audio disabled). Anchors
 verified `2026-07-02` against `2026.6.9.4750`; re-verified 2026-07-03 against `2026.7.3.4826`
-(`GameAudio.cs` byte-identical; `Brutal.FmodApi` not in the changed set).
+(`GameAudio.cs` byte-identical; `Brutal.FmodApi` not in the changed set); re-verified 2026-07-14 against
+`2026.7.5.4892` (`GameAudio.cs` untouched; the refreshed `Brutal.Fmod.dll` compiles clean against the
+same call surface).
 
 ---
 
@@ -341,6 +352,41 @@ anchors (the two here + `VesselReader.SampleDocking`) were re-verified to `Verif
   see the docking section above).
 - **Lights / animations / decouplers / RCS / engines / flight computer / teleport / refills** — all
   members compiled clean and none appear in the changelog with an API-affecting change.
+
+---
+
+## ✅ 4892 write-surface findings (playbook pass 2026-07-14) {#4892-findings}
+
+Full pass `2026.7.3.4826` → `2026.7.5.4892` (build forced non-incremental + tests green; revs 4827–4859
+unlogged in both drops, so the git diff between the drops' commits is authoritative). **Every bound
+write member, every reflection accessor, and every Harmony hook target is UNCHANGED** — no code change
+required. Highlights:
+
+- **Reflection accessors re-verified (static)**: `Vehicle._manualControlInputs` present
+  (`Vehicle.cs:232`, struct `ManualControlInputs` with `EngineOn`/`EngineThrottle`/`ThrusterCommandFlags`
+  — `ManualControlInputs.cs` untouched by the diff); the light-template clone path untouched
+  (`LightModule.cs` not in the changed set); KittenEva avatar-scale chain untouched (`KittenEva.cs` not
+  in the changed set). Live `/sim/status/accessors` check still advised.
+- **Harmony hook targets intact**: `Universe.ExecuteNextVehicleSolvers(double, SimStep)`
+  (`Universe.cs:1660`, file untouched), `Program.DrawProgramMenusHook()` (`Program.cs:3417`, same shape),
+  `Program.RenderGame(AcquiredFrame, double)` (`Program.cs:3965` — interior gained an underwater-render
+  call; the display transpiler injects at the method's *final* `Brutal.VulkanApi` `End()`, unaffected).
+  `Vehicle.GetWorldMatrix(Camera)` / `Vehicle.UpdateRenderData(Viewport,int)` (the `gatos.always_render`
+  prefix targets) keep identical signatures **and stock bodies** (only line-shifted), so the
+  reproduced-body prefixes stay byte-accurate.
+- **Solver-phase rationale re-confirmed**: the FC snapshot/restore window is intact —
+  `VehicleUpdateData.Prepare` snapshots via `NewFlightComputer.CopyFrom(flightComputer)`
+  (`VehicleUpdateData.cs:87`) and the apply restores via `FlightComputer.CopyFrom(updateData.NewFlightComputer)`
+  (`Vehicle.cs:1991`). Frame-phase FC writes would still be overwritten; the Solver phase stays mandatory.
+- **Behavior notes (game-side, inherited automatically)**: `FlightComputer.CommandEngineThrottles` now
+  **zeroes `CommandThrottle`/`CommandBurnTime`** on every engine when no burn is commanded — after
+  `vessel.burn` completes, per-engine throttle reads drop to an honest 0 (see the
+  [read-surface 4892 findings](ksa-read-surface.md#4892-findings)). The rev 4884 combustion→Reactions /
+  tank-affinity refactor leaves `Vehicle.RefillConsumables()` and `Battery.Refill` untouched (refill
+  cheats unaffected; tanks now auto-assign a propellant mix by affinity, so what refill *fills* follows
+  the new game rules). `Decoupler.{IsActive,SetIsActive}` untouched (the `Decoupler.cs` diff is a
+  particle-emitter `Handle` refactor inside `Activate`). Rev 4866: vehicles set to ignite with no
+  propellant no longer stay off-rails (perf fix; `vessel.ignite` semantics unchanged).
 
 ---
 

@@ -52,6 +52,15 @@ when the prefix fires). Re-verified 2026-07-03 against `2026.7.3.4826`:
 `Program.RenderGame`'s two-`End()` structure is identical (shifted ~12 lines, absorbed by the
 pattern-matching transpiler); the solver's FlightComputer snapshot/restore window
 (`VehicleUpdateState`/`VehicleUpdateTask` prepare/apply) is preserved, so the Solver phase stays valid.
+Re-verified 2026-07-14 against `2026.7.5.4892`: `Universe.cs` untouched by the 4826→4892 diff
+(`ExecuteNextVehicleSolvers` still `Universe.cs:1660`); `Program.DrawProgramMenusHook()` at
+`Program.cs:3417`, same shape (its interior swaps the `Staging` window class for `ResourceGroups` —
+irrelevant to the postfix); `Program.RenderGame(AcquiredFrame, double)` at `Program.cs:3965` gained an
+interior underwater-render call, but the transpiler anchors on the method's **final** 1-arg
+`Brutal.VulkanApi` `End()` — injection site unaffected; the FC snapshot/restore window moved to
+`VehicleUpdateData.Prepare` (`NewFlightComputer.CopyFrom(flightComputer)`, `VehicleUpdateData.cs:87`) +
+apply at `Vehicle.cs:1991` (`FlightComputer.CopyFrom(updateData.NewFlightComputer)`) — same discipline,
+Solver phase stays valid.
 
 ### Dynamic IVA patches (`gatos.iva`) {#iva-patches}
 
@@ -64,7 +73,10 @@ installs the patches; disabling restores the tracked templates and `UnpatchAll("
 default-off state carries **zero** IVA patches. The patch targets are `[KsaAnchor]`-documented in
 `IvaForceRender` (Risk Medium; verified `2026-06-28` / `2026.6.9.4750`; re-verified 2026-07-03 against
 `2026.7.3.4826` — the render gate at `PartModel.cs:387` and all patched members are unchanged; the only
-`PerInstanceData` change is a struct pad → `Wetness` float, passed through opaquely); a ctor/`AddInstance`
+`PerInstanceData` change is a struct pad → `Wetness` float, passed through opaquely; re-verified
+2026-07-14 against `2026.7.5.4892` — `PartModel.cs`/`Viewport.cs` untouched; the
+`PartModelModule`/`PartModelDynamicModule` diff only adds selection-highlight flag bits, `Template`
+untouched); a ctor/`AddInstance`
 signature change surfaces at install time (caught, logged). (Un)patching runs on the game thread (the command
 drain / unload). Torn down by `Mod.TeardownGameCheats`.
 
@@ -84,7 +96,9 @@ vehicle per frame. Marks key on the vessel **id** (survive scene rebuilds); desp
 members are `[KsaAnchor]`-documented in `VesselForceRender` (Risk Medium; verified `2026-07-02` /
 `2026.6.9.4750`; re-verified 2026-07-03 against `2026.7.3.4826` — the stock `GetWorldMatrix`/
 `UpdateRenderData` bodies are **byte-identical** to gatOS's reproductions, only shifted ~72 lines by
-unrelated Vehicle.cs additions); a missing target throws at install time (caught by `KsaCatalog` → the
+unrelated Vehicle.cs additions; re-verified 2026-07-14 against `2026.7.5.4892` — both stock bodies again
+untouched by the diff, only line-shifted, so the reproductions remain byte-accurate); a missing target
+throws at install time (caught by `KsaCatalog` → the
 actuator latches degraded, EOPNOTSUPP), and a prefix fault logs once and falls back to the stock cull.
 `UpdateRenderData` is **virtual** — the patch binds `Vehicle`'s implementation, so overrides (KittenEva
 renders via its own `KittenRenderable`) are **not** force-rendered, same as the unscience original.
@@ -117,9 +131,11 @@ the default-off state carries **zero** patches and **zero** GPU resources. The p
 build are `[KsaAnchor]`-documented in `ThugLifeRenderPatches`/`ThugLifeQuadRenderer`/`ThugLifeTextureFactory`
 (Risk **High**; verified `2026-06-28` / `2026.6.9.4750`; re-verified statically 2026-07-03 against
 `2026.7.3.4826` — `RenderMainPass(CommandBuffer)` byte-identical at line 329, `UnlitMeshVert`/`Frag`
-shader keys + assets unchanged, `Program.OffScreenPass`/`RenderPassState` unchanged; Vulkan render-pass
-*compatibility* at draw time is only provable live — check pending in `docs/VALIDATION.md`); a
-`RenderMainPass`/pipeline signature change
+shader keys + assets unchanged, `Program.OffScreenPass`/`RenderPassState` unchanged; re-verified
+statically 2026-07-14 against `2026.7.5.4892` — `SuperMeshRenderSystem.cs` entirely untouched by the
+diff, shaders/keys/`OffScreenPass` unchanged, and the 4861–4889 ground-clutter pipeline overhaul does
+not reach the quad's pipeline; Vulkan render-pass *compatibility* at draw time is only provable live —
+check pending in `docs/VALIDATION.md`); a `RenderMainPass`/pipeline signature change
 surfaces at install time (caught, logged, feature self-disables).
 
 KSA runs `SuperMeshRenderSystem.RenderMainPass` on the **main thread** (the same thread as the GUI hooks
@@ -140,7 +156,9 @@ seven `debug.thug_life_*` control writes are ordinary Frame-phase commands — s
 The `/sim/display` screen stream (STREAM_PLAN.md; `Game/Ksa/{DisplayRenderPatch,FrameCapture}.cs`, both
 `[KsaAnchor]`, Risk **Medium**, verified `2026-07-02`; re-verified statically 2026-07-03 against
 `2026.7.3.4826` — `RenderGame` present with the same two-`End()` structure, `GetRenderer`/`MainViewport`/
-`OffscreenTarget`/`ResourceFrameIndex` all unchanged) taps the **public** offscreen scene target and
+`OffscreenTarget`/`ResourceFrameIndex` all unchanged; re-verified statically 2026-07-14 against
+`2026.7.5.4892` — `RenderGame` gained an interior underwater-render call but the final-`End()` injection
+site is unaffected, and all touched members above are unchanged) taps the **public** offscreen scene target and
 rides the engine's own frame command buffer — no private queue submit, no `WaitIdle` (an out-of-band
 variant corrupted the device). Per throttled frame (default 15 fps, gated on `enabled` **and** ≥1 open
 reader — near-zero cost otherwise), `FrameCapture.MaybeRecord` records, in-band:
@@ -218,13 +236,14 @@ These bind to KSA via reflection, so a rename/removal **cannot** fail the build 
 runtime as a degraded accessor (`/sim/status/accessors`). **Always re-verify these in a live flight after
 an update even when the build is green.**
 
-| Accessor | gatOS site | Reflected member | 4826 status |
+| Accessor | gatOS site | Reflected member | 4892 status |
 |---|---|---|---|
-| Manual throttle setter | `ThrottleActuator.cs:17,33` | `Vehicle._manualControlInputs` (private field) → `.EngineThrottle` (public field on the struct) | ✅ present (`Vehicle.cs:232`; `ManualControlInputs.cs` byte-identical to 4750) |
-| Light template clone | `LightActuator.cs:127` (`EnsureUnshared`/`ShallowClone`) | generic field-by-field clone of `LightModule.Template` + `Intensity`/`ColorRgb`/`OuterAngle`/`InnerAngle` (the per-instance "red-alert" unshare) | ✅ (`LightModule.cs` byte-identical to 4750; the `PartTemplate.cs` churn is the *part* template — no light references) |
+| Manual throttle setter | `ThrottleActuator.cs:17,33` | `Vehicle._manualControlInputs` (private field) → `.EngineThrottle` (public field on the struct) | ✅ present (`Vehicle.cs:232`; `ManualControlInputs.cs` untouched since 4750) |
+| Light template clone | `LightActuator.cs:127` (`EnsureUnshared`/`ShallowClone`) | generic field-by-field clone of `LightModule.Template` + `Intensity`/`ColorRgb`/`OuterAngle`/`InnerAngle` (the per-instance "red-alert" unshare) | ✅ (`LightModule.cs` untouched since 4750; the 4892 `PartTemplate.cs` churn removes the dead `Tank` field + Reactions plumbing — no light references) |
 
 The throttle field is the single most fragile binding gatOS has (private field, reflection, High). It was
-explicitly confirmed present in 4750 and re-confirmed in 4826 (decomp diff, 2026-07-03). If a future
+explicitly confirmed present in 4750 and re-confirmed in 4826 (decomp diff, 2026-07-03) and 4892
+(decomp diff, 2026-07-14). If a future
 update removes it, `ctl/throttle` writes return
 `Unsupported` ("manual throttle field not found in this build") and the read-back falls back to
 `GetManualThrottle()` (public, still present). A live `/sim/status/accessors` check after each update

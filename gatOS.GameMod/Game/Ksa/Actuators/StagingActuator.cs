@@ -11,8 +11,11 @@ namespace gatOS.GameMod.Game.Ksa.Actuators;
 internal static class StagingActuator
 {
     [KsaAnchor("vehicle.Parts.SequenceList.ActivateNextSequence(vehicle); Vehicle.UpdateAfterPartTreeModification()",
-        SourceFile = "KSA/SequenceList.cs / KSA/Vehicle.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium,
-        Notes = "Mirrors the in-game stage key (Vehicle.cs ProcessInput).")]
+        SourceFile = "KSA/SequenceList.cs / KSA/Vehicle.cs", Verified = "2026-07-14", GameVersion = "2026.7.5.4892", Risk = ChurnRisk.Medium,
+        Notes = "Mirrors the in-game stage key (Vehicle.cs ProcessInput). 4892: the KSA 'Staging' window "
+            + "class became ResourceGroups (UI-only, unrelated); ActivateNextSequence keeps its signature, "
+            + "now ends in a batched RemoveSpentSequences, and sequences are double-buffered for the UI - "
+            + "activation semantics unchanged.")]
     internal static CommandResult Stage(Vehicle vehicle)
     {
         vehicle.Parts.SequenceList.ActivateNextSequence(vehicle);

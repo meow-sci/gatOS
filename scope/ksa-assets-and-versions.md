@@ -27,13 +27,35 @@ Two checkouts are kept side by side for diffing:
 
 | Checkout dir | Build | Date | Revisions | Role |
 |---|---|---|---|---|
-| `…/ksa-game-assemblies` | **2026.7.3.4826** | 2026-07-03 | logs only 4824 → 4826 (see the changelog-gap note below) | **current / verified baseline** — full playbook pass 2026-07-03: build + tests green, full decomp + Content diff clean (no code change needed); `KSAFolder` default resolves here |
-| `…/ksa-game-assemblies_prev` | 2026.6.9.4750 | 2026-06-27 | 4680 → 4750 | **prior baseline** (the G1–G4 fix-pass target; what the 4826 pass diffed against) |
+| `…/ksa-game-assemblies` | **2026.7.5.4892** | 2026-07-11 | logs only 4860 → 4892 (see the changelog-gap note below) | **current / verified baseline** — full playbook pass 2026-07-14: build + tests green, full decomp + Content diff clean (no code change needed); `KSAFolder` default resolves here. The checkout is a **git repo whose history holds every prior drop** (`1265373` = 4826, `6fa343d` = 4750, …) — diff drops with `git diff <old>..<new>` inside it |
+| `…/ksa-game-assemblies_prev` | 2026.6.9.4750 | 2026-06-27 | 4680 → 4750 | older checkout kept for convenience; the in-repo git history above supersedes it for diffing (the 4892 pass diffed `1265373..HEAD`, i.e. 4826 → 4892) |
 
 gatOS was originally built against the 4680-era sources (most `[KsaAnchor]` `Verified` dates span
 2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27; the touched
 anchors carry `GameVersion="2026.6.9.4750"` (see
 [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)).
+
+**The 4826 → 4892 pass (2026-07-14) — clean, no code changes.** ⚠️ **Changelog gap:** the 4892 drop's
+`version.json` covers only revs 4860→4892 and the 4826 drop's only 4824→4826 — **revs 4827–4859 have no
+changelog anywhere**, so the pass was driven by `git diff 1265373..7cf5c0a` (4826 → 4892) over
+`current/decomp` + `current/Content` inside the assemblies checkout. Result: full solution compiles
+0-warning against the 4892 DLLs (forced non-incremental), all tests green, and **no bound member changed
+name, signature, type, unit, frame, or gating**. The headline upstream change — rev 4884's save-breaking
+**combustion→Reactions / tank-affinity refactor** (`ModLibrary` now registers `ReactionTemplate`; `Tank`
+gains `RoleAffinity`/`AssignedMix`/`Assign`; `PartTemplate.Tank` removed; substances
+Nepetalactone/Actinidine removed, methalox/hydrazine/APCP added) — is **additive to every gatOS binding**
+(`Tank.Moles`, `Mole`/`MoleState`, `FilledFraction`, `PartTree.RefillConsumables` all untouched; gatOS
+never referenced `PartTemplate.Tank` or the combustion templates). Other churn checked and cleared:
+`Staging.cs` deleted (the staging *window* became `ResourceGroups` — gatOS binds
+`SequenceList.ActivateNextSequence`, intact, now with batched `RemoveSpentSequences`); the 4873/4880/4890
+decoupling perf refactor (incl. a module id-lookup fix that *improves* post-split `Modules.Get<T>`
+correctness); `FlightComputer.CommandEngineThrottles` zeroing (see the write page); additive
+`EngineController.SeaLevelData`, `PhysicsEnvironment.AtmosphereRadius`, `Camera` orthographic mode,
+`SimplePipelineCreator.AlphaToCoverageEnable`, `ReverseDepthBufferUtils.CreateOrthographicReverseZ`;
+particle-emitter Handle refactor (`Celestial`/`Decoupler`/`Tank` emitter plumbing gatOS never touches).
+Findings detail: [read](ksa-read-surface.md#4892-findings) / [write](ksa-write-surface.md) 4892 sections.
+No `plans/` gap plan was needed. Live re-check items: `docs/VALIDATION.md`. 4892 is now the verified
+baseline.
 
 **The 4750 → 4826 pass (2026-07-03) — clean, no code changes.** ⚠️ **Changelog gap:** the 4826
 checkout's `version.json` is an *incremental* log covering only revs 4824→4826 (the terrain-sampling
@@ -84,7 +106,7 @@ and the fastest way to confirm a rename actually landed. Concrete files (current
 | Battery capacity | `Core/CoreElectricalAGameData.xml` | `<Battery HasStatusLight="true"><MaximumCapacity J="1000"/></Battery>` (also 3000/100/500) | capacity is **Joules** — `battery/capacity` unit unchanged. |
 | Solar / generator production | `Core/CoreElectricalAGameData.xml` | `<SolarPanel><Produced W="200"/></SolarPanel>` (cells `W="100"` — 4826 doubled the stock `SolarPanelB_CellA` value from `W="50"`, same unit) | rev 4681: production authored in **Watts** — confirms `power/produced`, `solar/<n>/produced` are instantaneous W. |
 | Control authority (`IsControllable`) | `Core/CoreCommandAGameData.xml` | `CoreCommandA_Prefab_MediumCapsuleVariantA` has `<Control />` | rev 4699: the new Control Module is on the capsule in XML; vehicles without `<Control />` are not controllable. |
-| Engines / tanks / lights / RCS / decouplers / animations | `Core/Core*GameData.xml` (Propulsion, Electrical, Coupling, …) | `<EngineController>`, `<Tank>`/`<Mole>`, `<LightModule>`, `<ThrusterController>`, `<Decoupler>`, `<KeyframeAnimation>` | the module element names the readers/actuators bind to; no 4750 changes; 4826 adds only `<ConnectorRef>`/`<Aligned>` (the new symmetry connectors) + `<CombustionProcess>` entries — no module element gatOS binds changed. |
+| Engines / tanks / lights / RCS / decouplers / animations | `Core/Core*GameData.xml` (Propulsion, Electrical, Coupling, …) | `<EngineController>`, `<Tank>`/`<Mole>`, `<LightModule>`, `<ThrusterController>`, `<Decoupler>`, `<KeyframeAnimation>` | the module element names the readers/actuators bind to; no 4750 changes; 4826 adds only `<ConnectorRef>`/`<Aligned>` (the new symmetry connectors) + `<CombustionProcess>` entries; 4892 (rev 4884) migrates `<Combustion Id="…"/>` → `<Reaction Id="…">` and adds `<RoleAffinity>` on tanks (`PartGameData.xml`) — template *configuration* churn only, no module element gatOS binds changed. |
 | Part template ids (dynamic add) | `Core/Core*GameData.xml` `PartGameData Id="…"` | e.g. `CoreCouplingA_Prefab_DockingPort1WA` | the string ids `ModLibrary.Get<PartTemplate>(id)` resolves (not used by `/sim` reads; reference). |
 | **`thug_life` quad shaders** | `Core/Shaders/Mesh/UnlitMesh.{vert,frag}` | the `"UnlitMeshVert"`/`"UnlitMeshFrag"` `ShaderReference` keys `ThugLifeQuadRenderer.BuildPipeline` resolves via `ModLibrary.Get<ShaderReference>(...)` | the world-space quad reuses KSA's stock unlit-mesh shaders; if these keys/assets are renamed/removed the pipeline build fails (caught, feature self-disables). |
 
@@ -118,7 +140,15 @@ breaks the draw — re-verify live):
 
 Full anchor list: [`ksa-read-surface.md#thug-life`](ksa-read-surface.md#thug-life) (anchor math),
 [`ksa-write-surface.md#thug-life`](ksa-write-surface.md#thug-life) (the seven actions),
-[`../docs/KSA_INTEGRATION_MATRIX.md`](../docs/KSA_INTEGRATION_MATRIX.md) (render set). **Verified
+[`../docs/KSA_INTEGRATION_MATRIX.md`](../docs/KSA_INTEGRATION_MATRIX.md) (render set). **Re-verified
+(static) 2026-07-14 against `2026.7.5.4892`**: `SuperMeshRenderSystem.cs` untouched by the 4826→4892
+diff (`RenderMainPass(CommandBuffer)` intact), `UnlitMesh.{vert,frag}` assets + the
+`"UnlitMeshVert"`/`"UnlitMeshFrag"` `DefaultAssets.xml` keys unchanged (the DefaultAssets churn is
+particle-updater shader renames), `Program.OffScreenPass`/`SampleCount` unchanged, reverse-Z
+*perspective* path unchanged (`CreateOrthographicReverseZ` is a new additive helper for the editor's
+new ortho camera), and `SimplePipelineCreator.AlphaToCoverageEnable` (new, default `false`) matches the
+prior multisample behavior — gatOS builds its pipeline without SPC anyway. The 4861–4864/4886–4889
+ground-clutter multi-material overhaul does not touch the quad's pipeline. **Verified
 `2026-06-28` against `2026.6.9.4750`; re-verified (static) 2026-07-03 against `2026.7.3.4826`**:
 `RenderMainPass(CommandBuffer)` byte-identical (the `SuperMeshRenderSystem.cs` diff only swaps
 `AddMacroDefinition` overloads in `Setup*Renderers`), the `UnlitMesh.{vert,frag}` assets and
@@ -184,3 +214,8 @@ The applied 4680→4750 result: [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/F
 The applied 4750→4826 result: clean pass, no code changes — recorded in the checkout table above, the
 [read](ksa-read-surface.md#4826-findings) / [write](ksa-write-surface.md) 4826 findings sections, and
 the matrix header; live re-check items in [`../docs/VALIDATION.md`](../docs/VALIDATION.md).
+The applied 4826→4892 result: clean pass, no code changes — recorded in the pass paragraph above, the
+[read](ksa-read-surface.md#4892-findings) / [write](ksa-write-surface.md#4892-findings) 4892 findings
+sections, and the matrix header; live re-check items in [`../docs/VALIDATION.md`](../docs/VALIDATION.md).
+Since the assemblies checkout is a git repo holding every drop, prefer `git diff <oldCommit>..<newCommit>`
+inside it over the two-checkout `--no-index` diff.

@@ -373,9 +373,12 @@ internal static class VesselReader
             + "4826: Decoupler.Decouple no longer force-deactivates the separated stage's IActivate modules, "
             + "so engines/<n>/active on a just-decoupled vehicle retains its pre-split state (was: false).")]
     [KsaAnchor("EngineControllerState{CommandThrottle,IsPropellantAvailable} via ModuleStateful.TryGetFrom",
-        SourceFile = "KSA/EngineControllerState.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/EngineControllerState.cs", Verified = "2026-07-14", GameVersion = "2026.7.5.4892", Risk = ChurnRisk.Medium,
         Notes = "Read in the same pass as the module walk (GP3); detail-off skips the state fetch and "
-            + "leaves ThrottleCmd/PropellantAvailable at the record defaults, exactly as before.")]
+            + "leaves ThrottleCmd/PropellantAvailable at the record defaults, exactly as before. "
+            + "4892: FlightComputer.CommandEngineThrottles now zeroes CommandThrottle/CommandBurnTime "
+            + "when no burn is commanded, so engines/<n>/throttle reads an honest 0 after burn end "
+            + "instead of the last commanded value (members unchanged).")]
     private static List<EngineSnapshot> SampleEngines(Vehicle vehicle, bool detail)
     {
         var modules = vehicle.Parts.Modules.Get<EngineController>();
@@ -421,8 +424,12 @@ internal static class VesselReader
     // ---- tanks -------------------------------------------------------------------------------
 
     [KsaAnchor("vehicle.Parts.Modules.Get<Tank>().Moles; vehicle.Parts.Moles.GetState(mole).Mass; Mole.FilledFraction",
-        SourceFile = "KSA/Tank.cs / KSA/Mole.cs", Verified = "2026-06-12", Risk = ChurnRisk.Low,
-        Notes = "A Tank holds one Mole per substance; amounts live in the SoA Moles state list.")]
+        SourceFile = "KSA/Tank.cs / KSA/Mole.cs", Verified = "2026-07-14", GameVersion = "2026.7.5.4892", Risk = ChurnRisk.Low,
+        Notes = "A Tank holds one Mole per substance; amounts live in the SoA Moles state list. "
+            + "4892: the rev-4884 combustion->Reactions refactor is additive here (Tank gains "
+            + "RoleAffinity/AssignedMix; Moles/MoleState/FilledFraction untouched) - tanks now "
+            + "auto-assign a propellant mix by affinity and the substance catalog changed, so tank "
+            + "resource names on new vehicles differ from the 4826 era.")]
     private static List<TankSnapshot> SampleTanks(Vehicle vehicle)
     {
         var tanks = new List<TankSnapshot>();

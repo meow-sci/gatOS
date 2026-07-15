@@ -44,11 +44,13 @@ welds/IVA/parts, thug_life, per-vessel scale/always_render, debug impulse, `ctl/
 `/sim/audio` checklists) that require a live KSA flight; checklists are in
 [`docs/VALIDATION.md`](docs/VALIDATION.md). The purrTTY tip release is now cut.
 
-> **KSA baseline: `2026.7.3.4826`** (upgrade-ksa playbook pass 2026-07-03, from 4750): **clean — no
+> **KSA baseline: `2026.7.5.4892`** (upgrade-ksa playbook pass 2026-07-14, from 4826): **clean — no
 > code changes needed**; build + tests green, full decomp/Content diff found no bound-member drift.
-> Behavior notes (post-decouple control-state inheritance) + the pass record live in
-> [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope pages; live re-check items appended to
-> [`docs/VALIDATION.md`](docs/VALIDATION.md).
+> Behavior notes (the rev 4884 combustion→**Reactions**/tank-affinity refactor is additive to every
+> gatOS read; the FC now zeroes per-engine `CommandThrottle` when no burn is commanded; KSA's `Staging`
+> *window class* became `ResourceGroups` — gatOS binds `SequenceList`, unaffected) + the pass record
+> live in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope pages; live re-check items
+> appended to [`docs/VALIDATION.md`](docs/VALIDATION.md).
 
 > **Whole-mod perf pass (2026-07-02):** all seven plans of
 > [`plans/GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md`](plans/GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md)

@@ -15,18 +15,19 @@ new events) and **G4** (full control surface: throttle/staging/attitude/burn, RC
 they add **no** KSA coupling — every transport speaks the same `SnapshotStore` (reads) and
 `ICommandSink`/`SimCommand` (writes), so this matrix (the KSA-touching surface) is unaffected by them.
 
-**Verified:** **2026-07-03 against `2026.7.3.4826`** (full solution build green, 0 warnings; full
-decomp + Content **tree diff** against the 2026.6.9.4750 baseline — the 4826 changelog is incremental,
-covering only revs 4824–4826 with 4751–4823 unlogged, so the diff was the discovery mechanism). **Clean
-pass: no bound member, reflection accessor, or Harmony hook target changed** — no code change required.
-The five read anchors touched by the 4826 behavior notes (post-decouple control-state inheritance:
-the `ctl/engine`/`ctl/throttle` read-backs, `engines/<n>/active`, `rcs/<n>/active`,
-`decouplers/<n>/fired` — see the
-[read-surface 4826 findings](../scope/ksa-read-surface.md#4826-findings)) carry
-`GameVersion="2026.7.3.4826"`; rows showing an earlier per-member `Verified` date bind to members
-**unchanged** in 4826 (their compatibility is confirmed by the green build + the tree diff — 13 bound
-decomp files are byte-identical to 4750). Prior pass: 2026-06-27 against `2026.6.9.4750` (the G1–G4
-fix-pass). Live in-flight checklist: `docs/VALIDATION.md`.
+**Verified:** **2026-07-14 against `2026.7.5.4892`** (full solution build green, 0 warnings, forced
+non-incremental; full decomp + Content diff via `git diff` between the 4826 and 4892 drops inside the
+assemblies checkout — revs 4827–4859 are unlogged in both drops, so the diff was the discovery
+mechanism). **Clean pass: no bound member, reflection accessor, or Harmony hook target changed** — no
+code change required. Behavior notes (rev 4884 combustion→Reactions/tank-affinity refactor — additive
+to every binding; FC `CommandThrottle` zeroing; rev 4866 on-rails changes) are catalogued in the
+[read-surface 4892 findings](../scope/ksa-read-surface.md#4892-findings) /
+[write-surface 4892 findings](../scope/ksa-write-surface.md#4892-findings); the anchors touched by
+those notes carry a `4892:` note. Rows showing an earlier per-member `Verified` date bind to members
+**unchanged** in 4892 (their compatibility is confirmed by the green build + the diff). Prior passes:
+2026-07-03 against `2026.7.3.4826` (clean; post-decouple control-state inheritance notes — those
+anchors carry `GameVersion="2026.7.3.4826"`), 2026-06-27 against `2026.6.9.4750` (the G1–G4 fix-pass).
+Live in-flight checklist: `docs/VALIDATION.md`.
 
 ## Transport parity (binding)
 

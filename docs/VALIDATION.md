@@ -332,3 +332,24 @@ flight on 4826.**
 | 5 | `environment/g_force` sanity near an SoI boundary (no jump vs 4750 expectations) | ☐ | gravitation refactor folded the multi-body correction into `ComputeGravitationBub` |
 | 6 | Decouple/undock a stage with engines on + throttle up: the new stage's `ctl/engine`/`ctl/throttle`/`engines/<n>/active` read back the **inherited** parent state (expected new 4826 behavior, not a gatOS bug) | ☐ | `Vehicle.Split` control-input inheritance + `Decoupler.Decouple` cascade removal |
 | 7 | `solar/<n>/produced` on a stock small cell reads ~100 W in sunlight (stock value doubled from 50 W) | ☐ | `CoreElectricalAGameData.xml` value change, same unit |
+
+## KSA 2026.7.5.4892 upgrade — live re-check items — **NOT YET RUN**
+
+The 2026.7.3.4826 → 2026.7.5.4892 playbook pass (2026-07-14) was **clean** — build + tests green, full
+decomp/Content diff found no bound-member change (see `scope/FULL_SCOPE.md` §0 and the
+`scope/ksa-read-surface.md` 4892 findings). Note the game marks rev 4884 as **save-breaking** upstream
+(saved games and saved vehicles), so start from fresh vehicles. These are the residual items static
+review cannot settle; they can ride any of the pending passes above (the 4826 items remain valid and
+can run on 4892). **All items pending a live flight on 4892.**
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | `/sim/status/accessors` clean after normal flying + a `ctl/throttle` write + a `lights/<n>/brightness` write + a `vessels/<id>/scale` write | ☐ | reflection accessors are compile-blind; decomp can lag the binary |
+| 2 | `tanks/` listing on a **new** stock vehicle (post-4884 Gemini7/Rocket) shows the new-catalog substances (e.g. methalox reactants) with sane `amount/capacity/fraction`; `debug/vessels/<id>/refill_fuel` still fills the affinity-assigned mix | ☐ | rev 4884 Reactions/affinity refactor — read path unchanged, catalog + auto-assignment new |
+| 3 | After a `ctl/burn` completes (or engines shut down), `engines/<n>/throttle` reads **0**, not the last commanded value | ☐ | `FlightComputer.CommandEngineThrottles` now zeroes `CommandThrottle`/`CommandBurnTime` when no burn is commanded |
+| 4 | `echo 1 > ctl/stage` still activates the next sequence and `ctl/stage`-driven decouples behave (staging window in-game is now "Resource Groups") | ☐ | `SequenceList.ActivateNextSequence` intact; sequences double-buffered (4880) + batched spent-sequence removal (4873) |
+| 5 | At high warp with crossing orbits / discarded stages: `situation` transitions show more vessels going on-rails (ignite + no propellant no longer blocks it; distant ocean vessels float on-rails) — truthful new behavior, not a gatOS bug | ☐ | rev 4866 on-rails perf changes |
+| 6 | thug_life quad still draws correctly (add an entry, check pose/depth/MSAA vs the scene) | ☐ | `SuperMeshRenderSystem.cs` untouched, but the ground-clutter render overhaul (4861–4889) reworked pipeline-adjacent state; only a live draw proves render-pass compatibility |
+| 7 | `/sim/display` still streams (enable + open a reader; frames advance) | ☐ | `RenderGame` interior gained an underwater pass; transpiler targets the final `End()` — should absorb it |
+| 8 | Weld a vessel pair across a CCI↔CCF frame transition (e.g. near/into atmosphere): no attitude/rate corruption on the welded source | ☐ | rev 4867 fixed angular-velocity corruption in CCI↔CCF transitions — welds ride `Teleport` through those frames |
+| 9 | EVA kitten spawn: kitten appears just outside the door (no collision kick-spin); `eva`-taxi tutorial flow still works | ☐ | rev 4869 spawn-position change + backpack collider |
