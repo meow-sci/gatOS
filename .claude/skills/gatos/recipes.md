@@ -276,7 +276,8 @@ import { command } from "./gatos.ts";
 const BASE = process.env.GATOS_HTTP ?? "http://127.0.0.1:4242/v1";
 const source = "Polaris", target = "Hunter";
 
-// 1. Pick a STABLE anchor part id from the target's top-level parts (0 ⇒ the target's body/CoM frame).
+// 1. Pick a STABLE anchor id from the target's parts (0 ⇒ the target's body/CoM frame). Subparts work
+//    too: parts/<n>/subparts/<m>/instance_id — an animated subpart anchor tracks the animation.
 //    The field-level fs endpoint returns one leaf's raw text value.
 const r = await fetch(`${BASE}/fs/vessels/${target}/parts/0/instance_id`);
 const piid = r.ok ? Number((await r.text()).trim()) : 0;
@@ -292,6 +293,8 @@ await command({ vessel_id: source, action: "debug.weld_here", token: target, val
 Shell twins (in-guest, against the `/sim` mount):
 ```sh
 piid=$(cat /sim/vessels/Hunter/parts/0/instance_id)
+# or find a part/subpart by name in ONE read — parts/json is the whole tree as a JSON doc:
+piid=$(cat /sim/vessels/Hunter/parts/json | jq -r '.[] | select(.display_name=="Command Pod") | .instance_id')
 echo "Hunter $piid" > /sim/debug/vessels/Polaris/weld_here   # weld at the current pose (lock defaults to 1)
 cat  /sim/debug/welds/count                                  # -> 1
 echo 0 > /sim/debug/welds/Polaris/enabled                    # suspend tracking (entry kept)
@@ -303,6 +306,12 @@ Notes:
 - **`weld` vs `weld_here`:** `weld` takes an **explicit** pose
   `<target> <part_iid> <x y z> <pitch yaw roll> <lock>`; `weld_here` captures the current pose for you (the
   practical path — computing offsets by hand is hard).
+- `<part_iid>` may be a **top-level part or a subpart** `instance_id` (discover subparts under
+  `parts/<n>/subparts/<m>/`); a subpart anchor tracks its live pose, so welding to an animated subpart
+  (robotics/landing-leg segment) follows the animation.
+- **`parts/json`** is the whole part/subpart tree as one JSON document (snake_case, nested `subparts`
+  arrays) — the easy discovery path: `cat /sim/vessels/<id>/parts/json | jq` (or
+  `GET /v1/fs/vessels/<id>/parts/json`) instead of walking `parts/<n>/` leaf by leaf.
 - Errnos: `EBUSY` (source==target, or the two orbit different bodies), `ENOENT` (target/part gone),
   `EINVAL` (bad arity/values).
 - Welds are **runtime-only** (never persisted) and cleared on mod unload. A source may anchor at most one

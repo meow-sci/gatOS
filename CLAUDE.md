@@ -44,13 +44,16 @@ welds/IVA/parts, thug_life, per-vessel scale/always_render, debug impulse, `ctl/
 `/sim/audio` checklists) that require a live KSA flight; checklists are in
 [`docs/VALIDATION.md`](docs/VALIDATION.md). The purrTTY tip release is now cut.
 
-> **KSA baseline: `2026.7.5.4892`** (upgrade-ksa playbook pass 2026-07-14, from 4826): **clean — no
-> code changes needed**; build + tests green, full decomp/Content diff found no bound-member drift.
-> Behavior notes (the rev 4884 combustion→**Reactions**/tank-affinity refactor is additive to every
-> gatOS read; the FC now zeroes per-engine `CommandThrottle` when no burn is commanded; KSA's `Staging`
-> *window class* became `ResourceGroups` — gatOS binds `SequenceList`, unaffected) + the pass record
-> live in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope pages; live re-check items
-> appended to [`docs/VALIDATION.md`](docs/VALIDATION.md).
+> **KSA baseline: `2026.7.6.4939`** (upgrade-ksa playbook pass 2026-07-16, from 4892): **clean — no
+> code changes needed**; build + tests green, full decomp/Content diff (gapless changelog, first time)
+> found no bound-member drift. Behavior notes (the new fuel-line/tank-transfer/propellant-use system is
+> additive on `Tank` but changes *when* engines see fuel — the propellant reads report it truthfully;
+> the rev 4914 control-module lockout is **UI-only** — the module methods gatOS binds stay ungated, so
+> `/sim` writes still actuate control-less vessels; animating parts now update colliders and force
+> off-rails — `animation.goal` on landing legs has real physics; rev 4915 removes the old
+> service-module parts, **save-breaking upstream**) + the pass record live in
+> [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope pages; live re-check items appended to
+> [`docs/VALIDATION.md`](docs/VALIDATION.md).
 
 > **Whole-mod perf pass (2026-07-02):** all seven plans of
 > [`plans/GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md`](plans/GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md)
@@ -354,8 +357,10 @@ in-game via the Telemetry submenu and status window slider. Gating **at the samp
 disabled stream skips its KSA reads *and* shrinks the published snapshot, so every transport serves less
 by construction (transport-parity stays structural). `telemetry_vessel_detail` is the big lever: off
 drops the entire G3 enrich pass, leaving only core flight telemetry. `telemetry_vessel_parts` gates the
-per-vessel top-level `parts/` list (the welds anchor picker; cached per vehicle, rebuilt on part-count
-change or every 10 s). The status window's Telemetry block shows `PerfStat` readouts (sample-time
+per-vessel `parts/` list — top-level parts with their subparts nested at `parts/<n>/subparts/<m>/`, plus
+the `parts/json` whole-tree JSON document (the welds anchor picker; either level's `instance_id` is a
+valid weld anchor; cached per vehicle, rebuilt on part-count change or every 10 s — `parts/json`
+re-serializes only on that rebuild, memoized by list reference). The status window's Telemetry block shows `PerfStat` readouts (sample-time
 avg/max/last, command-drain avg/max, MQTT publish avg/max) recorded allocation-free.
 
 ## Conventions (decided — do not re-litigate; see OS_PLAN.md Part 1)

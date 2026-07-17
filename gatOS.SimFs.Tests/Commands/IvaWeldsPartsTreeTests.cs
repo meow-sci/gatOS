@@ -75,6 +75,75 @@ public sealed class IvaWeldsPartsTreeTests
     }
 
     [Test]
+    public async Task Subparts_AreListedUnderTheirPart_WithOwnInstanceIds()
+    {
+        _store.Publish(TestData.Snapshot(1, WithParts(
+            new PartSnapshot(0, 4242, "rootpart", "Command Pod", "pod_mk1", true, 2, new double3Snap(0, 0, 0))
+            {
+                Subparts =
+                [
+                    new SubpartSnapshot(0, 9001, "hatch", "Hatch", "hatch_a", new double3Snap(0, 1, 0)),
+                    new SubpartSnapshot(1, 9002, "antenna", "Antenna", "ant_b", new double3Snap(0.5, 1, 0)),
+                ],
+            },
+            new PartSnapshot(1, 4243, "tankpart", "Fuel Tank", "tank_x", false, 0, new double3Snap(0, -1.5, 0)))));
+
+        var iid0 = await ReadAsync("vessels", "by-id", "test-1", "parts", "0", "subparts", "0", "instance_id");
+        var name0 = await ReadAsync("vessels", "by-id", "test-1", "parts", "0", "subparts", "0", "display_name");
+        var iid1 = await ReadAsync("vessels", "by-id", "test-1", "parts", "0", "subparts", "1", "instance_id");
+        var tmpl1 = await ReadAsync("vessels", "by-id", "test-1", "parts", "0", "subparts", "1", "template");
+        var pos1 = await ReadAsync("vessels", "by-id", "test-1", "parts", "0", "subparts", "1", "position");
+        Assert.Multiple(() =>
+        {
+            Assert.That(iid0, Is.EqualTo("9001\n"));
+            Assert.That(name0, Is.EqualTo("Hatch\n"));
+            Assert.That(iid1, Is.EqualTo("9002\n"));
+            Assert.That(tmpl1, Is.EqualTo("ant_b\n"));
+            Assert.That(pos1, Is.EqualTo("0.5 1 0\n"));
+        });
+
+        // A part without subparts keeps the (empty) subparts/ dir; a child walk is ENOENT.
+        var emptyDir = await WalkAsync("vessels", "by-id", "test-1", "parts", "1", "subparts");
+        var ex = Assert.ThrowsAsync<NinePErrorException>(
+            () => _client.WalkAsync(emptyDir, _nextFid++, "0"));
+        Assert.That(ex!.Errno, Is.EqualTo(LinuxErrno.ENOENT));
+    }
+
+    [Test]
+    public async Task PartsJson_ServesTheWholeTree_AsOneSnakeCaseDocument()
+    {
+        _store.Publish(TestData.Snapshot(1, WithParts(
+            new PartSnapshot(0, 4242, "rootpart", "Command Pod", "pod_mk1", true, 1, new double3Snap(0, 0, 0))
+            {
+                Subparts = [new SubpartSnapshot(0, 9001, "hatch", "Hatch", "hatch_a", new double3Snap(0, 1, 0))],
+            },
+            new PartSnapshot(1, 4243, "tankpart", "Fuel Tank", "tank_x", false, 0, new double3Snap(0, -1.5, 0)))));
+
+        var text = await ReadAsync("vessels", "by-id", "test-1", "parts", "json");
+        Assert.That(text, Does.EndWith("\n"));
+
+        using var doc = System.Text.Json.JsonDocument.Parse(text);
+        var parts = doc.RootElement;
+        Assert.Multiple(() =>
+        {
+            Assert.That(parts.GetArrayLength(), Is.EqualTo(2));
+            Assert.That(parts[0].GetProperty("instance_id").GetUInt32(), Is.EqualTo(4242));
+            Assert.That(parts[0].GetProperty("display_name").GetString(), Is.EqualTo("Command Pod"));
+            Assert.That(parts[0].GetProperty("is_root").GetBoolean(), Is.True);
+            Assert.That(parts[0].GetProperty("subparts")[0].GetProperty("instance_id").GetUInt32(),
+                Is.EqualTo(9001));
+            Assert.That(parts[0].GetProperty("subparts")[0].GetProperty("template").GetString(),
+                Is.EqualTo("hatch_a"));
+            Assert.That(parts[1].GetProperty("id").GetString(), Is.EqualTo("tankpart"));
+            Assert.That(parts[1].GetProperty("subparts").GetArrayLength(), Is.EqualTo(0));
+        });
+
+        // The json file coexists with the indexed children (parts/0, parts/1 still resolve).
+        Assert.That(await ReadAsync("vessels", "by-id", "test-1", "parts", "0", "instance_id"),
+            Is.EqualTo("4242\n"));
+    }
+
+    [Test]
     public async Task Parts_AreAbsentWhenVesselHasNone()
     {
         _store.Publish(TestData.Snapshot(1, TestData.Vessel())); // default fixture carries no parts

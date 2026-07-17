@@ -178,9 +178,12 @@ internal sealed class WeldManager
         _welds = WeldEngine.TopologicalSort(_welds); // keep targets ahead of their dependents (chains)
     }
 
-    [KsaAnchor("Universe.CurrentSystem.All.UnsafeAsList(); Vehicle.Parts.Parts; Part.InstanceId",
-        SourceFile = "KSA/Universe.cs / KSA/Part.cs", Verified = "2026-06-28", GameVersion = "2026.6.9.4750",
-        Risk = ChurnRisk.Low, Notes = "Liveness check + anchor-part re-resolution for the weld driver.")]
+    [KsaAnchor("Universe.CurrentSystem.All.UnsafeAsList(); Vehicle.Parts.Parts; Part.{InstanceId,SubParts}",
+        SourceFile = "KSA/Universe.cs / KSA/Part.cs", Verified = "2026-07-16", GameVersion = "2026.7.6.4939",
+        Risk = ChurnRisk.Low, Notes = "Liveness check + anchor re-resolution for the weld driver. The "
+            + "anchor may be a top-level part OR a subpart (a Part with its own InstanceId; the weld "
+            + "math's PositionVehicleAsmb/Asmb2VehicleAsmb are subpart-aware, so an animated subpart "
+            + "anchor tracks — the purrTTY in-world quad pattern).")]
     private static bool IsLive(Vehicle vehicle)
     {
         if (Universe.CurrentSystem is not { } system)
@@ -194,8 +197,14 @@ internal sealed class WeldManager
     private static Part? FindPart(Vehicle vehicle, uint instanceId)
     {
         foreach (var part in vehicle.Parts.Parts)
+        {
             if (part.InstanceId == instanceId)
                 return part;
+            foreach (var sub in part.SubParts)
+                if (sub.InstanceId == instanceId)
+                    return sub;
+        }
+
         return null;
     }
 }

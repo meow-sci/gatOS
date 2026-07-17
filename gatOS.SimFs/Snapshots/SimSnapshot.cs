@@ -225,9 +225,10 @@ public sealed record VesselSnapshot(
 
     /// <summary>
     ///     Top-level parts (<c>Vehicle.Parts.Parts</c>), surfaced under <c>parts/&lt;n&gt;/</c> so guests
-    ///     can discover a part to anchor a weld to. Subparts are not exposed. Empty when the parts
-    ///     stream is gated off (<c>telemetry_vessel_parts</c>); the reader caches it per vehicle and
-    ///     rebuilds on part-count change (or every 10 s).
+    ///     can discover a part to anchor a weld to; each part carries its subparts under
+    ///     <c>subparts/&lt;m&gt;/</c>. Empty when the parts stream is gated off
+    ///     (<c>telemetry_vessel_parts</c>); the reader caches it per vehicle and rebuilds on
+    ///     part-count change (or every 10 s).
     /// </summary>
     public IReadOnlyList<PartSnapshot> Parts { get; init; } = [];
 }
@@ -394,7 +395,8 @@ public sealed record EncounterSnapshot(string Body, double Ut, double DistanceMe
 
 /// <summary>
 ///     One top-level part (<c>Vehicle.Parts.Parts</c>) — the anchor picker for the welds feature
-///     (<c>/sim/vessels/by-id/&lt;id&gt;/parts/&lt;n&gt;/</c>). Subparts are deliberately not surfaced.
+///     (<c>/sim/vessels/by-id/&lt;id&gt;/parts/&lt;n&gt;/</c>). Its subparts are surfaced under
+///     <c>parts/&lt;n&gt;/subparts/&lt;m&gt;/</c> (see <see cref="Subparts"/>).
 /// </summary>
 /// <param name="Index">
 ///     Per-vessel part index in PartTree enumeration order — the friendly directory name. <b>Not</b>
@@ -408,11 +410,36 @@ public sealed record EncounterSnapshot(string Body, double Ut, double DistanceMe
 /// <param name="DisplayName">Human-readable name (<c>Part.DisplayName</c>).</param>
 /// <param name="Template">The part template id (<c>Part.Template.Id</c>).</param>
 /// <param name="IsRoot">Whether this is the root part (<c>Part.PartParent == null</c>).</param>
-/// <param name="SubpartCount">Number of subparts (informational; subparts are not exposed as nodes).</param>
+/// <param name="SubpartCount">Number of subparts (== <see cref="Subparts"/>.Count when sampled).</param>
 /// <param name="PositionVehicleAsmb">Part position in the vehicle assembly frame, meters.</param>
 public sealed record PartSnapshot(
     int Index, uint InstanceId, string Id, string DisplayName, string Template,
-    bool IsRoot, int SubpartCount, double3Snap PositionVehicleAsmb);
+    bool IsRoot, int SubpartCount, double3Snap PositionVehicleAsmb)
+{
+    /// <summary>
+    ///     The part's subparts (<c>Part.SubParts</c>), surfaced under <c>subparts/&lt;m&gt;/</c> so a
+    ///     weld can anchor to a subpart (e.g. a robotics/animated segment) by its
+    ///     <see cref="SubpartSnapshot.InstanceId"/>.
+    /// </summary>
+    public IReadOnlyList<SubpartSnapshot> Subparts { get; init; } = [];
+}
+
+/// <summary>
+///     One subpart (<c>Part.SubParts</c> — itself a <c>Part</c> with its own runtime-unique
+///     <c>InstanceId</c>), under <c>parts/&lt;n&gt;/subparts/&lt;m&gt;/</c>.
+/// </summary>
+/// <param name="Index">Subpart index within the owning part's <c>SubParts</c> span (0-based).</param>
+/// <param name="InstanceId">
+///     Runtime-unique id (<c>Part.InstanceId</c>) — valid as a weld <c>&lt;part_iid&gt;</c> anchor
+///     exactly like a top-level part's.
+/// </param>
+/// <param name="Id">The subpart id string (<c>Part.Id</c>).</param>
+/// <param name="DisplayName">Human-readable name (<c>Part.DisplayName</c>).</param>
+/// <param name="Template">The subpart template id (<c>Part.Template.Id</c>).</param>
+/// <param name="PositionVehicleAsmb">Subpart position in the vehicle assembly frame, meters.</param>
+public sealed record SubpartSnapshot(
+    int Index, uint InstanceId, string Id, string DisplayName, string Template,
+    double3Snap PositionVehicleAsmb);
 
 /// <summary>
 ///     One active weld (<c>/sim/debug/welds</c>): a source vessel rigidly tracking a part on a target

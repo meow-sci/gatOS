@@ -200,13 +200,16 @@ ImGui) — drive them over `/sim` (or HTTP/MQTT). See `SPEC_9P_FILESYSTEM.md` §
 | 1 | `echo 1 > /sim/debug/always_render_iva` makes interior (IVA) meshes visible from the external camera; `echo 0 …` hides them again | ☐ | global render cheat |
 | 2 | With the cheat **off**, no `gatos.iva` Harmony patches exist (reads `0` at start; first enable logs "patches installed", disable logs "patches removed") | ☐ | dynamic patch lifecycle |
 | 3 | Toggle repeatedly → no residue (interiors hidden after the final `0`); quitting with it **on** restores templates + unpatches cleanly at unload | ☐ | `TeardownGameCheats` |
-| 4 | `ls /sim/vessels/active/parts/` lists the **top-level** parts (no subparts); `cat parts/0/{instance_id,template,is_root,position}` are sane | ☐ | `telemetry_vessel_parts` |
+| 4 | `ls /sim/vessels/active/parts/` lists the top-level parts; `cat parts/0/{instance_id,template,is_root,position}` are sane | ☐ | `telemetry_vessel_parts` |
+| 4b | `ls /sim/vessels/active/parts/<n>/subparts/` lists each part's subparts (count matches `subpart_count`; empty dir when 0); `cat subparts/0/{instance_id,id,display_name,template,position}` are sane, and every subpart `instance_id` is distinct from all part ids | ☐ | subpart discovery (2026-07-16) |
+| 4c | `cat /sim/vessels/active/parts/json \| jq` parses; the document matches the `parts/<n>/` leaves (same ids/names/positions, nested `subparts` arrays); `jq '.[] \| select(.display_name=="…") \| .instance_id'` finds a weld anchor in one pipe | ☐ | `parts/json` whole-tree doc (2026-07-16) |
 | 5 | Stage/decouple or edit the active vessel → `parts/` updates within a sample (count-change invalidation); a count-preserving edit updates within 10 s | ☐ | per-vehicle cache invalidation |
 | 6 | `telemetry_vessel_parts=false` (the "Vessel parts" telemetry menu toggle or config) → `/sim/vessels/<id>/parts/` is gone | ☐ | gate |
 | 7 | Pick an anchor `<piid>` from the target's `parts/<n>/instance_id`; `echo "<target> <piid>" > /sim/debug/vessels/<source>/weld_here` welds the source at its current pose (it stays put relative to the target) | ☐ | `weld_here` capture |
 | 8 | The welded source tracks the target **rigidly** through translation, rotation, and **time-warp** (offset/orientation preserved); `cat /sim/debug/welds/count` ≥1 and `/sim/debug/welds/<source>/{target,part,offset,rotation,lock_rotation}` reflect it | ☐ | per-frame driver after `VehicleSolvers.Wait()` |
 | 9 | `echo 0 > /sim/debug/welds/<source>/enabled` suspends tracking (entry kept; source free); `echo 1 …` resumes it | ☐ | suspend/resume |
 | 10 | Staging an **unrelated** part on the target (anchor part survives) does **not** drop the weld; removing the anchor part itself falls back to body-frame anchoring (still not dropped) | ☐ | anchor re-resolution each tick |
+| 10b | Weld to a **subpart** `<piid>` (from `parts/<n>/subparts/<m>/instance_id`) — `weld_here` captures and tracks exactly like a part anchor; anchored to an **animated** subpart (e.g. a landing-leg / robotics segment), the welded source follows the animation as the subpart moves | ☐ | subpart anchor (2026-07-16); `PositionVehicleAsmb`/`Asmb2VehicleAsmb` compose through `PartParent` |
 | 11 | `echo 1 > /sim/debug/vessels/<source>/unweld` removes that weld; `echo 1 > /sim/debug/welds/clear` removes all (count → 0) | ☐ | remove / clear |
 | 12 | Weld a vessel to itself, or to one orbiting a different body → `EBUSY`; bad `<piid>`/target → `ENOENT`; bad arity/values → `EINVAL` | ☐ | errnos |
 | 13 | With **no** welds active, the `OnAfterUi` driver is a no-op — no measurable per-frame cost, no `VehicleSolvers.Wait()` | ☐ | `WeldManager.IsEmpty` early-out |
@@ -353,3 +356,23 @@ can run on 4892). **All items pending a live flight on 4892.**
 | 7 | `/sim/display` still streams (enable + open a reader; frames advance) | ☐ | `RenderGame` interior gained an underwater pass; transpiler targets the final `End()` — should absorb it |
 | 8 | Weld a vessel pair across a CCI↔CCF frame transition (e.g. near/into atmosphere): no attitude/rate corruption on the welded source | ☐ | rev 4867 fixed angular-velocity corruption in CCI↔CCF transitions — welds ride `Teleport` through those frames |
 | 9 | EVA kitten spawn: kitten appears just outside the door (no collision kick-spin); `eva`-taxi tutorial flow still works | ☐ | rev 4869 spawn-position change + backpack collider |
+
+## KSA 2026.7.6.4939 upgrade — live re-check items — **NOT YET RUN**
+
+The 2026.7.5.4892 → 2026.7.6.4939 playbook pass (2026-07-16) was **clean** — build + tests green, full
+decomp/Content diff (`git diff 7cf5c0a..2423a02`, gapless changelog) found no bound-member change (see
+`scope/FULL_SCOPE.md` §0 and the `scope/ksa-read-surface.md` / `scope/ksa-write-surface.md` 4939
+findings). Note rev 4915 removes the old service-module parts — **save-breaking upstream** (the second
+save-breaker after 4884) — so start from fresh vehicles. The 4892 items above remain valid and can run
+on 4939. These are the residual items static review cannot settle:
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | `/sim/status/accessors` clean after normal flying + a `ctl/throttle` write + a `ctl/translate` write + a `lights/<n>/brightness` write + a `vessels/<id>/scale` write | ☐ | reflection accessors are compile-blind; decomp can lag the binary |
+| 2 | On a **control-less** vessel (e.g. a decoupled stage with no control module): `ctl/stage`, `engines/<n>/active`, and `decouplers/<n>/fire` via `/sim` still succeed while the stock UI shows the new lockout ("No vehicle control module.") — confirm this divergence is intended gatOS behavior | ☐ | rev 4914 `ControlsLockout` is UI/input-layer only; `SequenceList.ActivateNextSequence`/`EngineController.SetIsActive`/`Decoupler.SetIsActive` carry no gate |
+| 3 | Fuel: build a vehicle with a fuel line + a propellant-use-disabled tank; `engines/<n>/propellant` flips per the new rules (line-fed stacks drainable; crossfeed no longer crosses a decoupler out-of-stage; disabled tank walls off); an armed tank-to-tank transfer shows ~20 W per draining tank in `power/consumed` | ☐ | revs 4903/4907/4917/4938 — reads report game truth; formats unchanged |
+| 4 | `animation.goal` on landing legs: colliders follow the deployed legs (vehicle stands on them) and `situation` stays physics-simulated (off-rails) while the animation runs | ☐ | rev 4930 + `VehicleUpdateTask` off-rails-while-animating |
+| 5 | `echo 1 > ctl/stage` on a controllable vessel still activates the next sequence (the in-flight Sequences window is redesigned + re-orderable in flight) | ☐ | `SequenceList.cs` +1137-line UI rework; `ActivateNextSequence` byte-compatible |
+| 6 | thug_life quad still draws correctly (add an entry; check pose/depth/MSAA vs the scene, with and without the new Plume Trails / screenspace-particles graphics toggles ON) | ☐ | `SuperMeshRenderSystem.cs` untouched, but revs 4894–4932 add mid-frame compute/composite passes; only a live draw proves render-pass compatibility |
+| 7 | `/sim/display` still streams (enable + open a reader; frames advance; try with Plume Trails ON) | ☐ | `RenderGame` interior gained volumetric-trail + gizmos calls; the tail (final `End()`) is byte-identical — transpiler should absorb it |
+| 8 | `tanks/` listing on a new vehicle after adding a fuel line / toggling propellant-use: `amount/capacity/fraction` stay sane through `RecreateResourceManagers` rebuilds | ☐ | rev 4938 toggling rebuilds resource managers; `Tank.Moles` path untouched |

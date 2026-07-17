@@ -96,8 +96,10 @@ vessels/active/…  (alias of the controlled vessel)   vessels/by-id/<id>/
     orbit/*  navball/*  environment/*  battery/*  power/*
     engines/<n>/*  tanks/<r>/*  rcs/<n>/*  solar/<n>/*  generators/<n>/*
     lights/<n>/*  docking/<n>/*  decouplers/<n>/*  animations/<n>/*  encounters
-    parts/<n>/{instance_id,id,display_name,template,is_root,subpart_count,position}
-                                        (top-level parts; welds anchor picker; telemetry_vessel_parts)
+    parts/json                          (the whole part/subpart tree as ONE JSON doc — cat + jq it)
+    parts/<n>/{instance_id,id,display_name,template,is_root,subpart_count,position,
+               subparts/<m>/{instance_id,id,display_name,template,position}}
+                                        (parts + subparts; welds anchor picker; telemetry_vessel_parts)
     ctl/{ignite,shutdown,engine,stage,throttle,lights,rcs,translate,
          attitude_mode,attitude_frame,attitude_target,burn,focus}
 events
@@ -123,7 +125,9 @@ part (`weld` = explicit pose, `weld_here` = capture the current relative pose, `
 "thug life" sunglasses meme) to a part on a vehicle, tracked each frame (gatOS's first custom GPU render —
 `add`/`clear` + per-entry `position`/`rotation`/`size`/`visible`/`remove`). For welds and `thug_life`,
 discover the anchor part from the target's `parts/<n>/instance_id` (pass `0` to anchor to the body/CoM
-frame). Full arg shapes, action keys, and errnos are in [SPEC §3.7](../../../SPEC_9P_FILESYSTEM.md); a
+frame). A **weld** anchor may also be a **subpart** — use `parts/<n>/subparts/<m>/instance_id`; an
+animated subpart anchor (robotics/landing-leg segment) tracks the animation. (`thug_life` anchors remain
+top-level parts only.) Full arg shapes, action keys, and errnos are in [SPEC §3.7](../../../SPEC_9P_FILESYSTEM.md); a
 worked `weld_here` example is in [`recipes.md` §9](recipes.md) and a `thug_life` example in
 [`recipes.md` §10](recipes.md). The render-side internals (how the quad is drawn into KSA's scene) are
 documented in the **ksa skill's `quad.md`**.

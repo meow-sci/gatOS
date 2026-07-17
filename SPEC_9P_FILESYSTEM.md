@@ -383,19 +383,28 @@ NDJSON, one line per predicted closest approach: `{"body":<id>,"ut":<t>,"distanc
 
 #### 3.4.16 Parts *(present when `telemetry_vessel_parts` is on)* — `…/parts/<n>/` (n = part index)
 
-Top-level parts only (subparts are not surfaced); the **welds** anchor picker (§3.7). The list is
-cached per vehicle and rebuilt on part-count change or every 10 s. `<n>` is a 0-based index (friendly
-to enumerate) but **not** stable across vehicle edits — `instance_id` is the stable handle a weld uses.
+Top-level parts, each with its subparts nested under `subparts/<m>/`; the **welds** anchor picker
+(§3.7). The list is cached per vehicle and rebuilt on part-count change or every 10 s. `<n>`/`<m>` are
+0-based indexes (friendly to enumerate) but **not** stable across vehicle edits — `instance_id` is the
+stable handle a weld uses. A subpart is a full game part with its own runtime-unique `instance_id`,
+equally valid as a weld `<part_iid>` (an animated subpart anchor — e.g. a robotics segment — tracks
+its live pose).
 
 | Path | A | Type | Meaning |
 |---|---|---|---|
+| `parts/json` | S | JSON | The **whole part/subpart tree as one JSON document**: an array of part objects (snake_case, the shared record projection) each `{index, instance_id, id, display_name, template, is_root, subpart_count, position_vehicle_asmb:{x,y,z}, subparts:[{index, instance_id, id, display_name, template, position_vehicle_asmb}]}`. The one-`cat` discovery path — e.g. `cat parts/json \| jq -r '.[] \| .. \| .instance_id? // empty'` or find-by-name with `jq '.[] \| select(.display_name=="Solar Array")'`. Serialized only when the parts list actually rebuilds (count change / 10 s); reads in between are served from cache. |
 | `parts/<n>/instance_id` | S | uint | Stable part id (`Part.InstanceId`) — pass as `<part_iid>` to a weld. |
 | `parts/<n>/id` | S | string | `Part.Id` (can collide across instances of one template). |
 | `parts/<n>/display_name` | S | string | Human-readable name. |
 | `parts/<n>/template` | S | string | Part template id (`Part.Template.Id`). |
 | `parts/<n>/is_root` | S | flag | Whether this is the root part. |
-| `parts/<n>/subpart_count` | S | int | Number of subparts (informational). |
+| `parts/<n>/subpart_count` | S | int | Number of subparts (= entries under `subparts/`). |
 | `parts/<n>/position` | S | `x y z` | Part position in the vehicle assembly frame, m. |
+| `parts/<n>/subparts/<m>/instance_id` | S | uint | Stable subpart id — pass as `<part_iid>` to a weld, same as a part's. |
+| `parts/<n>/subparts/<m>/id` | S | string | Subpart `Part.Id`. |
+| `parts/<n>/subparts/<m>/display_name` | S | string | Human-readable name. |
+| `parts/<n>/subparts/<m>/template` | S | string | Subpart template id. |
+| `parts/<n>/subparts/<m>/position` | S | `x y z` | Subpart position in the vehicle assembly frame, m (sampled; the weld tracks the live pose). |
 
 #### 3.4.17 Control surface — `…/ctl/` *(present only when a command sink is wired)*
 
@@ -466,13 +475,13 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/focus` | **St** | vehicle/body id | `camera.focus` | Frame | Move the camera to any astronomical by id (view-only). |
 | `debug/control_vessel` | **St** | vehicle id | `debug.control_vessel` | Frame | Focus **and** take control of a vehicle by id. (4750: KSA may refuse a target that isn't `controllable` — pre-check the `controllable` read; outcome to be confirmed in a live flight.) |
 | `debug/always_render_iva` | **St** | `0`/`1` | `debug.always_render_iva` | Frame | Global render cheat: force interior (IVA) part meshes to render outside the IVA camera. Vessel-agnostic. |
-| `debug/vessels/<id>/weld` | **St** | `<target> <part_iid> <x> <y> <z> <pitch> <yaw> <roll> <lock>` | `debug.weld_create` | Frame | Weld this vessel (source) to a target part with an explicit pose. See **welds** below. Read = the current spec for this source, or empty. |
+| `debug/vessels/<id>/weld` | **St** | `<target> <part_iid> <x> <y> <z> <pitch> <yaw> <roll> <lock>` | `debug.weld_create` | Frame | Weld this vessel (source) to a target part **or subpart** with an explicit pose. See **welds** below. Read = the current spec for this source, or empty. |
 | `debug/vessels/<id>/weld_here` | **St** | `<target> <part_iid> [<lock>]` | `debug.weld_here` | Frame | Weld at the **current** relative pose (captured now). `lock` defaults to `1`. |
 | `debug/vessels/<id>/unweld` | T | `1` | `debug.weld_remove` | Frame | Remove this source's weld. |
 | `debug/welds/clear` | T | `1` | `debug.weld_clear` | Frame | Remove **all** welds. Vessel-agnostic. |
 | `debug/welds/count` | S | int | — | — | Number of active welds. |
 | `debug/welds/<source>/target` | S | string | — | — | The anchor vessel id. |
-| `debug/welds/<source>/part` | S | uint | — | — | Anchor part `instance_id` (`0` = target body frame). |
+| `debug/welds/<source>/part` | S | uint | — | — | Anchor part/subpart `instance_id` (`0` = target body frame). |
 | `debug/welds/<source>/offset` | S | `x y z` | — | — | Position offset in the anchor frame (m). |
 | `debug/welds/<source>/rotation` | S | `pitch yaw roll` | — | — | Orientation offset (deg; display — the weld is driven by an exact quaternion). |
 | `debug/welds/<source>/lock_rotation` | S | `0`/`1` | — | — | Whether orientation is locked to the anchor. |
@@ -491,8 +500,11 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/thug_life/<id>/spec` | S | spec line | — | — | The write-compatible 10-token spec (echo to `add` to recreate as a new id). |
 
 **welds** (the "weld one vessel rigidly to another, anchored to a part" cheat — a game hack):
-- Discover anchor parts under `vessels/by-id/<target>/parts/<n>/` (§3.4); each part's `instance_id` is the
-  stable handle you pass as `<part_iid>` (`0` ⇒ anchor to the target's body/CoM frame). A vessel may be the
+- Discover anchors under `vessels/by-id/<target>/parts/<n>/` — top-level parts **and** their
+  `subparts/<m>/` (§3.4.16), or grab the whole tree in one read from `parts/json` (`cat parts/json | jq`);
+  either level's `instance_id` is the stable handle you pass as `<part_iid>`
+  (`0` ⇒ anchor to the target's body/CoM frame). A subpart anchor tracks its live pose, so welding to an
+  animated subpart (robotics/landing-leg segment) follows the animation. A vessel may be the
   **source** of at most one weld (re-writing `weld` replaces it); many sources may anchor to one target.
 - `weld` takes an explicit pose; `weld_here` captures the current source↔anchor pose so the source stays put
   and then tracks rigidly — the practical path (computing offsets by hand is hard).

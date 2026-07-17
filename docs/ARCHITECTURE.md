@@ -114,7 +114,7 @@ All default on; `telemetry_enabled` is the master gate:
 | Config key | What it gates | Cost when off |
 |---|---|---|
 | `telemetry_vessel_detail` | G3 detail pass (navball, environment, every per-module `StateList` read — sampled in the same single `BuildFull` pass as the core since GP3) | Drops all module-level events (flameout/dock/decouple) the differ can no longer see |
-| `telemetry_vessel_parts` | `PartsReader` per-vessel top-level parts list (the welds anchor picker); cached per vehicle, rebuilt on `Vehicle.Parts.Count` change or every 10 s | Drops `/sim/vessels/<id>/parts/` |
+| `telemetry_vessel_parts` | `PartsReader` per-vessel parts list — top-level parts + nested `subparts/<m>/` + the `parts/json` whole-tree doc (the welds anchor picker); cached per vehicle, rebuilt on `Vehicle.Parts.Count` change or every 10 s (`parts/json` re-serializes only on rebuild) | Drops `/sim/vessels/<id>/parts/` |
 | `telemetry_bodies` | `BodyReader` celestial catalog reads (statics cached per body since GP3 — per tick only positions/velocities are read) | Drops `/sim/bodies/` + `system` |
 | `telemetry_bodies_rate_hz` | Bodies resample cadence (0 = every tick). Below the master rate, in-between ticks re-publish the **same** bodies/system objects by reference — no KSA reads, no allocation, and consumers can reference-compare for "unchanged" | n/a (a cadence, not a gate) |
 | `telemetry_events` | `EventDiffer` + `EventsFile` (dictionary-free positional diff since GP3 — allocation-free when nothing changed) | Drops `/sim/events` blocking reads |

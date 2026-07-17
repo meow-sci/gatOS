@@ -15,18 +15,20 @@ new events) and **G4** (full control surface: throttle/staging/attitude/burn, RC
 they add **no** KSA coupling — every transport speaks the same `SnapshotStore` (reads) and
 `ICommandSink`/`SimCommand` (writes), so this matrix (the KSA-touching surface) is unaffected by them.
 
-**Verified:** **2026-07-14 against `2026.7.5.4892`** (full solution build green, 0 warnings, forced
-non-incremental; full decomp + Content diff via `git diff` between the 4826 and 4892 drops inside the
-assemblies checkout — revs 4827–4859 are unlogged in both drops, so the diff was the discovery
-mechanism). **Clean pass: no bound member, reflection accessor, or Harmony hook target changed** — no
-code change required. Behavior notes (rev 4884 combustion→Reactions/tank-affinity refactor — additive
-to every binding; FC `CommandThrottle` zeroing; rev 4866 on-rails changes) are catalogued in the
-[read-surface 4892 findings](../scope/ksa-read-surface.md#4892-findings) /
-[write-surface 4892 findings](../scope/ksa-write-surface.md#4892-findings); the anchors touched by
-those notes carry a `4892:` note. Rows showing an earlier per-member `Verified` date bind to members
-**unchanged** in 4892 (their compatibility is confirmed by the green build + the diff). Prior passes:
-2026-07-03 against `2026.7.3.4826` (clean; post-decouple control-state inheritance notes — those
-anchors carry `GameVersion="2026.7.3.4826"`), 2026-06-27 against `2026.6.9.4750` (the G1–G4 fix-pass).
+**Verified:** **2026-07-16 against `2026.7.6.4939`** (full solution build green, 0 warnings, forced
+non-incremental; full decomp + Content diff via `git diff 7cf5c0a..2423a02` between the 4892 and 4939
+drops inside the assemblies checkout — the 4939 changelog is gapless, `fromRevision` 4892 = the prior
+baseline). **Clean pass: no bound member, reflection accessor, or Harmony hook target changed** — no
+code change required. Behavior notes (the fuel-line/tank-transfer/propellant-use system — additive on
+`Tank`, changes *when* engines see fuel; the rev 4914 control-module lockout is UI-only — the module
+methods gatOS binds stay ungated; animating parts now update colliders + force off-rails; rev 4915
+removes the old service-module parts, save-breaking upstream) are catalogued in the
+[read-surface 4939 findings](../scope/ksa-read-surface.md#4939-findings) /
+[write-surface 4939 findings](../scope/ksa-write-surface.md#4939-findings). Rows showing an earlier
+per-member `Verified` date bind to members **unchanged** in 4939 (their compatibility is confirmed by
+the green build + the diff). Prior passes: 2026-07-14 against `2026.7.5.4892` (clean; rev 4884
+combustion→Reactions notes), 2026-07-03 against `2026.7.3.4826` (clean; post-decouple control-state
+inheritance notes), 2026-06-27 against `2026.6.9.4750` (the G1–G4 fix-pass).
 Live in-flight checklist: `docs/VALIDATION.md`.
 
 ## Transport parity (binding)
@@ -155,14 +157,16 @@ New `/sim/events` types (snapshot diff in `EventDiffer`): `engine-state`, `flame
 
 ## Read surface — parts (welds anchor picker; gated by `telemetry_vessel_parts`)
 
-Anchor in `Game/Ksa/Readers/PartsReader.cs`. **Top-level parts only** (subparts not surfaced); the
-welds anchor picker. Cached per vehicle (`ConditionalWeakTable<Vehicle,…>`), rebuilt on
-`Vehicle.Parts.Count` change or every 10 s (sim seconds). `<n>` is a 0-based index; `instance_id` is
-the **stable** handle a weld uses.
+Anchor in `Game/Ksa/Readers/PartsReader.cs`. Top-level parts **with their subparts nested under
+`subparts/<m>/`** (a subpart is a full `Part` with its own `InstanceId`); the welds anchor picker —
+either level's `instance_id` is a valid weld anchor. Cached per vehicle
+(`ConditionalWeakTable<Vehicle,…>`), rebuilt on `Vehicle.Parts.Count` change or every 10 s (sim
+seconds). `<n>`/`<m>` are 0-based indexes; `instance_id` is the **stable** handle a weld uses.
 
 | Path | A | KSA anchor | Risk |
 |---|---|---|---|
 | `vessels/by-id/<id>/parts/<n>/{instance_id,id,display_name,template,is_root,subpart_count,position}` | S | `Vehicle.Parts.{Parts,Count}`; `Part.{InstanceId,Id,DisplayName,Template.Id,PartParent,SubParts,PositionVehicleAsmb}` | Low |
+| `vessels/by-id/<id>/parts/<n>/subparts/<m>/{instance_id,id,display_name,template,position}` | S | `Part.SubParts` → `Part.{InstanceId,Id,DisplayName,Template.Id,PositionVehicleAsmb}` (subpart-aware: composes through `PartParent`) | Low |
 
 ## Control surface — G4 expansion
 
@@ -246,7 +250,7 @@ vehicle enumeration; pruning the last mark also removes the patches).
 | `debug/focus` | St | vehicle/body id | `camera.focus` by id (view-only; same action as `ctl/focus`) | M | Frame |
 | `debug/control_vessel` | St | vehicle id | `Program.GetMainCamera().SetFollow(vehicle)` + `Program.ControlledVehicle = vehicle` (focus **and** control) | M | Frame |
 | `debug/always_render_iva` | St | `0`/`1` | `IvaActuator`→`IvaForceRender.SetEnabled`: flips `PartModelModule.Template.Internal=false` over `PartModel.Instances`; installs/removes its own `gatos.iva` Harmony patches (`PartModel..ctor`/`AddInstance` postfixes) only while on (vessel-agnostic) | M (dynamic Harmony) | Frame |
-| `debug/vessels/<id>/weld` | St | `<target> <piid> x y z pitch yaw roll lock` | `WeldManager.Create`→`WeldEngine.UpdateWeld`: `Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,BodyRates,CenterOfMassAsmb,Parent,Orbit,Teleport,UpdatePerFrameData}`, `Orbit.CreateFromStateCci`, `IParentBody.GetCci2Cce`, `Universe.GetJobSimStep(double).NextTime`, `Program.GetPlayerDeltaTime`, `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` | H | Frame |
+| `debug/vessels/<id>/weld` | St | `<target> <piid> x y z pitch yaw roll lock` | `WeldManager.Create`→`WeldEngine.UpdateWeld`: `Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,BodyRates,CenterOfMassAsmb,Parent,Orbit,Teleport,UpdatePerFrameData}`, `Orbit.CreateFromStateCci`, `IParentBody.GetCci2Cce`, `Universe.GetJobSimStep(double).NextTime`, `Program.GetPlayerDeltaTime`, `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` (subpart-aware). `<piid>` resolves over `Vehicle.Parts.Parts` **and** each part's `Part.SubParts` (`WeldManager.FindPart`), so a top-level part or a subpart anchors — an animated subpart tracks its live pose | H | Frame |
 | `debug/vessels/<id>/weld_here` | St | `<target> <piid> [lock]` | `WeldManager.CreateAtCurrentPose`→`WeldEngine.CapturePose` (inverse transform of the above) | M | Frame |
 | `debug/vessels/<id>/unweld` | T | `1` | `WeldManager.Remove(vehicle.Id)` (registry op — no KSA) | L | Frame |
 | `debug/welds/clear` | T | `1` | `WeldManager.Clear` (vessel-agnostic) | L | Frame |
@@ -277,7 +281,11 @@ when no welds exist, so it needs **no** Harmony patch. Both tear down on unload
 (`Mod.TeardownGameCheats`). All weld create/remove/enable/clear and the IVA toggle are **Frame-phase**.
 Anchors verified `2026-06-28` against `2026.6.9.4750`; re-verified (static) 2026-07-03 against
 `2026.7.3.4826` (`Vehicle.Teleport`/`JobSystems`/`Orbit.CreateFromStateCci` and the IVA render gate all
-unchanged).
+unchanged). Subpart anchoring added 2026-07-16 against `2026.7.6.4939`: `WeldManager.FindPart` now also
+searches each part's `Part.SubParts` (a subpart is a full `Part` with its own `InstanceId`; the
+`PositionVehicleAsmb`/`Asmb2VehicleAsmb` members the weld math uses are subpart-aware — they compose
+through `PartParent`, the same properties purrTTY's in-world quads track animated subparts with), and
+`PartsReader` surfaces subparts under `parts/<n>/subparts/<m>/` for discovery.
 
 **`thug_life` — gatOS's first custom GPU rendering (⚠️ HIGHEST-CHURN KSA COUPLING).** The
 `debug.thug_life_*` actions (ported from `unscience`, exposed only on gatOS surfaces) anchor a flat,

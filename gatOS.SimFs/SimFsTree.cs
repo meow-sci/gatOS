@@ -594,7 +594,7 @@ public static class SimFsTree
                 () => string.Concat(Vessel(vesselId).Encounters
                     .Select(e => Formats.EncounterLine(e) + "\n")));
             var animations = AnimationsDir(p, vesselId);
-            // Top-level parts (the welds anchor picker). Present only when the parts stream is on
+            // Parts + subparts (the welds anchor picker). Present only when the parts stream is on
             // (telemetry_vessel_parts gates the reader, so the list is empty when off → no dir).
             var parts = PartsDir(p, vesselId);
             var stream = new StreamFile("stream", Qid($"{p}/stream"), _store, vesselId);
@@ -731,22 +731,33 @@ public static class SimFsTree
         ///     snapshot at access time); presence tracks the live count on every list/lookup. Module
         ///     indexes equal their list positions (the sampler invariant the event differ also leans
         ///     on), so the count check is the exact old <c>Any(x =&gt; x.Index == index)</c> test.
+        ///     <paramref name="extra"/> nodes (non-numeric names, e.g. <c>parts/json</c>) are listed
+        ///     after the indexed children and resolved by name.
         /// </summary>
-        private VfsDirectory IndexedDir(string dirName, string qidPath, Func<int> count, Func<int, VfsNode> create)
+        private VfsDirectory IndexedDir(string dirName, string qidPath, Func<int> count, Func<int, VfsNode> create,
+            params VfsNode[] extra)
         {
             var cache = new ConcurrentDictionary<int, VfsNode>();
             return new DelegateDirectory(dirName, Qid(qidPath),
                 () =>
                 {
                     var n = count();
-                    var children = new VfsNode[n];
+                    var children = new VfsNode[n + extra.Length];
                     for (var i = 0; i < n; i++)
                         children[i] = cache.GetOrAdd(i, create);
+                    for (var i = 0; i < extra.Length; i++)
+                        children[n + i] = extra[i];
                     return children;
                 },
-                name => int.TryParse(name, out var index) && index >= 0 && index < count()
-                    ? cache.GetOrAdd(index, create)
-                    : null);
+                name =>
+                {
+                    foreach (var node in extra)
+                        if (node.Name == name)
+                            return node;
+                    return int.TryParse(name, out var index) && index >= 0 && index < count()
+                        ? cache.GetOrAdd(index, create)
+                        : null;
+                });
         }
 
         private VfsDirectory EnginesDir(string p, string vesselId)
@@ -768,12 +779,40 @@ public static class SimFsTree
                 FractionControl($"{p}/engines/{index}/min_throttle", "min_throttle", vesselId,
                     "engine.min_throttle", index, () => Formats.Scalar(Engine(vesselId, index).MinThrottle)));
 
-        // ---- top-level parts (the welds anchor picker; read-only, cached by the reader) -----------
+        // ---- parts + subparts (the welds anchor picker; read-only, cached by the reader) ----------
 
         private VfsDirectory PartsDir(string p, string vesselId)
             => IndexedDir("parts", $"{p}/parts",
                 () => Vessel(vesselId).Parts.Count,
-                index => PartDir(p, vesselId, index));
+                index => PartDir(p, vesselId, index),
+                PartsJsonFile(p, vesselId));
+
+        /// <summary>
+        ///     <c>parts/json</c>: the whole part/subpart tree of the vessel as one JSON document (the
+        ///     <see cref="SimJson"/> snake_case projection of the <see cref="PartSnapshot"/> list, nested
+        ///     <c>subparts</c> included) — one <c>cat</c> + <c>jq</c> instead of a find-the-iid pipeline.
+        ///     Serialization is memoized on the <b>list reference</b>: the sampler passes the reader's
+        ///     cached list through unchanged, so the reference only swaps when the reader actually
+        ///     rebuilds (part-count change or the 10 s backstop) — publishes in between reuse the string.
+        /// </summary>
+        private VfsFile PartsJsonFile(string p, string vesselId)
+        {
+            PartsJsonCache? cache = null;
+            return Line($"{p}/parts/json", "json", () =>
+            {
+                var parts = Vessel(vesselId).Parts;
+                var c = cache;
+                if (c is null || !ReferenceEquals(c.List, parts))
+                    cache = c = new PartsJsonCache(parts, SimJson.Serialize(parts));
+                return c.Json;
+            });
+        }
+
+        private sealed class PartsJsonCache(IReadOnlyList<PartSnapshot> list, string json)
+        {
+            public readonly IReadOnlyList<PartSnapshot> List = list;
+            public readonly string Json = json;
+        }
 
         private VfsDirectory PartDir(string p, string vesselId, int index)
             => DelegateDirectory.Fixed($"{index}", Qid($"{p}/parts/{index}"),
@@ -789,7 +828,27 @@ public static class SimFsTree
                 Line($"{p}/parts/{index}/subpart_count", "subpart_count",
                     () => Part(vesselId, index).SubpartCount.ToString(CultureInfo.InvariantCulture)),
                 Line($"{p}/parts/{index}/position", "position",
-                    () => Formats.Vector(Part(vesselId, index).PositionVehicleAsmb)));
+                    () => Formats.Vector(Part(vesselId, index).PositionVehicleAsmb)),
+                SubpartsDir(p, vesselId, index));
+
+        private VfsDirectory SubpartsDir(string p, string vesselId, int partIndex)
+            => IndexedDir("subparts", $"{p}/parts/{partIndex}/subparts",
+                () => Part(vesselId, partIndex).Subparts.Count,
+                index => SubpartDir(p, vesselId, partIndex, index));
+
+        private VfsDirectory SubpartDir(string p, string vesselId, int partIndex, int index)
+            => DelegateDirectory.Fixed($"{index}", Qid($"{p}/parts/{partIndex}/subparts/{index}"),
+                // A subpart's instance_id is a valid weld anchor exactly like a top-level part's.
+                Line($"{p}/parts/{partIndex}/subparts/{index}/instance_id", "instance_id",
+                    () => Formats.UInt(Subpart(vesselId, partIndex, index).InstanceId)),
+                Line($"{p}/parts/{partIndex}/subparts/{index}/id", "id",
+                    () => Subpart(vesselId, partIndex, index).Id),
+                Line($"{p}/parts/{partIndex}/subparts/{index}/display_name", "display_name",
+                    () => Subpart(vesselId, partIndex, index).DisplayName),
+                Line($"{p}/parts/{partIndex}/subparts/{index}/template", "template",
+                    () => Subpart(vesselId, partIndex, index).Template),
+                Line($"{p}/parts/{partIndex}/subparts/{index}/position", "position",
+                    () => Formats.Vector(Subpart(vesselId, partIndex, index).PositionVehicleAsmb)));
 
         // ---- control surface (only when a command sink is wired — KSA_GAME_INTEGRATION_PLAN T1) ----
 
@@ -1517,6 +1576,9 @@ public static class SimFsTree
 
         private PartSnapshot Part(string vesselId, int index)
             => ByIndex(Vessel(vesselId).Parts, index, static pt => pt.Index, "part");
+
+        private SubpartSnapshot Subpart(string vesselId, int partIndex, int index)
+            => ByIndex(Part(vesselId, partIndex).Subparts, index, static sp => sp.Index, "subpart");
 
         private WeldSnapshot Weld(string sourceId)
             => FindWeld(sourceId)

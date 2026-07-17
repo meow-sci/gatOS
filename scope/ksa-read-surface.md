@@ -2,7 +2,7 @@
 
 > Every telemetry read gatOS performs against KSA. Each row: the `/sim` path it feeds, the gatOS code
 > site, the KSA member it binds to, the decompiled-source file that defines that member, the unit/format,
-> the churn risk, and the **4892 status** (✅ unaffected · ⚠️ silent semantic/unit drift · ❌ compile break).
+> the churn risk, and the **4939 status** (✅ unaffected · ⚠️ silent semantic/unit drift · ❌ compile break).
 >
 > Source of truth = the `[KsaAnchor]` attributes in the cited files. API catalog = [`SPEC_9P_FILESYSTEM.md`](../SPEC_9P_FILESYSTEM.md).
 > Anchor mirror = [`docs/KSA_INTEGRATION_MATRIX.md`](../docs/KSA_INTEGRATION_MATRIX.md). Decomp paths are
@@ -21,7 +21,7 @@ Performed directly in `gatOS.GameMod/Game/TelemetrySampler.cs` (not in a reader)
 2026-06-27):** the sampler methods now carry `[KsaAnchor]`s, so the census is complete. All `Universe`
 statics (+ `VersionInfo.Current`).
 
-| `/sim` path | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4892 |
+| `/sim` path | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4939 |
 |---|---|---|---|---|---|---|
 | `time/ut` | `TelemetrySampler.cs:92` | `Universe.GetElapsedSimTime().Seconds()` | `KSA/Universe.cs` | seconds, double | Low | ✅ |
 | `time/warp` | `:93` | `Universe.SimulationSpeed` | `KSA/Universe.cs` | factor | Low | ✅ |
@@ -32,10 +32,9 @@ statics (+ `VersionInfo.Current`).
 | (active vessel id) | `:94` | `Program.ControlledVehicle?.Id` | `KSA/Program.cs` | string | Low | ✅ |
 | (vessel set) | `:100` | `Universe.CurrentSystem.All.UnsafeAsList()` | `KSA/Universe.cs`, `KSA/CelestialSystem.cs` | enumeration | Low | ✅ |
 
-> Re-verified 2026-07-14 against `2026.7.5.4892` (`Universe.cs` and `VersionInfo.cs` untouched by the
-> 4826→4892 diff; `Program.ControlledVehicle` intact). Previously re-verified 2026-07-03 against
-> `2026.7.3.4826` (full decomp diff — `Universe.cs`'s only changes were a `Program.EditorFlag` reset in
-> a system-unload path plus log-line churn).
+> Re-verified 2026-07-16 against `2026.7.6.4939` (the `Universe.cs` diff is log-line renumbering only —
+> zero member-level changes; `VersionInfo.cs` untouched; `Program.ControlledVehicle` intact). Previously
+> re-verified 2026-07-14 against `2026.7.5.4892` and 2026-07-03 against `2026.7.3.4826`.
 > **G4 (2026-06-27):** these sampler-direct reads were the one un-anchored corner of the KSA surface; they
 > now carry `[KsaAnchor]`s (on `Sample` / `SampleWarpSpeeds` / `SafeAutoWarp*` / `GameVersion`), so the
 > census is complete — a rename errors in the sampler, still caught by the build.
@@ -47,7 +46,7 @@ statics (+ `VersionInfo.Current`).
 `gatOS.GameMod/Game/Ksa/Readers/VesselReader.cs`. Sampled for every vessel regardless of the
 `telemetry_vessel_detail` gate. Anchor: `VesselReader.Sample`.
 
-| `/sim` path (under `vessels/by-id/<id>/`) | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4892 |
+| `/sim` path (under `vessels/by-id/<id>/`) | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4939 |
 |---|---|---|---|---|---|---|
 | `id`, `name` | `:89,90` | `Vehicle.Id` (name = id; KSA has no display name) | `KSA/Vehicle.cs` | string | Low | ✅ |
 | `situation` | `:91` | `Vehicle.Situation.ToString()` | `KSA/Vehicle.cs`, `KSA/Situation*.cs` | string | Low | ⚠️ flags |
@@ -92,7 +91,7 @@ are cached per vehicle in `Readers/AnimationLinks.cs` (GP3), rebuilt on module-c
 
 ### Position / navball / environment
 
-| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 4892 |
+| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 4939 |
 |---|---|---|---|---|---|
 | `position/ecl`, `velocity/cci`, `com` | `:154-156` | `Vehicle.GetPositionEcl()`, `GetVelocityCci()`, `CenterOfMassAsmb` | `KSA/Vehicle.cs` | Low | ✅ |
 | `navball/{pitch,yaw,roll,twr,deltav,frame,speed}` | `:223` | `Vehicle.NavBallData.{AttitudeAngles(int3 deg),ThrustWeightRatio,DeltaVInVacuum,Frame,Speed}` | `KSA/NavBallData.cs` | Medium | ✅ |
@@ -102,7 +101,7 @@ are cached per vehicle in `Readers/AnimationLinks.cs` (GP3), rebuilt on module-c
 
 ### Writable-setpoint read-backs (so `ctl/*` files report the real state)
 
-| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 4892 |
+| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 4939 |
 |---|---|---|---|---|---|
 | `ctl/throttle` | `:169` | `Vehicle.GetManualThrottle()` | `KSA/Vehicle.cs` (`:824`) | Medium | ✅ ᵈ |
 | `ctl/rcs` | `:170` | any `ThrusterController.IsActive` | `KSA/ThrusterController.cs` | Medium | ✅ |
@@ -111,7 +110,7 @@ are cached per vehicle in `Readers/AnimationLinks.cs` (GP3), rebuilt on module-c
 
 ### Per-module reads
 
-| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 4892 |
+| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 4939 |
 |---|---|---|---|---|---|
 | `engines/<n>/{throttle,propellant,min_throttle}` | `:278` | `EngineControllerState.{CommandThrottle,IsPropellantAvailable}`; `EngineController.MinimumThrottle` | `KSA/EngineControllerState.cs` | Medium | ✅ |
 | `rcs/<n>/{active,propellant,map}` | `:387` | `ThrusterController.IsActive`; `ThrusterControllerState.{ControlMap,IsPropellantAvailable}` | `KSA/ThrusterController.cs` | Medium | ✅ ᵈ |
@@ -128,24 +127,28 @@ are cached per vehicle in `Readers/AnimationLinks.cs` (GP3), rebuilt on module-c
 
 ## Parts — `PartsReader` (gated by `telemetry_vessel_parts`) {#parts}
 
-`gatOS.GameMod/Game/Ksa/Readers/PartsReader.cs`. Surfaces a vehicle's **top-level** parts (subparts
-are deliberately not surfaced) at `vessels/by-id/<id>/parts/<n>/` — the anchor picker for the **welds**
-write surface ([`ksa-write-surface.md#welds`](ksa-write-surface.md#welds)). Cached per vehicle in a
-`ConditionalWeakTable<Vehicle,…>` (collected with the vehicle, no leak, game-thread only); rebuilt only
-on a `Vehicle.Parts.Count` change (the cheap "vehicle was edited" signal — KSA exposes no part-tree
-version/dirty flag) or every 10 s of sim time. Hot path = one `Parts.Count` read per vehicle per tick.
-Anchor: `PartsReader.cs:28`.
+`gatOS.GameMod/Game/Ksa/Readers/PartsReader.cs`. Surfaces a vehicle's top-level parts at
+`vessels/by-id/<id>/parts/<n>/`, **each with its subparts nested at `parts/<n>/subparts/<m>/`**
+(2026-07-16: a subpart is a full `Part` with its own `InstanceId`) — the anchor picker for the
+**welds** write surface ([`ksa-write-surface.md#welds`](ksa-write-surface.md#welds)); either level's
+`instance_id` is a valid weld anchor. Cached per vehicle in a `ConditionalWeakTable<Vehicle,…>`
+(collected with the vehicle, no leak, game-thread only); rebuilt only on a `Vehicle.Parts.Count`
+change (the cheap "vehicle was edited" signal — KSA exposes no part-tree version/dirty flag; subpart
+counts are template-fixed, so the top-level count stays the right signal) or every 10 s of sim time.
+Hot path = one `Parts.Count` read per vehicle per tick. Anchor: `PartsReader.cs:30`.
 
-| `/sim` path (under `…/parts/<n>/`) | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4892 |
+| `/sim` path (under `…/parts/<n>/`) | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4939 |
 |---|---|---|---|---|---|---|
-| `instance_id` | `PartsReader.cs:57` | `Part.InstanceId` | `KSA/Part.cs` | uint (the **stable** weld handle) | Low | ✅ |
-| `id` | `:57` | `Part.Id` | `KSA/Part.cs` | string (can collide across instances) | Low | ✅ |
-| `display_name` | `:57` | `Part.DisplayName` | `KSA/Part.cs` | string | Low | ✅ |
-| `template` | `:57` | `Part.Template.Id` | `KSA/Part.cs` | string | Low | ✅ |
-| `is_root` | `:58` | `Part.PartParent is null` | `KSA/Part.cs` | flag | Low | ✅ |
-| `subpart_count` | `:58` | `Part.SubParts.Length` | `KSA/Part.cs` | int | Low | ✅ |
-| `position` | `:55,59` | `Part.PositionVehicleAsmb` | `KSA/Part.cs` | `x y z` m (vehicle assembly frame) | Low | ✅ |
-| (enumeration) | `:37,50` | `Vehicle.Parts.{Count,Parts}` | `KSA/Vehicle.cs`, `KSA/PartTree.cs` | span of `Part` | Low | ✅ |
+| `instance_id` | `PartsReader.cs:60` | `Part.InstanceId` | `KSA/Part.cs` | uint (the **stable** weld handle) | Low | ✅ |
+| `id` | `:60` | `Part.Id` | `KSA/Part.cs` | string (can collide across instances) | Low | ✅ |
+| `display_name` | `:60` | `Part.DisplayName` | `KSA/Part.cs` | string | Low | ✅ |
+| `template` | `:60` | `Part.Template.Id` | `KSA/Part.cs` | string | Low | ✅ |
+| `is_root` | `:61` | `Part.PartParent is null` | `KSA/Part.cs` | flag | Low | ✅ |
+| `subpart_count` | `:61` | `Part.SubParts.Length` | `KSA/Part.cs` | int | Low | ✅ |
+| `position` | `:58,62` | `Part.PositionVehicleAsmb` | `KSA/Part.cs` | `x y z` m (vehicle assembly frame) | Low | ✅ |
+| `subparts/<m>/{instance_id,id,display_name,template}` | `:71-83` | `Part.SubParts` → `Part.{InstanceId,Id,DisplayName,Template.Id}` | `KSA/Part.cs` | as above | Low | ✅ |
+| `subparts/<m>/position` | `:80` | `Part.PositionVehicleAsmb` (subpart-aware: composes through `PartParent.MatrixAsmb2VehicleAsmb`) | `KSA/Part.cs` | `x y z` m (vehicle assembly frame) | Low | ✅ |
+| (enumeration) | `:40,53` | `Vehicle.Parts.{Count,Parts}` | `KSA/Vehicle.cs`, `KSA/PartTree.cs` | span of `Part` | Low | ✅ |
 
 Verified `2026-06-28` against `2026.6.9.4750` (new feature; compiled clean — none of these
 `Part`/`PartTree` members appear in the 4680→4750 changelog). Re-verified 2026-07-03 against
@@ -155,7 +158,22 @@ infrastructure (`PartSymmetryInstance`, `SequenceGroup`/`SequenceOrder`, `Aligne
 against `2026.7.5.4892`: the `Part.cs`/`PartTree.cs` churn is the decoupling perf refactor (bulk-change
 guards, single-pass subtree transfer, the `_moduleIdxsById` swap-removal **fix** — stale-index lookups
 after part removal now impossible, an upstream correctness *improvement* for all `Modules.Get<T>` reads)
-plus fuel-line plumbing; every bound member above is unchanged.
+plus fuel-line plumbing; every bound member above is unchanged. Re-verified 2026-07-16 against
+`2026.7.6.4939`: the `Part.cs` churn is symmetry-group XML expansion (`SymmetryGroupRef`), fuel-flow
+highlight plumbing, and the tank-transfer UI buttons; `PartTree.cs` gains fuel-line/resource-manager
+rebuild plumbing — every bound member above is unchanged.
+
+2026-07-16 (feature extension, same 4939 baseline): subparts are now surfaced under
+`parts/<n>/subparts/<m>/` — no **new** KSA members (the anchor already listed `Part.SubParts` for
+`subpart_count`); the reader now also reads `InstanceId`/`Id`/`DisplayName`/`Template.Id`/
+`PositionVehicleAsmb` **on the subpart instances**. The one semantic to watch on future bumps:
+`Part.PositionVehicleAsmb` must stay subpart-aware (the `IsSubPart` branch composing through
+`PartParent.MatrixAsmb2VehicleAsmb`, `KSA/Part.cs`) — it is what makes subpart rows (and subpart weld
+anchors) truthful.
+
+`parts/json` (same date) is a **game-free projection** — the `SimJson` serialization of the sampled
+`PartSnapshot` list (memoized on the list reference in `SimFsTree.PartsJsonFile`; re-serialized only
+when the reader rebuilds). No KSA coupling of its own, so no row: it breaks only if the rows above do.
 
 ---
 
@@ -170,7 +188,7 @@ write side [`ksa-write-surface.md#thug-life`](ksa-write-surface.md#thug-life)). 
 build at the `[KsaAnchor]` site (these are non-reflective), so they are caught at compile time — but
 frame-math is the classic *silent* drift, so re-verify the quad's pose in a live flight after any update.
 
-| read | gatOS site | KSA / Brutal member | Decomp file | Risk | 4892 |
+| read | gatOS site | KSA / Brutal member | Decomp file | Risk | 4939 |
 |---|---|---|---|---|---|
 | camera view-projection | `ThugLifeQuadRenderer.TryComputeModelEgo` | `Program.GetMainCamera()`; `Camera.MVP.viewProjection`; `Program.SetViewport` | `KSA/Program.cs`, `KSA/Camera.cs` | **High** | ✅ |
 | vehicle ego transform | same | `Vehicle.GetMatrixAsmb2Ego(Camera)`; `Vehicle.Asmb2Ego` | `KSA/Vehicle.cs` | **High** | ✅ |
@@ -266,6 +284,53 @@ report faithfully, none a member drift:
 
 ---
 
+## ✅ 4939 read-surface findings (playbook pass 2026-07-16) {#4939-findings}
+
+Full playbook pass 2026-07-16, `2026.7.5.4892` → `2026.7.6.4939`. Build (forced non-incremental) + full
+test suite green; **no bound member changed name, signature, type, unit, frame, or gating.** For the
+first time the changelog is gapless (`fromRevision` 4892 = the prior baseline; revs 4893–4939 all
+logged), and the decomp diff was taken between the two drops' commits inside the assemblies checkout
+(`7cf5c0a..2423a02`). Findings — all *game-behavior* changes the reads report faithfully, none a drift:
+
+- **Fuel-line / tank-transfer / propellant-use system (revs 4903/4907/4917/4936/4937/4938)**
+  (`tanks/<r>/*`, `engines/<n>/propellant`, `mass/propellant`, `power/consumed`): the new `FuelPort`
+  module, tank-to-tank in-flight transfer, and the per-tank propellant-use toggle are **additive** on
+  `Tank` (`PropellantUseEnabled`, `TransferMode`, transfer statics) — **`Tank.Moles`, `Mole`/`MoleState`,
+  `FilledFraction` and the whole moles read path are untouched**, so `tanks/<r>/{amount,capacity,fraction}`
+  formats and units are unchanged. What changes is *when* engines see fuel: crossfeed no longer crosses a
+  decoupler into a different stage (4917), fuel-line-fed stacks and daisy chains are now drainable
+  (4903/4917), and a propellant-use-disabled tank walls its contents off from engines/thrusters/transfer
+  (4938) — `engines/<n>/propellant` (`IsPropellantAvailable`) flips per the new rules, truthfully. An
+  active tank transfer draws **20 W per draining tank** from the batteries (4907), visible in
+  `power/consumed`.
+- **Tank volume now displays in liters (rev 4934)**: a UI formatter change (`VolumeReference` liter
+  units + new `Constants` conversions); tank *game data* moved from `PartGameData.xml` to
+  `CoreFuelTankAGameData.xml` with the identical `<Tank>` element schema. gatOS reports kg / kg / 0..1 —
+  no unit or SPEC change. `Sequence.TankMatchesMix` was removed (rev 4911) in favor of
+  `Tank.HoldsMixSubstances` — gatOS bound neither.
+- **Animating parts get real physics (rev 4930 + `VehicleUpdateTask`)**: `KeyframeAnimationModule` gains
+  `AnyAnimating`; a vehicle with a running animation (or a solar tracker moving ≥ 2°, via the new
+  `IKeyframeAnimationExtension.IsAnimating`) is now forced **off-rails**, and animations mark their
+  subtree colliders for update (landing legs finally collide correctly). `animation/<n>/*` read members
+  (`TimeGoal`, `Shared.Duration`, `State.{TimeCurrent,DeploymentState}`) are untouched; guests will
+  observe `situation` staying physics-simulated while animations run.
+- **In-flight Sequence UI rework (revs 4893/4899/4905/4906/4919)**: the `SequenceList.cs` +1137-line
+  churn is entirely window drawing (GaugeCanvas integration, group expand/collapse, per-engine fuel
+  bars); `ActivateNextSequence(Vehicle)` (`SequenceList.cs:127`) is byte-compatible. Sequences can now be
+  re-ordered in flight — a game capability, not an API change.
+- **CelestialSystem nearest-orbit-point fix (rev 4931)**: a hover-marker locals/threading refactor;
+  `CurrentSystem.All`/`Get`/`HomeBody` untouched. `Celestial.cs`'s one change is a particle-emitter
+  field rename (`Extra.Z` → `Opacity`) — not bound.
+- **Electrical XML re-indent only**: `CoreElectricalAGameData.xml` was reformatted (rev 4918 asset
+  update) — every `MaximumCapacity J=` / `Produced W=` / `Consumed W=` stock value is identical.
+  `Content/Core/Astronomicals.xml` churn is ground-clutter LOD tuning only — no celestial physics data.
+- **Old service-module parts removed (rev 4915, save-breaking upstream)**: vehicles using them break on
+  load — live validation should start from fresh vehicles (second save-breaker after 4884).
+- **Additive members, not yet surfaced**: `Tank.{TransferMode,PropellantUseEnabled}` and the fuel-line
+  graph are candidates for future additive reads/controls; no action required.
+
+---
+
 ## ✅ 4892 read-surface findings (detail) {#4892-findings}
 
 Full playbook pass 2026-07-14, `2026.7.3.4826` → `2026.7.5.4892`. Build (forced non-incremental) + full
@@ -322,7 +387,7 @@ differ, only change the values it observes. See [`non-ksa-surface.md`](non-ksa-s
 `gatOS.GameMod/Game/Ksa/Readers/BodyReader.cs`. Most reads go through the `IParentBody` interface
 (implemented by both `Celestial` and `StellarBody`), so a body-type rename surfaces in one place.
 
-| `/sim` path | gatOS site | KSA member | Decomp file | Unit | Risk | 4892 |
+| `/sim` path | gatOS site | KSA member | Decomp file | Unit | Risk | 4939 |
 |---|---|---|---|---|---|---|
 | (catalog) | `:24` | `Universe.CurrentSystem.All.UnsafeAsList()` → `Celestial`; `Universe.WorldSun` (`StellarBody`); `CelestialSystem.HomeBody` | `KSA/CelestialSystem.cs`, `KSA/Universe.cs` | – | Low | ✅ |
 | `system/{name,home,sun}` | `:35` | `WorldSun.Id`, `HomeBody.Id` | `KSA/Universe.cs` | string | Low | ✅ |

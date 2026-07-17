@@ -27,13 +27,38 @@ Two checkouts are kept side by side for diffing:
 
 | Checkout dir | Build | Date | Revisions | Role |
 |---|---|---|---|---|
-| `…/ksa-game-assemblies` | **2026.7.5.4892** | 2026-07-11 | logs only 4860 → 4892 (see the changelog-gap note below) | **current / verified baseline** — full playbook pass 2026-07-14: build + tests green, full decomp + Content diff clean (no code change needed); `KSAFolder` default resolves here. The checkout is a **git repo whose history holds every prior drop** (`1265373` = 4826, `6fa343d` = 4750, …) — diff drops with `git diff <old>..<new>` inside it |
-| `…/ksa-game-assemblies_prev` | 2026.6.9.4750 | 2026-06-27 | 4680 → 4750 | older checkout kept for convenience; the in-repo git history above supersedes it for diffing (the 4892 pass diffed `1265373..HEAD`, i.e. 4826 → 4892) |
+| `…/ksa-game-assemblies` | **2026.7.6.4939** | 2026-07-16 | 4892 → 4939 (**gapless** — `fromRevision` = the prior baseline, first drop with a complete changelog) | **current / verified baseline** — full playbook pass 2026-07-16: build + tests green, full decomp + Content diff clean (no code change needed); `KSAFolder` default resolves here. The checkout is a **git repo whose history holds every prior drop** (`7cf5c0a` = 4892, `1265373` = 4826, `6fa343d` = 4750, …) — diff drops with `git diff <old>..<new>` inside it |
+| `…/ksa-game-assemblies_prev` | 2026.6.9.4750 | 2026-06-27 | 4680 → 4750 | older checkout kept for convenience; the in-repo git history above supersedes it for diffing (the 4939 pass diffed `7cf5c0a..2423a02`, i.e. 4892 → 4939) |
 
 gatOS was originally built against the 4680-era sources (most `[KsaAnchor]` `Verified` dates span
 2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27; the touched
 anchors carry `GameVersion="2026.6.9.4750"` (see
 [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)).
+
+**The 4892 → 4939 pass (2026-07-16) — clean, no code changes.** The 4939 drop's `version.json` is
+**gapless** for the first time (`fromRevision` 4892 = the prior verified baseline; revs 4893–4939 all
+logged), so playbook step 1 worked as designed; the decomp/Content diff (`git diff 7cf5c0a..2423a02`
+inside the checkout) confirmed it. Result: full solution compiles 0-warning against the 4939 DLLs
+(forced non-incremental), all tests green, and **no bound member changed name, signature, type, unit,
+frame, or gating** — `EngineController.cs`, `FlightComputer.cs`, `DockingPort.cs`, `Decoupler.cs`,
+`ThrusterController.cs`, `LightModule.cs`, `Battery.cs`, `SolarPanel.cs`, `Orbit.cs`, `Camera.cs`,
+`SuperMeshRenderSystem.cs`, `GameAudio.cs`, `Mole.cs`, `ManualControlInputs.cs` and every `Brutal*`
+numerics file are entirely untouched. The headline upstream changes are all additive or UI-layer: the
+**fuel-line / tank-transfer / propellant-use system** (revs 4903–4938 — `Tank` gains
+`PropellantUseEnabled`/`TransferMode`/transfer statics; `Tank.Moles` and the whole moles read path
+untouched; tank game data moved `PartGameData.xml` → `CoreFuelTankAGameData.xml` with the identical
+`<Tank>` schema; volume *display* switched to liters — `VolumeReference`/`Constants` formatters only);
+the **rev 4914 control-module lockout** (staging key / engine Active checkboxes / Decouple menu now
+`ControlsLockout`-gated) lands **only in UI/input paths** — the module methods gatOS binds carry no new
+gate; the in-flight **Sequence UI rework** (+1137 lines in `SequenceList.cs`, all window drawing —
+`ActivateNextSequence` intact); **animating parts now update colliders and force off-rails** (rev 4930);
+and heavy render churn (screenspace particles, volumetric plume trails, ground-clutter culling) that
+never reaches a gatOS binding (`RenderGame`'s tail — the display transpiler's injection site — is
+byte-identical; `UnlitMesh` keys/assets unchanged). Rev 4915 removes the old service-module parts —
+**save-breaking upstream** (the second, after 4884). Findings detail:
+[read](ksa-read-surface.md#4939-findings) / [write](ksa-write-surface.md#4939-findings) 4939 sections.
+No `plans/` gap plan was needed. Live re-check items: `docs/VALIDATION.md`. 4939 is now the verified
+baseline.
 
 **The 4826 → 4892 pass (2026-07-14) — clean, no code changes.** ⚠️ **Changelog gap:** the 4892 drop's
 `version.json` covers only revs 4860→4892 and the 4826 drop's only 4824→4826 — **revs 4827–4859 have no
@@ -106,7 +131,7 @@ and the fastest way to confirm a rename actually landed. Concrete files (current
 | Battery capacity | `Core/CoreElectricalAGameData.xml` | `<Battery HasStatusLight="true"><MaximumCapacity J="1000"/></Battery>` (also 3000/100/500) | capacity is **Joules** — `battery/capacity` unit unchanged. |
 | Solar / generator production | `Core/CoreElectricalAGameData.xml` | `<SolarPanel><Produced W="200"/></SolarPanel>` (cells `W="100"` — 4826 doubled the stock `SolarPanelB_CellA` value from `W="50"`, same unit) | rev 4681: production authored in **Watts** — confirms `power/produced`, `solar/<n>/produced` are instantaneous W. |
 | Control authority (`IsControllable`) | `Core/CoreCommandAGameData.xml` | `CoreCommandA_Prefab_MediumCapsuleVariantA` has `<Control />` | rev 4699: the new Control Module is on the capsule in XML; vehicles without `<Control />` are not controllable. |
-| Engines / tanks / lights / RCS / decouplers / animations | `Core/Core*GameData.xml` (Propulsion, Electrical, Coupling, …) | `<EngineController>`, `<Tank>`/`<Mole>`, `<LightModule>`, `<ThrusterController>`, `<Decoupler>`, `<KeyframeAnimation>` | the module element names the readers/actuators bind to; no 4750 changes; 4826 adds only `<ConnectorRef>`/`<Aligned>` (the new symmetry connectors) + `<CombustionProcess>` entries; 4892 (rev 4884) migrates `<Combustion Id="…"/>` → `<Reaction Id="…">` and adds `<RoleAffinity>` on tanks (`PartGameData.xml`) — template *configuration* churn only, no module element gatOS binds changed. |
+| Engines / tanks / lights / RCS / decouplers / animations | `Core/Core*GameData.xml` (Propulsion, Electrical, Coupling, …) | `<EngineController>`, `<Tank>`/`<Mole>`, `<LightModule>`, `<ThrusterController>`, `<Decoupler>`, `<KeyframeAnimation>` | the module element names the readers/actuators bind to; no 4750 changes; 4826 adds only `<ConnectorRef>`/`<Aligned>` (the new symmetry connectors) + `<CombustionProcess>` entries; 4892 (rev 4884) migrates `<Combustion Id="…"/>` → `<Reaction Id="…">` and adds `<RoleAffinity>` on tanks (`PartGameData.xml`); 4939 (rev 4934) moves all `<Tank>` game data out of `PartGameData.xml` into `CoreFuelTankAGameData.xml` (identical element schema) and adds the `<FuelPort>` module — template *configuration* churn only, no module element gatOS binds changed. |
 | Part template ids (dynamic add) | `Core/Core*GameData.xml` `PartGameData Id="…"` | e.g. `CoreCouplingA_Prefab_DockingPort1WA` | the string ids `ModLibrary.Get<PartTemplate>(id)` resolves (not used by `/sim` reads; reference). |
 | **`thug_life` quad shaders** | `Core/Shaders/Mesh/UnlitMesh.{vert,frag}` | the `"UnlitMeshVert"`/`"UnlitMeshFrag"` `ShaderReference` keys `ThugLifeQuadRenderer.BuildPipeline` resolves via `ModLibrary.Get<ShaderReference>(...)` | the world-space quad reuses KSA's stock unlit-mesh shaders; if these keys/assets are renamed/removed the pipeline build fails (caught, feature self-disables). |
 
@@ -141,6 +166,14 @@ breaks the draw — re-verify live):
 Full anchor list: [`ksa-read-surface.md#thug-life`](ksa-read-surface.md#thug-life) (anchor math),
 [`ksa-write-surface.md#thug-life`](ksa-write-surface.md#thug-life) (the seven actions),
 [`../docs/KSA_INTEGRATION_MATRIX.md`](../docs/KSA_INTEGRATION_MATRIX.md) (render set). **Re-verified
+(static) 2026-07-16 against `2026.7.6.4939`**: `SuperMeshRenderSystem.cs` entirely untouched by the
+4892→4939 diff (`RenderMainPass(CommandBuffer)` at `:329`), the `UnlitMesh.{vert,frag}` assets + the
+`"UnlitMeshVert"`/`"UnlitMeshFrag"` `DefaultAssets.xml` keys unchanged (the DefaultAssets churn is
+particle/volumetric-trail/ground-clutter shader keys), `Program.OffScreenPass`/`SampleCount` unchanged,
+and the new screenspace-particle + volumetric-plume-trail renderers (revs 4894–4932) are mid-frame
+compute/composite passes that do not alter the main render pass the quad draws in.
+`RenderCore.Mesh/SimpleVkMeshAtlas`'s bounding-sphere-radius fix affects game-mesh culling only (the
+quad builds its own vertex buffers). **Re-verified
 (static) 2026-07-14 against `2026.7.5.4892`**: `SuperMeshRenderSystem.cs` untouched by the 4826→4892
 diff (`RenderMainPass(CommandBuffer)` intact), `UnlitMesh.{vert,frag}` assets + the
 `"UnlitMeshVert"`/`"UnlitMeshFrag"` `DefaultAssets.xml` keys unchanged (the DefaultAssets churn is
@@ -216,6 +249,9 @@ The applied 4750→4826 result: clean pass, no code changes — recorded in the 
 the matrix header; live re-check items in [`../docs/VALIDATION.md`](../docs/VALIDATION.md).
 The applied 4826→4892 result: clean pass, no code changes — recorded in the pass paragraph above, the
 [read](ksa-read-surface.md#4892-findings) / [write](ksa-write-surface.md#4892-findings) 4892 findings
+sections, and the matrix header; live re-check items in [`../docs/VALIDATION.md`](../docs/VALIDATION.md).
+The applied 4892→4939 result: clean pass, no code changes — recorded in the pass paragraph above, the
+[read](ksa-read-surface.md#4939-findings) / [write](ksa-write-surface.md#4939-findings) 4939 findings
 sections, and the matrix header; live re-check items in [`../docs/VALIDATION.md`](../docs/VALIDATION.md).
 Since the assemblies checkout is a git repo holding every drop, prefer `git diff <oldCommit>..<newCommit>`
 inside it over the two-checkout `--no-index` diff.

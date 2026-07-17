@@ -605,12 +605,20 @@ Four additions ported from the sibling `unscience` mod, exposed **only** on the 
 `gatOS.GameMod/Game/Ksa/` per the G2 rule; the snapshot/command plumbing is game-free. KSA bindings
 verified against decomp `2026.6.9.4750` (anchors `2026-06-28`).
 
-**Parts listing** — `vessels/by-id/<id>/parts/<n>/` (**top-level parts only**, no subparts), gated by a
-new `telemetry_vessel_parts` config key (default true). Leaves: `instance_id` (uint — the **stable** weld
-anchor handle), `id`, `display_name`, `template`, `is_root`, `subpart_count`, `position`.
-`Game/Ksa/Readers/PartsReader.cs` builds `PartSnapshot[]` from `Vehicle.Parts.Parts`, cached per vehicle
-in a `ConditionalWeakTable<Vehicle,…>` and rebuilt on a `Vehicle.Parts.Count` change or every 10 s (sim
-seconds). The sampler projects it per vessel when the gate is on.
+**Parts listing** — `vessels/by-id/<id>/parts/<n>/`, gated by a new `telemetry_vessel_parts` config key
+(default true). Leaves: `instance_id` (uint — the **stable** weld anchor handle), `id`, `display_name`,
+`template`, `is_root`, `subpart_count`, `position`. 2026-07-16: each part additionally nests its subparts
+at `parts/<n>/subparts/<m>/{instance_id,id,display_name,template,position}` (a subpart is a full `Part`
+with its own `InstanceId`; either level's `instance_id` is a valid weld anchor).
+`Game/Ksa/Readers/PartsReader.cs` builds `PartSnapshot[]` (+ nested `SubpartSnapshot[]`) from
+`Vehicle.Parts.Parts`/`Part.SubParts`, cached per vehicle in a `ConditionalWeakTable<Vehicle,…>` and
+rebuilt on a `Vehicle.Parts.Count` change or every 10 s (sim seconds; subpart counts are template-fixed,
+so the top-level count stays the right invalidation signal). The sampler projects it per vessel when the
+gate is on. `parts/json` (same date) serves the whole part/subpart tree as one JSON document (the
+`SimJson` snake_case projection of the `PartSnapshot` list) — the one-`cat` discovery path; the
+serialization is memoized on the list **reference** in `SimFsTree.PartsJsonFile` (the sampler passes the
+reader's cached list through unchanged, so re-serialization happens only on an actual rebuild), and the
+per-publish `SnapshotTextFile` memo handles concurrent readers on top.
 
 **`always_render_iva`** — global render cheat at `/sim/debug/always_render_iva` (`debug.always_render_iva`,
 Frame, vessel-agnostic) that forces interior (IVA) part meshes to render outside the IVA camera by flipping
@@ -620,7 +628,10 @@ ctor postfix + an editor-only `PartModel.AddInstance` postfix) and bulk-flips/tr
 over `PartModel.Instances`; disable restores the tracked templates and unpatches. `Actuators/IvaActuator.cs`
 is the thin actuator.
 
-**Welds** — rigidly attach a source vessel to a target vessel's part (a game hack).
+**Welds** — rigidly attach a source vessel to a target vessel's part **or subpart** (a game hack;
+2026-07-16: `WeldManager.FindPart` resolves `<part_iid>` over `Vehicle.Parts.Parts` and each part's
+`Part.SubParts` — an animated subpart anchor tracks its live pose, since the weld math's
+`PositionVehicleAsmb`/`Asmb2VehicleAsmb` compose through `PartParent`).
 `Game/Ksa/Welds/{WeldEntry,WeldEngine,WeldManager}.cs`: `WeldManager` is the game-thread registry +
 per-frame driver, `WeldEngine` the stateless teleport math ported verbatim from `unscience` (orientation
 stored as an authoritative `doubleQuat`, Euler display-only; `weld_here` capture is the inverse transform;

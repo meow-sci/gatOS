@@ -70,23 +70,32 @@ update's blast radius is small and discoverable. The procedure:
    (`EOPNOTSUPP`), logs once, and shows up in `/sim/status/accessors`. The guest sees a failed sensor,
    not a crashed mod. This is the safety net for the things steps 2–3 miss.
 
-> **Current applied result of this playbook:** the **2026.7.3.4826 → 2026.7.5.4892** update was run
-> through it on 2026-07-14 — **clean: no code changes required.** Build + full test suite green against
-> 4892 (forced non-incremental, 0 warnings); every bound member, reflection accessor, and Harmony hook
-> target verified unchanged by a full decomp + Content diff (the diff was taken between the two drops'
-> git commits inside the assemblies checkout; revs 4827–4859 have **no changelog** in either drop, so
-> the tree diff was again the discovery mechanism; see
-> [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md)). Findings are behavior notes, not drift:
-> the rev 4884 **combustion→Reactions / tank-affinity refactor** (save-breaking upstream) is *additive*
-> to every gatOS read (`Tank.Moles`/`Mole`/`FilledFraction`/`RefillConsumables` untouched; substance
-> *names* in tank listings change with the new catalog); the FC now **zeroes per-engine
-> `CommandThrottle`/`CommandBurnTime`** when no burn is commanded (honest 0 instead of stale); KSA's
-> `Staging` *window class* was replaced by `ResourceGroups` (gatOS binds `SequenceList.ActivateNextSequence`
-> — intact); the 4866 on-rails changes shift *when* vessels go on-rails at high warp
-> ([read 4892 findings](ksa-read-surface.md#4892-findings)). Live re-check items are queued in
+> **Current applied result of this playbook:** the **2026.7.5.4892 → 2026.7.6.4939** update was run
+> through it on 2026-07-16 — **clean: no code changes required.** Build + full test suite green against
+> 4939 (forced non-incremental, 0 warnings); every bound member, reflection accessor, and Harmony hook
+> target verified unchanged by a full decomp + Content diff (`git diff 7cf5c0a..2423a02` inside the
+> assemblies checkout; the 4939 changelog is **gapless** for the first time — `fromRevision` 4892 = the
+> prior baseline; see [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md)). Findings are behavior
+> notes, not drift: the new **fuel-line / tank-transfer / propellant-use system** is *additive* on
+> `Tank` (`Tank.Moles` and the moles read path untouched) but changes *when* engines see fuel —
+> `engines/<n>/propellant` reports the new crossfeed/disable rules truthfully, and an active transfer
+> draws 20 W/tank in `power/consumed`; the rev 4914 **control-module lockout is UI-only** (staging key /
+> engine checkboxes / Decouple menu) — the module methods gatOS binds carry no new gate, so `/sim`
+> writes still actuate control-less vessels where the stock UI now refuses; **animating parts now
+> update colliders and force off-rails** (rev 4930 — `animation.goal` on landing legs has real physics);
+> the in-flight Sequence UI rework leaves `SequenceList.ActivateNextSequence` byte-compatible; the heavy
+> particle/plume-trail/clutter render churn never reaches a binding (`RenderGame`'s tail — the display
+> transpiler's site — is byte-identical; `SuperMeshRenderSystem.cs` untouched). Rev 4915 removes the old
+> service-module parts (**save-breaking upstream**, the second after 4884)
+> ([read 4939 findings](ksa-read-surface.md#4939-findings) /
+> [write 4939 findings](ksa-write-surface.md#4939-findings)). Live re-check items are queued in
 > `docs/VALIDATION.md`.
 >
-> The prior 2026.6.9.4750 → 2026.7.3.4826 pass (2026-07-03) was also clean — behavior notes only
+> The prior 2026.7.3.4826 → 2026.7.5.4892 pass (2026-07-14) was also clean — behavior notes only (the
+> rev 4884 combustion→Reactions / tank-affinity refactor, additive to every read; FC `CommandThrottle`
+> zeroing; the `Staging`→`ResourceGroups` window rename; the 4866 on-rails shifts —
+> [read 4892 findings](ksa-read-surface.md#4892-findings)).
+> The 2026.6.9.4750 → 2026.7.3.4826 pass (2026-07-03) was also clean — behavior notes only
 > (post-decouple control-state inheritance, a near-SoI gravitation nuance, solar-cell 50→100 W —
 > [read 4826 findings](ksa-read-surface.md#4826-findings)). The 2026.6.8.4680 → 2026.6.9.4750 pass
 > found four gaps, all fixed 2026-06-27 (G1 docking `PushoffImpulse` N·s, G2 power `Joules`→`Watts`,
@@ -136,7 +145,7 @@ KSA game update have any chance of breaking it.
 | R | Celestial bodies + system catalog (orbits, atmosphere, ocean, frames) | **Yes** | [`ksa-read-surface.md`](ksa-read-surface.md) |
 | R | Time / warp / auto-warp / sim-step | **Yes** (sampler-direct) | [`ksa-read-surface.md`](ksa-read-surface.md#sampler-direct-reads) |
 | R | Events (snapshot-diff: engine/flameout/dock/undock/decouple/animation/battery) | Indirect (diff over reads) | [`ksa-read-surface.md`](ksa-read-surface.md#events) |
-| R | Vessel parts list (top-level only; the welds anchor picker; gated by `telemetry_vessel_parts`) | **Yes** | [`ksa-read-surface.md`](ksa-read-surface.md#parts) |
+| R | Vessel parts list (top-level parts + nested `subparts/<m>/`, plus the `parts/json` whole-tree JSON doc — a game-free projection; the welds anchor picker; gated by `telemetry_vessel_parts`) | **Yes** | [`ksa-read-surface.md`](ksa-read-surface.md#parts) |
 | **Writes (controls)** | | | |
 | W | Engine ignite/shutdown, per-engine active/min-throttle, manual throttle | **Yes** | [`ksa-write-surface.md`](ksa-write-surface.md) |
 | W | Staging, RCS (master + manual translation `ctl/translate`), flight-computer attitude/frame/target/burn | **Yes** (Solver phase for FC setpoints; translation = reflection on `_manualControlInputs.ThrusterCommandFlags`) | [`ksa-write-surface.md`](ksa-write-surface.md) |
@@ -174,7 +183,7 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/Ksa/Readers/VesselReader.cs` | 21 `[KsaAnchor]` reads (the bulk of telemetry; +`ReadControllable`, G3) | per-accessor try/catch → `KsaHealth`; `BuildFull` whole-pass guard |
 | `Game/Ksa/Readers/AnimationLinks.cs` | 1 `[KsaAnchor]` read (structural animation↔module links, cached per vehicle — GP3) | rebuilt on module-count change / 10 s; consumed inside the `BuildFull`/`BuildCore` guards |
 | `Game/Ksa/Readers/BodyReader.cs` | 3 `[KsaAnchor]` reads (celestial catalog; statics cached per body — GP3) | sampler-level guard |
-| `Game/Ksa/Readers/PartsReader.cs` | 1 `[KsaAnchor]` read (top-level parts; welds anchor picker) | per-call try/catch; `VesselParts` sampler gate |
+| `Game/Ksa/Readers/PartsReader.cs` | 1 `[KsaAnchor]` read (parts + nested subparts; welds anchor picker) | per-call try/catch; `VesselParts` sampler gate |
 | `Game/Ksa/Actuators/*.cs` (13 anchored files; `IvaActuator.cs` delegates to `Render/IvaForceRender.cs`, no anchor) | 33 `[KsaAnchor]`s (all controls + debug; incl. `ScaleActuator`'s recursive `Part.Scale` write + best-effort read, and `AudioActuator`'s 3 FMOD anchors — `GameAudio.System` create/play + the per-frame channel tick) | `KsaCatalog` try/catch per command; `AudioActuator.Tick` under the `_audioDead` session latch |
 | `Game/Ksa/Render/IvaForceRender.cs` | 1 `[KsaAnchor]` (`always_render_iva` cheat; own dynamic `gatos.iva` Harmony) | per-postfix try/catch; restored + unpatched on disable/unload |
 | `Game/Ksa/Render/VesselForceRender.cs` | 3 `[KsaAnchor]` (per-vessel `always_render` override; own dynamic `gatos.always_render` Harmony prefixes on `Vehicle.GetWorldMatrix`/`UpdateRenderData`, installed only while ≥ 1 vessel is marked) | per-prefix try/catch → stock cull; install throw → `KsaCatalog` degrade latch; unpatched on last unmark/prune/unload |

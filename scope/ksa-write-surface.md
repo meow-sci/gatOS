@@ -2,7 +2,7 @@
 
 > Every control gatOS performs against KSA. Each row: the `/sim` control path, the command **action
 > key**, the actuator method, the KSA member it binds to, the threading **phase** (Frame vs Solver), the
-> decomp file, churn risk, and **4892 status** (✅ · ⚠️ · ❌).
+> decomp file, churn risk, and **4939 status** (✅ · ⚠️ · ❌).
 >
 > Source of truth = `[KsaAnchor]` in `gatOS.GameMod/Game/Ksa/Actuators/**` and the dispatch table in
 > `KsaCatalog.cs`. Action keys + arg shapes + errno = [`SPEC_9P_FILESYSTEM.md`](../SPEC_9P_FILESYSTEM.md).
@@ -63,7 +63,7 @@ target in 4750 (verify live). Full record: [`../plans/FIX_CURRENT_GAPS_PLAN.md`]
 
 `Game/Ksa/Actuators/EngineActuator.cs`, `LightActuator.cs`, `AnimationActuator.cs`.
 
-| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4892 |
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4939 |
 |---|---|---|---|---|---|---|
 | `ctl/ignite` | `vessel.ignite` | `EngineActuator.Ignite` | `Vehicle.SetEnum(VehicleEngine.MainIgnite)` | `KSA/Vehicle.cs` | Medium | ✅¹ |
 | `ctl/shutdown` | `vessel.shutdown` | `EngineActuator.Shutdown` | `Vehicle.SetEnum(VehicleEngine.MainShutdown)` | `KSA/Vehicle.cs` | Medium | ✅¹ |
@@ -80,7 +80,7 @@ target in 4750 (verify live). Full record: [`../plans/FIX_CURRENT_GAPS_PLAN.md`]
 `ThrottleActuator.cs`, `StagingActuator.cs`, `RcsActuator.cs`, `TranslateActuator.cs`,
 `FlightComputerActuator.cs`.
 
-| `/sim` path | action key | phase | actuator | KSA member | Decomp file | Risk | 4892 |
+| `/sim` path | action key | phase | actuator | KSA member | Decomp file | Risk | 4939 |
 |---|---|---|---|---|---|---|---|
 | `ctl/throttle` | `vessel.throttle` | Frame | `ThrottleActuator.Set` | **reflection** `Vehicle._manualControlInputs.EngineThrottle` (no public setter; `GetManualThrottle()` reads it) | `KSA/Vehicle.cs` (`:232,824`) | **High** | ✅² |
 | `ctl/stage` | `vessel.stage` | Frame | `StagingActuator.Stage` | `Vehicle.Parts.SequenceList.ActivateNextSequence(vehicle)` + `Vehicle.UpdateAfterPartTreeModification()` | `KSA/SequenceList.cs`, `KSA/Vehicle.cs` | Medium | ✅³ |
@@ -101,7 +101,12 @@ rev 4732 rename of "Stages"); compiled clean — no change. Re-verified against 
 (`Staging.cs` deleted; the window is now `ResourceGroups`) — irrelevant to gatOS, which binds
 `SequenceList`; `ActivateNextSequence(Vehicle)` keeps its signature and body, now ending in a batched
 `RemoveSpentSequences()` (rev 4873 perf); sequences are double-buffered for the UI (rev 4880) —
-activation semantics unchanged.
+activation semantics unchanged. Re-verified against 4939: the +1137-line `SequenceList.cs` churn is the
+in-flight sequence-window redesign (GaugeCanvas dressing, group expand/collapse, fuel bars) —
+`ActivateNextSequence(Vehicle)` (`SequenceList.cs:127`) is untouched; note rev 4914 gates the
+**staging key** behind `ControlsLockout` (control-module required) but only in `Vehicle`'s key-input
+handler — the `ActivateNextSequence` call gatOS binds carries no such gate (see the
+[4939 findings](#4939-findings)).
 
 ⁴ Added 2026-07-04 (born on 4826): the struct-reflection pattern is the proven throttle anchor; the
 flags path (`ComputeRcsControl`/`SelectJetsToFire`, `WithCanceledOpposingCommands`, the
@@ -120,7 +125,7 @@ translation axes (e.g. the EVA kitten backpack's six translation jets); in-game 
 
 `LightActuator.cs`, `DecouplerActuator.cs`, `DockingActuator.cs`, `RcsActuator.cs`.
 
-| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4892 |
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4939 |
 |---|---|---|---|---|---|---|
 | `rcs/<n>/active` | `rcs.active` | `RcsActuator.SetActive` | `ThrusterController.SetIsActive` | `KSA/ThrusterController.cs` | Medium | ✅ |
 | `lights/<n>/on` | `light.on` | `LightActuator.SetOn` | `LightModule.Parent.FullPart.LightSwitch.LightIsActive` | `KSA/LightModule.cs` | Medium | ✅ |
@@ -144,7 +149,7 @@ and verified against 4750 — see the docking section below.
 
 ## Camera focus (Frame phase, authority-exempt)
 
-| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4892 |
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4939 |
 |---|---|---|---|---|---|---|
 | `ctl/focus`, `bodies/<id>/focus` | `camera.focus` | `CameraActuator.Focus` | `Program.GetMainCamera().SetFollow(Astronomical, tidalLocking:true, changeControl:false)` | `KSA/Program.cs`, `KSA/Camera.cs` | Medium | ✅ |
 
@@ -158,7 +163,7 @@ area** (`vessels/by-id/<id>/…`), not `/sim/debug` — the per-vessel controls 
 namespace. Exempt from the active-vessel authority gate via `KsaCatalog.AnyVesselActions` (each is a
 deliberate by-id operation on an arbitrary vessel). Gated only by the `control_enabled` master.
 
-| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4892 |
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4939 |
 |---|---|---|---|---|---|---|
 | `vessels/by-id/<id>/scale` | `vessel.scale` | `ScaleActuator.Set` (one-shot; > 0 only, `EINVAL` otherwise; KSA resets on vessel rebuild) | recursive `Part.Scale = (f,f,f)` over `Vehicle.Parts.Parts`/`Part.SubParts` (public `double3` setter); KittenEva avatar via reflected `_renderable._characterAvatar.Core.Scale = f*0.01f` | `KSA/Part.cs`, `KSA/PartTree.cs`, `KSA/KittenEva.cs` | **High** (reflection + `GetType().Name` gate) | ✅ |
 | `vessels/by-id/<id>/always_render` | `vessel.always_render` | `VesselForceRender.Set` (registry op; installs/removes the `gatos.always_render` prefixes — patches exist **only while ≥ 1 vessel is marked**) | prefixes on `Vehicle.GetWorldMatrix(Camera)` + `Vehicle.UpdateRenderData(Viewport,int)` reproduce the stock bodies minus the `< 1 px` cull: `Camera.GetPositionEgo`, `Vehicle.Body2Cce`, `Vehicle.GetMatrixAsmb2Ego`, `PartTree.UpdateRenderData`, `Vehicle.IsEditedVehicle` | `KSA/Vehicle.cs`, `KSA/Camera.cs`, `KSA/PartTree.cs` | Medium (dynamic Harmony; KittenEva override unaffected) | ✅ |
@@ -174,7 +179,7 @@ detail lives in [`ksa-runtime-coupling.md#always-render-patches`](ksa-runtime-co
 `Game/Ksa/Actuators/DebugActuator.cs` + `DockingActuator.SetPushoffImpulse`. Gated by `[control]
 debug_namespace`. Authority-exempt (own opt-in).
 
-| `/sim` path | action key | phase | KSA member | Decomp file | Risk | 4892 |
+| `/sim` path | action key | phase | KSA member | Decomp file | Risk | 4939 |
 |---|---|---|---|---|---|---|
 | `debug/time/warp` | `debug.warp` | Frame | `Universe.SetSimulationSpeed(double, alert:false)` | `KSA/Universe.cs` | Medium | ✅ |
 | `debug/control_vessel` | `debug.control_vessel` | Frame | `Program.GetMainCamera().SetFollow(…)`; `Program.ControlledVehicle = vehicle` | `KSA/Program.cs` | Medium | ✅⁶ |
@@ -205,10 +210,10 @@ per-source weld actions after vehicle resolution; `always_render_iva` and `weld_
 **vessel-agnostically before** resolution; `weld_create`/`weld_here` resolve the **target** from the
 command `Token` (the source is the command's `vessel_id`).
 
-| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4892 |
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4939 |
 |---|---|---|---|---|---|---|
 | `debug/always_render_iva` | `debug.always_render_iva` | `IvaActuator.SetAlwaysRender`→`IvaForceRender.SetEnabled` | `PartModel.Instances`; `PartModel..ctor(PartModelModule.Template)`; `PartModel.AddInstance(PerInstanceData,Viewport,int)`; `PartModel.ViewportData.Get(...).InstanceList`; `PartModelModule.Template.{Internal,RayTracing}`; `PartModelModule.RaytracingMode.ShadowProxy`; `Program.{Editor,MainViewport}`; `Viewport.Mode`; `CameraMode.IVA` (render gate `PartModel.cs:387`) | `KSA/PartModel.cs`, `KSA/PartModelModule.cs`, `KSA/Viewport.cs` | Medium (dynamic `gatos.iva` Harmony — recheck live) | ✅ |
-| `debug/vessels/<id>/weld` | `debug.weld_create` | `WeldManager.Create`→`WeldEngine.UpdateWeld` | `Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,BodyRates,CenterOfMassAsmb,Parent,Orbit,Teleport,UpdatePerFrameData}`; `Orbit.{OrbitLineColor,CreateFromStateCci}`; `IParentBody.GetCci2Cce`; `Universe.GetJobSimStep(double).NextTime`; `Program.GetPlayerDeltaTime`; `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` | `KSA/Vehicle.cs`, `KSA/Orbit.cs`, `KSA/Universe.cs`, `KSA/Part.cs` | **High** (per-frame `Teleport`) | ✅ |
+| `debug/vessels/<id>/weld` | `debug.weld_create` | `WeldManager.Create`→`WeldEngine.UpdateWeld` | `Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,BodyRates,CenterOfMassAsmb,Parent,Orbit,Teleport,UpdatePerFrameData}`; `Orbit.{OrbitLineColor,CreateFromStateCci}`; `IParentBody.GetCci2Cce`; `Universe.GetJobSimStep(double).NextTime`; `Program.GetPlayerDeltaTime`; `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` (subpart-aware). `<part_iid>` resolution (`WeldManager.FindPart`) searches `Vehicle.Parts.Parts` **and** each part's `Part.SubParts` — the anchor may be a top-level part or a subpart | `KSA/Vehicle.cs`, `KSA/Orbit.cs`, `KSA/Universe.cs`, `KSA/Part.cs` | **High** (per-frame `Teleport`) | ✅ |
 | `debug/vessels/<id>/weld_here` | `debug.weld_here` | `WeldManager.CreateAtCurrentPose`→`WeldEngine.CapturePose` | inverse transform: `Vehicle.{GetPositionCci,GetBody2Cci,CenterOfMassAsmb}`; `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` | `KSA/Vehicle.cs`, `KSA/Part.cs` | Medium | ✅ |
 | `debug/vessels/<id>/unweld` | `debug.weld_remove` | `WeldManager.Remove(vehicle.Id)` | (registry op — no KSA) | — | Low | ✅ |
 | `debug/welds/<source>/enabled` | `debug.weld_enable` | `WeldManager.SetEnabled` | (registry op — no KSA) | — | Low | ✅ |
@@ -231,6 +236,15 @@ bodies), `ENOENT` (target/part gone), `EINVAL` (bad arity/values). Anchors verif
 danger-zone visualization); rev 4867's CCI↔CCF angular-velocity corruption fix *benefits* the weld
 teleport path.
 
+2026-07-16 (feature extension, same 4939 baseline): the weld anchor may now be a **subpart** —
+`WeldManager.FindPart` also searches each part's `Part.SubParts` (create-time validation **and** the
+per-tick re-resolution in the driver, so an animated subpart anchor tracks its live pose). No new
+KSA members in the weld math: `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` are subpart-aware in the
+game (`IsSubPart` branch composing through `PartParent` — the same properties purrTTY's in-world
+quads anchor to subparts with); that branch staying intact is the semantic to watch on future bumps.
+Discovery rides the read surface (`parts/<n>/subparts/<m>/`,
+[`ksa-read-surface.md#parts`](ksa-read-surface.md#parts)).
+
 ---
 
 ## Render quad cheat — `thug_life` (Frame phase) {#thug-life}
@@ -245,7 +259,7 @@ highest-churn KSA coupling** — the *write* path below is small (it only edits 
 coupling is the per-frame GPU draw + anchor math, which is **runtime coupling**, not a write command — see
 [`ksa-runtime-coupling.md#thug-life-patch`](ksa-runtime-coupling.md#thug-life-patch).
 
-| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4892 |
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4939 |
 |---|---|---|---|---|---|---|
 | `debug/thug_life/add` | `debug.thug_life_add` | `ThugLifeManager.Create` (resolves the anchor vehicle from `Token`) | `Universe.CurrentSystem.All.UnsafeAsList()`; `Vehicle.Parts.Parts`; `Part.InstanceId` (anchor pick; `0` = vehicle body frame); lazy GPU build (see runtime page) | `KSA/Vehicle.cs`, `KSA/Part.cs`, `KSA/SuperMeshRenderSystem.cs` | **High** (render) | ✅ |
 | `debug/thug_life/clear` | `debug.thug_life_clear` | `ThugLifeManager.Clear` (vessel-agnostic; tears down the render postfix + GPU when last) | (registry + GPU lifecycle — no KSA *write*) | — | Low | ✅ |
@@ -285,7 +299,7 @@ never applies. Drives **FMOD Core directly** via the public `GameAudio.System` (
 higher-level `SoundReference`/`MusicPlayList` API is asset-file-bound and useless for runtime bytes),
 but reuses the game's channel groups so the in-game Sfx/Music/UI volume sliders govern playback.
 
-| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4892 |
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 4939 |
 |---|---|---|---|---|---|---|
 | `audio/play` | `audio.play` | `AudioActuator.Play` (+ `CreateOrGetSound` on first play of a clip version) | `GameAudio.System` (public static `FmodSystem`); `Fmod.TryCreateSound(bytes, Mode.OpenMemory\|_2d\|CreateSample/CreateCompressedSample, in CreateSoundExInfo{Length}, out Sound)` — the game's own in-memory recipe (`GameAudio.CreateFmodSound`); `Fmod.TryPlaySound(sound, group, paused:true, out Channel)`; `GameAudio.GetChannelGroup(ChannelGroupType.{Sfx,Music,Ui})`; `Channel.TrySet{Position,Mode,LoopCount,LoopPoints,Volume,Pan,Pitch,Paused}`; `Sound.TryGetLength` | `KSA/GameAudio.cs`, `KSA/ChannelGroupType.cs`, `Brutal.FmodApi/Fmod.cs`, `Brutal.FmodApi/Mode.cs` | Low (FMOD Core P/Invoke surface is upstream-stable; `GameAudio.System`/`GetChannelGroup` are plain public statics) | ✅ |
 | `audio/set` | `audio.set` | `AudioActuator.Set` | `Channel.TrySet{Volume,Pan,Pitch,Paused,Position}` | `Brutal.FmodApi/Fmod.cs` | Low | ✅ |
@@ -352,6 +366,60 @@ anchors (the two here + `VesselReader.SampleDocking`) were re-verified to `Verif
   see the docking section above).
 - **Lights / animations / decouplers / RCS / engines / flight computer / teleport / refills** — all
   members compiled clean and none appear in the changelog with an API-affecting change.
+
+---
+
+## ✅ 4939 write-surface findings (playbook pass 2026-07-16) {#4939-findings}
+
+Full pass `2026.7.5.4892` → `2026.7.6.4939` (build forced non-incremental + tests green; changelog
+gapless for the first time — revs 4893–4939 all logged, diff taken `7cf5c0a..2423a02` inside the
+assemblies checkout). **Every bound write member, every reflection accessor, and every Harmony hook
+target is UNCHANGED** — no code change required. Highlights:
+
+- **Rev 4914 control-module lockout is UI-only — `/sim` writes are unaffected but now *diverge* from the
+  stock UI.** The pre-existing `ControlsLockout` struct (the flight-computer lockout) now also gates the
+  **staging key**, the part-window engine/thruster **Active checkboxes**, and the **Decouple menu item**
+  on vehicles without a control module. The gate lives in `Vehicle`'s key-input handler and the part
+  windows; the module-level entry points gatOS binds — `SequenceList.ActivateNextSequence`,
+  `EngineController.SetIsActive(Vehicle,bool)`, `ThrusterController.SetIsActive`,
+  `Decoupler.SetIsActive(Vehicle,true)`, `Vehicle.SetEnum(MainIgnite/MainShutdown)` — carry **no** new
+  gate (`EngineController.cs`/`Decoupler.cs`/`ThrusterController.cs` untouched by the diff). So `/sim`
+  writes still actuate a control-less vessel where the stock UI now refuses — the same divergence that
+  has always existed for the FC setpoints (which KSA runtime-gates on `IsControllable`, see ² above)
+  extended to the rest of the stock UI. gatOS's authority gate (active-vessel, G-D1) is orthogonal and
+  unchanged. Flagged for a live confirm + kept as documented behavior: `/sim` commands any addressed
+  vessel modulo `all_vessels`, module-method semantics permitting.
+- **Reflection accessors re-verified (static)**: `Vehicle._manualControlInputs` present
+  (`Vehicle.cs:232`, `ManualControlInputs.cs` untouched — throttle + translate paths intact); the
+  light-template clone path untouched (`LightModule.cs` not in the changed set; `PartTemplate.cs` churn
+  is symmetry groups + a volume tooltip, zero light references); KittenEva avatar-scale chain untouched
+  (no EVA file in the changed set). Live `/sim/status/accessors` check still advised.
+- **Harmony hook targets intact**: `Universe.ExecuteNextVehicleSolvers(double, SimStep)`
+  (`Universe.cs:1660` — the whole `Universe.cs` diff is log-line renumbering);
+  `Program.DrawProgramMenusHook()` (`Program.cs:3453`); `Program.RenderGame` interior gained
+  volumetric-plume-trail + `GizmosRenderer` calls but its **tail is byte-identical** (the final
+  `commandBuffer2.End()` and the preceding transitions/composite) — the display transpiler's
+  final-`End()` injection site *and* its image-layout assumption hold;
+  `SuperMeshRenderSystem.RenderMainPass(CommandBuffer)` (`:329`, file untouched);
+  `Vehicle.GetWorldMatrix(Camera)` / `Vehicle.UpdateRenderData(Viewport,int)` untouched (the
+  `gatos.always_render` reproduced-body prefixes stay byte-accurate); `PartModel.Instances`/ctor
+  untouched (`gatos.iva` — the `PartModelModule.cs` churn is one fuel-flow highlight bit);
+  `JobSystems.VehicleSolvers` untouched.
+- **Solver-phase rationale unchanged**: `FlightComputer.cs`/`VehicleUpdateData.cs` untouched — the FC
+  snapshot/restore window is intact, Solver phase stays mandatory. `VehicleUpdateTask.cs` changes are
+  additive (animating vehicles forced off-rails; `Tank.UpdateTransfers` in the module update).
+- **thug_life render set re-verified (static)**: `UnlitMeshVert`/`UnlitMeshFrag` keys and the
+  `UnlitMesh.{vert,frag}` assets unchanged (the `DefaultAssets.xml` churn is particle/trail/clutter
+  shader keys); `Program.OffScreenPass`/`SampleCount` unchanged; the new screenspace-particle +
+  volumetric-trail passes are mid-`RenderGame` compute/composite work that doesn't alter the main-pass
+  render-pass the quad draws in; `RenderCore.Mesh/SimpleVkMeshAtlas`'s bounding-sphere-radius fix
+  affects game-mesh culling only (the quad builds its own buffers). Live draw check still mandatory —
+  render-pass compatibility is only provable in-game.
+- **Behavior notes (game-side, inherited automatically)**: `animation.goal` writes now have real
+  physical effect — colliders follow the animation and the vehicle stays off-rails while animating
+  (rev 4930; landing legs work). Refill cheats (`Vehicle.RefillConsumables`, `Battery.Refill`)
+  untouched; what refill fills continues to follow tank affinity/assignment, now including the
+  propellant-use-disabled state (a disabled tank still fills but won't feed engines).
 
 ---
 
