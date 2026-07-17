@@ -104,10 +104,11 @@ impl Widget for Button<'_> {
             );
         }
 
-        // Label, centered. Selected/Active mark it with ‣ … ‣ and bold.
+        // Label, centered. Selected/Active frame it with » … « (Latin-1 guillemets — near-universal
+        // font coverage) and bold.
         let selected = self.state != BtnState::Normal;
         let label = if selected && area.width as usize >= self.label.chars().count() + 4 {
-            format!("\u{2023} {} \u{2023}", self.label)
+            format!("\u{00bb} {} \u{00ab}", self.label)
         } else {
             self.label.to_string()
         };
