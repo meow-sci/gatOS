@@ -1,0 +1,37 @@
+# pressme-rs button panel.
+#
+# One [[button]] table per button, top-to-bottom in file order. Each has:
+#   label    text shown centered on the button.
+#   color    the button's fill color as a hex string — "#rrggbb", "#rgb", or the bare digits.
+#   command  the shell command to run when the button is pressed (sh -c on unix, cmd /C on Windows).
+#            It runs to completion off the UI thread; the first line of its output (or its exit code
+#            on failure) lands on the button as a result line.
+#
+# Buttons stack full-width and the terminal height splits evenly across them. In the gatOS guest the
+# commands are ordinary Alpine userland — including anything against the /sim mount, so this doubles
+# as a one-key control board (throttle, stage, lights, a canned burn script, …).
+
+[[button]]
+label = "Full throttle"
+color = "#2ea043"
+command = "echo 1 > /sim/vessels/active/ctl/throttle && echo throttle up"
+
+[[button]]
+label = "Cut throttle"
+color = "#d29922"
+command = "echo 0 > /sim/vessels/active/ctl/throttle && echo throttle cut"
+
+[[button]]
+label = "Stage"
+color = "#1f6feb"
+command = "echo 1 > /sim/vessels/active/ctl/stage && echo staged"
+
+[[button]]
+label = "Toggle lights"
+color = "#8957e5"
+command = "echo toggle > /sim/vessels/active/ctl/lights && echo lights toggled"
+
+[[button]]
+label = "Abort — kill engines"
+color = "#f85149"
+command = "echo 0 > /sim/vessels/active/ctl/engine && echo ENGINES OFF"

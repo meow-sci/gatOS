@@ -1,0 +1,26 @@
+[package]
+name = "pressme-rs"
+version = "0.1.0"
+edition = "2021"
+description = "A ratatui panel of full-width, hex-colored buttons that each run a shell command when pressed"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "pressme-rs"
+path = "src/main.rs"
+
+[dependencies]
+# ratatui re-exports crossterm, so we use ratatui::crossterm for events + backend — the event and
+# backend crate versions then can never drift.
+ratatui = "0.29"
+# The button config file is TOML (an array of [[button]] tables). serde derives the parse; unlike
+# the sibling the90s' hand-rolled YAML subset, an array-of-tables is fiddly to parse by hand, so we
+# lean on the toml crate — the same format the mod's own gatos.toml uses.
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
