@@ -88,10 +88,11 @@ lifecycle, tied to the VM run). Cadence `serial_interval_ms`.
 (alloc-free timing accumulator for the status window). No game dependency by rule.
 
 ## Guest image — `guest/`
-Alpine build/fetch pipeline (`build-image.sh`, `fetch-guest.{sh,ps1}`, `GUEST_VERSION`=14). Overlay
+Alpine build/fetch pipeline (`build-image.sh`, `fetch-guest.{sh,ps1}`, `GUEST_VERSION`=17). Overlay
 supervisors in `rootfs-overlay/sbin/` (`init-gatos`, `sim-mount`, `mnt-mount`, `qga-gatos`) read
 `gatos.*port=` off the kernel cmdline; `usr/local/bin/tail` is the busybox-`tail -f` poll-mode shim that
-makes `tail -f /sim/...` work over v9fs (guest v14 fix). `manifest.toml` is the host boot contract. No
+makes `tail -f /sim/...` work over v9fs (guest v14 fix); `init-gatos` mounts cgroup2 with controllers
+delegated so container runtimes (podman) run (guest v17). `manifest.toml` is the host boot contract. No
 custom guest binaries touch KSA — the guest never knows KSA exists; it sees a filesystem.
 
 ## TypeScript SDK — `examples/sdk-ts/`

@@ -37,6 +37,11 @@ setup-alpine, no openrc; busybox init runs the hand-written `guest/rootfs-overla
   once (**guest v10+**)
 - `init-gatos`: best-effort `resize2fs /dev/vda` so root ext4 grows online to fill a host-resized
   overlay (`resize2fs` ships via `e2fsprogs-extra`, **guest v9+**)
+- `init-gatos`: mounts the unified cgroup2 hierarchy at `/sys/fs/cgroup` (`nsdelegate`) and
+  delegates every controller via `cgroup.subtree_control` — what OpenRC's cgroups service does on
+  stock Alpine; without it container runtimes fail (`crun: invalid file system type on
+  /sys/fs/cgroup`). Makes in-guest `apk add podman` work out of the box (**guest v17+**;
+  `GuestCgroupIntegrationTests` asserts the contract)
 
 The base stays small (`DISK_SIZE_MB`, 1.5 GiB); the host grows the per-save overlay to
 `[disk_size_gb]` (default 8 GiB). Artifacts in `guest/out/` (never committed): partitionless-ext4

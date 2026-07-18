@@ -66,7 +66,7 @@ welds/IVA/parts, thug_life, per-vessel scale/always_render, debug impulse, `ctl/
 |---|---|---|
 | M0 — scaffold | DONE | `gatos.slnx`, `Directory.Build.props`, `GatOsPaths` |
 | M1 — spike | DONE | `spike/NOTES.md` (**required reading** before M3/M4/M7/M8) |
-| M2 — guest image | DONE | `guest/build-image.sh`, `guest/fetch-guest.*`, `GUEST_VERSION`=15 |
+| M2 — guest image | DONE | `guest/build-image.sh`, `guest/fetch-guest.*`, `GUEST_VERSION`=17 |
 | M3 — gatOS.Vm | DONE | `VmHost.cs`, `QemuCommandBuilder`, `DiskManager`, `PortAllocator` |
 | M4 — gatOS.Ssh | DONE | `SshShellSession.cs`, `VmConnectionBroker.cs` |
 | M5 — purrTTY upstream | DONE (tip release cut) | purrtty commits `9fb5e13`/`a56966a` |
@@ -94,7 +94,11 @@ PATH and broke `tail -f` on the 9p `/sim` mount (GNU `tail -f` follows via inoti
 never delivers for the host-side appends that grow `stream`/`events`/`alarm`) — failing
 `SimMountIntegrationTests`; fixed in guest **v14** by the `usr/local/bin/tail` poll-mode shim
 (verified against a live mount, Windows/TCG, 2026-06-20); guest **v15** raises the /sim + /mnt mount
-msize to 524288 to match the 9p server's raised ceiling (plans/PERF_IMPROVEMENT_PLAN.md P4). **M10 (persistence & savegame) is next.**
+msize to 524288 to match the 9p server's raised ceiling (plans/PERF_IMPROVEMENT_PLAN.md P4); guest
+**v16** adds `procps-ng`; guest **v17** makes `init-gatos` mount the unified cgroup2 hierarchy with
+all controllers delegated (OpenRC's cgroups job on stock Alpine — busybox init must do it by hand),
+so container runtimes work: in-guest `apk add podman` runs rootful containers out of the box
+(`GuestCgroupIntegrationTests` asserts the mount + delegation). **M10 (persistence & savegame) is next.**
 
 > **`spike/NOTES.md` is REQUIRED READING before any M3/M4/M7/M8 work** — notably: `i_size`
 > must be truthful on ≥6.11 kernels; two distinct file models exist (growing-log `tail -f` vs

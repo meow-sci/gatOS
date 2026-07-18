@@ -13,6 +13,20 @@ mount -t tmpfs -o nodev,nosuid tmpfs /dev/shm 2>/dev/null
 mount -t tmpfs tmpfs /run 2>/dev/null
 mount -t tmpfs tmpfs /tmp 2>/dev/null
 
+# cgroup v2 (unified) — stock Alpine mounts this via OpenRC's cgroups service; with busybox
+# init it is our job. Container runtimes (podman/crun) need the hierarchy mounted at
+# /sys/fs/cgroup AND the controllers delegated: a controller absent from the root's
+# subtree_control is invisible to every child cgroup, and with no mount at all crun dies
+# with "invalid file system type on `/sys/fs/cgroup`". The root cgroup is exempt from the
+# no-internal-process rule, so delegating while every process still lives in the root group
+# is legal. One write per controller: a single unavailable controller must not sink the rest.
+mount -t cgroup2 -o nsdelegate cgroup2 /sys/fs/cgroup 2>/dev/null
+if [ -r /sys/fs/cgroup/cgroup.controllers ]; then
+    for c in $(cat /sys/fs/cgroup/cgroup.controllers); do
+        echo "+$c" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null
+    done
+fi
+
 mount -o remount,rw / 2>/dev/null
 
 # Grow the root filesystem to fill the block device. The host sizes the per-save overlay from
