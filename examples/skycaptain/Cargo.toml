@@ -1,0 +1,29 @@
+[package]
+name = "skycaptain"
+version = "0.1.0"
+edition = "2021"
+description = "ratatui skywriting autopilot — draws text in the sky with the engine plume trail, over the gatOS /sim filesystem"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "skycaptain"
+path = "src/main.rs"
+
+[dependencies]
+# ratatui re-exports crossterm, so we use ratatui::crossterm for events + backend — the event and
+# backend crate versions then can never drift (the convention across the sibling Rust examples).
+ratatui = "0.29"
+# Tiny blocking HTTP client for the optional --url (HTTP /v1/fs) source; no TLS feature — the gatOS
+# API is plain http:// over slirp. The default source reads the /sim mount directly with std::fs.
+ureq = { version = "2", default-features = false }
+# Telemetry parsing: /sim/vessels/active/telemetry is one JSON object (Formats.VesselTelemetry).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# No nalgebra here (unlike land-o-matic, which needs it for the SOCP solver): the skywriting math is
+# plain 3-vector algebra, and a hand-rolled Vec3 keeps the in-guest `apk add cargo rust` build fast.
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
