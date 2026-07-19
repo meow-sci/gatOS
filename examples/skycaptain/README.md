@@ -103,10 +103,12 @@ widens its thrust-tilt allowance to keep useful lateral authority.
 --cheat-refill    keep the tank topped up with debug refill_fuel (recommended)
 ```
 
-Warp control uses `debug/time/warp` (the gatOS debug namespace). With `debug_namespace=false` the
-program still flies — at whatever warp you set by hand; all its timing is in sim time, so any warp
-is correct, just not automatic. KSA allows engine starts up to 30× compression; the defaults stay
-well under.
+Warp control uses `debug/time/warp` (the gatOS debug namespace) and is **cooperative**: each phase
+states its preference and retries until telemetry confirms it took — but once confirmed, turning
+the warp dial yourself is respected (the program adopts your factor instead of fighting you; its
+next phase transition states its preference again). With `debug_namespace=false` the program still
+flies at whatever warp you set by hand — all its timing is in sim time, so any warp is correct,
+just not automatic. KSA allows engine starts up to 30× compression; the defaults stay well under.
 
 A mid-text `.` `,` `!` `?` `:` has a dot the ballistics genuinely cannot relaunch from (a dot's
 "ramp" is meters long) — the planner refuses and says so. End the message with it, or pass

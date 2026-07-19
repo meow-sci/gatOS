@@ -144,9 +144,13 @@ pub struct Flight {
     rescue_stable_since_ut: Option<f64>,
     /// Last `refill_fuel` cheat write, ut.
     last_refill_ut: f64,
-    /// Wall time of the last warp write — the wanted warp is re-asserted every few seconds in case
-    /// the player (or a previous run) changed it under us.
+    /// Wall time of the last warp write attempt (for the retry pacing).
     last_warp_assert: Option<Instant>,
+    /// Telemetry has matched the desired warp since it was last set. Until confirmed, the write is
+    /// retried (a transient failure must not strand the flight at the wrong warp); once confirmed,
+    /// any later change is the PILOT's and is adopted, not fought.
+    warp_confirmed: bool,
+    warp_attempts: u32,
     /// (ut, along-ramp speed) of the previous paint tick + smoothed measured ramp acceleration —
     /// the launch predictor trusts measurement over the plan.
     ramp_prev: Option<(f64, f64)>,
@@ -163,9 +167,10 @@ pub struct Flight {
     trim_b: f64,
     last_ut: Option<f64>,
     dt_avg: f64,
-    /// The last warp factor we wrote — None until the first write, so the first `want_warp` always
-    /// fires even if the game happens to sit at that factor (a previous run may have left any warp).
-    warp_written: Option<f64>,
+    /// The warp factor this phase wants — None until the first request, so the first `want_warp`
+    /// always fires even if the game happens to sit at that factor (a previous run may have left
+    /// any warp behind).
+    warp_desired: Option<f64>,
     warp_unavailable: bool,
     write_fail_streak: u32,
     last_seq: Option<u64>,
@@ -326,6 +331,8 @@ impl Flight {
             rescue_stable_since_ut: None,
             last_refill_ut: 0.0,
             last_warp_assert: None,
+            warp_confirmed: false,
+            warp_attempts: 0,
             ramp_prev: None,
             ramp_accel_est: None,
             capture_tilt: false,
@@ -335,7 +342,7 @@ impl Flight {
             trim_b: 0.0,
             last_ut: None,
             dt_avg: 0.3,
-            warp_written: None,
+            warp_desired: None,
             warp_unavailable: false,
             write_fail_streak: 0,
             last_seq: None,
@@ -442,20 +449,29 @@ impl Flight {
         }
         self.last_ut = Some(tel.ut);
 
-        // Re-assert the wanted warp every few seconds: the player (or a previous run) can change
-        // the sim speed under us, and closed-loop phases are only sane at their intended warp.
-        if let Some(want) = self.warp_written {
-            let drifted = tel.warp > 0.0 && (tel.warp - want).abs() / want.max(0.1) > 0.25;
-            let due = self
-                .last_warp_assert
-                .map(|t| t.elapsed().as_secs_f64() > 4.0)
-                .unwrap_or(true);
-            if drifted
-                && due
-                && !self.warp_unavailable
-                && src.write("debug/time/warp", &format!("{want}")).is_ok()
-            {
-                self.last_warp_assert = Some(Instant::now());
+        // Warp maintenance. Until telemetry confirms the desired factor, retry the write every
+        // couple of seconds (a transiently failed one-shot must not strand the flight at the wrong
+        // warp — that's how a run got stuck writing at 1×). Once confirmed, a later change is the
+        // PILOT turning the dial: adopt it instead of fighting them; our next phase transition
+        // will state its own preference again (which they can override again).
+        if !self.warp_unavailable && tel.warp >= 0.1 {
+            if let Some(want) = self.warp_desired {
+                let matches = (tel.warp - want).abs() / want.max(0.1) < 0.25;
+                if matches {
+                    self.warp_confirmed = true;
+                } else if self.warp_confirmed {
+                    self.warp_desired = Some(tel.warp); // pilot override — respected
+                } else {
+                    let due = self
+                        .last_warp_assert
+                        .map(|t| t.elapsed().as_secs_f64() > 2.0)
+                        .unwrap_or(true);
+                    if due && self.warp_attempts < 6 {
+                        self.try_warp_write(src);
+                    } else if self.warp_attempts >= 6 {
+                        self.warp_confirmed = true; // stop insisting; fly at whatever it is
+                    }
+                }
             }
         }
 
@@ -797,7 +813,7 @@ impl Flight {
         if remaining > fine_window {
             self.want_warp(src, self.cfg.warp_hop);
             // Chunked alarm: ~0.8 s of wall time per chunk keeps the pilot's abort responsive.
-            let chunk = 0.8 * self.warp_written.unwrap_or(1.0).max(1.0);
+            let chunk = 0.8 * self.warp_desired.unwrap_or(1.0).max(1.0);
             let _ = src.wait_until((tel.ut + chunk).min(self.ignite_ut - fine_window * 0.9));
             self.last_ut = None;
         } else {
@@ -1059,24 +1075,40 @@ impl Flight {
         0.5 * self.cfg.warp_fine.max(1.0) / 60.0
     }
 
+    /// State a phase's warp preference. The write is attempted immediately and then retried by the
+    /// maintenance loop in [`Flight::step`] until telemetry confirms it (or the pilot overrides).
     fn want_warp(&mut self, src: &dyn Source, factor: f64) {
-        if self.warp_unavailable
-            || self
-                .warp_written
-                .map(|w| (w - factor).abs() < 0.01)
-                .unwrap_or(false)
-        {
+        if self.warp_unavailable {
             return;
         }
-        match src.write("debug/time/warp", &format!("{factor}")) {
+        let changed = self
+            .warp_desired
+            .map(|w| (w - factor).abs() > 0.01)
+            .unwrap_or(true);
+        if changed {
+            self.warp_desired = Some(factor);
+            self.warp_confirmed = false;
+            self.warp_attempts = 0;
+            self.try_warp_write(src);
+        }
+    }
+
+    fn try_warp_write(&mut self, src: &dyn Source) {
+        let Some(want) = self.warp_desired else {
+            return;
+        };
+        match src.write("debug/time/warp", &format!("{want}")) {
             Ok(()) => {
-                self.warp_written = Some(factor);
+                self.warp_attempts += 1;
                 self.last_warp_assert = Some(Instant::now());
             }
-            Err(e) => {
-                if e.errno == "EACCES" || e.errno == "ENOENT" {
-                    self.warp_unavailable = true; // debug namespace off — fly at whatever warp is set
-                }
+            Err(e) if e.errno == "EACCES" || e.errno == "ENOENT" => {
+                self.warp_unavailable = true; // debug namespace off — fly at whatever warp is set
+            }
+            Err(_) => {
+                // Transient (game paused/loading?): count it and let the maintenance loop retry.
+                self.warp_attempts += 1;
+                self.last_warp_assert = Some(Instant::now());
             }
         }
     }
@@ -1142,7 +1174,7 @@ impl Flight {
             eta_letter,
             eta_total: (self.plan.total_time - now_plan).max(0.0),
             warp: tel.map(|t| t.warp).unwrap_or(1.0),
-            warp_wanted: self.warp_written.unwrap_or(1.0),
+            warp_wanted: self.warp_desired.unwrap_or(1.0),
             pos_err: self.last_err,
             speed: tel.map(|t| t.vel.surf).unwrap_or(0.0),
             throttle: self.last_throttle,
