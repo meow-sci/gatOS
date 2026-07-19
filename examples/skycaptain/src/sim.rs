@@ -230,33 +230,47 @@ pub struct EngineAgg {
 }
 
 pub fn read_engines(src: &dyn Source) -> Option<EngineAgg> {
-    let mut total_thrust = 0.0;
-    let mut total_mdot = 0.0; // Σ thrust_i/Isp_i  (the g₀ in mdot cancels in the combined Isp)
-    let mut throttle_min = 0.0f64;
-    let mut count = 0;
-    for name in src.list("vessels/active/engines") {
-        let base = format!("vessels/active/engines/{name}");
-        if let (Some(t), Some(isp)) = (
-            read_scalar(src, &format!("{base}/vac_thrust")),
-            read_scalar(src, &format!("{base}/isp")),
-        ) {
-            if t > 0.0 && isp > 0.0 {
-                total_thrust += t;
-                total_mdot += t / isp;
-                throttle_min = throttle_min
-                    .max(read_scalar(src, &format!("{base}/min_throttle")).unwrap_or(0.0));
-                count += 1;
+    // Only ACTIVE engines burn when `ctl/engine` lights the vessel — counting disabled ones
+    // (spent stages, an unused ascent engine) would overstate thrust and every throttle command
+    // would come out low. If no engine reports active, fall back to all of them (pre-ignition
+    // states can be ambiguous).
+    let agg = |active_only: bool| -> Option<EngineAgg> {
+        let mut total_thrust = 0.0;
+        let mut total_mdot = 0.0; // Σ thrust_i/Isp_i  (the g₀ in mdot cancels in the combined Isp)
+        let mut throttle_min = 0.0f64;
+        let mut count = 0;
+        for name in src.list("vessels/active/engines") {
+            let base = format!("vessels/active/engines/{name}");
+            if active_only
+                && read_scalar(src, &format!("{base}/active"))
+                    .map(|v| v < 0.5)
+                    .unwrap_or(false)
+            {
+                continue;
+            }
+            if let (Some(t), Some(isp)) = (
+                read_scalar(src, &format!("{base}/vac_thrust")),
+                read_scalar(src, &format!("{base}/isp")),
+            ) {
+                if t > 0.0 && isp > 0.0 {
+                    total_thrust += t;
+                    total_mdot += t / isp;
+                    throttle_min = throttle_min
+                        .max(read_scalar(src, &format!("{base}/min_throttle")).unwrap_or(0.0));
+                    count += 1;
+                }
             }
         }
-    }
-    if count == 0 || total_mdot <= 0.0 {
-        return None;
-    }
-    Some(EngineAgg {
-        thrust_max: total_thrust,
-        isp: total_thrust / total_mdot,
-        throttle_min,
-    })
+        if count == 0 || total_mdot <= 0.0 {
+            return None;
+        }
+        Some(EngineAgg {
+            thrust_max: total_thrust,
+            isp: total_thrust / total_mdot,
+            throttle_min,
+        })
+    };
+    agg(true).or_else(|| agg(false))
 }
 
 /// Parses the leading float of a `/sim` scalar (`G9` doubles). `"1"`, `"0.42"`, `"-0"` all parse.

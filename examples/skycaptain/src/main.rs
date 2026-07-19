@@ -75,7 +75,10 @@ fn parse_args() -> Result<Config, String> {
             "--warp-hop" => cfg.cfg.warp_hop = parse_f(&val("--warp-hop")?, 1.0, 30.0)?,
             "--warp-fine" => cfg.cfg.warp_fine = parse_f(&val("--warp-fine")?, 1.0, 10.0)?,
             "--floor" => cfg.cfg.floor_radar = parse_f(&val("--floor")?, 0.0, 100_000.0)?,
+            "--slew" => cfg.env.slew_dps = parse_f(&val("--slew")?, 1.0, 45.0)?,
+            "--tilt" => cfg.env.tilt_max_deg = parse_f(&val("--tilt")?, 5.0, 35.0)?,
             "--allow-impulse" => cfg.cfg.allow_impulse = true,
+            "--cheat-refill" => cfg.cfg.cheat_refill = true,
             "-h" | "--help" => {
                 println!("{HELP}");
                 std::process::exit(0);
@@ -120,11 +123,20 @@ time compression (needs the gatOS debug namespace):
   --warp-hop X      warp while coasting between glyphs [10]
   --warp-fine X     warp inside cut/relight windows    [2]
 
+tuning (match your craft's flight computer):
+  --slew DPS        FC attitude slew rate assumption   [5]
+  --tilt DEG        max thrust tilt while painting     [12; auto-raised on low-g bodies]
+
 safety / cheats:
-  --floor M         abort under this radar altitude    [250]
+  --floor M         rescue under this radar altitude   [250]
   --allow-impulse   let unsolvable hops (mid-text dots) use debug impulse
+  --cheat-refill    keep the tank topped up with debug refill_fuel (also
+                    steadies the thrust model — recommended for long text)
 
   --interval MS     worker poll cadence                [120]
+
+Aborts and completion both end in a RESCUE: warp 1x, engine on, brake to a
+hover, then the vehicle is parked on the game FC's own nose-up hover hold.
 ";
 
 type Tui = Terminal<CrosstermBackend<io::Stdout>>;
@@ -291,7 +303,8 @@ fn worker(
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 if let Some(f) = flying.as_mut() {
-                    f.abort(src, "ui closed");
+                    // Parting act: park the vehicle on the game FC's hover hold (engine ON).
+                    f.hard_abort(src, "ui closed");
                 }
                 return;
             }

@@ -242,8 +242,11 @@ fn render_flight(f: &mut Frame, area: Rect, app: &App) {
         )));
     } else if matches!(app.end_state, Some(Ok(()))) {
         lines.push(Line::from(Span::styled(
-            " \u{2713} written across the sky \u{b7} vehicle released (it is falling \u{2014} fly it!) ",
-            Style::default().fg(Color::Black).bg(OK).add_modifier(Modifier::BOLD),
+            " \u{2713} written across the sky \u{b7} vehicle parked on the FC's hover hold \u{2014} it's yours ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(OK)
+                .add_modifier(Modifier::BOLD),
         )));
     }
     for l in app.log.iter().rev().take(2) {

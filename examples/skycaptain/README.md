@@ -66,9 +66,28 @@ default to ~900 m tall.
 - **Keys**: type/Backspace/Enter on compose; `a` abort, `q` abort+quit while flying; `n` new
   message when done.
 
-When the last stroke ends the engine cuts, warp returns to 1×, and the attitude is released to
-manual — **the vehicle is then falling** (a hovering skywriter has no way to park). Take the stick,
-or hand it to `land-o-matic`.
+**Every ending is a rescue.** Completion, any failure, and the pilot's `a` all funnel into the same
+sequence: warp to 1×, engine ON, brake to a hover, then park the vehicle on the game FC's *own*
+persistent hover hold (nose-up attitude target + hover throttle — onboard setpoints KSA keeps
+flying after the program stops talking). You always get a hovering craft back, never a falling one.
+The arm phase likewise forces 1× warp before trying to capture the initial hover (a leftover 10×
+from an earlier run once porpoised a rocket into the Martian regolith).
+
+## Picking a craft (matters more than any flag)
+
+The pen is the engine, so **the engine must be lit to draw — and KSA floors a lit engine's
+throttle at its `min_throttle` (often 10–20%)**. That floor sets a hard rule:
+
+> **min-throttle thrust must stay well under local gravity**, or the vehicle cannot *descend*
+> while painting and every down-stroke is physically impossible. The pre-flight refuses with the
+> numbers when this bites.
+
+Since hover throttle is `1/TWR`, the sweet spot is **TWR ≈ 2–5 on the body you're writing over**
+with a deep-throttling engine. Very high TWR is a trap, and low gravity multiplies TWR: an
+Earth-TWR-2 craft is already TWR ~5.4 on Mars. Small and light is good (agile attitude); pair it
+with a small tank and `--cheat-refill` — the debug refill keeps the tank topped up in flight, which
+also freezes the mass so the thrust model stays exact. On low-g bodies the autopilot automatically
+widens its thrust-tilt allowance to keep useful lateral authority.
 
 ## Options
 
@@ -76,10 +95,12 @@ or hand it to `land-o-matic`.
 --text MSG        pre-fill the message          --height M     letter cap height [900]
 --url BASE        HTTP /v1 mirror               --speed M/S    draw speed        [70]
 --root DIR        fixture /sim dir              --heading DEG  text compass dir  [90 = east]
---simulate        built-in physics sandbox      --floor M      abort radar floor [250]
+--simulate        built-in physics sandbox      --floor M      rescue radar floor [250]
 --warp-draw X     warp while painting [4]       --interval MS  poll cadence      [120]
---warp-hop X      warp while coasting [10]      --allow-impulse  let unsolvable hops (mid-text
---warp-fine X     warp at cut/relight [2]                        dots) use the debug impulse cheat
+--warp-hop X      warp while coasting [10]      --slew DPS     FC slew assumption [5]
+--warp-fine X     warp at cut/relight [2]       --tilt DEG     max paint tilt     [12]
+--allow-impulse   let unsolvable hops (mid-text dots) use the debug impulse cheat
+--cheat-refill    keep the tank topped up with debug refill_fuel (recommended)
 ```
 
 Warp control uses `debug/time/warp` (the gatOS debug namespace). With `debug_namespace=false` the
@@ -97,7 +118,10 @@ The median ink lands well inside the plume bloom, but corners and hop entries ca
 and hooks — brake overshoot at a slewing nose, crossrange kill after a long arc. It reads as
 hand-lettered brushwork, which is half the charm. Writing is slow at 1×: roughly 1–2 minutes of
 game time per letter (that's what the warp automation is for). Fuel: hovering costs ~`m·g/(Isp·g₀)`
-per second — the compose screen shows the tank, and low propellant aborts cleanly.
+per second — the compose screen shows the tank, low propellant triggers a rescue (or a refill, with
+the cheat on). The give-up logic is deliberately patient: it only rescues out of a letter after the
+tracking error has exceeded 2.5 km for 45 s *without improving* — a vehicle clawing its way back
+gets to keep trying.
 
 ## Host-side development
 

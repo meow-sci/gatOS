@@ -100,6 +100,44 @@ impl SimWorld {
         }
     }
 
+    /// The same vehicle ~10 km over Mars: low gravity (~3.7 m/s²) makes the wet TWR ~5.5 and the
+    /// thin CO₂ air still emits trail — the regime that shook out the low-g bugs.
+    pub fn new_mars(clock: SimClock) -> SimWorld {
+        let w = SimWorld::new(clock);
+        {
+            let mut s = w.state.lock().unwrap();
+            s.mu = 4.282837e13;
+            s.radius = 3_389_500.0;
+            s.rot = 7.088218e-5;
+            s.atmo_height = 60_000.0;
+            s.atmo_scale_h = 11_100.0;
+            s.atmo_rho0 = 0.020;
+            let pos = Vec3::new(s.radius + 10_000.0, 0.0, 0.0);
+            s.pos_cci = pos;
+            s.vel_cci = Vec3::new(0.0, 0.0, s.rot).cross(&pos);
+            s.thrust_dir = pos.normalize();
+            s.target_dir = pos.normalize();
+        }
+        w
+    }
+
+    /// Override the engine's deep-throttle floor (for the "can't descend" refusal test).
+    pub fn set_min_throttle(&self, v: f64) {
+        self.state.lock().unwrap().min_throttle = v;
+    }
+
+    /// Current propellant mass, kg.
+    pub fn prop(&self) -> f64 {
+        self.state.lock().unwrap().mass_prop
+    }
+
+    /// Surface-relative speed + engine state — the post-flight "did we leave it hovering?" check.
+    pub fn hover_state(&self) -> (f64, bool, f64) {
+        let s = self.state.lock().unwrap();
+        let v = frames::surface_velocity_cci(s.pos_cci, s.vel_cci, s.rot).norm();
+        (v, s.engine_on, s.throttle)
+    }
+
     /// A second handle onto the same world (tests keep one to inspect the trace after the flight).
     pub fn handle(&self) -> SimWorld {
         SimWorld {
@@ -256,6 +294,7 @@ impl Source for SimWorld {
             "vessels/active/engines/0/vac_thrust" => Ok(format!("{}", s.vac_thrust)),
             "vessels/active/engines/0/isp" => Ok(format!("{}", s.isp)),
             "vessels/active/engines/0/min_throttle" => Ok(format!("{}", s.min_throttle)),
+            "vessels/active/engines/0/active" => Ok("1".into()),
             _ => Err("ENOENT".into()),
         }
     }
@@ -306,6 +345,10 @@ impl Source for SimWorld {
                 }
                 let dv = Vec3::new(nums[0], nums[1], nums[2]);
                 s.vel_cci += dv;
+                Ok(())
+            }
+            p if p.starts_with("debug/vessels/") && p.ends_with("/refill_fuel") => {
+                s.mass_prop = 20_000.0_f64.min(s.mass_dry * 4.0);
                 Ok(())
             }
             "time/alarm" => Ok(()), // handled by wait_until

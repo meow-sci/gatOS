@@ -3,11 +3,12 @@
 //! Phase machine:
 //!
 //! ```text
-//! Arm ──(hover achieved; canvas frozen at the hover point, pen already lit)──▶ Paint
+//! Arm ──(warp forced to 1×; hover achieved; canvas frozen; pen already lit)──▶ Paint
 //! Paint ──(profile end; `time/alarm` cuts the engine at the exact ramp top)──▶ Coast
 //! Coast ──(ballistic; attitude pre-aimed; alarm relights at arrival)─────────▶ Paint …
-//! … last stroke ──(cut, warp 1, attitude released)───────────────────────────▶ Done
-//! any ──(stale telemetry / EACCES streak / floor / fuel / pilot)─────────────▶ Abort
+//! … last stroke / any failure / pilot abort ─────────────────────────────────▶ Rescue
+//! Rescue ──(warp 1×, engine ON, brake to hover, then hand the game's own FC a
+//!           persistent hover hold — the vehicle NEVER falls engine-off)───────▶ Done / Abort
 //! ```
 //!
 //! Two disciplines matter everywhere:
@@ -43,7 +44,10 @@ pub struct FlightCfg {
     pub warp_fine: f64,
     /// Resolve `assist`-flagged hops with the `debug/…/impulse` cheat instead of refusing.
     pub allow_impulse: bool,
-    /// Abort if radar altitude falls below this, m.
+    /// Keep the tank topped up with `debug/…/refill_fuel` during the flight — removes the fuel
+    /// budget AND keeps the mass (and so the thrust model) constant.
+    pub cheat_refill: bool,
+    /// Rescue (brake to hover) if radar altitude falls below this, m.
     pub floor_radar: f64,
     /// Compass heading the text runs toward (0 = N, 90 = E).
     pub heading_deg: f64,
@@ -56,6 +60,7 @@ impl Default for FlightCfg {
             warp_hop: 10.0,
             warp_fine: 2.0,
             allow_impulse: false,
+            cheat_refill: false,
             floor_radar: 250.0,
             heading_deg: 90.0,
         }
@@ -73,6 +78,14 @@ pub enum Phase {
     /// Coasting hop `items[item]` (engine off), relight scheduled.
     Coast {
         item: usize,
+    },
+    /// Engine ON, warp 1×, braking to a hover — entered on completion AND on every failure.
+    /// Ends by writing the game FC a persistent hover hold, then Done/Abort. A skywriter released
+    /// engine-off is a lawn dart; this phase is why aborts stopped cratering vehicles.
+    Rescue {
+        reason: String,
+        /// True when this rescue ends a *successful* flight (→ Done, not Abort).
+        success: bool,
     },
     Done,
     Abort(String),
@@ -122,8 +135,18 @@ pub struct Flight {
     /// Smoothed reference-clock rate (1 = realtime, ~0.12 = crawling). Also scales the reference
     /// derivatives fed to the tracker.
     ref_rate: f64,
-    /// ut when tracking error first exceeded the lost-letterform bound.
+    /// ut when tracking error first exceeded the lost-letterform bound + the best (smallest) error
+    /// seen since — improvement resets the give-up clock.
     lost_since_ut: Option<f64>,
+    lost_best_err: f64,
+    /// Rescue bookkeeping (sim time).
+    rescue_start_ut: Option<f64>,
+    rescue_stable_since_ut: Option<f64>,
+    /// Last `refill_fuel` cheat write, ut.
+    last_refill_ut: f64,
+    /// Wall time of the last warp write — the wanted warp is re-asserted every few seconds in case
+    /// the player (or a previous run) changed it under us.
+    last_warp_assert: Option<Instant>,
     /// (ut, along-ramp speed) of the previous paint tick + smoothed measured ramp acceleration —
     /// the launch predictor trusts measurement over the plan.
     ramp_prev: Option<(f64, f64)>,
@@ -140,7 +163,9 @@ pub struct Flight {
     trim_b: f64,
     last_ut: Option<f64>,
     dt_avg: f64,
-    warp_written: f64,
+    /// The last warp factor we wrote — None until the first write, so the first `want_warp` always
+    /// fires even if the game happens to sit at that factor (a previous run may have left any warp).
+    warp_written: Option<f64>,
     warp_unavailable: bool,
     write_fail_streak: u32,
     last_seq: Option<u64>,
@@ -149,6 +174,8 @@ pub struct Flight {
     arm_start_ut: Option<f64>,
     arm_stable_since_ut: Option<f64>,
     hover_anchor: Option<Vec3>,
+    /// Local-up direction in CCI from the last telemetry (for the parting nose-up attitude).
+    last_up: Option<Vec3>,
     last_throttle: f64,
     last_pen: (f64, f64),
     last_ref: (f64, f64),
@@ -206,15 +233,34 @@ impl Flight {
             accel_min: engines.throttle_min * accel_max,
             ..template
         };
-        // Never plan more lateral authority than a 2×-margin hover leaves.
+        // The pen requires the engine LIT, and KSA floors a lit engine at `min_throttle` — if that
+        // floor thrust rivals local gravity, the vehicle physically cannot descend while painting.
+        // This bites high-TWR craft on low-g bodies (Mars!) hardest.
+        if env.accel_min >= 0.8 * g {
+            return Err(format!(
+                "engine can't throttle low enough to write here: minimum thrust is {:.2} g of {} \
+                 gravity ({:.0}% floor × TWR {twr:.1}) — descending strokes are impossible. \
+                 Deactivate some engines, or fly a craft with TWR 2–5 on this body and a deep-throttling engine",
+                env.accel_min / g,
+                tel.parent.as_deref().unwrap_or("local"),
+                engines.throttle_min * 100.0
+            ));
+        }
+        // Low-g bodies need a wider tilt to keep useful lateral authority (a = g·tanθ): floor it
+        // at ~2 m/s², then never plan more than a 2×-margin hover allows.
+        let lowg_floor = (2.0 / g).atan().to_degrees().min(30.0);
         env.tilt_max_deg = env
             .tilt_max_deg
+            .max(lowg_floor)
             .min(((twr - 1.05) / twr).asin().to_degrees().max(4.0));
-        if env.accel_min > 0.9 * g {
+        if env.accel_min > 0.6 * g {
             notes.push(format!(
-                "deep-throttle floor {:.2} g is close to hover — strokes may over-accelerate",
+                "deep-throttle floor {:.2} g vs gravity — descents will be slow and floaty",
                 env.accel_min / g
             ));
+        }
+        if cfg.cheat_refill {
+            notes.push("tank refill cheat ON — propellant will be topped up in flight".into());
         }
 
         let plan = plan::compile(text, &env);
@@ -234,11 +280,12 @@ impl Flight {
             ));
         }
 
-        // Envelope: text hangs below the first ink; hop arcs rise above it.
-        let drop = -plan.bbox.2;
+        // Envelope: text hangs below the first ink; hop arcs rise above it. The extra 0.35·height
+        // covers tracking overshoot below the baseline.
+        let drop = -plan.bbox.2 + 0.35 * env.height;
         if tel.alt.radar - drop < cfg.floor_radar {
             return Err(format!(
-                "too low: text extends {drop:.0} m below here, radar alt {:.0} m (need {:.0} m clearance)",
+                "too low: text + overshoot margin extends {drop:.0} m below here, radar alt {:.0} m (need {:.0} m) — climb, or use --height for smaller letters",
                 tel.alt.radar,
                 drop + cfg.floor_radar
             ));
@@ -274,6 +321,11 @@ impl Flight {
             paint_t: 0.0,
             ref_rate: 1.0,
             lost_since_ut: None,
+            lost_best_err: f64::MAX,
+            rescue_start_ut: None,
+            rescue_stable_since_ut: None,
+            last_refill_ut: 0.0,
+            last_warp_assert: None,
             ramp_prev: None,
             ramp_accel_est: None,
             capture_tilt: false,
@@ -283,7 +335,7 @@ impl Flight {
             trim_b: 0.0,
             last_ut: None,
             dt_avg: 0.3,
-            warp_written: 1.0,
+            warp_written: None,
             warp_unavailable: false,
             write_fail_streak: 0,
             last_seq: None,
@@ -291,6 +343,7 @@ impl Flight {
             arm_start_ut: None,
             arm_stable_since_ut: None,
             hover_anchor: None,
+            last_up: None,
             last_throttle: 0.0,
             last_pen: (0.0, 0.0),
             last_ref: (0.0, 0.0),
@@ -299,10 +352,58 @@ impl Flight {
         })
     }
 
+    /// Pilot/failure abort: brake to a hover first, then hand back a *hovering* vehicle. A second
+    /// abort while already rescuing skips straight to the safe hand-off.
     pub fn abort(&mut self, src: &dyn Source, reason: &str) {
-        release(src);
-        self.want_warp(src, 1.0);
+        match &self.phase {
+            Phase::Done | Phase::Abort(_) => {}
+            Phase::Rescue { reason: r, success } => {
+                let (r, s) = (r.clone(), *success);
+                self.safe_release(src);
+                self.phase = if s { Phase::Done } else { Phase::Abort(r) };
+            }
+            _ => self.start_rescue(src, reason, false),
+        }
+    }
+
+    /// Terminal, can't-keep-flying abort (telemetry gone, UI closing): best-effort safe hand-off —
+    /// engine ON at hover throttle with the FC holding nose-up (onboard setpoints persist after we
+    /// stop talking) — never an engine-off release.
+    pub fn hard_abort(&mut self, src: &dyn Source, reason: &str) {
+        self.safe_release(src);
         self.phase = Phase::Abort(reason.to_string());
+    }
+
+    fn start_rescue(&mut self, src: &dyn Source, reason: &str, success: bool) {
+        self.want_warp(src, 1.0);
+        let _ = src.write("vessels/active/ctl/engine", "1");
+        self.hover_anchor = None;
+        self.rescue_start_ut = None;
+        self.rescue_stable_since_ut = None;
+        self.phase = Phase::Rescue {
+            reason: reason.to_string(),
+            success,
+        };
+    }
+
+    /// Park the vehicle on the game's own flight computer: nose-up attitude hold + hover throttle +
+    /// engine on. These setpoints are onboard — KSA keeps flying them after this program stops
+    /// writing — so the pilot inherits a hovering craft, not a falling one.
+    fn safe_release(&mut self, src: &dyn Source) {
+        self.want_warp(src, 1.0);
+        // Hover fraction from the specific-force model (mass-normalized, no live mass needed).
+        let hover = (self.env.g / self.env.accel_max * 1.03)
+            .clamp((self.engines.throttle_min + 0.01).min(1.0), 1.0);
+        let _ = src.write("vessels/active/ctl/throttle", &format!("{hover:.4}"));
+        let _ = src.write("vessels/active/ctl/engine", "1");
+        if let Some(up) = self.last_up {
+            let q = ksa_quat::compute_burn_body2cci(up, up);
+            let a = q.to_array();
+            let _ = src.write(
+                "vessels/active/ctl/attitude_target",
+                &format!("{} {} {} {}", a[0], a[1], a[2], a[3]),
+            );
+        }
     }
 
     pub fn is_over(&self) -> bool {
@@ -313,16 +414,17 @@ impl Flight {
     pub fn step(&mut self, src: &dyn Source, tick: &Tick) -> FlightView {
         let Some(tel) = tick.telemetry.as_ref() else {
             if self.stale(true) {
-                self.abort(src, "telemetry lost");
+                self.hard_abort(src, "telemetry lost");
             }
             return self.view(None);
         };
+        self.last_up = Some(Vec3::from_array(tel.pos_cci).normalize());
 
         // Staleness: the sampler stopped publishing (seq frozen) while unpaused.
         let frozen = self.last_seq == Some(tel.seq) && tel.warp > 0.0;
         self.last_seq = Some(tel.seq);
         if self.stale(frozen) {
-            self.abort(src, "telemetry stale > 5 s");
+            self.hard_abort(src, "telemetry stale > 8 s");
             return self.view(Some(tel));
         }
         if frozen {
@@ -340,14 +442,51 @@ impl Flight {
         }
         self.last_ut = Some(tel.ut);
 
-        // Hard safety floor + fuel.
-        if tel.alt.radar < self.cfg.floor_radar {
-            self.abort(src, "radar altitude below floor");
-            return self.view(Some(tel));
+        // Re-assert the wanted warp every few seconds: the player (or a previous run) can change
+        // the sim speed under us, and closed-loop phases are only sane at their intended warp.
+        if let Some(want) = self.warp_written {
+            let drifted = tel.warp > 0.0 && (tel.warp - want).abs() / want.max(0.1) > 0.25;
+            let due = self
+                .last_warp_assert
+                .map(|t| t.elapsed().as_secs_f64() > 4.0)
+                .unwrap_or(true);
+            if drifted
+                && due
+                && !self.warp_unavailable
+                && src.write("debug/time/warp", &format!("{want}")).is_ok()
+            {
+                self.last_warp_assert = Some(Instant::now());
+            }
         }
-        if tel.mass.p < 1.0 && !matches!(self.phase, Phase::Done | Phase::Abort(_)) {
-            self.abort(src, "out of propellant");
-            return self.view(Some(tel));
+
+        // Tank cheat: top up every ~20 sim-seconds (and instantly when low).
+        if self.cfg.cheat_refill
+            && !matches!(self.phase, Phase::Done | Phase::Abort(_))
+            && (tel.ut - self.last_refill_ut > 20.0
+                || tel.mass.p < 0.15 * (tel.mass.t - tel.mass.d).max(1.0))
+        {
+            let path = format!("debug/vessels/{}/refill_fuel", sanitize_id(&self.vessel_id));
+            let _ = src.write(&path, "1");
+            self.last_refill_ut = tel.ut;
+        }
+
+        // Hard safety floor + fuel: both end in a RESCUE (engine-on brake to hover), never an
+        // engine-off release — a hovering skywriter dropped engine-off is a crater.
+        let active = matches!(
+            self.phase,
+            Phase::Arm | Phase::Paint { .. } | Phase::Coast { .. }
+        );
+        if active && tel.alt.radar < self.cfg.floor_radar {
+            self.start_rescue(src, "radar floor breached", false);
+        }
+        if active && tel.mass.p < 1.0 {
+            if self.cfg.cheat_refill {
+                let path = format!("debug/vessels/{}/refill_fuel", sanitize_id(&self.vessel_id));
+                let _ = src.write(&path, "1");
+                self.last_refill_ut = tel.ut;
+            } else {
+                self.start_rescue(src, "out of propellant", false);
+            }
         }
 
         let Some(lon) = tick.lon_deg else {
@@ -368,6 +507,7 @@ impl Flight {
             Phase::Arm => self.step_arm(src, tel, &ft),
             Phase::Paint { item } => self.step_paint(src, tel, &ft, item),
             Phase::Coast { item } => self.step_coast(src, tel, &ft, item),
+            Phase::Rescue { reason, success } => self.step_rescue(src, tel, &ft, reason, success),
             Phase::Done | Phase::Abort(_) => {}
         }
         self.view(Some(tel))
@@ -376,9 +516,13 @@ impl Flight {
     // ---- phases ---------------------------------------------------------------------------------
 
     fn step_arm(&mut self, src: &dyn Source, tel: &sim::Telemetry, ft: &frames::FrameTick) {
+        // Hover capture is the most delicate closed loop in the program — force 1× warp for it.
+        // (A previous run can leave the game at 10×, where ~1 command per game-second cannot
+        // capture anything: the vehicle porpoises on its plume until the timeout. Seen on Mars.)
+        self.want_warp(src, 1.0);
         let start = *self.arm_start_ut.get_or_insert(tel.ut);
-        if tel.ut - start > 150.0 {
-            self.abort(src, "arm timed out (could not settle into a hover)");
+        if tel.ut - start > 240.0 {
+            self.start_rescue(src, "arm timed out (could not settle into a hover)", false);
             return;
         }
         // Light the engine immediately: the little braking smear merges into the first ink point.
@@ -399,7 +543,7 @@ impl Flight {
         };
         self.command_thrust(src, tel, ft, a_des_ccf, None);
 
-        let stable = ft.vel_ccf.norm() < 2.5 && err < 18.0;
+        let stable = ft.vel_ccf.norm() < 3.5 && err < 25.0;
         match (stable, self.arm_stable_since_ut) {
             (true, None) => self.arm_stable_since_ut = Some(tel.ut),
             (true, Some(t0)) if tel.ut - t0 > 2.0 => {
@@ -506,15 +650,30 @@ impl Flight {
         self.ref_rate = 0.7 * self.ref_rate + 0.3 * target_rate;
         self.paint_t += self.dt_tick * self.ref_rate;
 
-        // If the letterform is truly lost, stop scribbling near it.
-        if self.last_err > 1500.0 {
-            self.lost_since_ut.get_or_insert(tel.ut);
-            if tel.ut - self.lost_since_ut.unwrap_or(tel.ut) > 25.0 {
-                self.abort(src, "lost the letterform (tracking error > 1.5 km)");
+        // Give-up guard, deliberately lenient: only rescue when the error is HUGE (2.5 km), has
+        // stayed huge for 45 s, and is not improving — a vehicle that is clawing its way back gets
+        // to keep trying (the crawling reference + capture mode usually recover it).
+        if self.last_err > 2500.0 {
+            if self.lost_since_ut.is_none() {
+                self.lost_since_ut = Some(tel.ut);
+                self.lost_best_err = self.last_err;
+            }
+            if self.last_err < self.lost_best_err * 0.9 {
+                // Improving — restart the clock and remember the new best.
+                self.lost_best_err = self.last_err;
+                self.lost_since_ut = Some(tel.ut);
+            }
+            if tel.ut - self.lost_since_ut.unwrap_or(tel.ut) > 45.0 {
+                self.start_rescue(
+                    src,
+                    "lost the letterform (tracking error > 2.5 km, not recovering)",
+                    false,
+                );
                 return;
             }
         } else {
             self.lost_since_ut = None;
+            self.lost_best_err = f64::MAX;
         }
 
         // Periodically re-assert the pen (idempotent STATE write) — staging/other clients happen.
@@ -588,11 +747,11 @@ impl Flight {
                 self.aim_entry(src, tel, ft, item + 2, canvas);
                 self.want_warp(src, self.cfg.warp_hop);
             } else {
-                // Last stroke: cut, restore realtime, hand the vehicle back.
-                release(src);
-                self.want_warp(src, 1.0);
+                // Last stroke: cut the pen, then rescue-to-hover — the pilot inherits a hovering
+                // vehicle, not a falling one.
+                let _ = src.write("vessels/active/ctl/engine", "0");
                 self.item_t0 += stroke.duration;
-                self.phase = Phase::Done;
+                self.start_rescue(src, "done", true);
             }
         }
     }
@@ -638,7 +797,7 @@ impl Flight {
         if remaining > fine_window {
             self.want_warp(src, self.cfg.warp_hop);
             // Chunked alarm: ~0.8 s of wall time per chunk keeps the pilot's abort responsive.
-            let chunk = 0.8 * self.warp_written.max(1.0);
+            let chunk = 0.8 * self.warp_written.unwrap_or(1.0).max(1.0);
             let _ = src.wait_until((tel.ut + chunk).min(self.ignite_ut - fine_window * 0.9));
             self.last_ut = None;
         } else {
@@ -659,6 +818,49 @@ impl Flight {
             self.ramp_accel_est = None;
             self.phase = Phase::Paint { item: item + 1 };
             self.want_warp(src, self.cfg.warp_draw);
+        }
+    }
+
+    /// Brake to a hover with the engine ON, then park the vehicle on the game FC's own hover hold
+    /// and finish. Times out into the safe hand-off regardless — rescue can end early, never badly.
+    fn step_rescue(
+        &mut self,
+        src: &dyn Source,
+        tel: &sim::Telemetry,
+        ft: &frames::FrameTick,
+        reason: String,
+        success: bool,
+    ) {
+        self.want_warp(src, 1.0);
+        let start = *self.rescue_start_ut.get_or_insert(tel.ut);
+        let _ = src.write("vessels/active/ctl/engine", "1");
+
+        // Pure velocity damping — no position anchor. A rescue's job is to stop moving, not to
+        // stand somewhere particular; an anchor-chase at wide tilt dithers the commanded attitude
+        // faster than the FC can slew and never settles (measured, not theorized).
+        self.capture_tilt = false;
+        let a_des = cap_vec(ft.vel_ccf * -1.0, 8.0);
+        self.command_thrust(src, tel, ft, a_des, None);
+
+        let stable = ft.vel_ccf.norm() < 6.0;
+        let settled = match (stable, self.rescue_stable_since_ut) {
+            (true, None) => {
+                self.rescue_stable_since_ut = Some(tel.ut);
+                false
+            }
+            (true, Some(t0)) => tel.ut - t0 > 2.0,
+            (false, _) => {
+                self.rescue_stable_since_ut = None;
+                false
+            }
+        };
+        if settled || tel.ut - start > 120.0 {
+            self.safe_release(src);
+            self.phase = if success {
+                Phase::Done
+            } else {
+                Phase::Abort(reason)
+            };
         }
     }
 
@@ -728,8 +930,8 @@ impl Flight {
             (Ok(()), Ok(())) => self.write_fail_streak = 0,
             _ => {
                 self.write_fail_streak += 1;
-                if self.write_fail_streak > 4 {
-                    self.abort(src, "control writes failing (EACCES?)");
+                if self.write_fail_streak > 8 {
+                    self.hard_abort(src, "control writes failing (EACCES?)");
                 }
             }
         }
@@ -842,7 +1044,7 @@ impl Flight {
         );
         let dv_ccf = canvas.dir_from_canvas(want) - ft.vel_ccf;
         let dv_cci = frames::ccf_to_cci(dv_ccf, ft.theta);
-        let path = format!("debug/vessels/{}/impulse", self.vessel_id);
+        let path = format!("debug/vessels/{}/impulse", sanitize_id(&self.vessel_id));
         let _ = src.write(
             &path,
             &format!("{} {} {} cci dv", dv_cci.x, dv_cci.y, dv_cci.z),
@@ -858,11 +1060,19 @@ impl Flight {
     }
 
     fn want_warp(&mut self, src: &dyn Source, factor: f64) {
-        if self.warp_unavailable || (self.warp_written - factor).abs() < 0.01 {
+        if self.warp_unavailable
+            || self
+                .warp_written
+                .map(|w| (w - factor).abs() < 0.01)
+                .unwrap_or(false)
+        {
             return;
         }
         match src.write("debug/time/warp", &format!("{factor}")) {
-            Ok(()) => self.warp_written = factor,
+            Ok(()) => {
+                self.warp_written = Some(factor);
+                self.last_warp_assert = Some(Instant::now());
+            }
             Err(e) => {
                 if e.errno == "EACCES" || e.errno == "ENOENT" {
                     self.warp_unavailable = true; // debug namespace off — fly at whatever warp is set
@@ -877,7 +1087,7 @@ impl Flight {
             return false;
         }
         let t0 = *self.stale_since.get_or_insert_with(Instant::now);
-        t0.elapsed().as_secs_f64() > 5.0
+        t0.elapsed().as_secs_f64() > 8.0
     }
 
     fn view(&mut self, tel: Option<&sim::Telemetry>) -> FlightView {
@@ -919,10 +1129,12 @@ impl Flight {
 
         FlightView {
             phase_label: match &self.phase {
-                Phase::Arm => "ARM · settling into hover".into(),
+                Phase::Arm => "ARM · settling into hover (1×)".into(),
                 Phase::Paint { .. } => "PAINT".into(),
                 Phase::Coast { .. } => "HOP".into(),
-                Phase::Done => "DONE".into(),
+                Phase::Rescue { success: true, .. } => "RESCUE · braking to a parting hover".into(),
+                Phase::Rescue { reason, .. } => format!("RESCUE · {reason} — braking to hover"),
+                Phase::Done => "DONE · left hovering on the FC".into(),
                 Phase::Abort(r) => format!("ABORT · {r}"),
             },
             cur_letter,
@@ -930,7 +1142,7 @@ impl Flight {
             eta_letter,
             eta_total: (self.plan.total_time - now_plan).max(0.0),
             warp: tel.map(|t| t.warp).unwrap_or(1.0),
-            warp_wanted: self.warp_written,
+            warp_wanted: self.warp_written.unwrap_or(1.0),
             pos_err: self.last_err,
             speed: tel.map(|t| t.vel.surf).unwrap_or(0.0),
             throttle: self.last_throttle,
@@ -996,11 +1208,18 @@ fn cap_vec(v: Vec3, cap: f64) -> Vec3 {
     }
 }
 
-/// Release the vehicle: engine off, throttle zero, attitude back to manual.
-fn release(src: &dyn Source) {
-    let _ = src.write("vessels/active/ctl/throttle", "0");
-    let _ = src.write("vessels/active/ctl/engine", "0");
-    let _ = src.write("vessels/active/ctl/attitude_mode", "manual");
+/// gatOS sanitizes ids in filesystem paths (non-`[A-Za-z0-9._-]` → `_`); the debug paths must use
+/// the sanitized form or a vessel named "My Rocket" gets ENOENT.
+fn sanitize_id(id: &str) -> String {
+    id.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || ".-_".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
