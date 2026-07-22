@@ -139,6 +139,33 @@ impl Radar {
         port.write_channel(chan::CHAN33, value, Some(mask));
     }
 
+    /// Quantizes all four LR words (select codes 4..7 → indices 0..3) for the current antenna
+    /// position — shared by the extern SHINC race and the embedded `RequestRadarData` hook.
+    pub fn words(&self, alt_radar: f64, v_surf_body: Vec3) -> [u16; 4] {
+        let q_ab = self.antenna_to_body();
+        let v_ant = ksa_quat::transform(v_surf_body, q_ab.conj());
+        let mut out = [0u16; 4];
+        for (i, (comp, scale)) in [v_ant.x, v_ant.y, v_ant.z].iter().zip(VEL_SCALE_FT).enumerate() {
+            let counts = VEL_BIAS + (comp / FT / scale) as i32;
+            out[i] = counts.clamp(0, 0x7FFF) as u16;
+        }
+        // Slant range along the range beam: altitude / cos(beam vs local up). We use the
+        // antenna boresight tilted by the mount — slant = alt / max(cos(tilt), 0.2)
+        // [impl-verify beam vector (HBEAMANT) at the A5 in-game pass].
+        let tilt = match self.antenna {
+            Antenna::Pos2 => POS2_BETA,
+            _ => POS1_BETA,
+        };
+        let slant_ft = alt_radar / FT / tilt.cos().max(0.2);
+        let scale = if self.low_scale {
+            RANGE_LOW_FT_PER_BIT
+        } else {
+            RANGE_LOW_FT_PER_BIT * RANGE_HIGH_MULT
+        };
+        out[3] = ((slant_ft / scale) as i32).clamp(0, 0x7FFF) as u16;
+        out
+    }
+
     /// Answers a radar gate: ch 013 showed activity (b4) with select code `code` — deliver the
     /// word into RNRAD as 15 SHINC/SHANC pulses, MSB-first, inside the 9-gate window.
     /// Returns the delivered word.
@@ -149,37 +176,10 @@ impl Radar {
         alt_radar: f64,
         v_surf_body: Vec3,
     ) -> Option<u16> {
-        if !self.powered {
-            return None;
+        if !self.powered || !(4..=7).contains(&code) {
+            return None; // RR codes — out of scope (plan non-goal)
         }
-        let q_ab = self.antenna_to_body();
-        let word: u16 = match code {
-            4..=6 => {
-                // Velocity component along antenna axis k, ft/s → biased counts.
-                let v_ant = ksa_quat::transform(v_surf_body, q_ab.conj());
-                let comp_ft = [v_ant.x, v_ant.y, v_ant.z][(code - 4) as usize] / FT;
-                let counts = VEL_BIAS + (comp_ft / VEL_SCALE_FT[(code - 4) as usize]) as i32;
-                counts.clamp(0, 0x7FFF) as u16
-            }
-            7 => {
-                // Slant range along the range beam: altitude / cos(beam vs local up). The
-                // range beam in antenna coordinates is HBEAMANT; to first order it points
-                // down the antenna −X? We use the antenna boresight tilted by the mount —
-                // slant = alt / max(cos(tilt), 0.2) [impl-verify beam vector at A5].
-                let tilt = match self.antenna {
-                    Antenna::Pos2 => POS2_BETA,
-                    _ => POS1_BETA,
-                };
-                let slant_ft = alt_radar / FT / tilt.cos().max(0.2);
-                let scale = if self.low_scale {
-                    RANGE_LOW_FT_PER_BIT
-                } else {
-                    RANGE_LOW_FT_PER_BIT * RANGE_HIGH_MULT
-                };
-                ((slant_ft / scale) as i32).clamp(0, 0x7FFF) as u16
-            }
-            _ => return None, // RR codes — out of scope (plan non-goal)
-        };
+        let word = self.words(alt_radar, v_surf_body)[(code - 4) as usize];
         // MSB-first, 15 bits: SHANC shifts in a 1, SHINC a 0.
         for i in (0..15).rev() {
             let kind = if word & (1 << i) != 0 { CounterKind::Shanc } else { CounterKind::Shinc };

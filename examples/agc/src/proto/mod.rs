@@ -12,9 +12,13 @@
 
 pub mod client;
 pub mod codec;
+#[cfg(feature = "embedded")]
+pub mod embedded;
 
 pub use client::SocketPort;
 pub use codec::{pack, parse, Packet};
+#[cfg(feature = "embedded")]
+pub use embedded::EmbeddedPort;
 
 /// Unprogrammed-sequence increment types (`agc_engine.c` `UnprogrammedIncrement`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,4 +148,17 @@ pub trait AgcPort {
 
     /// True while the underlying transport is up (used for the NO AGC banner / resync).
     fn connected(&self) -> bool;
+
+    /// Advances an embedded engine by `dt` wall seconds; a no-op for the socket port (the
+    /// extern yaAGC paces itself). NOT calling it is the embedded pause contract (§3.4).
+    fn step(&mut self, _dt: f64) {}
+
+    /// Refreshes the embedded radar hook's word table (select codes 4..7); no-op extern —
+    /// the socket path answers the ch 013 race instead.
+    fn set_radar_words(&mut self, _words: [u16; 4], _valid: bool) {}
+
+    /// (packets sent, events received) since connect — status accounting.
+    fn stats(&self) -> (u64, u64) {
+        (0, 0)
+    }
 }

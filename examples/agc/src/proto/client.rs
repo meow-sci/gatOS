@@ -160,4 +160,8 @@ impl AgcPort for SocketPort {
     fn connected(&self) -> bool {
         self.stream.is_some()
     }
+
+    fn stats(&self) -> (u64, u64) {
+        (self.sent, self.received)
+    }
 }
