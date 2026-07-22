@@ -78,7 +78,7 @@ target in 4750 (verify live). Full record: [`../plans/FIX_CURRENT_GAPS_PLAN.md`]
 ## Vessel control surface (G4)
 
 `ThrottleActuator.cs`, `StagingActuator.cs`, `RcsActuator.cs`, `TranslateActuator.cs`,
-`FlightComputerActuator.cs`.
+`RotateActuator.cs`, `FlightComputerActuator.cs`.
 
 | `/sim` path | action key | phase | actuator | KSA member | Decomp file | Risk | 4939 |
 |---|---|---|---|---|---|---|---|
@@ -86,6 +86,7 @@ target in 4750 (verify live). Full record: [`../plans/FIX_CURRENT_GAPS_PLAN.md`]
 | `ctl/stage` | `vessel.stage` | Frame | `StagingActuator.Stage` | `Vehicle.Parts.SequenceList.ActivateNextSequence(vehicle)` + `Vehicle.UpdateAfterPartTreeModification()` | `KSA/SequenceList.cs`, `KSA/Vehicle.cs` | Medium | ✅³ |
 | `ctl/rcs` | `vessel.rcs` | Frame | `RcsActuator.SetMaster` | `ThrusterController.SetIsActive(vehicle,bool)` over all | `KSA/ThrusterController.cs` | Medium | ✅ |
 | `ctl/translate` | `vessel.translate` | Frame | `TranslateActuator.SetTranslation` | **reflection** `Vehicle._manualControlInputs.ThrusterCommandFlags` (same struct as throttle; translate bits replaced, rotation bits preserved) + `ThrusterMapFlags`; read-back `Vehicle.GetThrusterFlags()`. `FlightComputer.ComputeRcsControl` consumes the flags each solver step (`ManualThrustMode.Direct` → `SelectJetsToFire`; Auto attitude strips only rotation bits, so translation composes with tracking). Sign→flag mapping (+x=`TranslateForward`, +y=`Right`, +z=`Down`) verified against the `KittenBackPackSubPart` nozzle geometry in `Content/Core/PartGameData.xml` | `KSA/Vehicle.cs`, `KSA/ThrusterMapFlags.cs`, `KSA/FlightComputer.cs` (`:454-519,1029`) | **High** | ✅⁴ |
+| `ctl/rotate` | `vessel.rotate` | Frame | `RotateActuator.SetRotation` | **reflection** `Vehicle._manualControlInputs.ThrusterCommandFlags` (same struct as throttle/translate; rotation bits replaced, translation bits preserved) + `ThrusterMapFlags`; read-back `Vehicle.GetThrusterFlags()`. `FlightComputer.ComputeRcsControl` consumes the flags each solver step (`ManualThrustMode.Direct` → `SelectJetsToFire`; `ComputeTvcControl` decodes the same bits for gimbals). **Auto attitude strips the rotation bits** (`WithNoRotation()`) — full authority needs `attitude_mode=manual`, the inverse of translate's compose note. Sign→flag mapping is KSA's own torque decode (`ComputeTvcControl:559-585`): +x=`RollRight`, +y=`PitchUp`, +z=`YawRight` | `KSA/Vehicle.cs`, `KSA/ThrusterMapFlags.cs`, `KSA/FlightComputer.cs` (`:457-524,559-585,1020`) | **High** | ✅ (added at 4939) |
 | `ctl/attitude_mode` | `vessel.attitude_mode` | **Solver** | `FlightComputerActuator.SetAttitudeMode` | `FlightComputer.{AttitudeMode,AttitudeTrackTarget}`; `FlightComputerAttitudeMode`/`...TrackTarget` | `KSA/FlightComputer.cs` | Medium | ✅² |
 | `ctl/attitude_frame` | `vessel.attitude_frame` | **Solver** | `…SetAttitudeFrame` | `FlightComputer.AttitudeFrame` (`VehicleReferenceFrame`) | `KSA/FlightComputer.cs` | Medium | ✅² |
 | `ctl/attitude_target` | `vessel.attitude_target` | **Solver** | `…SetAttitudeTarget` | `FlightComputer.{CustomAttitudeTarget,AttitudeFrame,AttitudeTrackTarget=Custom}`; `VehicleReferenceFrameEx.{GetEclBody2Cci,QuaternionToEulerAngles}` | `KSA/FlightComputer.cs` | Medium | ✅² |

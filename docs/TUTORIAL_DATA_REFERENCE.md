@@ -53,6 +53,7 @@ teaching; you now have both approaches.
 | **Write a control (throttle)** | `echo 0.5 > /sim/vessels/active/ctl/throttle` | `POST /v1/fs/vessels/active/ctl/throttle` body `0.5` |
 | **Fire a one-shot (ignite)** | `echo 1 > /sim/vessels/active/ctl/ignite` | `POST /v1/fs/vessels/active/ctl/ignite` body `1` |
 | **RCS translation (EVA/docking)** | `echo "1 0 0" > /sim/vessels/active/ctl/translate` (body-axis signs; latches — `0 0 0` stops) | `POST /v1/fs/vessels/active/ctl/translate` body `1 0 0` |
+| **RCS rotation (own DAP; manual attitude mode)** | `echo "1 0 0" > /sim/vessels/active/ctl/rotate` (torque signs: +x roll right, +y pitch up, +z yaw right; latches — `0 0 0` stops) | `POST /v1/fs/vessels/active/ctl/rotate` body `1 0 0` |
 | **Set a named attitude mode** | `echo Prograde > /sim/vessels/active/ctl/attitude_mode` | `POST /v1/fs/vessels/active/ctl/attitude_mode` body `Prograde` |
 | **Set a custom attitude quat** | `echo "$x $y $z $w" > …/ctl/attitude_target` | `POST /v1/fs/vessels/active/ctl/attitude_target` body `x y z w` |
 | **Schedule a burn** | `echo "$ut $dvx $dvy $dvz" > …/ctl/burn` | `POST /v1/fs/vessels/active/ctl/burn` body `ut dvx dvy dvz` |

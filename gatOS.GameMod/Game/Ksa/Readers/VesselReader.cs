@@ -234,9 +234,10 @@ internal static class VesselReader
             PowerProducedW = Sanitize.Finite(solarProducedW + generatorProducedW),
             PowerConsumedW = SamplePowerConsumed(vehicle),
             // The writable-setpoint read-backs the control files surface (ctl/throttle, ctl/rcs,
-            // ctl/translate, ctl/attitude_mode, ctl/attitude_frame).
+            // ctl/translate, ctl/rotate, ctl/attitude_mode, ctl/attitude_frame).
             ThrottleCmd = Sanitize.Finite(vehicle.GetManualThrottle()),
             TranslateCmd = SampleTranslate(vehicle),
+            RotateCmd = SampleRotate(vehicle),
             RcsOn = rcsOn,
             AttitudeMode = attitudeMode,
             AttitudeFrame = attitudeFrame,
@@ -285,6 +286,13 @@ internal static class VesselReader
     private static double3Snap SampleTranslate(Vehicle vehicle)
     {
         var (x, y, z) = TranslateActuator.Read(vehicle);
+        return new double3Snap(x, y, z);
+    }
+
+    /// <summary>The <c>ctl/rotate</c> read-back: live rotation flags decoded to body-axis signs.</summary>
+    private static double3Snap SampleRotate(Vehicle vehicle)
+    {
+        var (x, y, z) = RotateActuator.Read(vehicle);
         return new double3Snap(x, y, z);
     }
 

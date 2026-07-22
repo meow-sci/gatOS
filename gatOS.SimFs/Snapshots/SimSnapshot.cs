@@ -184,6 +184,13 @@ public sealed record VesselSnapshot(
     public double3Snap TranslateCmd { get; init; }
 
     /// <summary>
+    ///     The latched manual RCS rotation command as body-axis torque signs (<c>ctl/rotate</c>
+    ///     read): each component −1/0/+1 for commanded torque about body X (+ = roll right),
+    ///     Y (+ = pitch up), Z (+ = yaw right). <c>(0,0,0)</c> = no rotation commanded.
+    /// </summary>
+    public double3Snap RotateCmd { get; init; }
+
+    /// <summary>
     ///     Whether the vessel's main engines are ignited — the master that <c>ctl/ignite</c> and
     ///     <c>ctl/shutdown</c> toggle (KSA <c>EngineOn</c>, read via <c>IsSet(VehicleEngine.MainIgnite)</c>).
     ///     The reactive <c>ctl/engine</c> read; not the per-engine "allowed to fire" <c>engines/n/active</c>.

@@ -275,6 +275,28 @@ exercise the reflection + flags path (`TranslateActuator`). See `SPEC_9P_FILESYS
 | 6 | In-game keyboard translate keys and the file compose sanely (last writer wins on the translate bits; keyboard rotation unaffected) | ☐ | rotation bits preserved on file writes |
 | 7 | Magnitudes are ignored: `echo "0.2 0 0"` behaves exactly like `1 0 0` (bang-bang) | ☐ | signs only |
 
+## `ctl/rotate` (manual RCS rotation — W1, AGC_PLAN §7.4) — validation pass — **NOT YET RUN**
+
+Prereq: the T6.6 pass. `[control] control_enabled = true` (default). Best exercised on a vessel
+with rotation-mapped RCS (any stock rocket with an RCS ring; the EVA kitten backpack also carries
+rotation jets). **Set `ctl/attitude_mode` to `manual` first** — an active auto-attitude hold
+strips the manual rotation bits (`WithNoRotation()`), the inverse of translate's compose behavior.
+The game-free half (parse, EINVAL, command shape/phase, read-back rendering) is covered by
+`gatOS.SimFs.Tests/Commands/VesselRotateTests.cs`; these items exercise the reflection + flags
+path (`RotateActuator`). See `SPEC_9P_FILESYSTEM.md` §3.4.17 and `docs/KSA_INTEGRATION_MATRIX.md`
+(control surface). **All items pending a live flight.**
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | In `attitude_mode=manual`, floating: `echo "1 0 0" > ctl/rotate` → the vessel **rolls right** (about the nose axis); `echo "0 0 0"` stops the jets | ☐ | +x = `RollRight` (KSA torque decode) |
+| 2 | `echo "0 1 0"` → **pitches up**; `echo "0 0 1"` → **yaws right** (torque axes on the X-nose/Y-right/Z-down frame) | ☐ | +y = `PitchUp`, +z = `YawRight` |
+| 3 | The command **latches**: torque keeps applying across many seconds without re-writing; `cat ctl/rotate` reads back the latched signs; program exit without `0 0 0` leaves it firing (documented) | ☐ | held-key semantics |
+| 4 | Compose with translate: `ctl/batch` carrying both `rotate` and `translate` fires both; each file's write preserves the other's bits | ☐ | bit masking (`~AllRotation` / `~AllTranslation`) |
+| 5 | Under an active attitude hold (auto mode), the file write is accepted but the hold keeps steering (rotation bits stripped; at most a rate bias on the held axis) — then `attitude_mode=manual` restores full authority | ☐ | `WithNoRotation()` — documented behavior |
+| 6 | `echo 0 > ctl/rcs` (master off) silences RCS rotation; gimbaled engines still respond through TVC while the main engine burns | ☐ | `SelectJetsToFire` vs `ComputeTvcControl` |
+| 7 | Magnitudes are ignored: `echo "0.2 0 0"` behaves exactly like `1 0 0` (bang-bang) | ☐ | signs only |
+| 8 | With `[control] all_vessels = false`, a write to a **non-controlled** vessel's `ctl/rotate` fails `EACCES` | ☐ | authority gate (not in `AnyVesselActions`) |
+
 ## `debug/vessels/<id>/impulse` (one-shot impulsive kick) — validation pass — **NOT YET RUN**
 
 Prereq: the T6.6 pass. `[control] debug_namespace = true` (default). Run during a real flight —

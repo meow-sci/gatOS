@@ -99,7 +99,10 @@ named auto modes — see §5.
 
 The full body triad is **aircraft-style: +X = nose, +Y = right, +Z = down** (verified against the
 RCS translation-thruster geometry — `ctl/translate`'s sign convention follows it: `+x` thrusts along
-the nose, `+y` right, `+z` down).
+the nose, `+y` right, `+z` down). Rotation follows the same triad as torque axes — `ctl/rotate`'s
+signs are KSA's own torque-command decode: `+x` = roll right (about the nose), `+y` = pitch up
+(about the right axis), `+z` = yaw right (about the down axis); full authority needs
+`attitude_mode=manual` (an auto hold strips manual rotation).
 
 ### To aim the thrust/nose at a desired CCI direction `d̂`
 

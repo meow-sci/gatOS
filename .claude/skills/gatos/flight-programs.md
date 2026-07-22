@@ -185,6 +185,7 @@ writing your own guidance law.
 |---|---|
 | set throttle / ignite / stage | write `ctl/throttle`, `ctl/ignite`, `ctl/stage` (frame phase, immediate) |
 | translate with RCS (EVA/docking) | write `ctl/translate` = body-axis signs (`1 0 0` = along the nose); bang-bang, **latches** until `0 0 0`; composes with an attitude hold |
+| rotate with RCS (your own DAP/autopilot) | write `ctl/rotate` = body-axis torque signs (`1 0 0` = roll right, `0 1 0` = pitch up, `0 0 1` = yaw right); bang-bang, **latches** until `0 0 0`; needs `attitude_mode=manual` for full authority (auto strips rotation); pair with `ctl/translate` in one `ctl/batch` |
 | hold a standard orientation | write `ctl/attitude_mode` (+ `ctl/attitude_frame`) — let the autopilot steer |
 | point at a computed direction | build Body→CCI quaternion → write `ctl/attitude_target` |
 | do an impulsive transfer/circularize | write `ctl/burn = "ut dvx dvy dvz"` (CCI Δv) |

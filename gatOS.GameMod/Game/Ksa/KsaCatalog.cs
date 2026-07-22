@@ -125,6 +125,9 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
         "vessel.rcs" => RcsActuator.SetMaster(vehicle, c.Value > 0.5),
         // Manual RCS translation (body-axis signs; latches until rewritten).
         "vessel.translate" => TranslateActuator.SetTranslation(vehicle, c.Values ?? []),
+        // Manual RCS rotation (body-axis torque signs; latches until rewritten; full authority
+        // only in manual attitude mode — auto strips the rotation bits).
+        "vessel.rotate" => RotateActuator.SetRotation(vehicle, c.Values ?? []),
         "vessel.attitude_mode" => FlightComputerActuator.SetAttitudeMode(vehicle, c.Token ?? ""),
         "vessel.attitude_frame" => FlightComputerActuator.SetAttitudeFrame(vehicle, c.Token ?? ""),
         "vessel.attitude_target" => FlightComputerActuator.SetAttitudeTarget(vehicle, c.Values ?? []),

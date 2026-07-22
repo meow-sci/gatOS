@@ -178,6 +178,7 @@ Anchors in `Game/Ksa/Actuators/**`; routed by `KsaCatalog`. Frame phase unless n
 | `…/ctl/stage` | T | `1` | `Parts.SequenceList.ActivateNextSequence` + `UpdateAfterPartTreeModification` | M | Frame |
 | `…/ctl/rcs` | St | `0`/`1` | `ThrusterController.SetIsActive` over all controllers | M | Frame |
 | `…/ctl/translate` | St | `x y z` (signs) | `Vehicle._manualControlInputs.ThrusterCommandFlags` (reflection — same struct as throttle; translate bits only, rotation bits preserved). `FlightComputer.ComputeRcsControl` consumes the flags each solver step (`Direct` mode → `SelectJetsToFire`); sign→flag mapping verified against the `KittenBackPackSubPart` nozzle geometry (+x=`TranslateForward`, +y=`Right`, +z=`Down`). Latches until rewritten. Added 2026-07-04 | H | Frame |
+| `…/ctl/rotate` | St | `x y z` (signs) | `Vehicle._manualControlInputs.ThrusterCommandFlags` (reflection — same struct as throttle/translate; rotation bits only, translation bits preserved). `FlightComputer.ComputeRcsControl` consumes the flags each solver step (`Direct` mode → `SelectJetsToFire`; `ComputeTvcControl` decodes the same bits for gimbals); sign→flag mapping is KSA's own torque decode (+x=`RollRight`, +y=`PitchUp`, +z=`YawRight`). **Auto attitude strips rotation bits — full authority needs `attitude_mode=manual`.** Latches until rewritten. Added 2026-07-22 (W1, AGC_PLAN §7.4) | H | Frame |
 | `…/ctl/attitude_mode` | St | token | `FlightComputer.AttitudeMode`/`AttitudeTrackTarget` (`manual` → Manual; else Auto+track) | M | **Solver** |
 | `…/ctl/attitude_frame` | St | token | `FlightComputer.AttitudeFrame` (`VehicleReferenceFrame`) | M | **Solver** |
 | `…/ctl/attitude_target` | St | `x y z w` | `FlightComputer.AttitudeTarget = {Target2Cci,RatesCci}` (+Custom track) | M | **Solver** |
@@ -198,7 +199,8 @@ A STATE control file's **read** returns the current setpoint, so the vessel-leve
 that samples it back. These are populated in `VesselReader.BuildFull` (anchor `SampleFlightComputer` +
 `GetManualThrottle`): `ctl/throttle` ← `Vehicle.GetManualThrottle()`, `ctl/rcs` ← any
 `ThrusterController.IsActive`, `ctl/translate` ← `Vehicle.GetThrusterFlags()` decoded to body-axis
-signs (anchor `TranslateActuator.Read`), `ctl/attitude_mode` ← `FlightComputer.AttitudeMode`/`AttitudeTrackTarget`
+signs (anchor `TranslateActuator.Read`), `ctl/rotate` ← the same flags' rotation bits decoded to
+body-axis torque signs (anchor `RotateActuator.Read`), `ctl/attitude_mode` ← `FlightComputer.AttitudeMode`/`AttitudeTrackTarget`
 (`manual` when Manual, else the track-target name), `ctl/attitude_frame` ← `FlightComputer.AttitudeFrame`.
 (Before this wiring the snapshot reported the record defaults — throttle `0`, attitude `""` — on every
 transport regardless of the real state.)

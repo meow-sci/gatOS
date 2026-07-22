@@ -930,6 +930,15 @@ public static class SimFsTree
                 // overwritten — write "0 0 0" to stop. Read = the latched command as signs.
                 VectorControl($"{q}/translate", "translate", vesselId, "vessel.translate",
                     SimCommand.NoOrdinal, 3, () => Formats.Vector(Vessel(vesselId).TranslateCmd)),
+                // Manual RCS rotation — the file twin of the player's rotation keys and the
+                // symmetric sibling of translate. "x y z": the SIGNS command bang-bang torque
+                // about the body axes (+x = roll right, +y = pitch up, +z = yaw right; 0 = that
+                // axis off). LATCHES like a held key until overwritten — write "0 0 0" to stop.
+                // Full authority only in manual attitude mode (an auto-attitude hold strips the
+                // rotation bits — the inverse of translate's compose behavior). Read = the
+                // latched command as signs.
+                VectorControl($"{q}/rotate", "rotate", vesselId, "vessel.rotate",
+                    SimCommand.NoOrdinal, 3, () => Formats.Vector(Vessel(vesselId).RotateCmd)),
                 EnumControl($"{q}/attitude_mode", "attitude_mode", vesselId, "vessel.attitude_mode",
                     AttitudeModeTokens, () => Vessel(vesselId).AttitudeMode),
                 EnumControl($"{q}/attitude_frame", "attitude_frame", vesselId, "vessel.attitude_frame",

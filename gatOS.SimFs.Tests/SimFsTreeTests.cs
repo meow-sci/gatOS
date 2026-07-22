@@ -169,7 +169,7 @@ public sealed class SimFsTreeTests
             "vessels/by-id/test-1/ctl/engine",
             "vessels/by-id/test-1/ctl/stage", "vessels/by-id/test-1/ctl/throttle",
             "vessels/by-id/test-1/ctl/lights", "vessels/by-id/test-1/ctl/rcs",
-            "vessels/by-id/test-1/ctl/translate",
+            "vessels/by-id/test-1/ctl/translate", "vessels/by-id/test-1/ctl/rotate",
             "vessels/by-id/test-1/ctl/attitude_mode", "vessels/by-id/test-1/ctl/attitude_frame",
             "vessels/by-id/test-1/ctl/attitude_target", "vessels/by-id/test-1/ctl/burn",
             "vessels/by-id/test-1/ctl/focus",
