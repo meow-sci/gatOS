@@ -1,0 +1,150 @@
+#!/bin/sh
+# agc — launcher/supervisor for the in-guest Apollo Guidance Computer stack.
+#
+#   agc start lm|cm [--cold] [--agc=extern|embedded]
+#   agc stop  [lm|cm]
+#   agc status
+#   agc log   [lm|cm] [agc|bridge|downlink]
+#   agc align [lm|cm]            # REFSMMAT uplink + V41 coarse-align macro (via the bridge)
+#   agc uplink FILE [lm|cm]      # P27/V71 uplink script through the digital uplink
+#   agc verbs                    # quick verb/noun card
+#
+# Layout: /opt/agc/{bin,rom,share} (install-agc.sh) · state /var/lib/agc/<id>/ (core dumps,
+# padload) · runtime /run/agc/<id>/ (pids, bridge cmd spool) + /run/agc/switches/ (cockpit
+# discrete files shared by all panels) · logs /var/log/agc/<id>.{agc,bridge}.log +
+# /var/log/agc/<id>.downlink.ndjson.
+#
+# Ports (VirtualAGC convention): LM base 19797, CM base 19697. yaAGC listens on base..base+9,
+# one client per port — the bridge and every dsky scan upward for a free slot.
+set -eu
+
+PREFIX="${AGC_PREFIX:-/opt/agc}"
+BIN="$PREFIX/bin"; ROM="$PREFIX/rom"
+LOGD=/var/log/agc; LIBD=/var/lib/agc; RUND=/run/agc
+
+id_of()   { case "${1:-lm}" in lm|LM) echo lm;; cm|CM) echo cm;; *) echo "bad vehicle '$1' (lm|cm)" >&2; exit 2;; esac; }
+port_of() { [ "$1" = lm ] && echo 19797 || echo 19697; }
+rope_of() { [ "$1" = lm ] && echo "$ROM/Luminary099.bin" || echo "$ROM/Comanche055.bin"; }
+cfg_of()  { [ "$1" = lm ] && echo LMSIM || echo CMSIM; }
+
+alive() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
+
+start_one() { # $1=id  $2=cold(0/1)  $3=mode
+    ID="$1"; COLD="$2"; MODE="$3"
+    PORT="$(port_of "$ID")"; ROPE="$(rope_of "$ID")"
+    mkdir -p "$LOGD" "$LIBD/$ID" "$RUND/$ID/cmd" "$RUND/switches"
+    PIDA="$RUND/$ID/yaAGC.pid"; PIDB="$RUND/$ID/bridge.pid"
+    if alive "$PIDB" || alive "$PIDA"; then echo "$ID already running (agc stop $ID first)"; exit 1; fi
+    [ -f "$ROPE" ] || { echo "missing rope $ROPE — run build/install first" >&2; exit 1; }
+
+    CORE="$LIBD/$ID/$(echo "$ID" | tr a-z A-Z).core"     # yaAGC auto-dump/resume file
+    PAD="$LIBD/$ID/padload.core"
+    [ "$COLD" = 1 ] && rm -f "$CORE"
+
+    # Padload: generated from the live universe on cold start (or when none exists yet).
+    if [ ! -f "$CORE" ]; then
+        echo "== generating padload from /sim (audit follows)"
+        "$BIN/agc-padload" --vehicle="$ID" --out="$PAD" || {
+            echo "warning: padload generation failed (no /sim?) — cold-starting with empty erasable" >&2
+            PAD=""
+        }
+    else
+        PAD=""    # resume the mission from the auto core dump
+    fi
+
+    if [ "$MODE" = extern ]; then
+        printf '%s\n' "$(cfg_of "$ID")" > "$RUND/$ID/sim.cfg"
+        echo "== yaAGC ($ID) on :$PORT"
+        ( cd "$LIBD/$ID" && exec "$BIN/yaAGC" --nodebug --port="$PORT" --interlace=10 \
+              --cfg="$RUND/$ID/sim.cfg" "$ROPE" ${PAD:+"$PAD"} \
+              >> "$LOGD/$ID.agc.log" 2>&1 ) &
+        echo $! > "$PIDA"
+        sleep 1
+        alive "$PIDA" || { echo "yaAGC died — tail $LOGD/$ID.agc.log:" >&2; tail -5 "$LOGD/$ID.agc.log" >&2; exit 1; }
+    fi
+
+    echo "== agc-bridge ($ID, $MODE mode)"
+    ( exec "$BIN/agc-bridge" --vehicle="$ID" --port="$PORT" --agc="$MODE" \
+          ${PAD:+--padload="$PAD"} --rope="$ROPE" \
+          --switches="$RUND/switches" --cmd-dir="$RUND/$ID/cmd" \
+          --downlink="$LOGD/$ID.downlink.ndjson" \
+          >> "$LOGD/$ID.bridge.log" 2>&1 ) &
+    echo $! > "$PIDB"
+    sleep 1
+    alive "$PIDB" || { echo "bridge died — tail $LOGD/$ID.bridge.log:" >&2; tail -5 "$LOGD/$ID.bridge.log" >&2; exit 1; }
+    echo "$ID up. DSKY:  dsky${ID:+ --port=$PORT}    logs:  agc log $ID"
+}
+
+stop_one() {
+    ID="$1"
+    for P in "$RUND/$ID/bridge.pid" "$RUND/$ID/yaAGC.pid"; do
+        if alive "$P"; then kill "$(cat "$P")" 2>/dev/null || true; fi
+        rm -f "$P"
+    done
+    echo "$ID stopped"
+}
+
+case "${1:-}" in
+start)
+    ID="$(id_of "${2:-lm}")"; COLD=0; MODE=extern
+    for a in "$@"; do case "$a" in --cold) COLD=1;; --agc=embedded) MODE=embedded;; --agc=extern) MODE=extern;; esac; done
+    start_one "$ID" "$COLD" "$MODE"
+    ;;
+stop)
+    if [ -n "${2:-}" ]; then stop_one "$(id_of "$2")"; else
+        for i in lm cm; do [ -d "$RUND/$i" ] && stop_one "$i"; done
+    fi
+    ;;
+status)
+    for i in lm cm; do
+        [ -d "$RUND/$i" ] || continue
+        A=down; B=down
+        alive "$RUND/$i/yaAGC.pid"  && A="pid $(cat "$RUND/$i/yaAGC.pid")"
+        alive "$RUND/$i/bridge.pid" && B="pid $(cat "$RUND/$i/bridge.pid")"
+        echo "$i: yaAGC=$A bridge=$B port=$(port_of "$i")"
+    done
+    ;;
+log)
+    ID="$(id_of "${2:-lm}")"
+    case "${3:-bridge}" in
+        agc)      exec tail -f "$LOGD/$ID.agc.log";;
+        downlink) exec tail -f "$LOGD/$ID.downlink.ndjson";;
+        *)        exec tail -f "$LOGD/$ID.bridge.log";;
+    esac
+    ;;
+align)
+    ID="$(id_of "${2:-lm}")"
+    echo align > "$RUND/$ID/cmd/$$.cmd"
+    echo "align requested (REFSMMAT uplink + V41N20 macro) — watch UPLINK ACTY on the DSKY"
+    ;;
+uplink)
+    [ -n "${2:-}" ] || { echo "usage: agc uplink FILE [lm|cm]" >&2; exit 2; }
+    ID="$(id_of "${3:-lm}")"
+    F="$(readlink -f "$2")"
+    echo "uplink $F" > "$RUND/$ID/cmd/$$.cmd"
+    echo "uplink of $F requested"
+    ;;
+verbs)
+    cat <<'CARD'
+VERBS  05 octal R1-R3 · 06 decimal R1-R3 · 16 monitor decimal · 21/22/24/25 load R1/R2/R1R2/all
+       27 fixed mem · 32 recycle · 33 PROCEED · 34 terminate · 35 LAMP TEST · 36 FRESH START
+       37 change program (V37E<PP>E) · 40 zero CDUs · 41 coarse align (V41N20E) · 42 fine align
+       48 DAP data load (R03) · 50 please-perform · 55 adjust clock · 57 permit LR updates
+       58 inhibit LR updates · 60 LR antenna pos 2 · 63 radar sample · 69 restart · 71/72/73 uplink
+       75 U/V jet translate · 76 min-impulse DAP · 77 rate-command DAP · 82 orbit params
+       99 engine-enable request (PRO = light it)
+NOUNS  09 alarms · 18 auto-maneuver angles · 20 present ICDU angles · 33 TIG · 36 clock
+       40 TFI/VG/ΔVacc · 42 apo/peri/ΔV · 43 lat/lon/alt · 44 orbit params · 46 DAP config
+       47 LM/CSM weights · 60 H-dot/H/ΔV · 61 TG/velocities · 62 abs vel/TFI/ΔV
+       63 ΔH/H-dot/H (braking) · 64 LPD+TG/H-dot/H (approach) · 66 LR range/pos
+       68 slant range/TG/LPD · 74 ascent targets · 92 LR override
+PROGRAMS (LM)  00 idle · 06 standby · 12 ascent · 30 ext ΔV · 40 DPS · 41 RCS · 42 APS
+       47 thrust monitor · 51/52/57 IMU align · 63 braking · 64 approach · 65 auto land
+       66 ROD · 68 confirm · 70/71 aborts · 76 target ΔV
+CARD
+    ;;
+*)
+    sed -n '3,11p' "$0" | sed 's/^# \{0,1\}//'
+    exit 2
+    ;;
+esac
