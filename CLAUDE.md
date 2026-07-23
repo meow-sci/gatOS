@@ -44,16 +44,18 @@ welds/IVA/parts, thug_life, per-vessel scale/always_render, debug impulse, `ctl/
 `/sim/audio` checklists) that require a live KSA flight; checklists are in
 [`docs/VALIDATION.md`](docs/VALIDATION.md). The purrTTY tip release is now cut.
 
-> **KSA baseline: `2026.7.6.4939`** (upgrade-ksa playbook pass 2026-07-16, from 4892): **clean — no
-> code changes needed**; build + tests green, full decomp/Content diff (gapless changelog, first time)
-> found no bound-member drift. Behavior notes (the new fuel-line/tank-transfer/propellant-use system is
-> additive on `Tank` but changes *when* engines see fuel — the propellant reads report it truthfully;
-> the rev 4914 control-module lockout is **UI-only** — the module methods gatOS binds stay ungated, so
-> `/sim` writes still actuate control-less vessels; animating parts now update colliders and force
-> off-rails — `animation.goal` on landing legs has real physics; rev 4915 removes the old
-> service-module parts, **save-breaking upstream**) + the pass record live in
-> [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope pages; live re-check items appended to
-> [`docs/VALIDATION.md`](docs/VALIDATION.md).
+> **KSA baseline: `2026.7.8.4980`** (upgrade-ksa playbook pass 2026-07-22, from 4939): **one compile
+> break, fixed** — rev 4943 removed `InputEvents.VehicleDockingInputData.OldMeanRadius`;
+> `DockingActuator.Undock` now enqueues `{Vehicle, DockingPort, Undock}` like the stock UnDock menu
+> item (downstream `Vehicle.Split(Connector, PushoffImpulse)` byte-identical). Build + tests green;
+> no other bound member, reflection accessor, or Harmony hook target changed. Two inherited semantic
+> drifts (no API change): the new `FlightComputer.RCSMode` toggle (R key) silently disables auto
+> attitude holds on RCS-only vessels, and the roll-mode default flipped to decoupled — fresh flight
+> computers no longer hold `attitude_target`'s roll component (SPEC caveats added). Behavior notes
+> (splits keep control-module-stamped names; density fallback mass; fuel-flow drain-order default;
+> the high-warp verlet fix; the additive screenshot feature + its thug_life sample-count transient)
+> + the pass record live in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope pages; live
+> re-check items appended to [`docs/VALIDATION.md`](docs/VALIDATION.md).
 
 > **Whole-mod perf pass (2026-07-02):** all seven plans of
 > [`plans/GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md`](plans/GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md)

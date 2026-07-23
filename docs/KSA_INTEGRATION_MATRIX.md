@@ -15,20 +15,25 @@ new events) and **G4** (full control surface: throttle/staging/attitude/burn, RC
 they add **no** KSA coupling — every transport speaks the same `SnapshotStore` (reads) and
 `ICommandSink`/`SimCommand` (writes), so this matrix (the KSA-touching surface) is unaffected by them.
 
-**Verified:** **2026-07-16 against `2026.7.6.4939`** (full solution build green, 0 warnings, forced
-non-incremental; full decomp + Content diff via `git diff 7cf5c0a..2423a02` between the 4892 and 4939
-drops inside the assemblies checkout — the 4939 changelog is gapless, `fromRevision` 4892 = the prior
-baseline). **Clean pass: no bound member, reflection accessor, or Harmony hook target changed** — no
-code change required. Behavior notes (the fuel-line/tank-transfer/propellant-use system — additive on
-`Tank`, changes *when* engines see fuel; the rev 4914 control-module lockout is UI-only — the module
-methods gatOS binds stay ungated; animating parts now update colliders + force off-rails; rev 4915
-removes the old service-module parts, save-breaking upstream) are catalogued in the
-[read-surface 4939 findings](../scope/ksa-read-surface.md#4939-findings) /
-[write-surface 4939 findings](../scope/ksa-write-surface.md#4939-findings). Rows showing an earlier
-per-member `Verified` date bind to members **unchanged** in 4939 (their compatibility is confirmed by
-the green build + the diff). Prior passes: 2026-07-14 against `2026.7.5.4892` (clean; rev 4884
-combustion→Reactions notes), 2026-07-03 against `2026.7.3.4826` (clean; post-decouple control-state
-inheritance notes), 2026-06-27 against `2026.6.9.4750` (the G1–G4 fix-pass).
+**Verified:** **2026-07-22 against `2026.7.8.4980`** (full solution build green, 0 warnings; full
+decomp + Content diff between the side-by-side 4939 and 4980 checkouts — the 4980 changelog is gapless,
+`fromRevision` 4939 = the prior baseline). **One compile break, fixed same-day**: rev 4943 removed
+`InputEvents.VehicleDockingInputData.OldMeanRadius` — `DockingActuator.Undock` dropped the field from
+its enqueue (now `{Vehicle, DockingPort, Undock}`, matching the stock UnDock menu item; downstream
+`DockingPort.Undock` → `Vehicle.Split(Connector, PushoffImpulse)` byte-identical). No other bound
+member, reflection accessor, or Harmony hook target changed. Two inherited semantic drifts (no API
+change): the new `FlightComputer.RCSMode` toggle (revs 4946/4949 — auto attitude holds on an RCS-only
+vessel silently stop actuating while RCS is toggled off) and the `RollMode` default flip
+`Up`→`Decoupled` (rev 4978 — a fresh FC no longer holds `attitude_target`'s roll component). Behavior
+notes (control-module name stamps survive splits; density fallback mass; fuel-flow default/persistence;
+the verlet high-warp fix; the additive screenshot feature and its thug_life sample-count caveat) are
+catalogued in the [read-surface 4980 findings](../scope/ksa-read-surface.md#4980-findings) /
+[write-surface 4980 findings](../scope/ksa-write-surface.md#4980-findings). Rows showing an earlier
+per-member `Verified` date bind to members **unchanged** in 4980 (their compatibility is confirmed by
+the green build + the diff). Prior passes: 2026-07-16 against `2026.7.6.4939` (clean; fuel-line/
+tank-transfer notes, UI-only control-module lockout), 2026-07-14 against `2026.7.5.4892` (clean; rev
+4884 combustion→Reactions notes), 2026-07-03 against `2026.7.3.4826` (clean; post-decouple
+control-state inheritance notes), 2026-06-27 against `2026.6.9.4750` (the G1–G4 fix-pass).
 Live in-flight checklist: `docs/VALIDATION.md`.
 
 ## Transport parity (binding)

@@ -399,6 +399,25 @@ on 4939. These are the residual items static review cannot settle:
 | 7 | `/sim/display` still streams (enable + open a reader; frames advance; try with Plume Trails ON) | ☐ | `RenderGame` interior gained volumetric-trail + gizmos calls; the tail (final `End()`) is byte-identical — transpiler should absorb it |
 | 8 | `tanks/` listing on a new vehicle after adding a fuel line / toggling propellant-use: `amount/capacity/fraction` stay sane through `RecreateResourceManagers` rebuilds | ☐ | rev 4938 toggling rebuilds resource managers; `Tank.Moles` path untouched |
 
+## KSA 2026.7.8.4980 upgrade — live re-check items — **NOT YET RUN**
+
+The 2026.7.6.4939 → 2026.7.8.4980 playbook pass (2026-07-22) found **one compile break, fixed**
+(`DockingActuator.Undock` — rev 4943 removed `VehicleDockingInputData.OldMeanRadius`) and **two
+inherited semantic drifts** (`FlightComputer.RCSMode` gating auto attitude holds; the `RollMode`
+default flip). See `scope/FULL_SCOPE.md` §0 and the `scope/ksa-read-surface.md` /
+`scope/ksa-write-surface.md` 4980 findings. The 4939 items above remain valid and can run on 4980.
+Residual items static review cannot settle:
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | `echo 1 > …/docking/<n>/undock` on a docked port still separates cleanly with the pushoff impulse, and the camera no longer jumps (the rev 4943 fix this break rode in on) | ☐ | the enqueue lost `OldMeanRadius` — confirm the new camera-follow path tolerates a `/sim`-initiated undock |
+| 2 | **RCSMode gate**: hold `ctl/attitude_mode=Prograde` on an RCS-only vessel, press the new **R** keybind (RCS off) → the hold silently stops actuating (gauge shows RCS off); press R again → hold resumes. Confirm `ctl/rotate`/`ctl/translate` manual flags still fire jets regardless of the toggle | ☐ | revs 4946/4949/4975; a new silent-ignore path gatOS neither reads nor sets — decide whether to surface `FlightComputer.RCSMode` as an additive `/sim` control + read |
+| 3 | **Roll decoupled default**: on a **fresh** (never-saved) vessel, write a full-quaternion `ctl/attitude_target` → +X pointing converges but the vessel rolls free; set Roll mode in the stock UI → roll holds. Decide whether `SetAttitudeTarget` should set `RollMode` explicitly | ☐ | rev 4978 `RollMode` default `Up`→`Decoupled`; loaded saves keep their serialized mode |
+| 4 | After `docking.undock` / `decoupler.fire` on a vessel whose control modules carry names: the separated vessel's `name` / `vessels/by-id/<id>` key is the persisted control-module name (not `<parent>-<n>`) and telemetry follows it | ☐ | rev 4950 `Control.VehicleName` stamps; gatOS keys vessels by `Vehicle.Id` |
+| 5 | thug_life quad still draws correctly under the reworked cascaded shadows; then take a **hi-res (scale>1) screenshot** with a quad active — expect at worst a transient self-disable (`Active=false` + one log), never a crash | ☐ | shadow rework is cascade-path only, but rev 4942's `SampleCountOverride` renderer rebuild can mismatch the never-rebuilt quad pipeline's MSAA state |
+| 6 | `/sim/display` still streams with **texture streaming** ON (new default) and across a hi-res screenshot capture | ☐ | rev 4942 inserts `ScreenshotCapture` calls immediately before the transpiler's final-`End()` anchor; rev 4974 texture streaming is terrain-side |
+| 7 | High-warp physics sanity: `acceleration`/`dynamic_pressure` no longer gain spurious orbital energy at high physics warp (the values gatOS reports track the fixed integrator) | ☐ | rev 4977 verlet + CCI-frame drag fix — value drift, members unchanged |
+
 ## AGC (examples/agc — Luminary099 in-guest) — mission cards M-A…M-E — **NOT YET RUN IN-GAME**
 
 Prereq: the T6.6 pass; `examples/agc` built + installed in the guest (`tools/build-agc.sh` —

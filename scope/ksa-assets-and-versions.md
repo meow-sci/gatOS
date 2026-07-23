@@ -27,13 +27,38 @@ Two checkouts are kept side by side for diffing:
 
 | Checkout dir | Build | Date | Revisions | Role |
 |---|---|---|---|---|
-| `…/ksa-game-assemblies` | **2026.7.6.4939** | 2026-07-16 | 4892 → 4939 (**gapless** — `fromRevision` = the prior baseline, first drop with a complete changelog) | **current / verified baseline** — full playbook pass 2026-07-16: build + tests green, full decomp + Content diff clean (no code change needed); `KSAFolder` default resolves here. The checkout is a **git repo whose history holds every prior drop** (`7cf5c0a` = 4892, `1265373` = 4826, `6fa343d` = 4750, …) — diff drops with `git diff <old>..<new>` inside it |
-| `…/ksa-game-assemblies_prev` | 2026.6.9.4750 | 2026-06-27 | 4680 → 4750 | older checkout kept for convenience; the in-repo git history above supersedes it for diffing (the 4939 pass diffed `7cf5c0a..2423a02`, i.e. 4892 → 4939) |
+| `…/ksa-game-assemblies` | **2026.7.8.4980** | 2026-07-22 | 4939 → 4980 (**gapless** — `fromRevision` = the prior baseline) | **current / verified baseline** — full playbook pass 2026-07-22: one compile break (docking `OldMeanRadius`) fixed, everything else clean; `KSAFolder` default resolves here. The checkout is a **git repo whose history holds every prior drop** (`7cf5c0a` = 4892, `1265373` = 4826, `6fa343d` = 4750, …) — diff drops with `git diff <old>..<new>` inside it |
+| `…/ksa-game-assemblies_prev` | 2026.7.6.4939 | 2026-07-16 | 4892 → 4939 | prior verified baseline kept side-by-side; the 4980 pass diffed the two checkouts' `current/decomp` + `current/Content` trees directly |
 
 gatOS was originally built against the 4680-era sources (most `[KsaAnchor]` `Verified` dates span
 2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27; the touched
 anchors carry `GameVersion="2026.6.9.4750"` (see
 [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)).
+
+**The 4939 → 4980 pass (2026-07-22) — one compile break, fixed; otherwise clean.** The 4980 drop's
+`version.json` is gapless (`fromRevision` 4939 = the prior baseline; revs 4940–4980 logged, last logged
+commit 4978). Build-as-alarm caught the one break: **rev 4943 removed
+`InputEvents.VehicleDockingInputData.OldMeanRadius`** (docking/decouple camera zoom-jump fix — the
+camera follow no longer needs the stashed radius); `DockingActuator.Undock` dropped the field
+(the game's own UnDock enqueue is now `{Vehicle, DockingPort, Undock}`, `DockingPort.cs:145-150`;
+`DockingPort.Undock` → `Vehicle.Split(Connector, PushoffImpulse)` byte-identical). After the one-line
+fix the full solution compiles 0-warning against the 4980 DLLs and all tests pass. Everything else
+verified unchanged: `Tank.cs`/`Mole.cs`/`EngineControllerState.cs`/`ManualControlInputs.cs`/
+`ThrusterController.cs`/`BurnTarget.cs` byte-identical; `Vehicle._manualControlInputs` still `:232`;
+both Harmony hook targets and the display transpiler's final-`End()` site intact (rev 4942's
+`ScreenshotCapture` inserts *before* it, additively); `RenderMainPass` untouched (the shadow rework is
+cascade-path only); `Orbit.cs` churn is map-hover picking (unbound). **Semantic drift inherited, no API
+change**: `FlightComputer.RCSMode` (revs 4946/4949/4975 — RCS toggle gates auto attitude holds; RCS-only
+vessels silently stop actuating when toggled off; `CopyFrom` copies it, Solver discipline intact) and
+the `RollMode` default flip `Up`→`Decoupled` (rev 4978 — fresh FCs no longer hold `attitude_target`
+roll). Behavior notes: control-module name stamps survive splits (4950), density fallback mass (4955),
+fuel-flow default furthest-to-nearest-by-stage + persisted per-engine `FlowRule` (4957/4958/4965 —
+drain order only), the verlet/CCI-drag fix changes high-warp physics values (4977). Content: the only
+schema-adjacent change is texture `Category="Terrain"`→`"TerrainHeight"` (rev 4947) — celestial texture
+elements only, orbital/body schema untouched (the `apollo11-system` generator emits no texture
+`Category`). Findings detail: [read](ksa-read-surface.md#4980-findings) /
+[write](ksa-write-surface.md#4980-findings) 4980 sections. No `plans/` gap plan needed. Live re-check
+items: `docs/VALIDATION.md`. 4980 is now the verified baseline.
 
 **The 4892 → 4939 pass (2026-07-16) — clean, no code changes.** The 4939 drop's `version.json` is
 **gapless** for the first time (`fromRevision` 4892 = the prior verified baseline; revs 4893–4939 all
@@ -166,6 +191,19 @@ breaks the draw — re-verify live):
 Full anchor list: [`ksa-read-surface.md#thug-life`](ksa-read-surface.md#thug-life) (anchor math),
 [`ksa-write-surface.md#thug-life`](ksa-write-surface.md#thug-life) (the seven actions),
 [`../docs/KSA_INTEGRATION_MATRIX.md`](../docs/KSA_INTEGRATION_MATRIX.md) (render set). **Re-verified
+(static) 2026-07-22 against `2026.7.8.4980`**: `RenderMainPass(CommandBuffer)` and its body
+**identical** — the whole `SuperMeshRenderSystem.cs` diff is the cascaded-shadow rework
+(`RenderShadowPass` gained an `int cascadeIndex` param, depth pipelines an int push-constant, PBR
+pipelines a CSM-filter fragment specialization constant, ID 10) and none of it touches the main color
+pass; `Program.OffScreenPass` (`:403`), `ColorFormat=R16G16B16A16SFloat`,
+`SampleCount=GameSettings.GetSampleCount()`, reverse-Z and `CreateRenderPass(Clear, Load)` all
+unchanged; `UboVesselData`'s new navball-marker float4s and `MeshDrawContext`/`MeshRenderTechnique`'s
+cascade-index plumbing never reach the quad's own pipeline/descriptors; `Part` ego members
+(`PositionEgo`, `Asmb2Ego`, `Asmb2VehicleAsmb`) untouched. ⚠ New (rev 4942): the scaled-screenshot
+path (`GameSettings.SampleCountOverride` + `RebuildRenderer`) can transiently rebuild the renderer at
+1 sample while the quad pipeline (built once, no rebuild listener) still assumes the old
+`OffScreenPass.SampleCount` — see
+[`ksa-runtime-coupling.md#thug-life-patch`](ksa-runtime-coupling.md#thug-life-patch). **Re-verified
 (static) 2026-07-16 against `2026.7.6.4939`**: `SuperMeshRenderSystem.cs` entirely untouched by the
 4892→4939 diff (`RenderMainPass(CommandBuffer)` at `:329`), the `UnlitMesh.{vert,frag}` assets + the
 `"UnlitMeshVert"`/`"UnlitMeshFrag"` `DefaultAssets.xml` keys unchanged (the DefaultAssets churn is

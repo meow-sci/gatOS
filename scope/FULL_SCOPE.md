@@ -70,28 +70,38 @@ update's blast radius is small and discoverable. The procedure:
    (`EOPNOTSUPP`), logs once, and shows up in `/sim/status/accessors`. The guest sees a failed sensor,
    not a crashed mod. This is the safety net for the things steps 2–3 miss.
 
-> **Current applied result of this playbook:** the **2026.7.5.4892 → 2026.7.6.4939** update was run
-> through it on 2026-07-16 — **clean: no code changes required.** Build + full test suite green against
-> 4939 (forced non-incremental, 0 warnings); every bound member, reflection accessor, and Harmony hook
-> target verified unchanged by a full decomp + Content diff (`git diff 7cf5c0a..2423a02` inside the
-> assemblies checkout; the 4939 changelog is **gapless** for the first time — `fromRevision` 4892 = the
-> prior baseline; see [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md)). Findings are behavior
-> notes, not drift: the new **fuel-line / tank-transfer / propellant-use system** is *additive* on
-> `Tank` (`Tank.Moles` and the moles read path untouched) but changes *when* engines see fuel —
-> `engines/<n>/propellant` reports the new crossfeed/disable rules truthfully, and an active transfer
-> draws 20 W/tank in `power/consumed`; the rev 4914 **control-module lockout is UI-only** (staging key /
-> engine checkboxes / Decouple menu) — the module methods gatOS binds carry no new gate, so `/sim`
-> writes still actuate control-less vessels where the stock UI now refuses; **animating parts now
-> update colliders and force off-rails** (rev 4930 — `animation.goal` on landing legs has real physics);
-> the in-flight Sequence UI rework leaves `SequenceList.ActivateNextSequence` byte-compatible; the heavy
-> particle/plume-trail/clutter render churn never reaches a binding (`RenderGame`'s tail — the display
-> transpiler's site — is byte-identical; `SuperMeshRenderSystem.cs` untouched). Rev 4915 removes the old
-> service-module parts (**save-breaking upstream**, the second after 4884)
-> ([read 4939 findings](ksa-read-surface.md#4939-findings) /
-> [write 4939 findings](ksa-write-surface.md#4939-findings)). Live re-check items are queued in
+> **Current applied result of this playbook:** the **2026.7.6.4939 → 2026.7.8.4980** update was run
+> through it on 2026-07-22 — **one compile break, fixed same-day; no other change needed.** Rev 4943
+> removed `InputEvents.VehicleDockingInputData.OldMeanRadius` (docking camera zoom-jump fix) —
+> `DockingActuator.Undock` dropped the field from its enqueue (now `{Vehicle, DockingPort, Undock}`,
+> still exactly the stock UnDock menu-item enqueue; `DockingPort.Undock` → `Vehicle.Split(Connector,
+> PushoffImpulse)` byte-identical). Build + full test suite green against 4980 (0 warnings); every other
+> bound member, reflection accessor, and Harmony hook target verified unchanged by a full decomp +
+> Content diff of the two side-by-side checkouts (changelog gapless again — revs 4940–4980). Two
+> **semantic drifts gatOS inherits, no API change**: the new `FlightComputer.RCSMode` (revs 4946/4949,
+> R keybind) — with RCS toggled off, an **auto attitude hold on an RCS-only vessel silently stops
+> actuating** (a new silent-ignore path beside the `IsControllable` gate; `ctl/rotate`/`ctl/translate`
+> manual flags are not gated); and the `RollMode` default flip `Up` → `Decoupled` (rev 4978) — a fresh
+> FC **no longer holds `attitude_target`'s roll component** (pointing still converges). Behavior notes:
+> undocked/decoupled vessels now keep their control-module-stamped name (rev 4950 — friendlier
+> `vessels/by-id` keys after a split); massless vehicles get a density-based fallback mass (rev 4955);
+> the fuel-flow default flipped to furthest-to-nearest-by-stage with a persisted per-engine rule
+> (4957/4958/4965 — drain order only, all reads stay truthful); the verlet fix (4977) changes high-warp
+> physics values, not read semantics; rev 4942's screenshot feature is additive to `RenderGame` (the
+> display transpiler's final-`End()` anchor holds) but its hi-res path force-rebuilds the renderer at 1
+> sample — a niche transient hazard for an active thug_life quad pipeline (self-disabling latch covers
+> it). ([read 4980 findings](ksa-read-surface.md#4980-findings) /
+> [write 4980 findings](ksa-write-surface.md#4980-findings)). Live re-check items are queued in
 > `docs/VALIDATION.md`.
 >
-> The prior 2026.7.3.4826 → 2026.7.5.4892 pass (2026-07-14) was also clean — behavior notes only (the
+> The prior 2026.7.5.4892 → 2026.7.6.4939 pass (2026-07-16) was clean — no code changes; behavior notes
+> only (the additive fuel-line / tank-transfer / propellant-use system — reads report the new rules
+> truthfully, an active transfer draws 20 W/tank; the rev 4914 control-module lockout is **UI-only** so
+> `/sim` writes still actuate control-less vessels; animating parts update colliders and force off-rails
+> (rev 4930); rev 4915 removes the old service-module parts, **save-breaking upstream** —
+> [read 4939 findings](ksa-read-surface.md#4939-findings) /
+> [write 4939 findings](ksa-write-surface.md#4939-findings)).
+> The 2026.7.3.4826 → 2026.7.5.4892 pass (2026-07-14) was also clean — behavior notes only (the
 > rev 4884 combustion→Reactions / tank-affinity refactor, additive to every read; FC `CommandThrottle`
 > zeroing; the `Staging`→`ResourceGroups` window rename; the 4866 on-rails shifts —
 > [read 4892 findings](ksa-read-surface.md#4892-findings)).

@@ -13,8 +13,13 @@ namespace gatOS.GameMod.Game.Ksa.Actuators;
 internal static class FlightComputerActuator
 {
     [KsaAnchor("FlightComputer.{AttitudeMode,AttitudeTrackTarget}; FlightComputerAttitudeMode/...TrackTarget",
-        SourceFile = "KSA/FlightComputer.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium,
-        Notes = "'manual' → AttitudeMode.Manual; any other token is an auto track-target.")]
+        SourceFile = "KSA/FlightComputer.cs", Verified = "2026-07-22", GameVersion = "2026.7.8.4980",
+        Risk = ChurnRisk.Medium,
+        Notes = "'manual' → AttitudeMode.Manual; any other token is an auto track-target. 4980 (rev "
+            + "4946/4949): new FlightComputer.RCSMode (Enabled/Disabled, toggled in-game with R) gates the "
+            + "RCS torque-authority scan in UpdateActiveControlSystems — with it Disabled, an auto hold on "
+            + "an RCS-only vessel silently does not actuate (only gimballed TVC survives, and only while "
+            + "burning). gatOS neither reads nor sets it; pre-existing silent-ignore caveat extended.")]
     internal static CommandResult SetAttitudeMode(Vehicle vehicle, string token)
     {
         var fc = vehicle.FlightComputer;
@@ -42,11 +47,15 @@ internal static class FlightComputerActuator
     }
 
     [KsaAnchor("FlightComputer.{CustomAttitudeTarget,AttitudeFrame}; VehicleReferenceFrameEx.{GetEclBody2Cci,QuaternionToEulerAngles}",
-        SourceFile = "KSA/FlightComputer.cs", Verified = "2026-06-15", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/FlightComputer.cs", Verified = "2026-07-22", GameVersion = "2026.7.8.4980",
+        Risk = ChurnRisk.Medium,
         Notes = "Custom track recomputes Target2Cci from CustomAttitudeTarget (euler) every solver step "
             + "(UpdateAttitudeTarget), so a directly-set Target2Cci is discarded — we must set the euler "
             + "form in an AttitudeFrame instead. EclBody is inertial, so its frame2Cci needs only the "
-            + "parent's Cce2Cci (no FlightComputerNavigation).")]
+            + "parent's Cce2Cci (no FlightComputerNavigation). 4980 (rev 4978): FlightComputer.RollMode "
+            + "default flipped Up → Decoupled (\"ANY\"), so a fresh FC no longer actuates roll — the +X "
+            + "pointing converges but the quaternion's roll component is held only if the player (or a "
+            + "loaded save) sets RollMode; gatOS does not set it.")]
     internal static CommandResult SetAttitudeTarget(Vehicle vehicle, IReadOnlyList<double> quat)
     {
         if (quat.Count != 4)
