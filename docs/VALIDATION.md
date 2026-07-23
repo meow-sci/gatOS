@@ -398,3 +398,24 @@ on 4939. These are the residual items static review cannot settle:
 | 6 | thug_life quad still draws correctly (add an entry; check pose/depth/MSAA vs the scene, with and without the new Plume Trails / screenspace-particles graphics toggles ON) | ☐ | `SuperMeshRenderSystem.cs` untouched, but revs 4894–4932 add mid-frame compute/composite passes; only a live draw proves render-pass compatibility |
 | 7 | `/sim/display` still streams (enable + open a reader; frames advance; try with Plume Trails ON) | ☐ | `RenderGame` interior gained volumetric-trail + gizmos calls; the tail (final `End()`) is byte-identical — transpiler should absorb it |
 | 8 | `tanks/` listing on a new vehicle after adding a fuel line / toggling propellant-use: `amount/capacity/fraction` stay sane through `RecreateResourceManagers` rebuilds | ☐ | rev 4938 toggling rebuilds resource managers; `Tank.Moles` path untouched |
+
+## AGC (examples/agc — Luminary099 in-guest) — mission cards M-A…M-E — **NOT YET RUN IN-GAME**
+
+Prereq: the T6.6 pass; `examples/agc` built + installed in the guest (`tools/build-agc.sh` —
+rope assembly is checksum-gated, so a successful install already proves the byte-exact
+Luminary099/Comanche055 ropes). Host-tier and in-guest-tier validation (AGC_PLAN §10 tiers 1-2)
+**already ran green on 2026-07-22**: 51 unit tests (codec golden packets, IMU/PIPA conservation
+properties, padload octal pins, radar quantization) + live-wire tests against a real yaAGC
+(V16N36 clock, V35 lamp test, padload-core resume) + the embedded-mode freeze/thaw test.
+These cards are the remaining in-game tier. Flagged `[impl-verify]` calibration items are
+listed with their card.
+
+| Card | Check | Result | Notes |
+|---|---|---|---|
+| M-A "First light" | Fresh save → `agc start lm` (audit GREEN on the stock moon) → `dsky` in a purrTTY tab: V35 animates every segment/lamp; V16N36 ticks; V37E00E reaches P00; same on an in-world quad | ☐ | emulator + DSKY + clock, in-game packaging |
+| M-B "Alignment" | ISS 90 s turn-on (NO ATT clears); `agc align`; V41N20 coarse align zeroes; V16N20 tracks the tumbling vessel within quantization on ALL axes (falsifies gimbal sign errors); V40 zero; pause → resume resyncs clean (V55 trim in `agc log`) | ☐ | the whole IMU seam; `body_map` signs |
+| M-C "Burns" | V48 DAP load; V76/V77 rate-damp/hold visibly (DAP jets ride `ctl/batch` rotate/translate); P30+P40: ignition at TIG under V99/PRO, Average-G N40 counts down, auto-cutoff within tolerance vs `/sim` truth | ☐ | actuation seam; **calibrate THRUST lbf/pulse** (config) vs commanded thrust; **verify jet-table signs** (DAP fighting itself = wrong sign) |
+| M-D "Landing" | Pre-PDI `agc-padload --statevec` uplink; V37E63E → PRO at TIG → DPS 10% + throttle-up; LR locks (ALT/VEL lamps out), V57 accept, N63 ΔH converges; P64 pitchover + N64 LPD; P66 ROD to touchdown near the `Apollo11` landmark; P70 abort-to-orbit demo | ☐ | the whole point; **verify LR select-code table + slant-range beam** (N63-vs-`/sim/altitude/radar` telemetry in `agc log`); 099-new padload cells (GAINBRAK/TCG*/DELTTFAP/V2FG/TAUVERT/LRVF zeroed — V21-load if P63/P65 misbehave) |
+| M-E "Ascent & CM" | P12: ABORT STAGE + `ctl/stage` at TIG, APS monitored ascent to target orbit; `agc start cm` → Comanche055 P00/V16N36 on :19697, `dsky --cm` lamp set | ☐ | staging path; CM mode |
+| embedded | `agc start lm --agc=embedded` (built `--features embedded`): M-B and M-C repeat identically; pausing the game freezes V16N36 exactly; kill + restart resumes from the auto core dump | ☐ | A6 exit criteria |
+| system | `apollo11-system` generated + selected: Moon ~389,000 km at t≈+273,000 s (LOI), crescent moon over the pad at t=0, `Apollo11` landmark at the padload site | ☐ | epoch placement sanity |

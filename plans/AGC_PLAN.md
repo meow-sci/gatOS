@@ -7,8 +7,24 @@ interfaces (IMU, PIPAs, landing radar, throttle, RCS), with a **Rust ratatui DSK
 purrTTY terminal tab — including on an in-world cockpit quad. The player flies P63→P66 to a
 lunar touchdown on code that landed on the Moon on 1969-07-20.*
 
-> **STATUS (2026-07-22):** plan authored; no code yet. Milestones A0–A7 pending. The research
-> base below was verified against the three source trees on this date (`meow-sci/gatOS`,
+> **STATUS (2026-07-22, updated same day):** **A0–A7 + W1 code-complete.** `examples/agc/`
+> holds the crate (proto codec + SocketPort + A6 embedded FFI, IMU/PIPA/radar/engines/rcs/
+> discretes/uplink/padload/downlink/clockpolicy, `dsky`, tools, README, flight guide);
+> W1 `ctl/rotate` landed in gatOS proper (SPEC/scope/matrix/tests in lockstep) — the direct
+> rotation input path EXISTS in KSA (`ThrusterMapFlags` rotation bits on
+> `_manualControlInputs`, decomp 2026.7.6.4939), no per-thruster fallback needed; note the
+> asymmetry vs translate: an auto-attitude hold strips manual rotation bits, so the bridge
+> flies in `attitude_mode=manual`. Host+wire validation ran green 2026-07-22: 51 unit tests,
+> 3 live tests against real yaAGC+Luminary099 (V16N36, V35, **padload-core resume** — D-A5
+> proven), embedded freeze/thaw. Plan corrections from implementation: (1) an explicit yaAGC
+> resume file is the FULL format (channels+erasable+CPU state; `AllOrErasable=1`), not
+> erasable-only — the padload writer emits it; (2) embedded hosts MUST replicate SocketAPI's
+> channel-7 (SUPERBNK) internal write or the rope TC-traps into a restart loop (now in
+> `csrc/vagc_shim.c`); (3) LR scales came out of the rope itself (`HSCAL`/`V?SCAL`/
+> `LVELBIAS`), shrinking that [impl-verify]. Remaining: the in-game mission cards
+> M-A…M-E + flagged calibrations (`docs/VALIDATION.md`). The `apollo11-system/` generator
+> places Earth/Moon at the 1969-07-16 13:32 UTC epoch. The research
+> base below was verified against the three source trees on 2026-07-22 (`meow-sci/gatOS`,
 > `alex-sherwin/virtualagc`, `alex-sherwin/apollo-11`), including an out-of-tree build of
 > yaAGC/yaYUL and a byte-identical assembly of Luminary099 and Comanche055 against their
 > `.binsource` references, plus live wire-protocol probes against a running yaAGC.
@@ -702,7 +718,13 @@ SPEC_9P_FILESYSTEM.md + `scope/` pages + `docs/KSA_INTEGRATION_MATRIX.md` + `doc
 in the same change. The examples get a `site/` tutorial (via the `tutorials` skill) at A7, and
 CLAUDE.md's status table gains a row when A2 first ships something usable.
 
-### 7.4 W1 — `ctl/rotate` (the one gatOS augmentation; prerequisite for A4)
+### 7.4 W1 — `ctl/rotate` (the one gatOS augmentation; prerequisite for A4) — **DONE 2026-07-22**
+
+> Landed: `RotateActuator` on the rotation bits of `_manualControlInputs.ThrusterCommandFlags`
+> (KSA's own torque decode: +x=RollRight, +y=PitchUp, +z=YawRight), `RotateRules`, snapshot
+> read-back, `VesselRotateTests`, SPEC/scope/matrix/VALIDATION lockstep. The fallback was not
+> needed. One asymmetry vs translate, documented everywhere: auto attitude strips manual
+> rotation bits (`WithNoRotation()`), so full authority needs `attitude_mode=manual`.
 
 Symmetric sibling of `ctl/translate` [V that none exists today]: per-vessel `ctl/rotate`,
 grammar `x y z` **signs-only** about the KSA body axes (+x/−x roll, +y/−y pitch, +z/−z yaw
