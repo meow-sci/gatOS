@@ -17,6 +17,7 @@ KSA game process                                          QEMU subprocess
 │   SshShellSession ──SSH.NET──────────────────┼─127.0.0.1:<pSsh>──► hostfwd → :22       │
 │   NinePServer (listens 127.0.0.1:<p9>) ◄─────┼── guest connects out via 10.0.2.2       │
 │   SimFsTree ◄ SnapshotStore ◄ TelemetrySampler (game thread, OnBeforeGui)              │
+│   IvaPhysicsManager → CabinSim (own Bepu world, assembly frame; OnAfterUi, off by dflt)│
 │   VmHost (state machine) → QemuProcess, DiskManager, QgaClient, PortAllocator          │
 └──────────────────────────────────────────────┘         └──────────────────────────────┘
 ```
@@ -195,7 +196,7 @@ render thread (GameMod/Game/Ksa)                          background (gatOS.SimF
 
 ---
 
-## Game-thread cheats (welds + IVA render + thug_life + per-vessel scale/always_render)
+## Game-thread cheats (welds + IVA render + IVA physics + thug_life + per-vessel scale/always_render)
 
 The cheats ported from the sibling `unscience` mod are exposed **only** on gatOS surfaces (9p `/sim`
 + HTTP `/v1` + MQTT — no ImGui), all mutating game state on the game thread:
@@ -238,9 +239,33 @@ The cheats ported from the sibling `unscience` mod are exposed **only** on gatOS
   thread; the prefixes read a volatile immutable set (two hash lookups per vehicle per frame while
   installed); despawn pruning (`VesselForceRender.Prune`) rides the sampler's vehicle enumeration.
 
+- **IVA cabin physics** (`Game/Ksa/Iva/`, plans/IVA_MOVEMENTS.md): free-floating objects inside a
+  vessel's interior — weightless while coasting, slammed aft under thrust, flung around by RCS rotation,
+  and colliding with the actual interior surfaces. **Off by default behind one master switch**
+  (`/sim/debug/iva/enabled`), and off means nothing exists: no physics simulation, no interior collision
+  mesh, no buffer pool, no per-frame work, no Bepu type loaded. Objects are gatOS-owned rigid bodies
+  **driving real shipped IVA prop SubParts** (so rendering, lighting, ray tracing and IVA visibility
+  gating come from the game for free — gatOS writes no renderer code), simulated in a **gatOS-owned
+  `BepuPhysics.Simulation`** — against KSA's own embedded Bepu 2.5, but with its own `BufferPool` and
+  `Shapes` — running in the **vessel assembly frame**, where the interior is static geometry that never
+  moves and poses come out in exactly the coordinates `Part.PositionParentAsmb` wants. gatOS never adds a
+  body to KSA's `ConstraintSim`: a cabin body would sit deep inside the vehicle's coarse exterior collider
+  (ejected through the hull *and* shoving the spacecraft, since dynamic↔dynamic contacts are allowed
+  unconditionally), that sim is not stepped at all for a coasting vessel, and it runs on solver worker
+  threads. This adds a **sixth game-thread work site**: `Mod.DriveIvaPhysics` in `OnAfterUi`, right after
+  `DriveWelds` and (like it) after `JobSystems.VehicleSolvers.Wait()`, so the accelerometer/rates/CoM
+  readings feeding the forcing field are settled; `Timestep` runs with no `IThreadDispatcher`, so every
+  Bepu callback is on that same thread. **No Harmony patch.** Interior collision geometry is derived
+  automatically from the vessel's own interior meshes (`MeshReference.PositionCompare`, classified by
+  `PartModelModule.Template.Internal` — the same flag `always_render_iva` flips), cached per vessel and
+  rebuilt on part-count change / 10 s / an adopt-set change. Objects park (velocities zeroed, poses held)
+  under time warp, in the vehicle editor and outside the IVA camera. The physics model itself is
+  **game-free** (`gatOS.SimFs/Iva/CabinPhysics.cs`) and unit-tested on a bare host.
+
 All create/remove via Frame-phase commands and tear down on unload
-(`Mod.TeardownGameCheats`). The anchor picker for welds **and `thug_life`** is the per-vessel `parts/` list
-(`telemetry_vessel_parts`; `thug_life` also accepts `0` = the vehicle body frame).
+(`Mod.TeardownGameCheats`). The anchor picker for welds, `thug_life` **and IVA physics** is the per-vessel
+`parts/` list (`telemetry_vessel_parts`; `thug_life` also accepts `0` = the vehicle body frame, while IVA
+physics takes a **subpart** `instance_id` only — a top-level part's transform is serialized into saves).
 
 ---
 

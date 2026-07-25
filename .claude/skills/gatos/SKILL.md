@@ -124,6 +124,9 @@ debug/                                  (only when debug_namespace=true)
                   weld,weld_here,unweld}
     welds/{clear,count,<source>/{target,part,offset,rotation,lock_rotation,enabled}}
     thug_life/{add,clear,count,<id>/{vessel,part,position,rotation,size,visible,remove,spec}}
+    iva/{enabled,run_outside_iva,adopt,adopt_all,clear,count,stats,interior,help,
+         <id>/{vessel,part,name,template,position,velocity,angular_velocity,mass,shape,size,
+               asleep,nudge,release,spec}}                   (OFF by default — see below)
     always_render_iva   time/warp   focus   control_vessel
 ```
 
@@ -144,6 +147,30 @@ top-level parts only.) Full arg shapes, action keys, and errnos are in [SPEC §3
 worked `weld_here` example is in [`recipes.md` §9](recipes.md) and a `thug_life` example in
 [`recipes.md` §10](recipes.md). The render-side internals (how the quad is drawn into KSA's scene) are
 documented in the **ksa skill's `quad.md`**.
+
+**IVA cabin physics (`/sim/debug/iva`) — OFF by default:** free-floating objects inside a vessel's
+interior, with real inertial physics — weightless and drifting while coasting, slammed aft when the
+engines light, flung around by RCS rotation, and colliding with the *actual* interior surfaces.
+`enabled` is a **master switch that starts and ends the whole feature**: while it is `0` (the shipped
+default) no simulation exists at all, and writing `0` puts every object back at its exact rest pose and
+tears everything down. Turn it on, then cut props loose:
+
+```sh
+echo 1 > /sim/debug/iva/enabled
+echo "Gemini7 4 Sardine" > /sim/debug/iva/adopt_all   # the 4 smallest props matching "Sardine"
+echo "Gemini7 12"        > /sim/debug/iva/adopt_all   # or the 12 smallest loose props, any template
+cat /sim/debug/iva/0/position                         # each object is /sim/debug/iva/<id>/
+echo "0.3 0 0" > /sim/debug/iva/0/nudge               # flick it across the cabin
+echo 1 > /sim/debug/iva/clear                         # everything back where it was
+```
+
+Objects drive real shipped IVA prop **SubParts** — so pass a **subpart** `instance_id`
+(`parts/<n>/subparts/<m>/instance_id`, or `cat parts/json | jq`), never a top-level part: KSA saves a
+top-level part's transform but not a SubPart's, which is exactly why this can never touch your save
+file. Objects park (frozen) under time warp, in the VAB, and outside the IVA camera unless
+`run_outside_iva=1`. Emits `iva.impact` / `iva.escape` / `iva.release` events — wiring `iva.impact` to
+`/sim/audio` gives you clunks. `cat /sim/debug/iva/help` is a full readme; the surface, tuning knobs and
+errnos are in [SPEC §3.7](../../../SPEC_9P_FILESYSTEM.md) (**iva**).
 
 **Audio playback (`/sim/audio`, gated by `audio_enabled=true` — NOT a debug cheat):** play real
 audio (mp3/ogg/wav/flac) through the game's speakers. Upload with `cat clip.mp3 >
@@ -174,6 +201,11 @@ authority-exempt). SPEC §3.4.1 has the full semantics.
 - `control_enabled=false` → all writes `EACCES`. `control_all_vessels=false` → only the controlled
   vessel is commandable (`camera.focus`, `vessel.scale`, `vessel.always_render` and `debug.*` stay
   exempt). `debug_namespace=false` → `/sim/debug/**` is gone. All default on.
+- **`/sim/debug/iva/enabled` is off by default** and is a *separate* switch from `debug_namespace` —
+  the `iva/` directory is there, but adopting anything before `echo 1 > enabled` answers `EOPNOTSUPP`,
+  and nothing is simulated until you do. `adopt` takes a **subpart** `instance_id` (a top-level part is
+  `ENOENT` by design) and refuses anything bigger than `iva_max_object_size` (0.5 m) so you cannot cut a
+  hull panel loose.
 - **`debug.teleport` sets a CCI state about the vessel's *current* parent body** — the vessel must
   already be in the intended body's SOI. See [SPEC §6](../../../SPEC_9P_FILESYSTEM.md).
 - **`debug/…/impulse` defaults to newton-seconds** (Δv = J ÷ live mass), not m/s — append the `dv`

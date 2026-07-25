@@ -820,6 +820,91 @@ be exercised headlessly.
 
 ---
 
+## IVA cabin physics: `/sim/debug/iva` (plans/IVA_MOVEMENTS.md): Code DONE; in-game pass pending
+
+Free-floating objects inside a vessel's interior, landed 2026-07-24. In IVA mode, loose props stop
+being glued to the hull: weightless and drifting while coasting, slammed aft when the engines light,
+flung around by RCS rotation, and colliding with the **actual interior surfaces**. `echo 1 >
+/sim/debug/iva/enabled; echo "Gemini7 4 Sardine" > /sim/debug/iva/adopt_all`.
+
+**Off by default behind one master switch**, `/sim/debug/iva/enabled`, and off means nothing exists:
+no physics `Simulation`, no `BufferPool`, no interior collision mesh, no per-frame work (the driver is
+one branch on `IvaPhysicsManager.IsIdle`), and no Bepu type is even loaded (the Bepu fields live on
+`CabinSim`, which is not constructed until the first adopt). Writing `0` releases every object at its
+exact rest pose and disposes every simulation; so does mod unload.
+
+**Why a gatOS-owned physics world** (the decisive research, plan §1.3/§3): KSA models each vehicle as
+**one** dynamic Bepu body whose shape is a handful of coarse convex primitives approximating the
+*outside* of the whole vehicle — the Gemini-class pod's entire collision representation is a 2 m
+cylinder plus a 0.89 m sphere, and the IVA interior part declares no `<Collider>` at all — while
+`NarrowPhaseCallbacks.AllowContactGeneration` permits dynamic-vs-dynamic pairs unconditionally.
+Anything placed where a crew member sits is therefore deep inside the vehicle's own collider:
+penetration recovery ejects it through the hull **and** the contact constraint shoves the real
+spacecraft. Suppressing that pair would mean patching a `readonly struct` callback inlined into Bepu's
+hot path. Worse, `VehicleUpdateTask` only steps that simulation when `ConstraintSim.IsAnyConstrained` —
+never for a coasting vessel, the exact case this feature is for — and the solve runs on
+`VehicleSolvers` workers, so mutating it would race the game (threading rule 1). **This is also why
+floating props are not separate KSA vessels**: each would be one more dynamic body in that same
+simulation, with the same ejection and shoving, plus orbits, map markers, solver tasks and save-file
+entries. So gatOS creates its own `BepuPhysics.Simulation` (against KSA's own embedded Bepu 2.5,
+already in-process) with its own `BufferPool`/`Shapes` — never `ConstraintSim.GlobalShapes` — in the
+**vessel assembly frame**, where the interior is static geometry that never moves, poses come out in
+exactly the coordinates `Part.PositionParentAsmb` wants, and coordinates stay within metres of the
+origin so float32 has precision to spare. It cannot perturb the vessel, cannot corrupt a save, cannot
+race the solver.
+
+**Game-free half** (`gatOS.SimFs/Iva/CabinPhysics.cs` + the `debug/iva` tree): the entire physics model
+is one formula — `a = -a_p - alpha x r_b - 2 omega x v - omega x (omega x r_b)` — over plain vectors,
+so it lives outside the KSA compile gate and is unit-tested on a bare host (`CabinPhysicsTests`: pad =
+1 g down, coast = weightless, burn = aft, spin = centrifugal + Coriolis signs, superposition). Gravity
+never appears: it is already absent from **proper** acceleration by construction, which is what lets one
+formula cover pad, coast, burn, spin and touchdown with no `Situation` switch. `IvaSnapshot` /
+`IvaObjectSnapshot` / `IvaInteriorSnapshot` / `IvaStatsSnapshot` + `Formats.Iva*` back the registry view.
+
+**Game half** (`Game/Ksa/Iva/`, 9 `[KsaAnchor]`s; new condition-guarded `BepuPhysics`/`BepuUtilities`
+references): `CabinSim`/`CabinCallbacks` (the Bepu wrapper — fixed substeps, the forcing field applied
+in `IntegrateVelocity`, our own contact material, speed clamping, and impact detection by per-substep
+speed change rather than narrow-phase bookkeeping); `InteriorGeometry` (the collision mesh, built from
+the vessel's own interior meshes — `MeshReference.PositionCompare`, a de-indexed `double3[]` triangle
+soup KSA retains forever for its picking raycasts, classified by `PartModelModule.Template.Internal`,
+which is *defined* as "renders only through the IVA camera" and so is an exact art-driven classifier for
+touchable interior surfaces; both windings emitted by default, with a bounding-box room fallback);
+`FloatingObject` (the driven SubPart + the parent-frame transform math + exact rest-pose restore);
+`IvaPhysicsManager` (registry, lifecycle, `adopt`/`adopt_all`/`release`/`clear`/`nudge`, the leash, and
+the per-frame driver). **No Harmony patch.** `Mod.DriveIvaPhysics` runs in `OnAfterUi` right after
+`DriveWelds` — the **sixth game-thread work site** — and like it calls `JobSystems.VehicleSolvers.Wait()`
+first so the accelerometer/rates/CoM readings are settled; `Timestep` runs with no `IThreadDispatcher`,
+so every Bepu callback is on that same thread.
+
+**Rendering is free**: an object drives a real shipped IVA prop **SubPart**'s
+`PositionParentAsmb`/`Asmb2ParentAsmb`, which `PartModelModule.UpdateRenderData` re-reads every frame —
+KSA's own idiom for a runtime-animated part transform (`KeyframeAnimationModule`, `SolarTracker`) — so
+lighting, PBR, ray tracing and IVA visibility gating all follow with no renderer code. **SubParts only,
+and binding**: `Part.GetReferenceWithChildren` serializes a `Transform` for top-level parts but not for
+SubParts, so a displaced object physically cannot leak into a save file; adopting a top-level part is
+refused by design. The rest pose is captured into gatOS's own fields, not KSA's `*Safe` pair.
+
+**Rails**: objects park (velocities zeroed, poses held) under time warp, in the vehicle editor
+(`Program.Editor != null` disables `Part` transform caching) and outside the IVA camera unless
+`run_outside_iva`; speed is clamped and an escapee is leashed back to the cabin centroid
+(`iva.escape`); adopting anything larger than `iva_max_object_size` is refused so structure cannot be
+cut loose; a staged-away part auto-releases (`iva.release`); a per-vessel fault drops that cabin and a
+driver fault releases everything and latches the feature off for the session.
+
+**Transports:** the whole surface rides the shared machinery (field mirror + `/v1/command` +
+`gatos/command`) by construction. Config `[iva]`: the `iva_physics_enabled` boot seed plus 11 tuning
+knobs, clamped in `Normalize()` (which gained a `double` overload). Status window: an "IVA physics"
+`PerfStat` row, shown only once the feature has actually run. Build plumbing: `Bepu*.dll` added to the
+sibling `ksa-game-assemblies` `copy-ksa.ts` glob, and a `VerifyBepuReference` MSBuild target that fails
+a stale `KSAFolder` with the one-line fix instead of 200 type errors. Tests:
+`gatOS.SimFs.Tests/Iva/CabinPhysicsTests` (9) + `gatOS.SimFs.Tests/Commands/IvaPhysicsTreeTests` (22).
+Catalog: `SPEC_9P_FILESYSTEM.md` §3.7 (**iva**) + §5.1 + §2.5; `scope/ksa-{read,write,runtime,assets}-*`;
+`docs/KSA_INTEGRATION_MATRIX.md` (IVA cabin physics). **Pending: the in-game pass** (21-item checklist
+in `docs/VALIDATION.md`, including the plan's Q1-Q3/Q5 open questions) — none of it can be exercised
+headlessly.
+
+---
+
 ## Suite totals and pending work
 
 **Full non-IT suite**: green, zero warnings.
@@ -829,9 +914,9 @@ be exercised headlessly.
 `HostMountIntegrationTests` fixture requires guest v10 to be published.
 
 **Still pending: the in-game passes** — T6.6/T9.3/G1–G4 and the welds/IVA/parts, thug_life,
-per-vessel `scale`/`always_render`, `debug/vessels/<id>/impulse`, `ctl/translate`, and `/sim/audio`
-checklists in `docs/VALIDATION.md` are runnable now that the purrTTY tip release is cut, but need a
-live KSA flight to complete.
+per-vessel `scale`/`always_render`, `debug/vessels/<id>/impulse`, `ctl/translate`, `/sim/audio` and
+IVA-cabin-physics checklists in `docs/VALIDATION.md` are runnable now that the purrTTY tip release is
+cut, but need a live KSA flight to complete.
 
 **Next**: M10 (persistence & savegame shape). Everything past M9 is not yet implemented, with
 the single exception of T11.1 (QEMU win-x64 bundle) which was pulled forward and is done.

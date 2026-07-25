@@ -153,6 +153,57 @@ anchor falls back to body-frame anchoring rather than dropping the weld. A drive
 fault disables welds for the session (`_weldsDead` latch, one error log). The weld *control* writes and the
 IVA toggle are ordinary Frame-phase commands; see [`ksa-write-surface.md#welds`](ksa-write-surface.md#welds).
 
+### IVA cabin physics per-frame driver (no patch) {#iva-cabin-sim}
+
+The **IVA cabin-physics** feature (`Game/Ksa/Iva/`, plans/IVA_MOVEMENTS.md) also needs **no** Harmony
+patch. `IvaPhysicsManager.Update(dt)` runs from `OnAfterUi` (`Mod.DriveIvaPhysics`, `[StarMapAfterGui]`) —
+the game thread, after the per-frame vehicle-solver workers; like the welds driver it calls
+`JobSystems.VehicleSolvers.Wait()` first (anchored) so the accelerometer/rates/CoM readings it feeds into
+the forcing field are the settled values for the step, then writes each floating object's pose onto its
+driven **SubPart** (`Part.PositionParentAsmb` / `Part.Asmb2ParentAsmb`). This is the **sixth game-thread
+work site**. It **self-gates to a single branch** when the master switch is off or nothing is adopted
+(`IvaPhysicsManager.IsIdle`), so it costs nothing when unused and never touches game state unprompted.
+
+**gatOS runs its own physics world, and that is a deliberate isolation decision — not an implementation
+convenience.** The simulation is a gatOS-owned `BepuPhysics.Simulation` (against KSA's own embedded
+BepuPhysics 2.5, already loaded in-process) with its own `BufferPool` and `Shapes` — deliberately **never**
+`ConstraintSim.GlobalShapes`, which the game's solver threads share — running in the vessel **assembly
+frame**. Three facts in the decompiled sources rule out adding bodies to KSA's `ConstraintSim`:
+
+1. **A cabin body would be ejected *and* would shove the spacecraft.** KSA represents each vehicle as one
+   dynamic body whose shape is a `BigCompound` of a few coarse convex primitives approximating the
+   *outside* of the whole vehicle (the Gemini-class pod's entire collision representation is a 2 m cylinder
+   plus a 0.89 m sphere; the IVA interior part declares **no** `<Collider>` at all). Anything placed where a
+   crew member sits is deep inside that collider, so penetration recovery ejects it through the hull — and
+   because `NarrowPhaseCallbacks.AllowContactGeneration` permits dynamic↔dynamic pairs unconditionally and
+   the vehicle body *is* dynamic, the contact constraint pushes the real spacecraft. Suppressing that pair
+   would mean patching a method on a `readonly struct` passed as a generic type argument into Bepu's
+   aggressively-inlined hot path — a Harmony patch there is unlikely to take and impossible to rely on.
+2. **It is not stepped when we need it.** `VehicleUpdateTask` branches on `ConstraintSim.IsAnyConstrained`;
+   a lone vessel in orbit runs `FullPhysicsUnconstrainedStep` and Bepu never ticks — precisely the coasting
+   case this feature exists for.
+3. **It runs on worker threads.** The solve executes on `JobSystems.VehicleSolvers`, so every mutation
+   would be a data race against the game's solver, violating threading rule 1.
+
+The gatOS-owned world has none of those problems: it cannot perturb the vessel, cannot corrupt a save,
+cannot race the solver, and — because the frame is the assembly frame — the interior is static geometry
+that never moves and poses come out in exactly the coordinates `Part.PositionParentAsmb` wants. Coordinates
+stay within metres of the origin, so Bepu's float32 solver has precision to spare (unlike the game's own
+bubble-relative frame). `Simulation.Timestep` is called with **no `IThreadDispatcher`**, so every Bepu
+callback runs single-threaded on the game thread. Coupling is one-way by design (vessel → objects);
+plans/IVA_MOVEMENTS.md §7 R4 sketches the opt-in back-reaction path if it is ever wanted.
+
+Break impact is therefore unusually contained: a KSA change to `ConstraintSim`, `NarrowPhaseCallbacks`,
+`PoseIntegratorCallbacks`, the collider XML or the bubble/`Phys` frame **cannot** affect this feature.
+What *can*: the interior-mesh reads and the `Part` transform driver
+([`ksa-read-surface.md#iva-physics`](ksa-read-surface.md#iva-physics),
+[`ksa-write-surface.md#iva-physics`](ksa-write-surface.md#iva-physics)), and a KSA build that dropped or
+renamed `BepuPhysics.dll`/`BepuUtilities.dll` — guarded by a condition-guarded reference plus an explicit
+`VerifyBepuReference` build error, with a hand-rolled sphere/capsule-vs-triangle solver documented as the
+fallback behind the `CabinSim` seam (plans/IVA_MOVEMENTS.md §3 Option C). A per-vessel driver fault drops
+that cabin; a whole-driver fault releases every object and latches the feature off for the session
+(`_ivaDead`).
+
 ### Dynamic thug_life render patch (`gatos.thug_life`) — render-thread draw injection {#thug-life-patch}
 
 The `thug_life` cheat (`Game/Ksa/ThugLife/`, ported from `unscience`) is gatOS's **first custom GPU
@@ -267,6 +318,10 @@ degrades to no-injection; a capture-time managed fault latches the feature off f
   `gatos.thug_life` render postfix on `SuperMeshRenderSystem.RenderMainPass`, plus a per-frame
   `UpdateThugLife()` anchor-revalidation in `OnBeforeUi` (the fourth game-thread work site,
   [`#thug-life-patch`](#thug-life-patch) above). All on the main thread.
+- **IVA cabin-physics driver** — *not* a `CommandQueue` phase: a per-frame step of a gatOS-owned physics
+  world plus `Part.PositionParentAsmb`/`Asmb2ParentAsmb` writes on driven SubParts, in `OnAfterUi` (the
+  sixth game-thread work site, [`#iva-cabin-sim`](#iva-cabin-sim) above). Off by default; the
+  `debug.iva_*` registry writes themselves are ordinary Frame-phase commands.
 - **always_render prefixes** — *not* a `CommandQueue` phase: read-only prefixes on the render-prep path
   (`Vehicle.GetWorldMatrix`/`UpdateRenderData`) consulting a volatile immutable id set — they mutate no
   game state beyond what the stock methods do ([`#always-render-patches`](#always-render-patches) above);

@@ -388,6 +388,30 @@ New condition-guarded reference: **`Brutal.Fmod.dll`**.
 | `CreateOrGetSound` | `Fmod.TryCreateSound(bytes, Mode.OpenMemory \| _2d \| CreateSample/CreateCompressedSample, in CreateSoundExInfo{Length}, out Sound)`; `Sound.TryGetLength/TryRelease` | L | The in-memory recipe `GameAudio.CreateFmodSound` itself uses — FMOD copies the buffer and sniffs the container (mp3/ogg/wav/flac). ≤ 1 MiB ⇒ `CreateSample` (full decode); larger ⇒ `CreateCompressedSample` (decode during mix — cheap create, ≈ file-size memory, concurrent plays OK). Cached per (clip, version). |
 | `Tick` | `Channel.TryIsPlaying/TryGetPosition/TryStop`; `Sound.TryRelease`; `Universe.GetElapsedSimTime().Seconds()` (event stamps) | L | Per-frame (`Mod.DriveAudio`, `OnBeforeUi` after the drain): prunes finished channels (a recycled FMOD handle answers non-Ok — that *is* the completion signal), enforces `end=`, releases evicted sounds, publishes `/sim/audio/status`, emits `audio.finished`. |
 
+## IVA cabin physics (plans/IVA_MOVEMENTS.md — `/sim/debug/iva`)
+
+Free-floating objects inside a vessel's interior. **Vessel-agnostic** (routed before vehicle
+resolution — the target is a registry object) and part of `debug.*`, so it needs `[control]
+debug_namespace` and is authority-exempt. **`debug.iva_physics` is the master switch and defaults
+off:** while it is off the manager is an empty registry — no physics simulation, no interior mesh, no
+buffer pool, no per-frame work, and no Bepu type loaded. Writing `0` releases every object at its exact
+rest pose and disposes every simulation.
+
+The physics itself is **game-free** (`gatOS.SimFs/Iva/CabinPhysics.cs`, unit-tested on a bare host) and
+the simulation is a **gatOS-owned** `BepuPhysics.Simulation` in the vessel assembly frame — gatOS never
+adds a body to KSA's `ConstraintSim`, never patches its callbacks, and installs **no Harmony patch** for
+this feature (rationale: [`scope/ksa-runtime-coupling.md#iva-cabin-sim`](../scope/ksa-runtime-coupling.md#iva-cabin-sim)).
+New condition-guarded references: **`BepuPhysics.dll` + `BepuUtilities.dll`** (KSA's own embedded engine,
+already loaded in-process).
+
+| Anchor (`Game/Ksa/Iva/`) | KSA / Brutal members | Risk | Notes |
+|---|---|---|---|
+| `IvaPhysicsManager.Update` | `JobSystems.VehicleSolvers.Wait()`; `Universe.{CurrentSystem.All.UnsafeAsList,SimulationSpeed}`; `Program.{Editor,MainViewport}`; `Viewport.Mode`; `CameraMode.IVA`; `Vehicle.{Id,AccelerationBody,AngularAccelerationBody,BodyRates,CenterOfMassAsmb,Parts.Count}` | L | The per-frame driver (`Mod.DriveIvaPhysics`, `OnAfterUi` — the sixth game-thread work site), after the solver workers so the kinematics are settled. **`AccelerationBody` is a true accelerometer in every flight situation** (zero in `Freefall`; the `GM/r²` normal force when `Landed`/`Floating`; thrust+drag with gravity excluded when `Maneuvering`), which is why one formula covers pad, coast, burn and landing. Parks under warp, in the editor (`Program.Editor != null` disables `Part` transform caching), and outside the IVA camera unless `run_outside_iva`. |
+| `InteriorGeometry.Build` | `Vehicle.Parts.Parts`; `Part.{SubParts,InstanceId,Modules,MatrixAsmb2VehicleAsmb}`; `ModuleList.Get<PartModelModule>()`; `PartModelModule.PartModel.Template`; `PartModelModule.Template.{Internal,RayTracing,Mesh}`; `MeshReference.PositionCompare`; `IVASeat.PositionAsmb`; `double3.Transform` | M | Builds exact interior collision geometry from the vessel's own IVA meshes. `Template.Internal` **is** "renders only through the IVA camera" (`PartModel`'s gate is `(!Template.Internal \|\| viewport.Mode == CameraMode.IVA)` — the flag `always_render_iva` flips), so it is a free, art-driven classifier for interior surfaces. `PositionCompare` is a de-indexed `double3[]` triangle soup retained forever for KSA's own picking raycasts. Read-only; never mutates a part. Falls back to a synthetic box room around the `IVASeat`s. |
+| `FloatingObject.ApplyPose` | `Part.{PositionParentAsmb(set),Asmb2ParentAsmb(set),PartParent,PositionVehicleAsmb,Asmb2VehicleAsmb,Scale}`; `double3.Transform`; `doubleQuat.{Concatenate,Conjugate,NormalizeOrZero}` | M | The per-frame transform driver. Both setters call `ResetCachedPosMatrixValues` and `PartModelModule.UpdateRenderData` re-reads them every frame, so rendering/lighting/ray-tracing/IVA gating follow for free — this is KSA's **own** idiom (`KeyframeAnimationModule`, `SolarTracker`). **SubParts only, binding:** `Part.GetReferenceWithChildren` serializes a `Transform` for top-level parts but not SubParts, so a displaced object cannot leak into a save. |
+| `FloatingObject.{ReadBodyPose,RestoreRestPose}` | `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb,PositionParentAsmb(set),Asmb2ParentAsmb(set)}` | L | Adopt-time seed pose and exact rest-pose restore. The rest pose is captured into gatOS's own fields, **not** KSA's `PositionParentAsmbSafe`/`Asmb2ParentAsmbSafe` (which belong to the animation system). |
+| `IvaPhysicsManager.{Adopt,TryMeasure,IsInteriorProp,FindSubPart,IsLive}` | `Vehicle.{Id,Parts}`; `Part.{InstanceId,SubParts,PartParent,DisplayName,Template.Id,PositionParentAsmb,Asmb2ParentAsmb,Scale,Modules}`; `ModuleList.Get<PartModelModule>()`; `PartModelModule.Template.{Internal,RayTracing,Mesh}`; `MeshReference.PositionCompare`; `Universe.CurrentSystem.All.UnsafeAsList()` | L–M | SubPart lookup (top-level parts refused by design), collision-proxy sizing from the mesh AABB (box only in this build — Bepu's `Box` needs no shape-local rotation, so body orientation *is* part orientation), interior-prop candidacy for `adopt_all`, and liveness. |
+
 ## Screen stream (STREAM_PLAN.md)
 
 The one KSA binding for the `/sim/display` screen stream — a render-thread GPU readback, not a

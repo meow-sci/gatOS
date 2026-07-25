@@ -193,6 +193,7 @@ KSA game update have any chance of breaking it.
 | W | `/sim/debug` welds (weld/weld_here/unweld/enable/clear) + `always_render_iva` render cheat (ported from `unscience`) | **Yes** (High: per-frame `Teleport`; dynamic `gatos.iva` Harmony) | [`ksa-write-surface.md`](ksa-write-surface.md#welds) |
 | W | `/sim/debug/thug_life` world-space quad cheat (add/clear/per-entry position/rotation/size/visible/remove; ported from `unscience`) — gatOS's **first custom GPU rendering** | **Yes** (⚠️ **highest-churn**: render-pipeline internals + Vulkan; dynamic `gatos.thug_life` Harmony postfix on `SuperMeshRenderSystem.RenderMainPass`) | [`ksa-write-surface.md`](ksa-write-surface.md#thug-life) |
 | W | First-class per-vessel nodes `vessels/by-id/<id>/{scale,always_render}` (model scaling + render-distance override; ported from `unscience` garrys-torch/i-feel-seen) — authority-exempt, outside `/sim/debug` | **Yes** (High: `Part.Scale` + KittenEva reflection; Medium: dynamic `gatos.always_render` Harmony prefixes on `Vehicle.GetWorldMatrix`/`UpdateRenderData`) | [`ksa-write-surface.md`](ksa-write-surface.md#per-vessel-nodes) |
+| W | `/sim/debug/iva` free-floating cabin objects with real inertial physics (master `enabled` switch + `adopt`/`adopt_all`/`release`/`clear`/`nudge`; a **gatOS-owned BepuPhysics 2.5 `Simulation`** in the vessel assembly frame, driving shipped IVA prop **SubPart** transforms; plans/IVA_MOVEMENTS.md) — **off by default; off means no simulation exists at all** | **Yes** (Medium: `MeshReference.PositionCompare` triangle soup + `PartModelModule.Template.Internal` classifier for interior geometry; `Part.{PositionParentAsmb,Asmb2ParentAsmb}` per-frame driver; `Vehicle.{AccelerationBody,AngularAccelerationBody,BodyRates,CenterOfMassAsmb}` forcing terms. **No Harmony patch**, no game-solver mutation) + a new **`BepuPhysics`/`BepuUtilities` DLL reference** | [`ksa-write-surface.md`](ksa-write-surface.md#iva-physics) |
 | W | `/sim/audio` userland audio playback (`file/` clip uploads + `play`/`set`/`stop` through the game's FMOD mixer; `audio.*` actions, vessel-agnostic, gated by `audio_enabled`) | **Yes** (Low: `GameAudio.System`/`GetChannelGroup` public statics + the FMOD Core `Brutal.FmodApi` P/Invoke surface — new `Brutal.Fmod.dll` reference) | [`ksa-write-surface.md`](ksa-write-surface.md#audio) |
 | **Runtime coupling** | | | |
 | C | StarMap lifecycle, Harmony patches (solver-drain, menu fallback), ModMenu entry, status UI | **Yes** (hook targets) | [`ksa-runtime-coupling.md`](ksa-runtime-coupling.md) |
@@ -225,6 +226,7 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/Ksa/Render/IvaForceRender.cs` | 1 `[KsaAnchor]` (`always_render_iva` cheat; own dynamic `gatos.iva` Harmony) | per-postfix try/catch; restored + unpatched on disable/unload |
 | `Game/Ksa/Render/VesselForceRender.cs` | 3 `[KsaAnchor]` (per-vessel `always_render` override; own dynamic `gatos.always_render` Harmony prefixes on `Vehicle.GetWorldMatrix`/`UpdateRenderData`, installed only while ≥ 1 vessel is marked) | per-prefix try/catch → stock cull; install throw → `KsaCatalog` degrade latch; unpatched on last unmark/prune/unload |
 | `Game/Ksa/Welds/{WeldEngine,WeldManager}.cs` | 4 `[KsaAnchor]` (per-frame `Teleport` driver + registry/liveness) | per-weld try/catch in the driver; `_weldsDead` session latch |
+| `Game/Ksa/Iva/*.cs` (`InteriorGeometry`, `FloatingObject`×3, `IvaPhysicsManager`×5; `CabinSim`/`CabinCallbacks`/`CabinTuning` touch **Bepu only**, no KSA type) | 9 `[KsaAnchor]` (IVA cabin physics: the interior-mesh walk, the per-frame SubPart transform driver, adopt-time measurement/lookup, the forcing-term reads + park gates) | master switch off by default (nothing constructed); per-vessel try/catch in the driver → that cabin dropped; `_ivaDead` session latch releases everything and disables the feature |
 | `Game/Ksa/ThugLife/*.cs` (`ThugLifeTextureFactory`, `ThugLifeQuadRenderer`, `ThugLifeRenderPatches`, `ThugLifeManager`; `ThugLifeEntry`/`ThugLifeTexturePattern` have none) | `[KsaAnchor]` render-internals set (`thug_life` cheat: Vulkan GPU build, per-frame anchor math, dynamic `gatos.thug_life` Harmony postfix on `SuperMeshRenderSystem.RenderMainPass`) — **deepest / highest-churn coupling** | per-frame try/catch; self-disables (`Active=false`) on any GPU fault; unpatched + GPU freed on disable/unload |
 | `Game/Ksa/KsaCatalog.cs` | 2 `[KsaAnchor]` (vehicle/astronomical resolution) | self |
 | `Game/Ksa/{KsaAnchor,KsaHealth}.cs` | churn machinery (no KSA types in KsaHealth) | — |
@@ -240,9 +242,12 @@ WeldManager×2); and the `thug_life` render cheat added the new `Game/Ksa/ThugLi
 anchors (`ThugLifeTextureFactory.UploadPixels`, `ThugLifeQuadRenderer.{BuildPipeline,TryComputeModelEgo}`,
 `ThugLifeRenderPatches.Apply`, `ThugLifeManager.{Update,IsLive,EnsureGpu}`); the first-class per-vessel
 nodes added `ScaleActuator`×2 and `VesselForceRender`×3 (the `gatos.always_render` patch targets + the
-two reproduced method bodies). So the only remaining un-anchored KSA touch-points are the two
-`Mod.Game.cs` Harmony hook targets (the `gatos.iva`/`gatos.thug_life`/`gatos.always_render` patch
-targets and the weld driver's `VehicleSolvers.Wait()` are themselves anchored).
+two reproduced method bodies); and the IVA cabin-physics feature added the new `Game/Ksa/Iva/`
+anchors (`InteriorGeometry.Build`, `FloatingObject.{ApplyPose,ReadBodyPose,RestoreRestPose}`,
+`IvaPhysicsManager.{Adopt,Update,TryMeasure,IsInteriorProp,FindSubPart,IsLive}`). So the only remaining
+un-anchored KSA touch-points are the two `Mod.Game.cs` Harmony hook targets (the
+`gatos.iva`/`gatos.thug_life`/`gatos.always_render` patch targets and the weld/IVA drivers'
+`VehicleSolvers.Wait()` are themselves anchored).
 
 ---
 

@@ -340,6 +340,42 @@ pending a live flight.**
 | 12 | From the **host**: `curl -T alarm.mp3 http://127.0.0.1:4242/v1/audio/file/curl.mp3` then `curl -X POST --data 'curl.mp3' http://127.0.0.1:4242/v1/fs/audio/play` plays it; `curl http://127.0.0.1:4242/v1/audio/files` lists it; `curl -X DELETE …/v1/audio/file/curl.mp3` evicts it | ☐ | HTTP binary routes + field-mirror control |
 | 13 | Mod unload (quit) with channels playing → **immediate silence**, clean unload, no FMOD errors in the log; `[audio] audio_enabled=false` → `/sim/audio` absent and `audio.*` via `/v1/command` answers `EOPNOTSUPP` 501 | ☐ | `TeardownGameCheats` + config gate |
 
+## IVA cabin physics (`/sim/debug/iva`) — validation pass — **NOT YET RUN**
+
+Prereq: the T6.6 pass, `[control] debug_namespace = true`, and a vessel with an interior — the stock
+**Gemini 7** is the reference (its cabin ships sardine tins, bolts, screws, photos, notes, tape and a
+toothbrush). The physics model itself is covered game-free by `gatOS.SimFs.Tests/Iva/CabinPhysicsTests`
+and the surface by `gatOS.SimFs.Tests/Commands/IvaPhysicsTreeTests`; these items exercise what only a live
+flight can show. See `SPEC_9P_FILESYSTEM.md` §3.7 (**iva**), `docs/KSA_INTEGRATION_MATRIX.md` (IVA cabin
+physics) and `plans/IVA_MOVEMENTS.md`. **All items pending a live flight.**
+
+Items 1–3 are the plan's open questions (§7 Q1–Q3) and should be run **first** — everything else builds
+on them. Item 2 needs **no new code and no adopted object**; run it before anything else.
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | **(Q2)** On the pad, `cat /sim/vessels/by-id/<id>/environment/g_force` reads **≈ 1.0**, and `environment/accel` is ≈ 9.81 m/s² along the seat "up" axis | ☐ | the accelerometer assumption the whole model rests on; zero new code |
+| 2 | `cat /sim/debug/iva/enabled` reads `0` on a fresh launch; the gatOS status window shows **no** "IVA physics" perf row; `cat /sim/debug/iva/interior` and `…/count` are empty/`0` | ☐ | **off by default means nothing exists** |
+| 3 | `echo 1 > /sim/debug/iva/enabled`, then `cat /sim/debug/iva/interior` → one row for the vessel with a **plausible triangle count** (thousands) and an AABB roughly matching the cabin, `fallback` = `0` | ☐ | the interior mesh actually built from the IVA art |
+| 4 | **(Q1)** On the pad, adopt one sardine tin (`echo "Gemini7 <iid>" > adopt`): it **settles on the cabin floor** and stays — it does not fall through the hull or sink | ☐ | interior winding / one-sidedness; `iva_double_sided_interior` should make this moot |
+| 5 | In orbit (coasting, IVA camera): the same object **drifts in a straight line** and does not accelerate; `nudge` sends it across the cabin and it **bounces off a wall** | ☐ | the case the feature exists for; KSA's own sim would never step here |
+| 6 | Light the engines: floating objects **slam aft** and pile against the rear bulkhead; cut thrust and they drift free again | ☐ | linear reaction term |
+| 7 | RCS-rotate the vessel: objects **sling outward and lag the rotation** (they do not rigidly follow the cabin) | ☐ | Euler + Coriolis + centrifugal terms |
+| 8 | `echo "Gemini7 8" > adopt_all` cuts loose **8 small props** (bolts/screws/notes/tins first) and never a hull panel, seat or console; `echo "Gemini7 4 Sardine" > adopt_all` picks only sardine tins | ☐ | smallest-first heuristic + template filter |
+| 9 | Each object's rendered model **sits on** its collision proxy (no visible offset or float-away), and `…/<id>/{position,velocity,mass,shape,size,asleep}` track what you see | ☐ | the shape-offset transform math |
+| 10 | Leave the objects still for a few seconds on the pad → `asleep` reads `1` and the status window's "IVA physics" avg drops toward zero | ☐ | sleeping is what makes 16 settled props free |
+| 11 | Time-warp above 1× → `cat /sim/debug/iva/stats` shows `parked=1 reason=warp` and objects freeze in place; return to 1× and they resume from rest (no lurch) | ☐ | park/un-park |
+| 12 | Leave the IVA camera → `parked=1 reason=not-iva`; `echo 1 > run_outside_iva` un-parks it; enter the **VAB** → `parked=1 reason=editor` and nothing moves | ☐ | **(Q5)** the editor gate |
+| 13 | `echo 1 > /sim/debug/iva/<id>/release` puts that prop back at **exactly** its original pose (compare a screenshot before adopting); `echo 1 > clear` does it for all | ☐ | rest-pose exactness |
+| 14 | **(Q3)** Adopt several props, displace them, **save and reload**: the reloaded vehicle has every prop back at its template rest pose, and the save file contains no prop transform | ☐ | the "cannot contaminate a save" claim, against the shipping binary |
+| 15 | `echo 0 > /sim/debug/iva/enabled` while objects float → everything restores, `count` → `0`, `interior` empties, the perf row stops advancing | ☐ | **the master switch ends the code** |
+| 16 | Stage/decouple the part carrying an adopted prop mid-flight → that object auto-releases and `tail -f /sim/events` shows `iva.release`; nothing crashes | ☐ | part-tree churn (R5) |
+| 17 | `tail -f /sim/events \| grep iva.impact` fires on wall hits with a plausible speed; wire it to `/sim/audio` (the `help` recipe) and hear the clunk | ☐ | impact events end-to-end |
+| 18 | Fly hard (hard burn, spin, touchdown): no object escapes the cabin. If one does, `iva.escape` fires and it reappears at the cabin centre rather than vanishing | ☐ | speed clamp + leash (R3) |
+| 19 | Two objects collide with each other and separate plausibly | ☐ | object↔object (free once the sim runs) |
+| 20 | With ~16 objects awake, the status window's "IVA physics" avg stays well under a millisecond and the frame rate is unaffected; **the vessel's own trajectory is untouched** (`orbit/apoapsis`/`periapsis` do not drift while objects bounce) | ☐ | perf + the one-way-coupling guarantee |
+| 21 | Mod unload (quit) with objects floating → clean unload, no errors in the log; `[iva] iva_physics_enabled = true` in `gatos.toml` makes the feature start enabled on the next launch | ☐ | teardown + config seed |
+
 ## KSA 2026.7.3.4826 upgrade — live re-check items — **NOT YET RUN**
 
 The 2026.6.9.4750 → 2026.7.3.4826 playbook pass (2026-07-03) was **clean** — build + tests green, full

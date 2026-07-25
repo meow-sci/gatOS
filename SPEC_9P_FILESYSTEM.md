@@ -135,6 +135,16 @@ write itself, mid-stream — not by a command):
 | `audio_max_total_bytes` | `67108864` | store-wide byte cap (`ENOSPC`; clamped ≥ clip cap..1 GiB) |
 | `audio_max_clips` | `64` | clip-count cap (`ENOSPC`; clamped 1..1024) |
 | `audio_max_channels` | `16` | concurrent playback channels (`EBUSY` past it; clamped 1..64) |
+| `iva_physics_enabled` | `false` | boot seed for `/sim/debug/iva/enabled` — the IVA cabin-physics master switch (§3.7); **off by default, and off means no simulation exists at all** |
+| `iva_run_outside_iva` | `false` | boot seed for `/sim/debug/iva/run_outside_iva`; off ⇒ leaving the IVA camera parks the objects |
+| `iva_max_objects` | `16` | floating objects per vessel (`EBUSY` past it; clamped 1..64) |
+| `iva_max_object_size` | `0.5` | largest bounding-box extent (m) a SubPart may have and still be adoptable (`EINVAL` past it; clamped 0.01..5) |
+| `iva_density_kg_m3` | `300` | density used to derive object mass from proxy volume (clamped 1..20000) |
+| `iva_max_speed` | `15` | velocity clamp in m/s — the anti-tunnelling guard (clamped 0.1..200) |
+| `iva_friction` / `iva_restitution` | `0.6` / `1.0` | contact friction, and bounciness as the maximum recovery velocity in m/s |
+| `iva_substep_hz` / `iva_max_substeps_per_frame` | `120` / `8` | fixed integration rate and the post-hitch catch-up bound |
+| `iva_double_sided_interior` | `true` | emit interior triangles in both windings so art winding cannot let objects fall through walls |
+| `iva_impact_speed` | `0.4` | speed change (m/s) in one substep that fires an `iva.impact` event |
 
 ---
 
@@ -521,6 +531,12 @@ reason ∈ `ended` (played out or hit `end=`) | `stopped` (explicit `stop`) | `r
 was reused)) — so a program can `grep -m1` for completion instead of polling `audio/status` (§3.9).
 Audio events ride the next telemetry sample, so they honor the `telemetry_events` gate.
 
+The IVA cabin physics (§3.7) emits three per-vessel types: **`iva.impact`** (an object's speed changed
+by more than `iva_impact_speed` in one substep — the "clunk" signal to wire to `/sim/audio`; `detail` =
+`object <id> (<name>) hit at <speed> m/s`), **`iva.escape`** (an object left the interior bounding box and
+was recentred) and **`iva.release`** (an object's SubPart was staged away, so it auto-released). These ride
+the telemetry sample too, and so honor `telemetry_events`.
+
 ### 3.6 `/status` *(present whenever the command sink is wired)*
 
 | Path | A | Format | Meaning |
@@ -568,6 +584,29 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/thug_life/<id>/visible` | **St** | `0`/`1` | `debug.thug_life_visible` | Frame | Show/hide (keeps the entry). |
 | `debug/thug_life/<id>/remove` | T | `1` | `debug.thug_life_remove` | Frame | Remove this entry. |
 | `debug/thug_life/<id>/spec` | S | spec line | — | — | The write-compatible 10-token spec (echo to `add` to recreate as a new id). |
+| `debug/iva/enabled` | **St** | `0`/`1` | `debug.iva_physics` | Frame | **The master switch for the whole IVA cabin-physics feature.** Off by default. `0` releases every object at its exact rest pose and disposes every cabin simulation, so nothing runs at all. Vessel-agnostic. See **iva** below. |
+| `debug/iva/run_outside_iva` | **St** | `0`/`1` | `debug.iva_run_outside_iva` | Frame | Keep simulating when no viewport is in the IVA camera. Off ⇒ leaving IVA parks the objects. Vessel-agnostic. |
+| `debug/iva/help` | S | text | — | — | Console-friendly usage readme + worked examples (stock Gemini 7 props). `cat` it. |
+| `debug/iva/adopt` | **St** | `<vessel> <subpart_iid>` or `<vessel> <subpart_iid> <vx> <vy> <vz>` | `debug.iva_adopt` | Frame | Cut one **SubPart** loose as a floating object (optionally with a starting velocity in the vessel assembly frame, m/s). Read = empty. |
+| `debug/iva/adopt_all` | **St** | `<vessel> [max] [template_substring]` | `debug.iva_adopt_all` | Frame | Cut loose the **smallest** eligible interior props first, up to `max` (`0`/absent = the per-vessel cap), optionally filtered by a case-insensitive template substring. Read = empty. |
+| `debug/iva/clear` | T | `1` | `debug.iva_clear` | Frame | Release **all** objects (the sim stays enabled). Vessel-agnostic. |
+| `debug/iva/count` | S | int | — | — | Number of floating objects across all vessels. |
+| `debug/iva/stats` | S | `vessels objects sleeping substeps avg_ms max_ms parked reason` | — | — | Driver counters. `parked` is `0`/`1`; `reason` is `warp`, `editor`, `not-iva`, or `-` while running. |
+| `debug/iva/interior` | S | `vessel triangles source_parts min_x min_y min_z max_x max_y max_z fallback` (0+ lines, LF-terminated) | — | — | One row per vessel with built interior geometry. `fallback` = `1` when no interior meshes were found and a synthetic box room was used. |
+| `debug/iva/<id>/vessel` | S | string | — | — | The vessel whose cabin this object floats in. |
+| `debug/iva/<id>/part` | S | uint | — | — | The driven SubPart's `instance_id`. |
+| `debug/iva/<id>/name` | S | string | — | — | The driven SubPart's display name. |
+| `debug/iva/<id>/template` | S | string | — | — | The driven SubPart's template id (e.g. `CoreIVAPropA_Subpart_DeanSardineA`). |
+| `debug/iva/<id>/position` | S | `x y z` | — | — | Position in the **vessel assembly frame** (m). |
+| `debug/iva/<id>/velocity` | S | `vx vy vz` | — | — | Velocity **relative to the cabin** (m/s). |
+| `debug/iva/<id>/angular_velocity` | S | `wx wy wz` | — | — | Angular velocity relative to the cabin (rad/s). |
+| `debug/iva/<id>/mass` | S | number | — | — | Body mass (kg): `iva_density_kg_m3` × collision-proxy volume. |
+| `debug/iva/<id>/shape` | S | string | — | — | Collision-proxy kind. `box` in this build. |
+| `debug/iva/<id>/size` | S | `x y z` | — | — | Collision-proxy full extents (m). |
+| `debug/iva/<id>/asleep` | S | `0`/`1` | — | — | `1` = settled and sleeping (costs nothing to simulate). |
+| `debug/iva/<id>/nudge` | **St** | `vx vy vz` | `debug.iva_nudge` | Frame | One-shot velocity kick in the vessel assembly frame (m/s), added to the current velocity; wakes the body. Read = `0 0 0` (no read-back). |
+| `debug/iva/<id>/release` | T | `1` | `debug.iva_release` | Frame | Un-adopt: restore the SubPart's exact rest pose and drop the body. |
+| `debug/iva/<id>/spec` | S | spec line | — | — | The write-compatible 2-token spec (echo to `adopt` to re-adopt this SubPart). |
 
 **welds** (the "weld one vessel rigidly to another, anchored to a part" cheat — a game hack):
 - Discover anchors under `vessels/by-id/<target>/parts/<n>/` — top-level parts **and** their
@@ -593,6 +632,42 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 - The render hook + GPU resources are installed **lazily on the first entry** and torn down when the last
   entry is removed (and at unload) — zero cost when unused. Entries are **runtime-only** (never persisted).
   Errnos: `ENOENT` (vessel/part/id gone), `EINVAL` (bad arity/values), `EIO` (renderer unavailable).
+
+**iva** (free-floating cabin objects with real inertial physics — plans/IVA_MOVEMENTS.md):
+- **`enabled` is the master switch and it is off by default.** While it is off nothing exists: no physics
+  simulation, no interior collision mesh, no buffer pool, no per-frame work. Writing `0` releases every
+  object at its exact rest pose and disposes every cabin simulation, returning to that state; so does mod
+  unload. `iva_physics_enabled` in `gatos.toml` is only the boot seed for this flag.
+- Objects are gatOS-owned rigid bodies **driving real shipped IVA prop SubParts**, simulated in a
+  gatOS-owned physics world in the **vessel assembly frame** — never in KSA's own solver, which models a
+  vehicle as one dynamic body wrapped in coarse exterior colliders (a cabin object would be ejected through
+  the hull *and* would shove the spacecraft) and does not step at all for a coasting vessel. Coupling is
+  therefore strictly one-way: objects feel the vessel, the vessel never feels them.
+- The forcing field is `a = −a_p − α×r_b − 2ω×v − ω×(ω×r_b)` over the vessel's own accelerometer readings
+  (`environment/accel`, `attitude/rates`, `environment/angular_accel`, `com`), so one formula covers pad
+  (objects rest on the floor at 1 g), coast (weightless drift), burn (slammed aft), spin (flung outward and
+  lagging) and touchdown. Gravity never appears — it is absent from proper acceleration by construction.
+- Collision geometry is derived automatically from the vessel's own **interior meshes** (every part whose
+  model template is interior-only, minus the adopted objects themselves), in the assembly frame. Read
+  `interior` to confirm it built. No hand-authored volumes; modded interiors work for free.
+- **SubParts only, and this is binding.** KSA serializes a transform for top-level parts but not for
+  SubParts, so a displaced object physically cannot leak into a save file. `adopt` on a top-level part
+  is `ENOENT` by design. Discover candidates under `vessels/by-id/<vessel>/parts/<n>/subparts/<m>/`
+  (§3.4.17) or in one read from `parts/json`; pass a subpart's `instance_id`.
+- Object ids are integers — the **smallest free slot**, reused after `release`/`clear` — appearing as
+  `debug/iva/<id>/`. Ids are global across vessels; the per-vessel object cap is `iva_max_objects`.
+- **Parking.** Objects freeze (velocities zeroed, poses held) under time warp, in the vehicle editor, and
+  whenever no viewport is in the IVA camera unless `run_outside_iva` is `1`. `stats` reports which.
+- **Rails.** Speed is clamped to `iva_max_speed`; an object that escapes the interior bounding box is
+  teleported back to the cabin centroid (`iva.escape`); adopting anything whose bounding box exceeds
+  `iva_max_object_size` is refused so hull panels and seats cannot be cut loose; a staged-away part
+  auto-releases (`iva.release`).
+- **Events** (§3.5): `iva.impact` (speed change past `iva_impact_speed` in one substep — wire it to
+  `/sim/audio` for clunks), `iva.escape`, `iva.release`.
+- Everything is **runtime-only** — never persisted, released at unload. Errnos: `EOPNOTSUPP` (the master
+  switch is off, or the subpart has no CPU mesh to size a proxy from), `ENOENT` (vessel/subpart/object id
+  gone), `EBUSY` (per-vessel cap reached, or that subpart already floats), `EINVAL` (bad arity/values, or
+  the subpart is larger than `iva_max_object_size`), `EIO` (the cabin simulation is unavailable).
 
 ### 3.8 `/display` *(the screen stream — STREAM_PLAN.md)*
 
@@ -817,6 +892,13 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `debug.thug_life_rotation` | entry id | values `[pitch,yaw,roll]` | Frame | `debug/thug_life/<id>/rotation` | id in `ordinal` |
 | `debug.thug_life_size` | entry id | values `[width,height]` | Frame | `debug/thug_life/<id>/size` | id in `ordinal` |
 | `debug.thug_life_visible` | entry id | value `0`/`1` | Frame | `debug/thug_life/<id>/visible` | id in `ordinal` |
+| `debug.iva_physics` | — | value `0`/`1` | Frame | `debug/iva/enabled` | vessel-agnostic; **the master switch** — `0` releases every object and disposes every cabin simulation |
+| `debug.iva_run_outside_iva` | — | value `0`/`1` | Frame | `debug/iva/run_outside_iva` | vessel-agnostic |
+| `debug.iva_adopt` | — | token = vessel id; values `[subpart_iid]` or `[subpart_iid,vx,vy,vz]` | Frame | `debug/iva/adopt` | vessel-agnostic; **SubParts only** (a top-level part is `ENOENT` by design) |
+| `debug.iva_adopt_all` | — | token = vessel id; value = max (`0` = the cap); `aux` = template substring | Frame | `debug/iva/adopt_all` | vessel-agnostic; smallest props first |
+| `debug.iva_release` | object id | value `1` | Frame | `debug/iva/<id>/release` | vessel-agnostic; id in `ordinal`; restores the exact rest pose |
+| `debug.iva_clear` | — | — | Frame | `debug/iva/clear` | vessel-agnostic; releases all (the sim stays enabled) |
+| `debug.iva_nudge` | object id | values `[vx,vy,vz]` | Frame | `debug/iva/<id>/nudge` | id in `ordinal`; assembly-frame velocity kick (m/s) |
 | `audio.play` | — | token = clip name; aux = channel id (optional); values `[start_ms, end_ms, vol, loop, pan, pitch, group]` (defaults `[0,0,1,0,0,1,0]`; `end_ms` 0 = whole clip; group `0`=sfx `1`=music `2`=ui) | Frame | `audio/play` | vessel-agnostic; not a `debug.*` action but gated by `audio_enabled` (`EOPNOTSUPP` when off) |
 | `audio.set` | — | token = channel id or clip name; values = flat `[key, value, …]` pairs (keys: `0`=vol `1`=pan `2`=pitch `3`=paused(0/1) `4`=seek_ms) | Frame | `audio/set` | vessel-agnostic |
 | `audio.stop` | — | token = `all` \| channel id \| clip name | Frame | `audio/stop` | vessel-agnostic |

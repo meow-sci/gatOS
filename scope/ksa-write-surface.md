@@ -307,6 +307,68 @@ assumptions + the new render-DLL references: [`ksa-assets-and-versions.md`](ksa-
 
 ---
 
+## IVA cabin physics — `IvaPhysicsManager` (Frame phase, vessel-agnostic) {#iva-physics}
+
+Free-floating objects inside a vessel's interior (plans/IVA_MOVEMENTS.md), exposed **only** on gatOS
+surfaces (9p `/sim/debug/iva/` + HTTP + MQTT — no ImGui beyond a perf readout). Part of the `debug.*`
+namespace (`[control] debug_namespace`); authority-exempt like the rest of `/sim/debug`. Anchors all under
+`gatOS.GameMod/Game/Ksa/Iva/`; `KsaCatalog.Iva` (a private dispatch method, taking an
+`IvaPhysicsManager iva` ctor param) routes the seven actions **vessel-agnostically** — the object id
+travels in `ordinal`, and `adopt`/`adopt_all` resolve the vessel from the command `Token` via the existing
+`ResolveVehicle`.
+
+**`debug.iva_physics` is the master switch and it defaults off.** While it is off the manager is an empty
+registry: no `Simulation`, no `BufferPool`, no interior mesh, no per-frame work (`Mod.DriveIvaPhysics`
+early-outs on `IvaPhysicsManager.IsIdle`), and no Bepu type is loaded — the Bepu fields live on `CabinSim`,
+which is not constructed until the first adopt. Writing `0` releases every object at its exact rest pose
+and disposes every simulation. This is the one switch a game update, a bug, or a suspicious player can use
+to make the whole feature vanish.
+
+**Why this needs no game-solver write at all.** gatOS runs its **own** `BepuPhysics.Simulation` in the
+vessel assembly frame; the *write* into KSA is only the per-frame `Part.PositionParentAsmb` /
+`Part.Asmb2ParentAsmb` assignment on driven **SubParts**. gatOS never adds a body to
+`ConstraintSim`, never patches `NarrowPhaseCallbacks`, and installs **no Harmony patch** for this feature.
+Rationale, with the decompiled evidence, is in [`ksa-runtime-coupling.md#iva-cabin-sim`](ksa-runtime-coupling.md#iva-cabin-sim).
+
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 5018 |
+|---|---|---|---|---|---|---|
+| `debug/iva/enabled` | `debug.iva_physics` | `IvaPhysicsManager.SetEnabled` | (registry + simulation lifecycle; the off path calls `RestoreRestPose` below) | — | Low | ✅ |
+| `debug/iva/run_outside_iva` | `debug.iva_run_outside_iva` | `IvaPhysicsManager.SetRunOutsideIva` | (park-gate flag — no KSA write) | — | Low | ✅ |
+| `debug/iva/adopt` | `debug.iva_adopt` | `IvaPhysicsManager.Adopt` (vessel from `Token`) | `Vehicle.{Id,Parts}`; `Part.{InstanceId,SubParts,PartParent,DisplayName,Template.Id,PositionParentAsmb,Asmb2ParentAsmb,Scale,Modules}`; `ModuleList.Get<PartModelModule>()`; `MeshReference.PositionCompare` (proxy sizing) | `KSA/Vehicle.cs`, `KSA/Part.cs`, `KSA/PartModelModule.cs`, `KSA/MeshReference.cs` | **Medium** | ✅ |
+| `debug/iva/adopt_all` | `debug.iva_adopt_all` | `IvaPhysicsManager.AdoptAll` | as `adopt`, plus `PartModelModule.Template.{Internal,RayTracing}` (the interior-prop candidacy test) | `KSA/PartModelModule.cs` | **Medium** | ✅ |
+| `debug/iva/<id>/release` | `debug.iva_release` | `IvaPhysicsManager.Release` (id in `ordinal`) | `Part.{PositionParentAsmb,Asmb2ParentAsmb}` (rest-pose restore) | `KSA/Part.cs` | Low | ✅ |
+| `debug/iva/clear` | `debug.iva_clear` | `IvaPhysicsManager.Clear` (vessel-agnostic) | as `release`, for every object | `KSA/Part.cs` | Low | ✅ |
+| `debug/iva/<id>/nudge` | `debug.iva_nudge` | `IvaPhysicsManager.Nudge` (id in `ordinal`) | (Bepu body velocity — no KSA write) | — | Low | ✅ |
+
+**SubParts only, and this is binding.** `Part.GetReferenceWithChildren` writes a `Transform` element for
+top-level parts but only `InstanceOf`/`LocalInstanceId`/`Stage`/`Sequence` for SubParts, so a displaced
+SubPart physically **cannot** be serialized into a player's saved vehicle. `IvaPhysicsManager.FindSubPart`
+therefore refuses to resolve a top-level part (`ENOENT` by design). Moving a SubPart also does not perturb
+vehicle physics — mass properties and the collision compound are recomputed only from
+`Vehicle.UpdateAfterPartTreeModification`, which gatOS never calls. **If a future KSA build starts
+serializing SubPart transforms, this feature must be re-evaluated before shipping** — that is the single
+highest-value break check on this page.
+
+Driving `PositionParentAsmb`/`Asmb2ParentAsmb` per frame is KSA's **own** idiom for a runtime-animated
+part transform (`KeyframeAnimationModule` and `SolarTracker` do exactly this off a stored rest pose); both
+setters call `Part.ResetCachedPosMatrixValues`, and `PartModelModule.UpdateRenderData` re-reads the
+transform every frame, so there is no dirty flag to defeat and rendering/lighting/ray-tracing/IVA gating
+all follow for free. gatOS captures the rest pose into its **own** `FloatingObject` fields rather than
+KSA's `PositionParentAsmbSafe`/`Asmb2ParentAsmbSafe` pair, so it cannot collide with the animation system.
+
+The `debug/iva/{count,stats,interior}` and `…/<id>/{vessel,part,name,template,position,velocity,
+angular_velocity,mass,shape,size,asleep,spec}` reads are a **game-free projection** of
+`IvaPhysicsManager.Snapshot()` (`IvaSnapshot`/`IvaObjectSnapshot`/`IvaInteriorSnapshot`/`IvaStatsSnapshot`
+records — no KSA read; `TelemetrySampler` projects it into `SimSnapshot.Iva`). Errnos: `EOPNOTSUPP` (master
+switch off, or no CPU mesh to size a proxy from), `ENOENT` (vessel/subpart/object gone), `EBUSY` (per-vessel
+cap, or already floating), `EINVAL` (bad arity/values, or larger than `iva_max_object_size`), `EIO` (the
+cabin simulation is unavailable). Everything is **runtime-only** (never persisted); torn down on unload
+(`Mod.TeardownGameCheats`). Anchors verified `2026-07-24` against `2026.7.9.5018`; **live in-game check
+pending** (`docs/VALIDATION.md`). The new `BepuPhysics`/`BepuUtilities` DLL references:
+[`ksa-assets-and-versions.md`](ksa-assets-and-versions.md).
+
+---
+
 ## Userland audio playback — `AudioActuator` (Frame phase, vessel-agnostic) {#audio}
 
 `Game/Ksa/Actuators/AudioActuator.cs` over the game-free `gatOS.SimFs/Audio/AudioStore` (the shared

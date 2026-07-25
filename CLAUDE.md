@@ -38,11 +38,12 @@ and the decisions locked in (Part 1).
 
 **All milestones through M9, plus G1–G7 (HTTP/serial/TypeScript SDK), the embedded MQTT
 transport, host folder mounts (`/mnt/<name>`), the welds / `always_render_iva` / parts-listing
-cheats ported from `unscience`, and the `/sim/audio` userland playback feature, are
-code-complete.** The only pending work is a set of in-game passes (T6.6/T9.3/G1–G4, plus the
-welds/IVA/parts, thug_life, per-vessel scale/always_render, debug impulse, `ctl/translate` and
-`/sim/audio` checklists) that require a live KSA flight; checklists are in
-[`docs/VALIDATION.md`](docs/VALIDATION.md). The purrTTY tip release is now cut.
+cheats ported from `unscience`, the `/sim/audio` userland playback feature, and the `/sim/debug/iva`
+free-floating cabin-object physics, are code-complete.** The only pending work is a set of in-game
+passes (T6.6/T9.3/G1–G4, plus the welds/IVA/parts, thug_life, per-vessel scale/always_render, debug
+impulse, `ctl/translate`, `/sim/audio` and IVA-cabin-physics checklists) that require a live KSA
+flight; checklists are in [`docs/VALIDATION.md`](docs/VALIDATION.md). The purrTTY tip release is now
+cut.
 
 > **KSA baseline: `2026.7.9.5018`** (upgrade-ksa playbook pass 2026-07-24, from 4980): **one compile
 > break, fixed** — rev 4992 (solid rocket motors) generalized propellant storage from liquid-only to a
@@ -93,6 +94,7 @@ welds/IVA/parts, thug_life, per-vessel scale/always_render, debug impulse, `ctl/
 | Welds + `always_render_iva` + parts (ex-`unscience`) | Code DONE; in-game pending | `Game/Ksa/Welds/`, `Game/Ksa/Render/IvaForceRender.cs`, `Game/Ksa/Readers/PartsReader.cs` |
 | Per-vessel `scale` + `always_render` nodes (ex-`unscience` garrys-torch scaling / i-feel-seen) | Code DONE; in-game pending | `Game/Ksa/Actuators/ScaleActuator.cs`, `Game/Ksa/Render/VesselForceRender.cs` — first-class vessel nodes outside `/sim/debug`, authority-gate-exempt (`KsaCatalog.AnyVesselActions`) |
 | `thug_life` sunglasses quad (ex-`unscience`) | Code DONE; in-game pending | `Game/Ksa/ThugLife/` (GPU quad renderer + dynamic render postfix), `SimFs` `debug/thug_life` |
+| IVA cabin physics (`/sim/debug/iva` — free-floating cabin objects; plans/IVA_MOVEMENTS.md) | Code DONE; in-game pending | `gatOS.SimFs/Iva/CabinPhysics.cs` (the game-free forcing field, unit-tested), `SimFs` `debug/iva` registry, `Game/Ksa/Iva/` (`CabinSim`/`CabinCallbacks` = a **gatOS-owned BepuPhysics 2.5 `Simulation`** in the vessel assembly frame; `InteriorGeometry` = collision mesh from the IVA art; `FloatingObject` = the driven SubPart; `IvaPhysicsManager` = registry + `Mod.DriveIvaPhysics` driver) — **off by default behind the `/sim/debug/iva/enabled` master switch**; no Harmony patch; new `BepuPhysics`/`BepuUtilities` refs |
 | Custom audio (`/sim/audio` — userland playback through the game's FMOD; plans/GATOS_CUSTOM_AUDIO_PLAN.md P1–P3) | Code DONE; in-game pending | `gatOS.SimFs/Audio/` (store + writable `file/` dir + play/set/stop grammar), `Game/Ksa/Actuators/AudioActuator.cs` (FMOD Sound cache/channels/tick over `GameAudio.System`; new `Brutal.Fmod.dll` ref), HTTP `/v1/audio` binary upload routes, `audio.finished` events; gated by `[audio] audio_enabled` |
 | Screen stream (`/sim/display`) | Code DONE; misrender **root-caused + fixed** (purrTTY libghostty `o=z` corruption → default `rgba`, + purrTTY content-hash re-decode; STREAM_PLAN.md §11); **perf/stability P0–P7 of [`plans/PERF_IMPROVEMENT_PLAN.md`](plans/PERF_IMPROVEMENT_PLAN.md) landed 2026-07-02, confirmed working in-game (informal pass)** (SSH read-pump, a=t keyframes, GPU blit downscale, zero-alloc encoder, demand pacing, 9p pooling + msize 512 KiB/guest v15, purrtty consumption fixes, P6: the purrTTY native rebuilt from ghostty main + `purrtty/vt-video-fixes` — the zig-0.15.2 `o=z` flate corruption and the placement-pin leak are FIXED, so `display_encoding` defaults to `rgba-zlib` again, 3–10× less wire; and P7: the native APC bulk lane, 82→1185 MiB/s consumption throughput); formal S6/S9 + P8 soak checklists still open | `SimFs/Display/`, `Game/Ksa/FrameCapture.cs` + `DisplayRenderPatch.cs` (in-band render-hook capture), `STREAM_PLAN.md` |
 | `ctl/rotate` (W1, AGC_PLAN §7.4) | Code DONE; in-game pending | `Game/Ksa/Actuators/RotateActuator.cs`, `SimFs/Commands/RotateRules.cs` — manual RCS rotation signs, the translate sibling; full authority needs `attitude_mode=manual` (auto strips rotation bits) |
@@ -175,7 +177,9 @@ scope/                          game-integration scope catalog (scope/FULL_SCOPE
                                 break-check playbook. THE reference for "will a game update break
                                 gatOS, and where?" Kept in lockstep with the code (see the mandate).
 plans/                          active execution plans (e.g. FIX_CURRENT_GAPS_PLAN.md — the gaps a
-                                game update introduced and how to close them)
+                                game update introduced and how to close them; IVA_MOVEMENTS.md — the
+                                landed free-floating cabin-object physics, incl. the decompiled evidence
+                                for why gatOS runs its OWN physics world rather than KSA's ConstraintSim)
 site/                           Astro/Starlight docs site — the progressive `guides/` tutorial series
                                 teaching flight programs against /sim (+ the HTTP /v1 mirror). Author
                                 new tutorials via the `tutorials` skill (.claude/skills/tutorials/):
@@ -231,7 +235,10 @@ gatOS.SimFs    → NineP, Logging                       /sim tree, snapshots, st
                                                       Display/ (the /sim/display screen stream: DisplaySettings,
                                                       KittyEncoder, DisplaySurface, DisplayStreamFile +
                                                       control files — STREAM_PLAN.md, built; capture in GameMod);
-                                                      Audio/ (the /sim/audio clip store: AudioStore caps/versioning,
+                                                      Iva/ (CabinPhysics: the free-floating-cabin-object
+                                                   forcing field — pure math over plain vectors, so the
+                                                   whole physics model is unit-tested game-free);
+                                                   Audio/ (the /sim/audio clip store: AudioStore caps/versioning,
                                                       writable AudioDirectory + upload handles, AudioCommands
                                                       play/set/stop grammar — GATOS_CUSTOM_AUDIO_PLAN, built;
                                                       the FMOD calls live in GameMod's AudioActuator)
@@ -246,7 +253,8 @@ gatOS.GameMod  → Ssh, SimFs, Http, Mqtt, Bus, Vm, Logging, vendor/purrTTY,
                   (+ the Brutal.Vulkan(.Abstractions/.Vma) + Planet.Render.Core + Brutal.Core.Memory game
                    DLLs and AllowUnsafeBlocks, for the Game/Ksa/ThugLife GPU quad renderer and the
                    Game/Ksa/FrameCapture screen-stream readback; + Brutal.Fmod for the
-                   Game/Ksa/Actuators/AudioActuator FMOD playback)
+                   Game/Ksa/Actuators/AudioActuator FMOD playback; + BepuPhysics/BepuUtilities — KSA's own
+                   embedded rigid-body engine — for the Game/Ksa/Iva cabin simulation)
 ```
 `examples/sdk-ts/` is a standalone TypeScript/Bun example SDK (G6, built — not part of the .NET
 solution); it talks to either transport behind one typed API.
@@ -346,7 +354,20 @@ host.
    `GameAudio.UpdateAudio`): it prunes finished channels, enforces `end=`, releases evicted FMOD sounds
    and publishes the `/sim/audio/status` snapshot into the game-free `AudioStore`; all FMOD calls
    (create/play/set/stop + the tick) happen only there and in the Frame-phase drain, and it self-gates
-   to a no-op while no channel or cached sound exists. Audio teardown rides `Mod.TeardownGameCheats`. The **per-vessel `always_render` override** (`Game/Ksa/Render/VesselForceRender.cs`) follows the
+   to a no-op while no channel or cached sound exists. Audio teardown rides `Mod.TeardownGameCheats`. A
+   **sixth game-thread work site** is the **IVA cabin-physics driver** (`Mod.DriveIvaPhysics` →
+   `IvaPhysicsManager.Update`, run in `[StarMapAfterGui] OnAfterUi` right after `DriveWelds`): like the
+   welds driver it calls `JobSystems.VehicleSolvers.Wait()` first so the accelerometer/rates/CoM readings
+   feeding its forcing field are the settled values for the step, then steps a **gatOS-owned Bepu
+   simulation** (single-threaded — `Timestep` is called with no `IThreadDispatcher`, so every Bepu
+   callback runs on this thread) and writes each floating object's pose onto its driven **SubPart**. It
+   needs **no** Harmony patch and self-gates to one branch (`IvaPhysicsManager.IsIdle`) while the
+   `/sim/debug/iva/enabled` master switch is off or nothing is adopted — which is the default, and in
+   that state no physics simulation, interior mesh or buffer pool exists at all. gatOS never adds a body
+   to KSA's own `ConstraintSim` (see `scope/ksa-runtime-coupling.md#iva-cabin-sim` for why: a cabin body
+   would be ejected through the hull *and* shove the spacecraft, the sim is not stepped for a coasting
+   vessel, and it runs on solver worker threads). IVA teardown rides `Mod.TeardownGameCheats`.
+   The **per-vessel `always_render` override** (`Game/Ksa/Render/VesselForceRender.cs`) follows the
    same discipline: dynamic `Harmony("gatos.always_render")` prefixes on `Vehicle.GetWorldMatrix`/
    `UpdateRenderData` (the sub-pixel cull bypass) installed **only while ≥ 1 vessel is marked** and removed
    on the last unmark/despawn-prune/unload; its registry is mutated only on the game thread and read by the

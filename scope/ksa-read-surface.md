@@ -197,6 +197,52 @@ when the reader rebuilds). No KSA coupling of its own, so no row: it breaks only
 
 ---
 
+## IVA cabin physics — `InteriorGeometry` + the driver's forcing terms (per-frame, game thread) {#iva-physics}
+
+`gatOS.GameMod/Game/Ksa/Iva/`. Like the thug_life anchor math below, these are **per-frame reads inside a
+driver**, not sampler reads, so they do **not** go through `SimSnapshot` — but unlike thug_life they run on
+the **game thread** in `OnAfterUi` (after `JobSystems.VehicleSolvers.Wait()`), which is what makes the
+kinematics settled and the reads race-free. All of it is gated behind the `debug/iva/enabled` master
+switch: while it is off none of these members is touched at all.
+
+| read | gatOS site | KSA / Brutal member | Decomp file | Risk | 5018 |
+|---|---|---|---|---|---|
+| forcing terms (the whole physics model) | `IvaPhysicsManager.Update`/`DriveVessel` | `Vehicle.{AccelerationBody,AngularAccelerationBody,BodyRates,CenterOfMassAsmb}` | `KSA/Vehicle.cs` | Low | ✅ |
+| park gates | `IvaPhysicsManager.ParkReason` | `Program.{Editor,MainViewport}`; `Viewport.Mode`; `CameraMode.IVA`; `Universe.SimulationSpeed` | `KSA/Program.cs`, `KSA/Viewport.cs`, `KSA/Universe.cs` | Low | ✅ |
+| interior collision geometry | `InteriorGeometry.Build`/`Emit` | `Vehicle.Parts.Parts`; `Part.{SubParts,InstanceId,Modules,MatrixAsmb2VehicleAsmb}`; `ModuleList.Get<PartModelModule>()`; `PartModelModule.PartModel.Template`; `PartModelModule.Template.{Internal,RayTracing,Mesh}`; `MeshReference.PositionCompare`; `double3.Transform(double3,double4x4)` | `KSA/Part.cs`, `KSA/PartModelModule.cs`, `KSA/PartModel.cs`, `KSA/MeshReference.cs` | **Medium** | ✅ |
+| fallback room (no interior meshes) | `InteriorGeometry.BuildFallbackRoom` | `PartTree.Modules.Get<IVASeat>()`; `IVASeat.PositionAsmb` | `KSA/IVASeat.cs`, `KSA/PartTree.cs` | Low | ✅ |
+| collision-proxy sizing | `IvaPhysicsManager.TryMeasure` | `Part.{Modules,Scale}`; `MeshReference.PositionCompare` | `KSA/Part.cs`, `KSA/MeshReference.cs` | **Medium** | ✅ |
+| adopt-time seed pose | `FloatingObject.ReadBodyPose` | `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` (subpart-aware) | `KSA/Part.cs` | Low | ✅ |
+| liveness / subpart lookup | `IvaPhysicsManager.{IsLive,FindSubPart}` | `Universe.CurrentSystem.All.UnsafeAsList()`; `Vehicle.Parts.Parts`; `Part.{SubParts,InstanceId}` | `KSA/Universe.cs`, `KSA/Part.cs` | Low | ✅ |
+
+**Two load-bearing semantic assumptions**, both worth re-checking on any game update because a *silent*
+change would be worse than a rename (which the build catches at the `[KsaAnchor]` site):
+
+1. **`Vehicle.AccelerationBody` is true proper (non-gravitational) acceleration in every flight
+   situation.** `VehicleUpdateTask` leaves it **zero** in `Freefall` (`ApplyFreefallMotion`), sets it to
+   the `GM/r²` normal-force reading rotated into body axes when `Landed`/`Floating` (`ApplySurfaceMotion`),
+   and accumulates thrust + drag + buoyancy with gravity excluded when `Maneuvering`/`Rolling`/`Sailing`
+   (`IntegrateVelocityVerlet`); it is normalized to m/s² at the end of the step
+   (`AccelerationBody /= SimStep.DeltaTime`). This is the single fact that lets one formula cover pad,
+   coast, burn and landing with no `Situation` switch. **A live sanity check exists with zero new code:**
+   `cat /sim/vessels/by-id/<id>/environment/g_force` must read ≈ 1.0 on the launch pad.
+2. **`PartModelModule.Template.Internal` means "renders only through the IVA camera"** — `PartModel`'s
+   render gate is `(!Template.Internal || viewport.Mode == CameraMode.IVA)`, the same flag the
+   `always_render_iva` cheat flips. That is what makes it an exact, art-driven classifier for "surfaces a
+   person inside the cabin can touch", so interior collision geometry needs no hand-authored volumes and
+   adapts to modded interiors for free. If the flag's meaning changes, the interior mesh silently becomes
+   wrong — `cat /sim/debug/iva/interior` (triangle/part counts + AABB) is the in-game diagnosis.
+
+`MeshReference.PositionCompare` is a de-indexed `double3[]` triangle soup in part-local coordinates, built
+at load and **retained forever** because KSA's own mouse picking (`Part.RayCastEgoSubPart` →
+`ray.RaycastWatertight(meshView.PositionCompare, …)`) needs it — so reading it costs nothing and cannot be
+null-but-loaded. The `debug/iva/**` reads under `/sim` are **not** KSA reads: they are a game-free
+projection of `IvaPhysicsManager.Snapshot()`, which `TelemetrySampler` copies into `SimSnapshot.Iva`.
+Verified `2026-07-24` against `2026.7.9.5018` (new feature; compiled clean). **Live in-game check
+pending** — see `docs/VALIDATION.md`.
+
+---
+
 ## thug_life anchor math — `ThugLifeQuadRenderer` (per-frame, render thread) {#thug-life}
 
 `gatOS.GameMod/Game/Ksa/ThugLife/ThugLifeQuadRenderer.cs` (`TryComputeModelEgo`) + `ThugLifeManager.cs`.

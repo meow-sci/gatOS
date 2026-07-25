@@ -1,8 +1,34 @@
 # Plan: `IVA_MOVEMENTS` — free-floating interior objects with real inertial physics
 
-Status: **proposed** (research complete, nothing implemented). Research pass: 2026-07-24, against
-KSA `2026.7.9.5018` decomp (`../unscience/decomp/ksa`) + the live install
-(`C:\Program Files\Kitten Space Agency`).
+Status: **LANDED 2026-07-24** — V0–V5 are implemented, built and tested; the in-game pass (§5 V5.1) is
+the only open item, as a 21-point checklist in [`docs/VALIDATION.md`](../docs/VALIDATION.md) that
+includes Q1–Q3/Q5 below. Research pass: 2026-07-24, against KSA `2026.7.9.5018` decomp
+(`../unscience/decomp/ksa`) + the live install (`C:\Program Files\Kitten Space Agency`).
+
+> **As-built deltas from this plan** (the plan is the design record; the code and
+> [`SPEC_9P_FILESYSTEM.md`](../SPEC_9P_FILESYSTEM.md) win where they disagree):
+>
+> - **The `/sim` surface is one flat registry under `/sim/debug/iva/`, not per-vessel
+>   `vessels/by-id/<id>/iva/`** (§4.4/V4). The feature is a cheat and belongs in the cheat namespace,
+>   the registry idiom exactly mirrors `debug/thug_life`, and — the deciding reason — the user
+>   requirement is a *single* master switch under `/sim/debug` that starts and ends the whole thing.
+>   Each object carries its `vessel`; object ids are global.
+> - **`enabled` is a global master switch**, not per-vessel. Off is the default and off means no
+>   `Simulation`, no `BufferPool`, no interior mesh, no per-frame work and no Bepu type loaded.
+> - **`adopt_all` replaces `spawn`** (V3.4). The stock interiors already ship ~60 loose props per
+>   capsule (sardine tins, bolts, screws, notes, tape, photos, a toothbrush), so a `PartTree.Merge`
+>   spawn path buys nothing for v1 and costs a part-tree mutation. `adopt_all` takes the *smallest*
+>   eligible props first, optionally filtered by template substring.
+> - **Box collision proxies only** (§4.3). Bepu's `Box` is axis-aligned in its local frame, so the body
+>   orientation *is* the part orientation — a capsule would need a shape-local rotation and an
+>   inverse-transform on every write-back, i.e. a correctness trap for no visible gain on a tumbling
+>   prop. Convex hulls remain the documented refinement (§6 V6).
+> - **Interior triangles are emitted in both windings by default** (`iva_double_sided_interior`),
+>   which retires risk **R2** by construction rather than leaving it to a live diagnosis + config flip.
+> - **Impacts are detected by per-substep |Δv|**, not narrow-phase instrumentation (V3.6) — it catches
+>   wall hits, object↔object hits and hard landings alike with no manifold state.
+> - **The `/sim` node names** are `nudge`/`release`/`spec` and the stats/interior lines are
+>   space-separated column rows; see SPEC §3.7 (**iva**) for the frozen formats.
 
 **Goal.** In IVA (interior camera) mode, loose objects inside a vessel behave like real loose
 objects: weightless and drifting while coasting, slammed aft when the engines light, thrown around
