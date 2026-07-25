@@ -74,6 +74,14 @@ public sealed record SimSnapshot(
     ///     only ever populated when the debug namespace is on. A pure cosmetic runtime cheat; never persisted.
     /// </summary>
     public IReadOnlyList<ThugLifeSnapshot> ThugLife { get; init; } = [];
+
+    /// <summary>
+    ///     The IVA free-floating-object simulation (the <c>/sim/debug/iva</c> cheat): the master
+    ///     on/off flag, the live objects, per-vessel interior-geometry diagnostics and step stats.
+    ///     Never null — <see cref="IvaSnapshot.Off"/> is the default, so the master flag is readable
+    ///     while the whole feature is dark. Runtime-only; never persisted.
+    /// </summary>
+    public IvaSnapshot Iva { get; init; } = IvaSnapshot.Off;
 }
 
 /// <summary>One vessel's telemetry.</summary>
@@ -621,6 +629,96 @@ public sealed record WeldSnapshot(
 public sealed record ThugLifeSnapshot(
     int Id, string VesselId, uint PartInstanceId, double3Snap Position, double3Snap Rotation,
     double Width, double Height, bool Visible);
+
+/// <summary>
+///     The IVA free-floating-object simulation as a whole (<c>/sim/debug/iva</c>): a gatOS-owned
+///     rigid-body sim, one per vessel that has objects, running in that vessel's assembly frame and
+///     colliding against interior geometry derived from the shipped IVA meshes. A pure runtime cheat
+///     — nothing here is ever persisted, and a displaced object's transform cannot reach a save file
+///     (KSA serializes no SubPart transform).
+/// </summary>
+/// <param name="Enabled">
+///     The master switch (<c>/sim/debug/iva/enabled</c>). <b>Off by default.</b> While it is off no
+///     simulation object exists at all: no physics engine instance, no interior geometry, no
+///     per-frame work. Turning it off releases every object (restoring exact rest poses) and disposes
+///     every simulation.
+/// </param>
+/// <param name="RunOutsideIva">
+///     Whether the sim keeps stepping when no viewport is in the IVA camera mode
+///     (<c>/sim/debug/iva/run_outside_iva</c>). Off by default: leaving IVA parks the objects in place.
+/// </param>
+/// <param name="Objects">The live floating objects, by registry id. Empty when none are adopted.</param>
+/// <param name="Interiors">One diagnostics row per vessel with a built interior mesh.</param>
+/// <param name="Stats">Step/health counters for the whole feature.</param>
+public sealed record IvaSnapshot(
+    bool Enabled,
+    bool RunOutsideIva,
+    IReadOnlyList<IvaObjectSnapshot> Objects,
+    IReadOnlyList<IvaInteriorSnapshot> Interiors,
+    IvaStatsSnapshot Stats)
+{
+    /// <summary>The feature-is-dark snapshot: master off, nothing adopted, no simulation.</summary>
+    public static IvaSnapshot Off { get; } = new(false, false, [], [], IvaStatsSnapshot.Zero);
+}
+
+/// <summary>
+///     One free-floating cabin object (<c>/sim/debug/iva/&lt;id&gt;</c>): a gatOS-owned rigid body
+///     paired with a real IVA prop SubPart whose transform is rewritten each frame from the body's
+///     pose. Rendering, lighting and IVA visibility gating therefore come from the game for free.
+/// </summary>
+/// <param name="Id">The registry handle (smallest free slot at adopt; reused after release) — the directory name.</param>
+/// <param name="VesselId">The vessel whose cabin this object floats in.</param>
+/// <param name="PartInstanceId">The driven SubPart's <c>Part.InstanceId</c> — the stable handle <c>parts/</c> uses.</param>
+/// <param name="Part">The driven SubPart's display name.</param>
+/// <param name="Template">The driven SubPart's template id (e.g. <c>CoreIVAPropA_Subpart_DeanSardineA</c>).</param>
+/// <param name="Position">Position in the vessel assembly frame, metres.</param>
+/// <param name="Velocity">Velocity relative to the cabin, m/s.</param>
+/// <param name="AngularVelocity">Angular velocity relative to the cabin, rad/s.</param>
+/// <param name="MassKg">The body's mass, kg (density × collision-proxy volume unless overridden).</param>
+/// <param name="Shape">The collision proxy kind; <c>box</c> in this build (see <paramref name="Size"/>).</param>
+/// <param name="Size">The collision proxy's full extents, metres.</param>
+/// <param name="Asleep">Whether the body is sleeping (settled — costs nothing to simulate).</param>
+public sealed record IvaObjectSnapshot(
+    int Id, string VesselId, uint PartInstanceId, string Part, string Template,
+    double3Snap Position, double3Snap Velocity, double3Snap AngularVelocity,
+    double MassKg, string Shape, double3Snap Size, bool Asleep);
+
+/// <summary>
+///     Interior collision-geometry diagnostics for one vessel (<c>/sim/debug/iva/interior</c>) — the
+///     evidence a live pass needs to confirm the mesh built correctly without a debug renderer.
+/// </summary>
+/// <param name="VesselId">The vessel the geometry belongs to.</param>
+/// <param name="Triangles">Triangle count in the built static mesh (doubled when double-sided).</param>
+/// <param name="SourceParts">How many parts/subparts contributed interior meshes.</param>
+/// <param name="AabbMin">Minimum corner of the geometry's bounding box, assembly frame, metres.</param>
+/// <param name="AabbMax">Maximum corner of the geometry's bounding box, assembly frame, metres.</param>
+/// <param name="Fallback">
+///     True when no interior meshes were found and a bounding-box "room" was synthesised instead, so
+///     objects rattle in a box rather than falling out of the universe.
+/// </param>
+public sealed record IvaInteriorSnapshot(
+    string VesselId, int Triangles, int SourceParts, double3Snap AabbMin, double3Snap AabbMax,
+    bool Fallback);
+
+/// <summary>Step/health counters for the IVA physics feature (<c>/sim/debug/iva/stats</c>).</summary>
+/// <param name="Vessels">Vessels with a live cabin simulation.</param>
+/// <param name="Objects">Total floating objects across all vessels.</param>
+/// <param name="Sleeping">How many of those are asleep (settled).</param>
+/// <param name="Substeps">Fixed substeps executed on the last driven frame.</param>
+/// <param name="StepAvgMs">Mean game-thread cost of one driver pass, milliseconds.</param>
+/// <param name="StepMaxMs">Worst game-thread cost of one driver pass, milliseconds.</param>
+/// <param name="Parked">
+///     Whether the sim is currently parked (velocities zeroed, poses frozen): under time warp, in the
+///     vehicle editor, or outside the IVA camera when <c>run_outside_iva</c> is off.
+/// </param>
+/// <param name="ParkReason">Why it is parked ("warp", "editor", "not-iva"), or empty when running.</param>
+public sealed record IvaStatsSnapshot(
+    int Vessels, int Objects, int Sleeping, int Substeps, double StepAvgMs, double StepMaxMs,
+    bool Parked, string ParkReason)
+{
+    /// <summary>All-zero counters — the stats of a feature that has never run.</summary>
+    public static IvaStatsSnapshot Zero { get; } = new(0, 0, 0, 0, 0, 0, false, "");
+}
 
 /// <summary>NavBall-derived attitude and performance figures.</summary>
 /// <param name="PitchDeg">Pitch, degrees.</param>

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using gatOS.GameMod.Game.Ksa;
+using gatOS.GameMod.Game.Ksa.Iva;
 using gatOS.GameMod.Game.Ksa.Readers;
 using gatOS.GameMod.Game.Ksa.Render;
 using gatOS.GameMod.Game.Ksa.ThugLife;
@@ -37,6 +38,8 @@ internal sealed class TelemetrySampler
     private readonly ValueStat _allocStats;
     private readonly WeldManager _welds;
     private readonly ThugLifeManager _thugLife;
+    private readonly IvaPhysicsManager _iva;
+    private readonly PerfStat _ivaStats;
     private readonly AudioStore? _audio;
     private int _appliedRateHz;
     private IReadOnlyList<double> _warpSpeeds = [];
@@ -64,6 +67,12 @@ internal sealed class TelemetrySampler
     /// <param name="allocStats">Bytes allocated by one <see cref="Sample"/> (the status window reads it).</param>
     /// <param name="welds">The weld registry — projected into the snapshot for the <c>/sim/debug/welds</c> view.</param>
     /// <param name="thugLife">The thug-life registry — projected for the <c>/sim/debug/thug_life</c> view.</param>
+    /// <param name="iva">
+    ///     The IVA cabin-physics registry — projected for the <c>/sim/debug/iva</c> view, and the
+    ///     source of the <c>iva.impact</c>/<c>iva.escape</c>/<c>iva.release</c> events folded into each
+    ///     snapshot.
+    /// </param>
+    /// <param name="ivaStats">Driver-time accumulator, reported through <c>/sim/debug/iva/stats</c>.</param>
     /// <param name="audio">
     ///     The audio store — its pending <c>audio.finished</c> events fold into each snapshot's
     ///     <see cref="SimSnapshot.NewEvents"/> (so they reach <c>/sim/events</c> and every event
@@ -71,7 +80,7 @@ internal sealed class TelemetrySampler
     /// </param>
     internal TelemetrySampler(SnapshotStore store, TelemetrySettings settings, KsaHealth health,
         PerfStat sampleStats, ValueStat allocStats, WeldManager welds, ThugLifeManager thugLife,
-        AudioStore? audio = null)
+        IvaPhysicsManager iva, PerfStat ivaStats, AudioStore? audio = null)
     {
         _store = store;
         _settings = settings;
@@ -82,6 +91,8 @@ internal sealed class TelemetrySampler
         _allocStats = allocStats;
         _welds = welds;
         _thugLife = thugLife;
+        _iva = iva;
+        _ivaStats = ivaStats;
         _audio = audio;
     }
 
@@ -177,6 +188,9 @@ internal sealed class TelemetrySampler
         // Fold in pending audio.finished events (drained even when gated off, so they never pile up).
         if (_audio?.DrainEvents() is { Count: > 0 } audioEvents && _settings.Events)
             events = events.Count == 0 ? audioEvents : [.. events, .. audioEvents];
+        // Same for the IVA cabin-physics events (iva.impact / iva.escape / iva.release).
+        if (_iva.DrainEvents() is { Count: > 0 } ivaEvents && _settings.Events)
+            events = events.Count == 0 ? ivaEvents : [.. events, .. ivaEvents];
         var snapshot = new SimSnapshot(++_sequence, ut, warp, activeId, vessels, events,
             GameVersion(), _appliedRateHz, _health.Snapshot())
         {
@@ -189,6 +203,7 @@ internal sealed class TelemetrySampler
             Welds = _welds.Snapshot(),
             AlwaysRenderIva = IvaForceRender.Enabled,
             ThugLife = _thugLife.Snapshot(),
+            Iva = _iva.Snapshot(_ivaStats),
         };
         _previous = snapshot;
         _store.Publish(snapshot);

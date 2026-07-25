@@ -64,6 +64,35 @@ public static class Formats
            + $"{Scalar(t.Width)} {Scalar(t.Height)}";
 
     /// <summary>
+    ///     The canonical IVA-object spec line — the read-back of <c>/sim/debug/iva/&lt;id&gt;/spec</c>
+    ///     and the 2-token form <c>/sim/debug/iva/adopt</c> accepts: <c>vessel subpart_iid</c>.
+    ///     Symmetric, so a read can be echoed straight back to <c>adopt</c> to re-adopt the SubPart.
+    /// </summary>
+    public static string IvaObjectSpec(IvaObjectSnapshot o) => $"{o.VesselId} {UInt(o.PartInstanceId)}";
+
+    /// <summary>
+    ///     The <c>/sim/debug/iva/stats</c> line — space-separated, stable column order:
+    ///     <c>vessels objects sleeping substeps avg_ms max_ms parked reason</c>
+    ///     (<c>reason</c> is <c>-</c> while running).
+    /// </summary>
+    public static string IvaStats(IvaStatsSnapshot s)
+        => $"{s.Vessels.ToString(CultureInfo.InvariantCulture)} "
+           + $"{s.Objects.ToString(CultureInfo.InvariantCulture)} "
+           + $"{s.Sleeping.ToString(CultureInfo.InvariantCulture)} "
+           + $"{s.Substeps.ToString(CultureInfo.InvariantCulture)} "
+           + $"{Scalar(s.StepAvgMs)} {Scalar(s.StepMaxMs)} {Flag(s.Parked)} "
+           + (s.ParkReason.Length == 0 ? "-" : s.ParkReason);
+
+    /// <summary>
+    ///     One <c>/sim/debug/iva/interior</c> row — space-separated, stable column order:
+    ///     <c>vessel triangles source_parts min_x min_y min_z max_x max_y max_z fallback</c>.
+    /// </summary>
+    public static string IvaInterior(IvaInteriorSnapshot i)
+        => $"{i.VesselId} {i.Triangles.ToString(CultureInfo.InvariantCulture)} "
+           + $"{i.SourceParts.ToString(CultureInfo.InvariantCulture)} "
+           + $"{Vector(i.AabbMin)} {Vector(i.AabbMax)} {Flag(i.Fallback)}";
+
+    /// <summary>
     ///     One <c>/sim/audio/status</c> row — space-separated, stable column order:
     ///     <c>id name state pos_ms len_ms vol loop group</c> (state ∈ <c>playing</c>|<c>paused</c>).
     /// </summary>

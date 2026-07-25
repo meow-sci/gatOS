@@ -2,6 +2,7 @@ using Brutal.ImGuiApi;
 using gatOS.GameMod.Game;
 using gatOS.GameMod.Game.Ksa;
 using gatOS.GameMod.Game.Ksa.Actuators;
+using gatOS.GameMod.Game.Ksa.Iva;
 using gatOS.GameMod.Game.Ksa.Render;
 using gatOS.GameMod.Game.Ksa.ThugLife;
 using gatOS.GameMod.Game.Ksa.Welds;
@@ -80,6 +81,14 @@ public sealed partial class Mod
     // driver runs in OnAfterUi (DriveWelds) and self-gates to nothing when empty — no Harmony patch.
     private WeldManager? _weldManager;
     private bool _weldsDead;
+
+    // The IVA cabin-physics registry + per-frame driver (Game/Ksa/Iva). Created lazily on the game
+    // thread with the other control objects and shared by the sampler (projects it into
+    // /sim/debug/iva) and the executor (mutates it). Its master switch is off by default, so until a
+    // guest writes /sim/debug/iva/enabled the object is an empty registry: no physics simulation, no
+    // interior mesh, no Bepu type ever loaded. DriveIvaPhysics (OnAfterUi) self-gates on that.
+    private IvaPhysicsManager? _ivaPhysics;
+    private bool _ivaDead;
 
     // The thug-life cheat registry + GPU renderer (Game/Ksa/ThugLife). Created lazily on the game thread,
     // shared by the sampler (projects it into /sim/debug/thug_life) and the executor (mutates it). The
@@ -187,11 +196,9 @@ public sealed partial class Mod
 
         try
         {
-            _health ??= new KsaHealth();
-            _weldManager ??= new WeldManager();
-            _thugLife ??= new ThugLifeManager();
-            _telemetry ??= new TelemetrySampler(store, _telemetrySettings, _health, _sampleStats,
-                _sampleAllocStats, _weldManager, _thugLife, _audioStore);
+            EnsureControlObjects();
+            _telemetry ??= new TelemetrySampler(store, _telemetrySettings, _health!, _sampleStats,
+                _sampleAllocStats, _weldManager!, _thugLife!, _ivaPhysics!, _ivaStats, _audioStore);
             // Sample only while something can actually read /sim: the VM is up, or a host-side
             // transport client is connected (9p / HTTP / MQTT). Otherwise the sampler idles for free.
             var state = CurrentVmStatus.State;
@@ -237,10 +244,38 @@ public sealed partial class Mod
         _health ??= new KsaHealth();
         _weldManager ??= new WeldManager();
         _thugLife ??= new ThugLifeManager();
+        if (_ivaPhysics is null)
+        {
+            // Constructing the registry touches no physics type and starts nothing: the master switch
+            // is off until a guest writes /sim/debug/iva/enabled (or the config seed turns it on).
+            _ivaPhysics = new IvaPhysicsManager();
+            _ivaPhysics.Configure(IvaTuningFromConfig());
+            _ivaPhysics.SeedRunOutsideIva(Config.IvaRunOutsideIva);
+            if (Config.IvaPhysicsEnabled)
+                _ivaPhysics.SetEnabled(true);
+        }
+
         if (_audioActuator is null && _audioStore is { } audioStore)
             _audioActuator = new AudioActuator(audioStore, Config.AudioMaxChannels);
-        _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels, _weldManager, _thugLife, _audioActuator);
+        _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels, _weldManager, _thugLife,
+            _ivaPhysics, _audioActuator);
     }
+
+    /// <summary>Snapshots the <c>[iva]</c> config section into the cabin simulation's tuning record.</summary>
+    private CabinTuning IvaTuningFromConfig()
+        => CabinTuning.Default with
+        {
+            SubstepHz = Config.IvaSubstepHz,
+            MaxSubstepsPerFrame = Config.IvaMaxSubstepsPerFrame,
+            Friction = Config.IvaFriction,
+            Restitution = Config.IvaRestitution,
+            MaxSpeed = Config.IvaMaxSpeed,
+            DensityKgM3 = Config.IvaDensityKgM3,
+            MaxObjectsPerVessel = Config.IvaMaxObjects,
+            MaxObjectSize = Config.IvaMaxObjectSize,
+            ImpactSpeed = Config.IvaImpactSpeed,
+            DoubleSidedInterior = Config.IvaDoubleSidedInterior,
+        };
 
     /// <summary>
     ///     Ticks the audio actuator on the game thread, right after the command drain (threading
@@ -288,6 +323,40 @@ public sealed partial class Mod
     }
 
     /// <summary>
+    ///     Drives the IVA cabin physics on the game thread from <c>OnAfterUi</c> — the same hook (and
+    ///     for the same reason) as the welds driver: the vehicle-solver workers have finished, so the
+    ///     accelerometer/rates/CoM readings the forcing field needs are the settled values for this
+    ///     step. Self-gates to a single branch while the master switch is off or nothing is adopted, so
+    ///     the feature costs nothing until a guest explicitly starts it. A failure disables it for the
+    ///     session (one error log) after releasing every object.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void DriveIvaPhysics(double dt)
+    {
+        if (_ivaDead || _ivaPhysics is not { } iva || iva.IsIdle)
+            return;
+        try
+        {
+            using (_ivaStats.Measure()) // alloc-free; the /sim/debug/iva/stats + status-window readout
+                iva.Update(dt);
+        }
+        catch (Exception ex)
+        {
+            _ivaDead = true;
+            try
+            {
+                iva.Teardown(); // put every prop back before going dark
+            }
+            catch (Exception teardownEx)
+            {
+                ModLog.Log.Debug($"gatOS IVA physics teardown error: {teardownEx.Message}");
+            }
+
+            ModLog.Log.Error($"gatOS IVA physics disabled after a driver error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     ///     Validates thug-life entries on the game thread before the scene renders this frame: drops
     ///     entries whose vehicle is gone and re-resolves each anchor part by InstanceId (robust to
     ///     staging). Self-gates to nothing when empty; a failure disables the feature for the session.
@@ -310,8 +379,9 @@ public sealed partial class Mod
 
     /// <summary>
     ///     Tears down the runtime cheats at unload: clears every weld, removes the thug-life quads (which
-    ///     also unpatches the render hook + frees its GPU resources), restores IVA (which unpatches the
-    ///     IVA Harmony hooks), and drops every vessel force-render mark (which unpatches the
+    ///     also unpatches the render hook + frees its GPU resources), releases every IVA floating object
+    ///     at its rest pose and disposes its cabin simulation, restores IVA rendering (which unpatches
+    ///     the IVA Harmony hooks), and drops every vessel force-render mark (which unpatches the
     ///     <c>gatos.always_render</c> prefixes). Game-coupled, so it is elided without the KSA assemblies.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
@@ -342,6 +412,17 @@ public sealed partial class Mod
         catch (Exception ex)
         {
             ModLog.Log.Debug($"gatOS thug-life teardown error: {ex.Message}");
+        }
+
+        try
+        {
+            // Restores every floating prop's exact rest pose and disposes every cabin simulation
+            // (and its buffer pool), leaving the master switch off.
+            _ivaPhysics?.Teardown();
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS IVA physics teardown error: {ex.Message}");
         }
 
         try
@@ -839,6 +920,19 @@ public sealed partial class Mod
                                  + "background pump (never blocks the game; only while an MQTT client is connected).");
         }
 
+        // Only once the feature has actually run — off by default, and its whole point is to cost
+        // nothing until someone starts it, so a permanent row would be misleading noise.
+        var ivaStats = _ivaStats;
+        if (ivaStats.Count > 0)
+        {
+            ImGui.Text($"IVA physics: avg {ivaStats.AvgMicros / 1000:F3} ms, "
+                       + $"max {ivaStats.MaxMicros / 1000:F3} ms");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Game-thread cost of one IVA cabin-physics pass (interior collision + "
+                                 + "the floating objects). Zero while /sim/debug/iva/enabled is 0 — "
+                                 + "settled objects sleep and cost nothing either.");
+        }
+
         if (_displaySurface is { } disp)
         {
             var ds = disp.Settings;
@@ -870,6 +964,7 @@ public sealed partial class Mod
         if (ImGui.SmallButton("Reset perf##gatos_reset_perf"))
         {
             _sampleStats.Reset();
+            _ivaStats.Reset();
             _sampleAllocStats.Reset();
             _drainStats.Reset();
             _mqttBroker?.PublishStats.Reset();

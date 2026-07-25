@@ -118,6 +118,31 @@ public sealed class GatOsConfig
             ("audio_max_clips", "Maximum number of uploaded clips (ENOSPC past it)."),
             ("audio_max_channels", "Maximum concurrent playback channels (play past it fails EBUSY)."),
         }),
+        ("IVA — free-floating cabin objects (/sim/debug/iva; all tunable live over /sim)", new[]
+        {
+            ("iva_physics_enabled",
+                "Boot seed for /sim/debug/iva/enabled — the master switch for the whole cabin-physics\n"
+                + "feature. OFF by default, and off means off: no physics simulation, no interior\n"
+                + "collision mesh, no per-frame work. Turn it on live with\n"
+                + "`echo 1 > /sim/debug/iva/enabled` (and `echo 0 >` to release everything and stop)."),
+            ("iva_run_outside_iva",
+                "Keep simulating when no viewport is in the IVA camera. Off = leaving IVA parks the\n"
+                + "objects (velocities zeroed, poses frozen) until you come back."),
+            ("iva_max_objects", "Cap on floating objects per vessel (an adopt past it fails EBUSY)."),
+            ("iva_max_object_size",
+                "Largest bounding-box extent, metres, a SubPart may have and still be adoptable — the\n"
+                + "guard that stops adopt_all (or a mistyped id) cutting a hull panel or a seat loose."),
+            ("iva_density_kg_m3", "Density used to derive an object's mass from its collision-proxy volume."),
+            ("iva_max_speed", "Hard velocity clamp, m/s — the anti-tunnelling guard for thin art meshes."),
+            ("iva_friction", "Contact friction coefficient; higher makes a settled object stay put."),
+            ("iva_restitution", "Bounciness, as the maximum contact recovery velocity in m/s."),
+            ("iva_substep_hz", "Fixed integration rate, Hz. A variable-dt contact sim is not stable."),
+            ("iva_max_substeps_per_frame", "Substep budget per frame — the post-hitch catch-up bound."),
+            ("iva_double_sided_interior",
+                "Emit every interior triangle in both windings, so an object cannot fall through a wall\n"
+                + "whose art happens to wind outward. On by default; off halves the triangle count."),
+            ("iva_impact_speed", "Speed change (m/s) in one substep that fires an iva.impact event."),
+        }),
     };
 
     /// <summary>Schema version of the file (readers reject anything but <see cref="CurrentSchema"/>).</summary>
@@ -295,6 +320,58 @@ public sealed class GatOsConfig
 
     /// <summary>Maximum concurrent playback channels (EBUSY past it; clamped 1..64).</summary>
     public int AudioMaxChannels { get; set; } = 16;
+
+    // ---- IVA: free-floating cabin objects (/sim/debug/iva; plans/IVA_MOVEMENTS.md). ----
+
+    /// <summary>
+    ///     Boot seed for <c>/sim/debug/iva/enabled</c> — the master switch that starts and ends the
+    ///     whole cabin-physics feature. <b>Off by default and off means off:</b> no physics
+    ///     simulation, no interior collision mesh, no per-frame work. Turn it on live with
+    ///     <c>echo 1 &gt; /sim/debug/iva/enabled</c>.
+    /// </summary>
+    public bool IvaPhysicsEnabled { get; set; }
+
+    /// <summary>
+    ///     Keep stepping the cabin sim when no viewport is in the IVA camera. Off by default: leaving
+    ///     IVA parks the objects (velocities zeroed, poses frozen) until you come back.
+    /// </summary>
+    public bool IvaRunOutsideIva { get; set; }
+
+    /// <summary>Fixed integration rate for the cabin sim in Hz (clamped 30..480).</summary>
+    public int IvaSubstepHz { get; set; } = 120;
+
+    /// <summary>Maximum substeps per frame — the post-hitch catch-up bound (clamped 1..32).</summary>
+    public int IvaMaxSubstepsPerFrame { get; set; } = 8;
+
+    /// <summary>Cap on floating objects per vessel; an adopt past it fails EBUSY (clamped 1..64).</summary>
+    public int IvaMaxObjects { get; set; } = 16;
+
+    /// <summary>
+    ///     Largest bounding-box extent in metres a SubPart may have and still be adoptable — the guard
+    ///     that keeps a hull panel or a seat from being cut loose (clamped 0.01..5).
+    /// </summary>
+    public double IvaMaxObjectSize { get; set; } = 0.5;
+
+    /// <summary>Default density in kg/m³ used to derive an object's mass from its proxy volume (clamped 1..20000).</summary>
+    public double IvaDensityKgM3 { get; set; } = 300;
+
+    /// <summary>Hard velocity clamp in m/s — the anti-tunnelling guard for thin art meshes (clamped 0.1..200).</summary>
+    public double IvaMaxSpeed { get; set; } = 15;
+
+    /// <summary>Contact friction coefficient (clamped 0..2); higher makes settled objects stay put.</summary>
+    public double IvaFriction { get; set; } = 0.6;
+
+    /// <summary>Bounciness as Bepu's maximum recovery velocity in m/s (clamped 0..20).</summary>
+    public double IvaRestitution { get; set; } = 1.0;
+
+    /// <summary>
+    ///     Emit every interior triangle in both windings, so an object cannot fall through a wall whose
+    ///     art happens to wind outward. On by default; turning it off halves the triangle count.
+    /// </summary>
+    public bool IvaDoubleSidedInterior { get; set; } = true;
+
+    /// <summary>Speed change in m/s within one substep above which an <c>iva.impact</c> event fires (clamped 0.01..50).</summary>
+    public double IvaImpactSpeed { get; set; } = 0.4;
 
     // ---- MOUNTS: host folders shared into the guest under /mnt/<name>. ----
 
@@ -503,6 +580,15 @@ public sealed class GatOsConfig
             AudioMaxClipBytes, 1024 * 1024 * 1024);
         AudioMaxClips = Clamp(nameof(AudioMaxClips), AudioMaxClips, 1, 1024);
         AudioMaxChannels = Clamp(nameof(AudioMaxChannels), AudioMaxChannels, 1, 64);
+        IvaSubstepHz = Clamp(nameof(IvaSubstepHz), IvaSubstepHz, 30, 480);
+        IvaMaxSubstepsPerFrame = Clamp(nameof(IvaMaxSubstepsPerFrame), IvaMaxSubstepsPerFrame, 1, 32);
+        IvaMaxObjects = Clamp(nameof(IvaMaxObjects), IvaMaxObjects, 1, 64);
+        IvaMaxObjectSize = Clamp(nameof(IvaMaxObjectSize), IvaMaxObjectSize, 0.01, 5);
+        IvaDensityKgM3 = Clamp(nameof(IvaDensityKgM3), IvaDensityKgM3, 1, 20000);
+        IvaMaxSpeed = Clamp(nameof(IvaMaxSpeed), IvaMaxSpeed, 0.1, 200);
+        IvaFriction = Clamp(nameof(IvaFriction), IvaFriction, 0, 2);
+        IvaRestitution = Clamp(nameof(IvaRestitution), IvaRestitution, 0, 20);
+        IvaImpactSpeed = Clamp(nameof(IvaImpactSpeed), IvaImpactSpeed, 0.01, 50);
 
         var displayEncoding = DisplayEncoding.Trim().ToLowerInvariant();
         if (displayEncoding is not ("rgba-zlib" or "rgba"))
@@ -591,6 +677,15 @@ public sealed class GatOsConfig
     private static int Clamp(string name, int value, int min, int max)
     {
         var clamped = Math.Clamp(value, min, max);
+        if (clamped != value)
+            ModLog.Log.Warn($"Config: {name} {value} is outside [{min}, {max}]; using {clamped}.");
+        return clamped;
+    }
+
+    /// <summary>Clamps a real-valued knob, treating a non-finite value as out of range.</summary>
+    private static double Clamp(string name, double value, double min, double max)
+    {
+        var clamped = double.IsFinite(value) ? Math.Clamp(value, min, max) : min;
         if (clamped != value)
             ModLog.Log.Warn($"Config: {name} {value} is outside [{min}, {max}]; using {clamped}.");
         return clamped;

@@ -158,6 +158,50 @@ audio_max_clips = 64
 # Maximum concurrent playback channels (play past it fails EBUSY).
 audio_max_channels = 16
 
+# ===== IVA — free-floating cabin objects (/sim/debug/iva; all tunable live over /sim) =====
+
+# Boot seed for /sim/debug/iva/enabled — the master switch for the whole cabin-physics
+# feature. OFF by default, and off means off: no physics simulation, no interior
+# collision mesh, no per-frame work. Turn it on live with
+# `echo 1 > /sim/debug/iva/enabled` (and `echo 0 >` to release everything and stop).
+iva_physics_enabled = false
+
+# Keep simulating when no viewport is in the IVA camera. Off = leaving IVA parks the
+# objects (velocities zeroed, poses frozen) until you come back.
+iva_run_outside_iva = false
+
+# Cap on floating objects per vessel (an adopt past it fails EBUSY).
+iva_max_objects = 16
+
+# Largest bounding-box extent, metres, a SubPart may have and still be adoptable — the
+# guard that stops adopt_all (or a mistyped id) cutting a hull panel or a seat loose.
+iva_max_object_size = 0.5
+
+# Density used to derive an object's mass from its collision-proxy volume.
+iva_density_kg_m3 = 300.0
+
+# Hard velocity clamp, m/s — the anti-tunnelling guard for thin art meshes.
+iva_max_speed = 15.0
+
+# Contact friction coefficient; higher makes a settled object stay put.
+iva_friction = 0.6
+
+# Bounciness, as the maximum contact recovery velocity in m/s.
+iva_restitution = 1.0
+
+# Fixed integration rate, Hz. A variable-dt contact sim is not stable.
+iva_substep_hz = 120
+
+# Substep budget per frame — the post-hitch catch-up bound.
+iva_max_substeps_per_frame = 8
+
+# Emit every interior triangle in both windings, so an object cannot fall through a wall
+# whose art happens to wind outward. On by default; off halves the triangle count.
+iva_double_sided_interior = true
+
+# Speed change (m/s) in one substep that fires an iva.impact event.
+iva_impact_speed = 0.4
+
 # ===== MOUNTS — host folders shared into the guest under /mnt/<name> =====
 
 # Off by default. Each [[mounts]] entry shares a host folder into the guest at /mnt/<name>,

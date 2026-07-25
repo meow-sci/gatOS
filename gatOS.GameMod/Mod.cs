@@ -90,6 +90,10 @@ public sealed partial class Mod
     // burst of control commands actuates KSA on a frame.
     private readonly PerfStat _drainStats = new();
 
+    // Timing of one IVA cabin-physics driver pass (game thread). Owned here, like the sampler stats,
+    // so the status window and /sim/debug/iva/stats can read it whether or not the feature is on.
+    private readonly PerfStat _ivaStats = new();
+
     // The magic HTTP transport (G5): same SnapshotStore + command pipeline as the 9p tree, on a
     // loopback port the guest reaches at 10.0.2.2. Volatile — read by the render thread (status)
     // and the VM boot's HttpPortProvider on their own threads.
@@ -138,6 +142,9 @@ public sealed partial class Mod
 
     /// <summary>Timing of one command-queue drain (game thread), for the status window's perf readout.</summary>
     internal PerfStat DrainStats => _drainStats;
+
+    /// <summary>Timing of one IVA cabin-physics driver pass, for the status window's perf readout.</summary>
+    internal PerfStat IvaStats => _ivaStats;
 
     /// <summary>Transient result of the last menu action, for the status window.</summary>
     internal string? LastActionNote => _lastActionNote;
@@ -289,9 +296,11 @@ public sealed partial class Mod
     }
 
     /// <summary>
-    ///     Draws the diagnostics UI (T6.4) and drives active welds (both game-thread, no-ops without the
-    ///     KSA assemblies). The weld drive runs first and independently of the UI so a UI fault never
-    ///     stops welds — and it self-gates to nothing when no welds exist.
+    ///     Draws the diagnostics UI (T6.4) and drives the two per-frame game-thread registries —
+    ///     active welds and IVA cabin physics (all no-ops without the KSA assemblies). Both drives run
+    ///     first and independently of the UI so a UI fault never stops them, and each self-gates to
+    ///     nothing when its registry is empty. This hook (rather than <c>OnBeforeUi</c>) is where the
+    ///     vehicle-solver workers have finished, so the kinematics both drivers read are settled.
     /// </summary>
     [StarMapAfterGui]
     public void OnAfterUi(double dt)
@@ -300,6 +309,7 @@ public sealed partial class Mod
             return;
 
         DriveWelds(dt); // partial; self-gates to a no-op when no welds are active
+        DriveIvaPhysics(dt); // partial; self-gates to a no-op while IVA physics is off or empty
 
         if (_uiDead)
             return;
@@ -834,6 +844,7 @@ public sealed partial class Mod
     partial void InstallDisplayHook();
     partial void DisposeDisplayCapture();
     partial void DriveWelds(double dt);
+    partial void DriveIvaPhysics(double dt);
     partial void UpdateThugLife();
     partial void TeardownGameCheats();
     partial void InstallSolverHook();

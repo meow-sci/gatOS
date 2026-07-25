@@ -27,6 +27,16 @@
         <Compile Remove="Game\**\*.cs"/>
     </ItemGroup>
 
+    <!-- BepuPhysics ships in every KSA install, so its absence from a resolved KSAFolder means that
+         folder is stale (a `ksa-game-assemblies` checkout predating the Bepu*.dll glob), not that the
+         feature is unavailable. Fail loudly with the fix rather than emitting 200 type-not-found
+         errors from Game/Ksa/Iva. Only checked when the game DLLs are present at all — game-free CI
+         removes Game/** entirely and never reaches here. -->
+    <Target Name="VerifyBepuReference" BeforeTargets="BeforeBuild"
+            Condition="'$(KsaAssembliesPresent)' == 'true' AND !Exists('$(KSAFolder)/BepuPhysics.dll')">
+        <Error Text="BepuPhysics.dll / BepuUtilities.dll are missing from KSAFolder ($(KSAFolder)) but KSA.dll is present, so that folder is stale. The IVA cabin-physics feature (Game/Ksa/Iva) references KSA's own embedded Bepu 2.5. Fix: re-run the sibling ksa-game-assemblies checkout's `bun copy-ksa.ts` (its glob list now includes Bepu*.dll), or copy Bepu*.dll from the game install into that folder."/>
+    </Target>
+
     <!-- Deploys the complete mod folder to $(DistDir) on every build (T6.5; mirrors purrTTY's
          CopyCustomContent). SelectedDistModDir resolves in Directory.Build.props:
          GATOS_DIST_DIR override (CI zips it), else the per-OS KSA mods dir. -->
@@ -169,6 +179,19 @@
              playback actuator (Game/Ksa/Actuators/AudioActuator) drives GameAudio.System through it. -->
         <Reference Include="Brutal.Fmod" Condition="Exists('$(KSAFolder)/Brutal.Fmod.dll')">
             <HintPath>$(KSAFolder)/Brutal.Fmod.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <!-- BepuPhysics 2.5 — KSA's own embedded rigid-body engine, which ships in the game folder
+             and is already loaded in-process. The IVA cabin-physics feature (Game/Ksa/Iva) creates a
+             gatOS-OWNED Simulation against this exact assembly, in the vessel assembly frame, never
+             touching the game's ConstraintSim. Referenced <Private>false</Private> like every other
+             game DLL. -->
+        <Reference Include="BepuPhysics" Condition="Exists('$(KSAFolder)/BepuPhysics.dll')">
+            <HintPath>$(KSAFolder)/BepuPhysics.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="BepuUtilities" Condition="Exists('$(KSAFolder)/BepuUtilities.dll')">
+            <HintPath>$(KSAFolder)/BepuUtilities.dll</HintPath>
             <Private>false</Private>
         </Reference>
         <Reference Include="Brutal.ImGui" Condition="Exists('$(KSAFolder)/Brutal.ImGui.dll')">

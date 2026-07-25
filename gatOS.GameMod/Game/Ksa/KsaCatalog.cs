@@ -1,5 +1,6 @@
 using Brutal.Numerics;
 using gatOS.GameMod.Game.Ksa.Actuators;
+using gatOS.GameMod.Game.Ksa.Iva;
 using gatOS.GameMod.Game.Ksa.Render;
 using gatOS.GameMod.Game.Ksa.ThugLife;
 using gatOS.GameMod.Game.Ksa.Welds;
@@ -17,7 +18,7 @@ namespace gatOS.GameMod.Game.Ksa;
 ///     the game thread by <see cref="CommandQueue.Drain"/>; never throws (faults are returned).
 /// </summary>
 internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager welds, ThugLifeManager thugLife,
-    AudioActuator? audio = null)
+    IvaPhysicsManager iva, AudioActuator? audio = null)
     : ICommandExecutor
 {
     /// <inheritdoc />
@@ -47,6 +48,12 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
             // add), so all of it is handled vessel-agnostically here, before the per-vessel resolution.
             if (command.Action.StartsWith("debug.thug_life", StringComparison.Ordinal))
                 return Finish(accessor, ThugLife(command));
+
+            // IVA free-floating cabin objects: registry-keyed like thug_life (object id in Ordinal,
+            // vessel id in Token for adopt), so the whole grammar is handled vessel-agnostically here.
+            // debug.iva_physics is the master switch that starts and ends the feature.
+            if (command.Action.StartsWith("debug.iva_", StringComparison.Ordinal))
+                return Finish(accessor, Iva(command));
 
             // Userland audio playback (GATOS_CUSTOM_AUDIO_PLAN): vessel-agnostic — the target is a
             // clip/channel, never a vehicle, so it bypasses vehicle resolution and the authority gate.
@@ -214,6 +221,57 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
                     return new CommandResult(CommandOutcome.Invalid, "thug_life size expects 'width height'");
                 return thugLife.SetSize(c.Ordinal, v[0], v[1]);
             }
+            default:
+                return new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'");
+        }
+    }
+
+    /// <summary>
+    ///     Routes the IVA cabin-physics actions to the <see cref="IvaPhysicsManager"/>. The master
+    ///     switch and <c>clear</c> take no target; <c>adopt</c>/<c>adopt_all</c> resolve the vessel from
+    ///     <see cref="SimCommand.Token"/>; the per-object actions key on
+    ///     <see cref="SimCommand.Ordinal"/>.
+    /// </summary>
+    private CommandResult Iva(SimCommand c)
+    {
+        switch (c.Action)
+        {
+            case "debug.iva_physics":
+                return iva.SetEnabled(c.Value > 0.5);
+            case "debug.iva_run_outside_iva":
+                return iva.SetRunOutsideIva(c.Value > 0.5);
+            case "debug.iva_clear":
+                return iva.Clear();
+            case "debug.iva_release":
+                return iva.Release(c.Ordinal);
+            case "debug.iva_nudge":
+            {
+                var v = c.Values ?? [];
+                if (v.Count != 3)
+                    return new CommandResult(CommandOutcome.Invalid, "iva nudge expects 'vx vy vz'");
+                return iva.Nudge(c.Ordinal, new double3(v[0], v[1], v[2]));
+            }
+
+            case "debug.iva_adopt":
+            {
+                if (ResolveVehicle(c.Token ?? "") is not { } vehicle)
+                    return new CommandResult(CommandOutcome.NotFound, $"vessel '{c.Token}' is gone");
+                var v = c.Values ?? [];
+                // [subpart_iid] (rest velocity) or [subpart_iid, vx, vy, vz].
+                if (v.Count is not (1 or 4))
+                    return new CommandResult(CommandOutcome.Invalid,
+                        "iva adopt expects '<vessel> <subpart_iid>' or '<vessel> <subpart_iid> vx vy vz'");
+                var velocity = v.Count == 4 ? new double3(v[1], v[2], v[3]) : double3.Zero;
+                return iva.Adopt(vehicle, (uint)v[0], velocity);
+            }
+
+            case "debug.iva_adopt_all":
+            {
+                if (ResolveVehicle(c.Token ?? "") is not { } vehicle)
+                    return new CommandResult(CommandOutcome.NotFound, $"vessel '{c.Token}' is gone");
+                return iva.AdoptAll(vehicle, (int)c.Value, c.Aux);
+            }
+
             default:
                 return new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'");
         }

@@ -1077,8 +1077,222 @@ public static class SimFsTree
                 // The welds registry view + global ops (per-source weld/unweld live under debug/vessels/<id>/).
                 WeldsDir(),
                 // The thug-life sunglasses registry: add/clear/count + one editable entry per quad.
-                ThugLifeDir());
+                ThugLifeDir(),
+                // The IVA free-floating-object simulation: the master on/off, the adopt/release
+                // grammar, diagnostics, and one entry per floating object.
+                IvaDir());
         }
+
+        // ---- IVA free-floating objects (plans/IVA_MOVEMENTS.md; gated by debug_namespace) ---------
+
+        /// <summary>
+        ///     The IVA cabin-physics registry. <c>enabled</c> is the <b>master switch that starts and
+        ///     ends the whole feature</b> — off by default, and writing <c>0</c> releases every object
+        ///     (restoring exact rest poses) and disposes every simulation, so nothing runs at all.
+        ///     <c>adopt</c>/<c>adopt_all</c> cut shipped IVA prop SubParts loose, <c>clear</c> puts them
+        ///     all back, and each live object appears as an editable <c>&lt;id&gt;/</c> subdir.
+        /// </summary>
+        private VfsDirectory IvaDir()
+        {
+            var sink = _commands!;
+            var help = new StaticTextFile("help", Qid("debug/iva/help"), () => IvaHelp);
+            var enabled = FlagControl("debug/iva/enabled", "enabled", "", "debug.iva_physics",
+                SimCommand.NoOrdinal, () => Formats.Flag(_store.Current.Iva.Enabled));
+            var runOutside = FlagControl("debug/iva/run_outside_iva", "run_outside_iva", "",
+                "debug.iva_run_outside_iva", SimCommand.NoOrdinal,
+                () => Formats.Flag(_store.Current.Iva.RunOutsideIva));
+            var adopt = LineControlFile.Create("adopt", Qid("debug/iva/adopt"), sink, () => "", ParseIvaAdopt);
+            var adoptAll = LineControlFile.Create("adopt_all", Qid("debug/iva/adopt_all"), sink,
+                () => "", ParseIvaAdoptAll);
+            var clear = new TriggerFile("clear", Qid("debug/iva/clear"), sink,
+                new SimCommand("", "debug.iva_clear", SimCommand.NoOrdinal, 1));
+            var count = Line("debug/iva/count", "count",
+                () => _store.Current.Iva.Objects.Count.ToString(CultureInfo.InvariantCulture));
+            var stats = Line("debug/iva/stats", "stats", () => Formats.IvaStats(_store.Current.Iva.Stats));
+            // A multi-row report (one line per vessel with a built interior), so it carries its own
+            // line terminators rather than going through Line's single-value + LF convention.
+            var interior = new SnapshotTextFile("interior", Qid("debug/iva/interior"), _store,
+                () => string.Concat(_store.Current.Iva.Interiors.Select(i => Formats.IvaInterior(i) + "\n")));
+            var fixedChildren = new VfsNode[]
+                { help, enabled, runOutside, adopt, adoptAll, clear, count, stats, interior };
+
+            return new DelegateDirectory("iva", Qid("debug/iva"),
+                () =>
+                {
+                    var objects = _store.Current.Iva.Objects;
+                    if (objects.Count == 0)
+                        return fixedChildren;
+                    var children = new List<VfsNode>(fixedChildren.Length + objects.Count);
+                    children.AddRange(fixedChildren);
+                    children.AddRange(objects.Select(o => (VfsNode)IvaObjectDir(o.Id)));
+                    return children;
+                },
+                name => int.TryParse(name, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)
+                        && _store.Current.Iva.Objects.Any(o => o.Id == id)
+                    ? IvaObjectDir(id)
+                    : FindByName(fixedChildren, name));
+        }
+
+        private VfsDirectory IvaObjectDir(int id)
+        {
+            var sink = _commands!;
+            var key = id.ToString(CultureInfo.InvariantCulture);
+            var q = $"debug/iva/{key}";
+            return DelegateDirectory.Fixed(key, Qid(q),
+                Line($"{q}/vessel", "vessel", () => IvaObject(id).VesselId),
+                Line($"{q}/part", "part", () => Formats.UInt(IvaObject(id).PartInstanceId)),
+                Line($"{q}/name", "name", () => IvaObject(id).Part),
+                Line($"{q}/template", "template", () => IvaObject(id).Template),
+                Line($"{q}/position", "position", () => Formats.Vector(IvaObject(id).Position)),
+                Line($"{q}/velocity", "velocity", () => Formats.Vector(IvaObject(id).Velocity)),
+                Line($"{q}/angular_velocity", "angular_velocity",
+                    () => Formats.Vector(IvaObject(id).AngularVelocity)),
+                Line($"{q}/mass", "mass", () => Formats.Scalar(IvaObject(id).MassKg)),
+                Line($"{q}/shape", "shape", () => IvaObject(id).Shape),
+                Line($"{q}/size", "size", () => Formats.Vector(IvaObject(id).Size)),
+                Line($"{q}/asleep", "asleep", () => Formats.Flag(IvaObject(id).Asleep)),
+                // A one-shot velocity kick in the vessel assembly frame, m/s — poke an object to see
+                // it move (and to test collisions) without waiting for the vessel to manoeuvre.
+                VectorControl($"{q}/nudge", "nudge", "", "debug.iva_nudge", id, 3, () => "0 0 0"),
+                // Un-adopt: restore the SubPart's exact rest pose and drop the body.
+                new TriggerFile("release", Qid($"{q}/release"), sink,
+                    new SimCommand("", "debug.iva_release", id, 1)),
+                // The adopt-compatible line (echo it to adopt to re-adopt this SubPart).
+                Line($"{q}/spec", "spec", () => Formats.IvaObjectSpec(IvaObject(id))));
+        }
+
+        private IvaObjectSnapshot IvaObject(int id)
+        {
+            var objects = _store.Current.Iva.Objects;
+            for (var i = 0; i < objects.Count; i++)
+                if (objects[i].Id == id)
+                    return objects[i];
+            throw new VfsErrorException(LinuxErrno.ENOENT, $"iva object {id} is gone");
+        }
+
+        /// <summary>
+        ///     Parses <c>adopt</c>: <c>"&lt;vessel&gt; &lt;subpart_iid&gt; [vx vy vz]"</c> — 2 or 5
+        ///     tokens. Returns null (⇒ EINVAL) on any malformed token.
+        /// </summary>
+        private static SimCommand? ParseIvaAdopt(string line)
+        {
+            var parts = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length is not (2 or 5) || parts[0].Length == 0)
+                return null;
+            if (!uint.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var iid)
+                || iid == 0)
+                return null;
+            var values = new double[4]; // [iid, vx, vy, vz]
+            values[0] = iid;
+            if (parts.Length == 5)
+                for (var i = 0; i < 3; i++)
+                    if (!double.TryParse(parts[i + 2], NumberStyles.Float, CultureInfo.InvariantCulture,
+                            out values[i + 1]) || !double.IsFinite(values[i + 1]))
+                        return null;
+            return new SimCommand("", "debug.iva_adopt", SimCommand.NoOrdinal, 0)
+            {
+                Token = parts[0],
+                Values = values,
+            };
+        }
+
+        /// <summary>
+        ///     Parses <c>adopt_all</c>: <c>"&lt;vessel&gt; [max] [template_substring]"</c> — 1 to 3
+        ///     tokens. Returns null (⇒ EINVAL) on a malformed count.
+        /// </summary>
+        private static SimCommand? ParseIvaAdoptAll(string line)
+        {
+            var parts = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length is < 1 or > 3 || parts[0].Length == 0)
+                return null;
+            double max = 0; // 0 ⇒ up to the configured per-vessel cap
+            if (parts.Length >= 2)
+            {
+                if (!int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)
+                    || n < 0)
+                    return null;
+                max = n;
+            }
+
+            return new SimCommand("", "debug.iva_adopt_all", SimCommand.NoOrdinal, max)
+            {
+                Token = parts[0],
+                Aux = parts.Length == 3 ? parts[2] : null,
+            };
+        }
+
+        /// <summary>
+        ///     The console-friendly readme behind <c>/sim/debug/iva/help</c>: the master switch, how to
+        ///     cut props loose, and worked examples on the stock Gemini interior.
+        /// </summary>
+        private const string IvaHelp =
+            """
+            iva — free-floating objects inside a vessel's cabin, with real inertial physics.
+
+            Loose props stop being glued to the hull: weightless and drifting while you coast,
+            slammed aft when the engines light, flung around by RCS rotation, and bouncing off the
+            ACTUAL interior surfaces (the collision mesh is built from the IVA meshes themselves).
+            Look out a window while it runs. All paths below are under /sim/debug/iva/.
+
+            MASTER SWITCH — everything is OFF until you turn it on, and off means off:
+            no physics engine, no interior mesh, no per-frame work at all.
+              echo 1 > enabled     # start it
+              echo 0 > enabled     # stop it: every object goes back to its exact rest pose and
+                                   # every simulation is torn down
+              cat     enabled
+
+            CUT SOMETHING LOOSE  (only SubParts can float — a top-level part's transform is saved,
+            a SubPart's is not, so nothing here can ever contaminate your save file)
+              echo "<vessel> <subpart_iid>"                > adopt
+              echo "<vessel> <subpart_iid> <vx> <vy> <vz>" > adopt      # ...with a starting velocity
+              echo "<vessel> [max] [template_substring]"   > adopt_all  # the smallest loose props first
+
+            FIND A PROP  (needs telemetry_vessel_parts on)
+              v=/sim/vessels/by-id/Gemini7
+              cat $v/parts/json | jq -r '.[].subparts[] | "\(.instance_id) \(.template)"' | grep -i sardine
+
+            PER OBJECT  (<id> = 0, 1, 2, ... — the smallest free slot, reused after release)
+              position velocity angular_velocity   3 numbers, vessel assembly frame (m, m/s, rad/s)
+              mass shape size                      kg; collision proxy kind; proxy extents in m
+              asleep                               1 = settled, costs nothing to simulate
+              nudge     "vx vy vz"                 one-shot velocity kick, m/s, assembly frame
+              release                              echo 1 — put this one back at its rest pose
+              spec                                 the adopt-compatible line; echo it back to re-adopt
+
+            EVERYTHING BACK
+              echo 1 > clear       # release every object (the sim stays enabled)
+              cat     count        # how many are floating
+              cat     stats        # vessels objects sleeping substeps avg_ms max_ms parked reason
+              cat     interior     # per vessel: triangles source_parts aabb_min aabb_max fallback
+
+            EXAMPLES  (stock Gemini 7 — its cabin already ships sardine tins, bolts, screws,
+            photos, notes, tape and a toothbrush)
+              echo 1 > /sim/debug/iva/enabled
+
+              # Set every sardine tin adrift:
+              echo "Gemini7 4 Sardine" > /sim/debug/iva/adopt_all
+
+              # Or pick one by hand and flick it across the cabin at 0.3 m/s:
+              iid=$(cat /sim/vessels/by-id/Gemini7/parts/json \
+                    | jq -r '.[].subparts[] | select(.template|test("SardineA")) | .instance_id' | head -1)
+              echo "Gemini7 $iid 0.3 0 0" > /sim/debug/iva/adopt
+
+              # Fill the cabin with the 12 smallest loose things, then watch one drift:
+              echo "Gemini7 12" > /sim/debug/iva/adopt_all
+              watch -n0.2 cat /sim/debug/iva/0/position
+
+              # Clunk on impact (needs /sim/audio and a clip called clunk.wav):
+              tail -f /sim/events | grep --line-buffered iva.impact \
+                | while read -r _; do echo "clunk.wav" > /sim/audio/play; done
+
+            Notes: objects are simulated in the vessel's assembly frame by a gatOS-owned physics
+            world — they never touch the game's own solver, so they cannot perturb your trajectory
+            or corrupt a save. They park (velocities zeroed, poses frozen) under time warp, in the
+            vehicle editor, and — unless run_outside_iva is 1 — whenever no viewport is in the IVA
+            camera. Nothing is persisted: everything is released at mod unload. The same actions
+            work over HTTP /v1 and MQTT.
+
+            """;
 
         // ---- welds cheat (G-D; gated by debug_namespace) ------------------------------------------
 
