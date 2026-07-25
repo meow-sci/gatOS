@@ -29,7 +29,7 @@ namespace gatOS.GameMod.Game.Ksa.Iva;
 ///     </para>
 ///     <para>
 ///         This is the <i>only</i> file that knows the simulation is Bepu (with
-///         <see cref="CabinCallbacks"/>); everything above it speaks poses, velocities and handles.
+///         <see cref="CabinPoseCallbacks"/>); everything above it speaks poses, velocities and handles.
 ///         plans/IVA_MOVEMENTS.md §3 Option C (a hand-rolled sphere-vs-triangle solver) stays a
 ///         drop-in replacement behind this seam.
 ///     </para>
@@ -38,6 +38,13 @@ internal sealed class CabinSim : IDisposable
 {
     private readonly CabinTuning _tuning;
     private readonly CabinFieldBox _field = new();
+
+    // Every body we created, in creation order. Bepu's own ActiveSet excludes sleeping bodies, and we
+    // must be able to reach those (see WakeAllOnFieldChange), so we keep our own roster.
+    private readonly List<BodyHandle> _bodies = [];
+
+    // Impact detection scratch, parallel to _bodies. Reused, so a step allocates nothing.
+    private Vector3[] _velocitiesBefore = [];
 
     private BufferPool? _pool;
     private Simulation? _simulation;
@@ -50,6 +57,8 @@ internal sealed class CabinSim : IDisposable
     private bool _hasInterior;
 
     private double _accumulator;
+    private CabinField _lastField;
+    private bool _hasLastField;
 
     /// <summary>Substeps executed on the most recent <see cref="Step"/> call.</summary>
     public int LastSubsteps { get; private set; }
@@ -74,8 +83,9 @@ internal sealed class CabinSim : IDisposable
 
     /// <summary>
     ///     Replaces the interior collision geometry from an assembly-frame triangle soup (three
-    ///     consecutive vertices per triangle). Cheap to call rarely, so the manager rebuilds only when
-    ///     the part tree or the adopted set changes.
+    ///     consecutive vertices per triangle). Building the mesh's bounding tree is the one genuinely
+    ///     expensive operation in this type, so the manager rebuilds only when the part tree or the
+    ///     adopted set actually changes — never on a timer.
     /// </summary>
     public void SetInterior(IReadOnlyList<Vector3> triangleVertices)
     {
@@ -98,6 +108,9 @@ internal sealed class CabinSim : IDisposable
         var description = new StaticDescription(RigidPose.Identity, _interiorShape);
         _interiorStatic = simulation.Statics.Add(in description);
         _hasInterior = true;
+
+        // New geometry under a sleeping object would otherwise be ignored until something else woke it.
+        WakeAll(simulation);
     }
 
     /// <summary>
@@ -125,12 +138,15 @@ internal sealed class CabinSim : IDisposable
             // A generous minimum-timestep count keeps a prop from napping between two nudges of a
             // slow manoeuvre; the threshold itself is what actually saves the work.
             new BodyActivityDescription((float)_tuning.SleepThreshold, 32));
-        return simulation.Bodies.Add(in description);
+        var handle = simulation.Bodies.Add(in description);
+        _bodies.Add(handle);
+        return handle;
     }
 
     /// <summary>Removes a body and disposes the shape created for it.</summary>
     public void Remove(BodyHandle handle)
     {
+        _bodies.Remove(handle);
         if (_simulation is not { } simulation || _pool is not { } pool)
             return;
         if (!simulation.Bodies.BodyExists(handle))
@@ -188,20 +204,22 @@ internal sealed class CabinSim : IDisposable
     }
 
     /// <summary>
-    ///     Freezes every body in place (the time-warp / left-IVA / editor park). Velocities are zeroed
-    ///     rather than the sim being merely un-stepped, so un-parking resumes from rest instead of
-    ///     resuming a stale velocity into a world that moved on.
+    ///     Freezes every body in place (the time-warp / paused / left-IVA / editor park). Velocities
+    ///     are zeroed rather than the sim merely being un-stepped, so un-parking resumes from rest
+    ///     instead of resuming a stale velocity into a world that moved on.
     /// </summary>
     public void Park()
     {
         _accumulator = 0;
         LastSubsteps = 0;
+        _hasLastField = false; // un-parking must not read as "the field jumped"
         if (_simulation is not { } simulation)
             return;
-        ref var set = ref simulation.Bodies.ActiveSet;
-        for (var i = 0; i < set.Count; i++)
+        foreach (var handle in _bodies)
         {
-            var body = simulation.Bodies[set.IndexToHandle[i]];
+            if (!simulation.Bodies.BodyExists(handle))
+                continue;
+            var body = simulation.Bodies[handle];
             body.Velocity.Linear = default;
             body.Velocity.Angular = default;
         }
@@ -209,16 +227,21 @@ internal sealed class CabinSim : IDisposable
 
     /// <summary>
     ///     Advances the cabin by <paramref name="dt"/> real seconds in fixed substeps, applying
-    ///     <paramref name="field"/> uniformly. Returns the largest per-body speed change seen across
-    ///     the pass keyed by handle — the manager turns those into <c>iva.impact</c> events without
-    ///     any narrow-phase bookkeeping.
+    ///     <paramref name="field"/> uniformly. <paramref name="onImpact"/> is invoked once per body per
+    ///     substep whose velocity change <i>could not</i> be explained by the forcing field — i.e. a
+    ///     contact — with that residual speed in m/s.
     /// </summary>
-    public void Step(double dt, in CabinField field, Action<BodyHandle, double>? onSpeedChange = null)
+    public void Step(double dt, in CabinField field, Action<BodyHandle, double>? onImpact = null)
     {
         LastSubsteps = 0;
         if (_simulation is not { } simulation)
             return;
 
+        // A sleeping body is not integrated, so it would never notice the engines lighting: Bepu only
+        // wakes an island on new contacts, and a change in an external acceleration field is invisible
+        // to it. Without this, props that settled on the pad would stay glued to the floor through
+        // launch — the one behaviour the whole feature exists to show.
+        WakeAllOnFieldChange(simulation, field);
         _field.Value = field;
 
         // Cap the catch-up so a hitch (or a load screen) cannot spiral: run at most
@@ -227,20 +250,25 @@ internal sealed class CabinSim : IDisposable
         var step = _tuning.SubstepSeconds;
         var budget = _tuning.MaxSubstepsPerFrame;
         var maxSpeed = (float)_tuning.MaxSpeed;
+        // The velocity change the forcing field alone will produce this substep. Only its linear term
+        // is position-independent, but over a two-metre cabin the rotational terms are ~10⁻² m/s² —
+        // three orders below any sensible impact threshold — so this accounts for essentially all of
+        // the non-contact change (see ReportImpacts).
+        var fieldDelta = -field.ProperAcceleration * (float)step;
 
         while (_accumulator >= step && LastSubsteps < budget)
         {
             _accumulator -= step;
             LastSubsteps++;
 
-            if (onSpeedChange is not null)
-                CaptureSpeeds(simulation);
+            if (onImpact is not null)
+                CaptureVelocities(simulation);
 
             simulation.Timestep((float)step);
 
             ClampSpeeds(simulation, maxSpeed);
-            if (onSpeedChange is not null)
-                ReportSpeedChanges(simulation, onSpeedChange);
+            if (onImpact is not null)
+                ReportImpacts(simulation, fieldDelta, onImpact);
         }
 
         if (_accumulator > budget * step)
@@ -254,6 +282,7 @@ internal sealed class CabinSim : IDisposable
         var pool = _pool;
         _simulation = null;
         _pool = null;
+        _bodies.Clear();
         if (simulation is null || pool is null)
             return;
 
@@ -291,54 +320,78 @@ internal sealed class CabinSim : IDisposable
         _interiorShape = default;
     }
 
-    // ---- impact detection: one speed sample either side of a substep -------------------------
-    //
-    // Watching |Δv| per substep is a far simpler and more robust impact signal than instrumenting the
-    // narrow phase: it catches wall hits, object-object hits and hard landings alike, needs no
-    // manifold state, and cannot fire on a contact that the solver later discards.
-
-    private float[] _speedsBefore = [];
-    private BodyHandle[] _speedHandles = [];
-    private int _speedCount;
-
-    private void CaptureSpeeds(Simulation simulation)
+    /// <summary>
+    ///     Wakes every body when the forcing field has moved meaningfully since the last step. The
+    ///     thresholds are wide enough to ignore the physics noise in a vessel sitting on the pad and
+    ///     narrow enough that lighting an engine, firing RCS or touching down wakes the cabin.
+    /// </summary>
+    private void WakeAllOnFieldChange(Simulation simulation, in CabinField field)
     {
-        ref var set = ref simulation.Bodies.ActiveSet;
-        _speedCount = set.Count;
-        if (_speedsBefore.Length < _speedCount)
-        {
-            _speedsBefore = new float[Math.Max(8, _speedCount * 2)];
-            _speedHandles = new BodyHandle[_speedsBefore.Length];
-        }
+        if (_hasLastField
+            && (field.ProperAcceleration - _lastField.ProperAcceleration).LengthSquared() < 0.15f * 0.15f
+            && (field.BodyRates - _lastField.BodyRates).LengthSquared() < 0.01f * 0.01f
+            && (field.AngularAcceleration - _lastField.AngularAcceleration).LengthSquared() < 0.05f * 0.05f
+            && (field.CenterOfMass - _lastField.CenterOfMass).LengthSquared() < 0.005f * 0.005f)
+            return;
 
-        for (var i = 0; i < _speedCount; i++)
-        {
-            var handle = set.IndexToHandle[i];
-            _speedHandles[i] = handle;
-            _speedsBefore[i] = simulation.Bodies[handle].Velocity.Linear.Length();
-        }
+        _lastField = field;
+        _hasLastField = true;
+        WakeAll(simulation);
     }
 
-    private void ReportSpeedChanges(Simulation simulation, Action<BodyHandle, double> onSpeedChange)
+    private void WakeAll(Simulation simulation)
     {
-        for (var i = 0; i < _speedCount; i++)
+        foreach (var handle in _bodies)
         {
-            var handle = _speedHandles[i];
             if (!simulation.Bodies.BodyExists(handle))
                 continue;
-            var after = simulation.Bodies[handle].Velocity.Linear.Length();
-            var delta = Math.Abs(after - _speedsBefore[i]);
-            if (delta > 0)
-                onSpeedChange(handle, delta);
+            // Through a local: the indexer returns a BodyReference by value, and a setter cannot be
+            // invoked on that temporary. The reference itself is just (Bodies, handle), so writing
+            // through the copy still reaches the real body.
+            var body = simulation.Bodies[handle];
+            body.Awake = true;
         }
     }
 
-    private static void ClampSpeeds(Simulation simulation, float maxSpeed)
+    // ---- impact detection --------------------------------------------------------------------
+    //
+    // Comparing each body's velocity across a substep against the change the forcing field alone would
+    // have produced isolates the contact impulse, and does it for wall hits, object-object hits and
+    // hard landings alike — with no manifold state, and without firing on a contact the solver later
+    // discards. Comparing raw |Δv| instead would report every substep as an impact under thrust.
+
+    private void CaptureVelocities(Simulation simulation)
     {
-        ref var set = ref simulation.Bodies.ActiveSet;
-        for (var i = 0; i < set.Count; i++)
+        if (_velocitiesBefore.Length < _bodies.Count)
+            _velocitiesBefore = new Vector3[Math.Max(8, _bodies.Count * 2)];
+        for (var i = 0; i < _bodies.Count; i++)
+            _velocitiesBefore[i] = simulation.Bodies.BodyExists(_bodies[i])
+                ? simulation.Bodies[_bodies[i]].Velocity.Linear
+                : default;
+    }
+
+    private void ReportImpacts(Simulation simulation, Vector3 fieldDelta, Action<BodyHandle, double> onImpact)
+    {
+        var threshold = (float)_tuning.ImpactSpeed;
+        for (var i = 0; i < _bodies.Count; i++)
         {
-            var body = simulation.Bodies[set.IndexToHandle[i]];
+            var handle = _bodies[i];
+            if (!simulation.Bodies.BodyExists(handle))
+                continue;
+            var after = simulation.Bodies[handle].Velocity.Linear;
+            var residual = (after - _velocitiesBefore[i] - fieldDelta).Length();
+            if (residual > threshold)
+                onImpact(handle, residual);
+        }
+    }
+
+    private void ClampSpeeds(Simulation simulation, float maxSpeed)
+    {
+        foreach (var handle in _bodies)
+        {
+            if (!simulation.Bodies.BodyExists(handle))
+                continue;
+            var body = simulation.Bodies[handle];
             var speed = body.Velocity.Linear.Length();
             if (speed > maxSpeed)
                 body.Velocity.Linear *= maxSpeed / speed;

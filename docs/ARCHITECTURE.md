@@ -258,8 +258,12 @@ The cheats ported from the sibling `unscience` mod are exposed **only** on gatOS
   Bepu callback is on that same thread. **No Harmony patch.** Interior collision geometry is derived
   automatically from the vessel's own interior meshes (`MeshReference.PositionCompare`, classified by
   `PartModelModule.Template.Internal` — the same flag `always_render_iva` flips), cached per vessel and
-  rebuilt on part-count change / 10 s / an adopt-set change. Objects park (velocities zeroed, poses held)
-  under time warp, in the vehicle editor and outside the IVA camera. The physics model itself is
+  rebuilt on a part-count change or an adopt/release — deliberately **not** on a timer, since building
+  the collision tree is the one expensive operation and a periodic hitch would be worse than stale
+  geometry. Objects park (velocities zeroed, poses held) while paused, under time warp, in the vehicle
+  editor and outside the IVA camera. Sleeping is on (a settled prop costs nothing), and the sim wakes
+  every body when the forcing field moves — otherwise props that settled on the pad would stay asleep
+  through launch, since a change in an external acceleration field is invisible to the physics engine. The physics model itself is
   **game-free** (`gatOS.SimFs/Iva/CabinPhysics.cs`) and unit-tested on a bare host.
 
 All create/remove via Frame-phase commands and tear down on unload

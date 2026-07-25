@@ -591,7 +591,7 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/iva/adopt_all` | **St** | `<vessel> [max] [template_substring]` | `debug.iva_adopt_all` | Frame | Cut loose the **smallest** eligible interior props first, up to `max` (`0`/absent = the per-vessel cap), optionally filtered by a case-insensitive template substring. Read = empty. |
 | `debug/iva/clear` | T | `1` | `debug.iva_clear` | Frame | Release **all** objects (the sim stays enabled). Vessel-agnostic. |
 | `debug/iva/count` | S | int | — | — | Number of floating objects across all vessels. |
-| `debug/iva/stats` | S | `vessels objects sleeping substeps avg_ms max_ms parked reason` | — | — | Driver counters. `parked` is `0`/`1`; `reason` is `warp`, `editor`, `not-iva`, or `-` while running. |
+| `debug/iva/stats` | S | `vessels objects sleeping substeps avg_ms max_ms parked reason` | — | — | Driver counters. `parked` is `0`/`1`; `reason` is `warp`, `paused`, `editor`, `not-iva`, `unknown`, or `-` while running. |
 | `debug/iva/interior` | S | `vessel triangles source_parts min_x min_y min_z max_x max_y max_z fallback` (0+ lines, LF-terminated) | — | — | One row per vessel with built interior geometry. `fallback` = `1` when no interior meshes were found and a synthetic box room was used. |
 | `debug/iva/<id>/vessel` | S | string | — | — | The vessel whose cabin this object floats in. |
 | `debug/iva/<id>/part` | S | uint | — | — | The driven SubPart's `instance_id`. |
@@ -656,8 +656,12 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
   (§3.4.17) or in one read from `parts/json`; pass a subpart's `instance_id`.
 - Object ids are integers — the **smallest free slot**, reused after `release`/`clear` — appearing as
   `debug/iva/<id>/`. Ids are global across vessels; the per-vessel object cap is `iva_max_objects`.
-- **Parking.** Objects freeze (velocities zeroed, poses held) under time warp, in the vehicle editor, and
-  whenever no viewport is in the IVA camera unless `run_outside_iva` is `1`. `stats` reports which.
+- **Parking.** Objects freeze (velocities zeroed, poses held) while the game is paused, under time warp,
+  in the vehicle editor, and whenever no viewport is in the IVA camera unless `run_outside_iva` is `1`.
+  `stats` reports which. Un-parking always resumes from rest, never from a stale velocity.
+- **Interior geometry is rebuilt on a part-count change or an adopt/release**, not on a timer — building
+  the collision tree is the one expensive operation here, and a periodic hitch would be worse than the
+  geometry going stale after a rare count-preserving interior edit. Toggle `enabled` off/on to force it.
 - **Rails.** Speed is clamped to `iva_max_speed`; an object that escapes the interior bounding box is
   teleported back to the cabin centroid (`iva.escape`); adopting anything whose bounding box exceeds
   `iva_max_object_size` is refused so hull panels and seats cannot be cut loose; a staged-away part

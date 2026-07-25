@@ -45,8 +45,6 @@ namespace gatOS.GameMod.Game.Ksa.Iva;
 /// </remarks>
 internal sealed class IvaPhysicsManager
 {
-    private const double InteriorRebuildIntervalSeconds = 10.0;
-
     private readonly List<CabinVessel> _vessels = [];
     private readonly List<SimEvent> _pendingEvents = [];
 
@@ -55,6 +53,7 @@ internal sealed class IvaPhysicsManager
     private bool _parked;
     private string _parkReason = "";
     private bool _driveFaultLogged;
+    private IvaSnapshot? _idleSnapshot;
 
     /// <summary>
     ///     The master switch (<c>/sim/debug/iva/enabled</c>). False is the shipped default and the
@@ -136,20 +135,21 @@ internal sealed class IvaPhysicsManager
 
         var cabin = GetOrCreateVessel(vehicle);
         if (cabin.Objects.Count >= _tuning.MaxObjectsPerVessel)
-            return new CommandResult(CommandOutcome.Busy,
+            return Fail(cabin, new CommandResult(CommandOutcome.Busy,
                 $"'{vehicle.Id}' already has {cabin.Objects.Count} floating objects "
-                + $"(iva_max_objects = {_tuning.MaxObjectsPerVessel})");
+                + $"(iva_max_objects = {_tuning.MaxObjectsPerVessel})"));
         if (cabin.Objects.Any(o => o.PartInstanceId == subPartInstanceId))
-            return new CommandResult(CommandOutcome.Busy, $"subpart {subPartInstanceId} already floats");
+            return Fail(cabin,
+                new CommandResult(CommandOutcome.Busy, $"subpart {subPartInstanceId} already floats"));
 
         if (!TryMeasure(part, out var size, out var center))
-            return new CommandResult(CommandOutcome.Unsupported,
-                $"subpart {subPartInstanceId} has no CPU mesh to size a collision proxy from");
+            return Fail(cabin, new CommandResult(CommandOutcome.Unsupported,
+                $"subpart {subPartInstanceId} has no CPU mesh to size a collision proxy from"));
         var extent = Math.Max(size.X, Math.Max(size.Y, size.Z));
         if (extent > _tuning.MaxObjectSize)
-            return new CommandResult(CommandOutcome.Invalid,
+            return Fail(cabin, new CommandResult(CommandOutcome.Invalid,
                 $"subpart {subPartInstanceId} is {extent:0.###} m across — bigger than "
-                + $"iva_max_object_size ({_tuning.MaxObjectSize:0.###} m); it is cabin structure, not a prop");
+                + $"iva_max_object_size ({_tuning.MaxObjectSize:0.###} m); it is cabin structure, not a prop"));
 
         var sim = EnsureSim(cabin);
         var mass = Math.Max(0.001, _tuning.DensityKgM3 * size.X * size.Y * size.Z);
@@ -157,7 +157,7 @@ internal sealed class IvaPhysicsManager
         var handle = sim.AddBox(size, mass, position, orientation,
             new Vector3((float)velocity.X, (float)velocity.Y, (float)velocity.Z));
         if (handle is not { } body)
-            return new CommandResult(CommandOutcome.Fault, "the cabin simulation is unavailable");
+            return Fail(cabin, new CommandResult(CommandOutcome.Fault, "the cabin simulation is unavailable"));
 
         cabin.Objects.Add(new FloatingObject
         {
@@ -198,8 +198,8 @@ internal sealed class IvaPhysicsManager
             ? Math.Min(max, _tuning.MaxObjectsPerVessel - cabin.Objects.Count)
             : _tuning.MaxObjectsPerVessel - cabin.Objects.Count;
         if (budget <= 0)
-            return new CommandResult(CommandOutcome.Busy,
-                $"'{vehicle.Id}' is already at the {_tuning.MaxObjectsPerVessel}-object cap");
+            return Fail(cabin, new CommandResult(CommandOutcome.Busy,
+                $"'{vehicle.Id}' is already at the {_tuning.MaxObjectsPerVessel}-object cap"));
 
         var candidates = new List<(double Extent, uint InstanceId)>();
         foreach (var part in vehicle.Parts.Parts)
@@ -219,9 +219,9 @@ internal sealed class IvaPhysicsManager
         }
 
         if (candidates.Count == 0)
-            return new CommandResult(CommandOutcome.NotFound,
+            return Fail(cabin, new CommandResult(CommandOutcome.NotFound,
                 $"no adoptable interior props on '{vehicle.Id}'"
-                + (templateFilter is { Length: > 0 } f ? $" matching '{f}'" : ""));
+                + (templateFilter is { Length: > 0 } f ? $" matching '{f}'" : "")));
 
         candidates.Sort(static (a, b) => a.Extent.CompareTo(b.Extent));
         var adopted = 0;
@@ -235,7 +235,7 @@ internal sealed class IvaPhysicsManager
 
         return adopted > 0
             ? CommandResult.Ok
-            : new CommandResult(CommandOutcome.Fault, "no candidate could be adopted");
+            : Fail(cabin, new CommandResult(CommandOutcome.Fault, "no candidate could be adopted"));
     }
 
     /// <summary>Un-adopts one object: restores its exact rest pose and drops the body. Game thread only.</summary>
@@ -419,13 +419,15 @@ internal sealed class IvaPhysicsManager
 
     private void RebuildInteriorIfNeeded(CabinVessel cabin, CabinSim sim)
     {
-        // Same caching contract PartsReader uses: rebuild on a part-count change (the cheap "vehicle
-        // was edited" signal — KSA exposes no part-tree version) or every 10 s as the backstop for a
-        // count-preserving edit. Plus whenever the adopted set changed, which alters the exclusions.
+        // Rebuild on a part-count change (the cheap "vehicle was edited" signal — KSA exposes no
+        // part-tree version) or whenever the adopted set changed, which alters the exclusions.
+        //
+        // Deliberately NOT on a timer, unlike PartsReader's 10 s backstop: that rebuilds a list of
+        // records, whereas this rebuilds a Bepu bounding tree over tens of thousands of triangles. A
+        // periodic multi-millisecond hitch is far worse than the geometry going stale after the rare
+        // count-preserving interior edit — and toggling `enabled` off/on rebuilds it on demand.
         var liveCount = cabin.Vehicle.Parts.Count;
-        var age = Environment.TickCount64 - cabin.InteriorBuiltMs;
-        if (!cabin.InteriorDirty && cabin.PartCount == liveCount
-                                 && age < InteriorRebuildIntervalSeconds * 1000)
+        if (!cabin.InteriorDirty && cabin.PartCount == liveCount)
             return;
 
         cabin.Excluded.Clear();
@@ -437,7 +439,6 @@ internal sealed class IvaPhysicsManager
         cabin.Interior = result;
         cabin.InteriorDirty = false;
         cabin.PartCount = liveCount;
-        cabin.InteriorBuiltMs = Environment.TickCount64;
     }
 
     private void DrainImpacts(CabinVessel cabin)
@@ -465,8 +466,13 @@ internal sealed class IvaPhysicsManager
     /// <summary>Immutable projection for the <c>/sim/debug/iva</c> view (game thread, from the sampler).</summary>
     public IvaSnapshot Snapshot(PerfStat driveStats)
     {
-        if (!Enabled && _vessels.Count == 0)
-            return IvaSnapshot.Off;
+        // Nothing running: report the two flags (a guest must be able to read back what it wrote,
+        // and the config seed, while the feature is dark) from a memo, so the idle path allocates
+        // nothing per sample tick — the GP3 alloc tripwire watches this.
+        if (_vessels.Count == 0)
+            return _idleSnapshot is { } memo && memo.Enabled == Enabled && memo.RunOutsideIva == RunOutsideIva
+                ? memo
+                : _idleSnapshot = new IvaSnapshot(Enabled, RunOutsideIva, [], [], IvaStatsSnapshot.Zero);
 
         var objects = new List<IvaObjectSnapshot>();
         var interiors = new List<IvaInteriorSnapshot>();
@@ -571,6 +577,22 @@ internal sealed class IvaPhysicsManager
         cabin.PartCount = -1;
     }
 
+    /// <summary>
+    ///     Returns <paramref name="failure"/>, dropping the cabin entry first when the failed operation
+    ///     was what created it — so a rejected adopt leaves the registry exactly as it found it rather
+    ///     than an empty cabin for the driver to clean up a frame later.
+    /// </summary>
+    private CommandResult Fail(CabinVessel cabin, CommandResult failure)
+    {
+        if (cabin.Objects.Count == 0)
+        {
+            DisposeVessel(cabin);
+            _vessels.Remove(cabin);
+        }
+
+        return failure;
+    }
+
     private CabinVessel GetOrCreateVessel(Vehicle vehicle)
     {
         foreach (var cabin in _vessels)
@@ -601,14 +623,34 @@ internal sealed class IvaPhysicsManager
     /// <summary>
     ///     Why the cabin is parked, or "" while it runs. Parking zeroes velocities and freezes poses,
     ///     which is much better behaved than integrating a 1000× warp step or a zero-dt editor frame.
+    ///     A read fault parks rather than propagating: freezing is always safe, and a gate read must
+    ///     never be what disables the feature for the session.
     /// </summary>
     private string ParkReason()
+    {
+        try
+        {
+            return ParkReasonCore();
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS iva: park-gate read failed, parking: {ex.Message}");
+            return "unknown";
+        }
+    }
+
+    private string ParkReasonCore()
     {
         // Q5: Program.Editor != null disables Part's transform caching entirely — the feature must be
         // inert in the VAB.
         if (Program.Editor is not null)
             return "editor";
-        if (Universe.SimulationSpeed > 1.0001)
+        var speed = Universe.SimulationSpeed;
+        // Paused: the vessel's kinematics are frozen, so integrating wall-clock time would have props
+        // keep falling in a stopped world.
+        if (!(speed > 0))
+            return "paused";
+        if (speed > 1.0001)
             return "warp";
         if (!RunOutsideIva && Program.MainViewport.Mode != CameraMode.IVA)
             return "not-iva";
@@ -737,7 +779,6 @@ internal sealed class IvaPhysicsManager
         public InteriorGeometry.Result? Interior;
         public bool InteriorDirty = true;
         public int PartCount = -1;
-        public long InteriorBuiltMs;
         public readonly HashSet<uint> Excluded = [];
         public readonly List<FloatingObject> Objects = [];
         public readonly List<(int Handle, double Speed)> Impacts = [];
