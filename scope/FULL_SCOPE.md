@@ -70,7 +70,34 @@ update's blast radius is small and discoverable. The procedure:
    (`EOPNOTSUPP`), logs once, and shows up in `/sim/status/accessors`. The guest sees a failed sensor,
    not a crashed mod. This is the safety net for the things steps 2–3 miss.
 
-> **Current applied result of this playbook:** the **2026.7.6.4939 → 2026.7.8.4980** update was run
+> **Current applied result of this playbook:** the **2026.7.8.4980 → 2026.7.9.5018** update was run
+> through it on 2026-07-24 — **one compile break, fixed; one coverage gap opened; nothing else needed.**
+> Rev 4992 (solid rocket motors) generalized propellant storage from liquid-only to a new
+> `ISubstanceStore` (`Liquid | Solid`) abstraction, renaming `Mole.GetLiquidMass` → `GetStoredMass`
+> (also `GetLiquidVolume` → `GetStoredVolume`, `Consume`/`ProduceLiquid` → `…Stored`, `ContainsLiquid`
+> deleted). `VesselReader.SampleTanks` was the one call site — **values unchanged**, since `Tank` moles
+> are liquids. Build + full test suite green against 5018 (0 warnings; 681 passed / 11 skipped); every
+> other bound member, reflection accessor, and Harmony hook target verified unchanged by a full decomp +
+> Content diff of the two side-by-side checkouts (changelog gapless — revs 4981–5018). **The coverage
+> gap it opened — closed in the same work item:** SRB solid propellant lives on the new
+> **`SolidGrainSegment`** module, an `ISubstanceStore` but **not a `Tank`**, so it is absent from
+> `/sim`'s `tanks/` — while `Vehicle.PropellantMass` (now computed from `Parts.SubstanceStores`) *does*
+> include it, making `mass/propellant` > Σ `tanks/<r>/amount` on booster vessels. gatOS gained a
+> dedicated **`srb/<n>/`** read surface (SPEC §3.4.8, `VesselReader.SampleSrbs`): grain mass, usable
+> mass, fraction, burn time, mass flow, chamber/exit conditions, burning area, stack validity and a
+> per-segment `segments/<m>/` breakdown — **read-only**, since KSA forces a solid's throttle to 0 or 1,
+> so ignition stays on the engine surface (`srb/<n>/engine` cross-links to `engines/<n>`). **Semantic drift inherited, no API change**: encounter candidacy widened (rev 4991 — the flat
+> SOI cutoff became an orbital-geometry/MOID test, so small moons like Phobos and Deimos now yield
+> `encounters/<n>/` rows that 4980 skipped); `Module.List` segmentation (rev 4990) is API-compatible for
+> every call gatOS makes. Behavior notes: `/sim/debug/refuel` now refills SRB grains for free; SRBs are
+> ordinary `EngineController`s (`SolidMotor : RocketCore`) so `engines/<n>` covers them, though throttle
+> is physically inert on a solid; `Program.RenderGame` and `SuperMeshRenderSystem.cs` are **byte-identical**,
+> so the display transpiler and the thug_life postfix are untouched; no `Brutal` numerics drift; no
+> celestial body-parameter edits in `Astronomicals.xml`. ([read 5018 findings](ksa-read-surface.md#5018-findings) /
+> [write 5018 findings](ksa-write-surface.md#5018-findings)). Live re-check items are queued in
+> `docs/VALIDATION.md`.
+>
+> The prior **2026.7.6.4939 → 2026.7.8.4980** update was run
 > through it on 2026-07-22 — **one compile break, fixed same-day; no other change needed.** Rev 4943
 > removed `InputEvents.VehicleDockingInputData.OldMeanRadius` (docking camera zoom-jump fix) —
 > `DockingActuator.Undock` dropped the field from its enqueue (now `{Vehicle, DockingPort, Undock}`,

@@ -192,7 +192,7 @@ capture is render-thread Vulkan code that cannot be exercised headlessly — the
 Prereq: the T6.6 pass (purrTTY tip release). `[control] debug_namespace = true` and
 `telemetry_vessel_parts = true` (both default). Run during a real flight with **two vessels close
 together** (weld one onto the other) and a crewed capsule (an IVA). These surfaces are gatOS-only (no
-ImGui) — drive them over `/sim` (or HTTP/MQTT). See `SPEC_9P_FILESYSTEM.md` §3.4.16 (parts) + §3.7
+ImGui) — drive them over `/sim` (or HTTP/MQTT). See `SPEC_9P_FILESYSTEM.md` §3.4.17 (parts) + §3.7
 (`debug/welds/**`, `always_render_iva`) and `docs/KSA_INTEGRATION_MATRIX.md`.
 
 | # | Check | Result | Notes |
@@ -262,7 +262,7 @@ Prereq: the T6.6 pass. `[control] control_enabled = true` (default). Best exerci
 kitten** (its backpack carries the six translation-mapped jets); a normal rocket with attitude-only
 RCS accepts the write but fires nothing. The game-free half (parse, EINVAL, command shape/phase,
 read-back rendering) is covered by `gatOS.SimFs.Tests/Commands/VesselTranslateTests.cs`; these items
-exercise the reflection + flags path (`TranslateActuator`). See `SPEC_9P_FILESYSTEM.md` §3.4.17 and
+exercise the reflection + flags path (`TranslateActuator`). See `SPEC_9P_FILESYSTEM.md` §3.4.18 and
 `docs/KSA_INTEGRATION_MATRIX.md` (control surface). **All items pending a live flight.**
 
 | # | Check | Result | Notes |
@@ -283,7 +283,7 @@ rotation jets). **Set `ctl/attitude_mode` to `manual` first** — an active auto
 strips the manual rotation bits (`WithNoRotation()`), the inverse of translate's compose behavior.
 The game-free half (parse, EINVAL, command shape/phase, read-back rendering) is covered by
 `gatOS.SimFs.Tests/Commands/VesselRotateTests.cs`; these items exercise the reflection + flags
-path (`RotateActuator`). See `SPEC_9P_FILESYSTEM.md` §3.4.17 and `docs/KSA_INTEGRATION_MATRIX.md`
+path (`RotateActuator`). See `SPEC_9P_FILESYSTEM.md` §3.4.18 and `docs/KSA_INTEGRATION_MATRIX.md`
 (control surface). **All items pending a live flight.**
 
 | # | Check | Result | Notes |
@@ -417,6 +417,30 @@ Residual items static review cannot settle:
 | 5 | thug_life quad still draws correctly under the reworked cascaded shadows; then take a **hi-res (scale>1) screenshot** with a quad active — expect at worst a transient self-disable (`Active=false` + one log), never a crash | ☐ | shadow rework is cascade-path only, but rev 4942's `SampleCountOverride` renderer rebuild can mismatch the never-rebuilt quad pipeline's MSAA state |
 | 6 | `/sim/display` still streams with **texture streaming** ON (new default) and across a hi-res screenshot capture | ☐ | rev 4942 inserts `ScreenshotCapture` calls immediately before the transpiler's final-`End()` anchor; rev 4974 texture streaming is terrain-side |
 | 7 | High-warp physics sanity: `acceleration`/`dynamic_pressure` no longer gain spurious orbital energy at high physics warp (the values gatOS reports track the fixed integrator) | ☐ | rev 4977 verlet + CCI-frame drag fix — value drift, members unchanged |
+
+## KSA 2026.7.9.5018 upgrade — live re-check items — **NOT YET RUN**
+
+The 2026.7.8.4980 → 2026.7.9.5018 playbook pass (2026-07-24) found **one compile break, fixed**
+(`VesselReader.SampleTanks` — rev 4992 renamed `Mole.GetLiquidMass` → `GetStoredMass`), **one coverage
+gap** (SRB solid propellant absent from `tanks/` while counted in `mass/propellant`), and **two inherited
+semantic drifts** (widened encounter candidacy; `Module.List` concrete-type segmentation). See
+`scope/FULL_SCOPE.md` §0 and the `scope/ksa-read-surface.md` / `scope/ksa-write-surface.md` 5018
+findings. All 4980 items above remain valid and can run on 5018. Residual items static review cannot
+settle:
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | Build a vessel **with SRBs**: `ls /sim/vessels/active/srb/` lists one dir per booster; `tanks/` lists only the liquid tanks; and **`mass/propellant` − Σ `tanks/<r>/amount` = Σ `srb/<n>/mass`** (the identity the new surface exists to make checkable). Confirm it holds as the boosters burn | ☐ | the headline check for the new `srb/<n>/` read surface (SPEC §3.4.8) |
+| 1a | `srb/<n>/`: `substance`/`grain`/`grain_shape` name the propellant + geometry; `valid`=1 and `error` empty; `segment_count` matches the stacked segments; `segments/<m>/{mass,mass_initial,radius,length,volume}` are plausible and Σ `segments/<m>/mass` = `srb/<n>/mass` | ☐ | static/config reads — checkable on the pad before ignition |
+| 1b | Pre-ignition `srb/<n>/fraction` = 1 on a fresh booster and `burn_time` = 0 (it only populates while burning); after ignition `active`=1, `mass_flow` > 0, `burn_time` counts down, `chamber_pressure`/`chamber_temp`/`exit_*` go non-zero, and `burning_area` traces the grain's thrust curve (rises then falls for a star grain) | ☐ | the live burn-state reads; `burn_time` is 0-when-idle by KSA design, so `fraction` is the pre-ignition gauge |
+| 1c | At burnout `mass` settles at ≈ `mass_unburnable` (the sliver), `mass_burnable`/`fraction` → 0, `propellant` → 0, `active` → 0 | ☐ | confirms the unburnable-sliver accounting from `SolidMotor.RefreshUnburnableGrain` |
+| 1d | `srb/<n>/engine` indexes a real `engines/<n>` entry, and igniting via `ctl/ignite` (or that engine's `active`, or `ctl/stage`) lights **that** booster. Writing `engines/<n>/throttle`-style throttle changes nothing about its thrust | ☐ | the cross-link + the read-only rationale; confirms nothing is missing on the control side |
+| 2 | On the same vessel, `engines/<n>/` includes the SRBs with sane `vac_thrust`/`isp`, `engines/<n>/active` and staging ignite them, and `ctl/throttle` visibly does **nothing** to their thrust | ☐ | `SolidMotor : RocketCore` under an ordinary `EngineController`; throttle inert by physics, not by API — confirm no error/exception path |
+| 3 | `echo 1 > /sim/debug/vessels/<id>/refuel` on a spent SRB restores its grain (mass and thrust return) as well as the liquid tanks | ☐ | rev 4992 rerouted `RefillAllTanks` through `ISubstanceStore`; gatOS's anchor (`Vehicle.RefillConsumables()`) is unchanged, so this is a free win to confirm |
+| 4 | In Mars orbit, `encounters` now emits lines for **Phobos/Deimos** approaches that 4980 omitted; the `{body,ut,distance}` shape is unchanged and the values are plausible | ☐ | rev 4991 replaced the flat 10 000 km SOI cutoff with a radius-band + approximate-MOID test |
+| 5 | Positional `/sim` indices are stable after the module-storage rework: `engines/<n>`, `rcs/<n>`, `lights/<n>`, `tanks/<r>`, `docking/<n>`, `decouplers/<n>` map to the same physical parts across a save/load and a staging event | ☐ | rev 4990 segments same-concrete-type modules contiguously; `Get<T>()` is per-concrete-type so ordering should be unaffected — verify rather than assume |
+| 6 | `/sim/status/accessors` reports **no** degraded accessor after a fresh flight load (the reflection set: manual throttle, thruster flags, light-template clone) | ☐ | standing post-update check — decomp can lag the shipping binary |
+| 7 | thug_life quad still draws correctly, and `/sim/display` still streams | ☐ | statically clean (`SuperMeshRenderSystem.cs` and `Program.RenderGame` byte-identical), but rev 4988's MilkyWay renderer split and the plume-trail/ground-clutter pass churn are only provable live |
 
 ## AGC (examples/agc — Luminary099 in-guest) — mission cards M-A…M-E — **NOT YET RUN IN-GAME**
 

@@ -142,7 +142,7 @@ The setpoints under `ctl/` are *onboard* — the sim integrates them itself, so 
 at any time-warp. The guest is mission control; the autopilot flies.
 
 - `ctl/attitude_mode` = `manual` | a track target (`Prograde`, `Retrograde`, `Normal`, `RadialOut`,
-  `Toward`, `Antivel`, `Custom`, …; full list in [SPEC §3.4.17](../../../SPEC_9P_FILESYSTEM.md)).
+  `Toward`, `Antivel`, `Custom`, …; full list in [SPEC §3.4.19](../../../SPEC_9P_FILESYSTEM.md)).
 - `ctl/attitude_frame` = the reference frame the named modes resolve against (`EclBody`, `EnuBody`,
   `Lvlh`, `VlfBody`, `BurnBody`, `Dock`).
 - `ctl/attitude_target` = a custom Body→CCI quaternion (sets mode → `Custom` internally).

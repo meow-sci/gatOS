@@ -128,7 +128,7 @@ appear only when the vessel actually has that module.
 
 The `ctl/` files are **onboard setpoints** — the sim integrates them itself, so they stay correct at
 any time-warp. Your program is mission control; the flight computer flies. Everything below is on
-`vessels/<id>/ctl/…` (or the `vessels/active/…` alias). Full table: [SPEC §3.4.17](../SPEC_9P_FILESYSTEM.md).
+`vessels/<id>/ctl/…` (or the `vessels/active/…` alias). Full table: [SPEC §3.4.18](../SPEC_9P_FILESYSTEM.md).
 
 ### 4.1 Engines & throttle (Frame phase — takes effect immediately)
 
@@ -356,8 +356,8 @@ Full units table: [SPEC §8](../SPEC_9P_FILESYSTEM.md). Full gotcha list:
 | Writing a tutorial about… | Primary sources |
 |---|---|
 | reading telemetry | this §3; [SPEC §3.4 / §4](../SPEC_9P_FILESYSTEM.md) |
-| throttle / ignite / staging | this §4.1; [SPEC §3.4.17 / §5.1](../SPEC_9P_FILESYSTEM.md); example `examples/gogogo-rs` |
-| named attitude modes | this §4.2; [SPEC §3.4.18](../SPEC_9P_FILESYSTEM.md); [`coordinate-frames.md §5`](../.claude/skills/gatos/coordinate-frames.md) |
+| throttle / ignite / staging | this §4.1; [SPEC §3.4.18 / §5.1](../SPEC_9P_FILESYSTEM.md); example `examples/gogogo-rs` |
+| named attitude modes | this §4.2; [SPEC §3.4.19](../SPEC_9P_FILESYSTEM.md); [`coordinate-frames.md §5`](../.claude/skills/gatos/coordinate-frames.md) |
 | custom attitude / pointing | this §4.2 + §5; [`coordinate-frames.md §4`](../.claude/skills/gatos/coordinate-frames.md); WIP `vessel-control-point-at-parent.mdx`; [`snippets.md`](../.claude/skills/tutorials/snippets.md) |
 | orbital math / burns | this §4.3 + §5.1; [SPEC §6](../SPEC_9P_FILESYSTEM.md); [`recipes.md §4`](../.claude/skills/gatos/recipes.md) |
 | reference frames | [`coordinate-frames.md`](../.claude/skills/gatos/coordinate-frames.md); [`KSA_CELESTIAL_COORDINATE_FRAMES.md`](KSA_CELESTIAL_COORDINATE_FRAMES.md) |

@@ -72,6 +72,15 @@ byte-identical at `Universe.cs:1660`; `Program.DrawProgramMenusHook()` moved to 
 no-arg instance shape; `Program.MainViewport` (`:433`) and `ModLibrary.Find(string)` (`:173`) unchanged;
 `FlightComputer.CopyFrom` gained one line — it now also copies the new `RCSMode` field (`:128`) — so the
 snapshot/restore window still captures everything gatOS mutates, Solver phase stays valid.
+Re-verified 2026-07-24 against `2026.7.9.5018`: `Universe.cs` is **byte-identical**
+(`ExecuteNextVehicleSolvers(double, SimStep)` still `:1660`), as is `FlightComputer.cs`;
+`Program.DrawProgramMenusHook()` moved to `Program.cs:3690` (same no-arg instance shape),
+`Program.MainViewport` to `:439`, `ModLibrary.Find(string)` to `:175` — all resolve by name via
+`AccessTools`, so the line moves are cosmetic. **`Program.RenderGame`'s body is byte-identical**
+(`Program.cs:4238`), so the `/sim/display` transpiler's final-`End()` injection site and its
+image-layout assumption are untouched. `VehicleUpdateData.cs`/`VehicleUpdateTask.cs` changed only to
+carry `ISubstanceStore[] SubstanceStores` alongside tanks (rev 4992, solid motors) — nothing gatOS
+binds.
 
 ### Dynamic IVA patches (`gatos.iva`) {#iva-patches}
 
@@ -90,7 +99,8 @@ default-off state carries **zero** IVA patches. The patch targets are `[KsaAncho
 untouched; re-verified 2026-07-16 against `2026.7.6.4939` — `PartModel.cs` again untouched, the
 `PartModelModule`/`PartModelDynamicModule` diff is one added fuel-flow highlight bit; re-verified
 2026-07-22 against `2026.7.8.4980` — neither `PartModel.cs` nor `PartModelModule.cs` is in the changed
-set); a ctor/`AddInstance`
+set; re-verified 2026-07-24 against `2026.7.9.5018` — `PartModel.cs`, `PartModelModule.cs`,
+`PartModelDynamicModule.cs` and `Viewport.cs` are all byte-identical again); a ctor/`AddInstance`
 signature change surfaces at install time (caught, logged). (Un)patching runs on the game thread (the command
 drain / unload). Torn down by `Mod.TeardownGameCheats`.
 
@@ -115,7 +125,10 @@ untouched by the diff, only line-shifted, so the reproductions remain byte-accur
 2026-07-16 against `2026.7.6.4939` — the `Vehicle.cs` diff (staging-key `ControlsLockout`, plume-trail
 emitters, fuel-transfer statics, collider flags) leaves both stock bodies untouched; re-verified
 2026-07-22 against `2026.7.8.4980` — the `Vehicle.cs` diff (Control name stamps, fallback mass,
-collision-avoidance pairs, navball markers) again leaves `GetWorldMatrix`/`UpdateRenderData` untouched);
+collision-avoidance pairs, navball markers) again leaves `GetWorldMatrix`/`UpdateRenderData` untouched;
+re-verified 2026-07-24 against `2026.7.9.5018` — the `Vehicle.cs` diff (`Parts.Tanks` →
+`Parts.SubstanceStores` in mass recompute, the `IFlowManagerHost` UI loop, plume-trail LOD and the
+`AverageThrottle` → `AverageThrustFraction` FX rename) once more leaves both stock bodies untouched);
 a missing target
 throws at install time (caught by `KsaCatalog` → the
 actuator latches degraded, EOPNOTSUPP), and a prefix fault logs once and falls back to the stock cull.
@@ -174,8 +187,17 @@ captures; the quad pipeline is built once against `OffScreenPass.SampleCount` wi
 listener**, so a hi-res in-game screenshot taken while quads are active can transiently mismatch the
 pipeline's sample count — the GPU-fault latch self-disables the feature rather than crashing; a rebuild
 listener is the fix if this coincidence matters. Vulkan render-pass *compatibility* at draw time is only
-provable live — check pending in `docs/VALIDATION.md`); a `RenderMainPass`/pipeline signature change
-surfaces at install time (caught, logged, feature self-disables).
+provable live — check pending in `docs/VALIDATION.md`; re-verified statically 2026-07-24 against
+`2026.7.9.5018` — `SuperMeshRenderSystem.cs` is **byte-identical** (`RenderMainPass(CommandBuffer)` at
+`:329`), `Program.OffScreenPass` (`:409`) / `OffscreenTarget` (`:415`) / `LinearRepeatSampler` (`:425`)
+unchanged, and `UnlitMeshVert`/`UnlitMeshFrag` (`DefaultAssets.xml:66-67` → `Shaders/Mesh/UnlitMesh.{vert,frag}`)
+are untouched. The 5018 render churn is elsewhere: the MilkyWay renderer split out of
+`InstancedStarTechnique` (rev 4988) **shrank `GlobalShaderBindings`** (descriptor-set layout 11 → 10
+bindings, sampler pool 10 → 8) — the quad builds its **own** descriptor-set + pipeline layout, so it is
+unaffected; plume-trail LOD (revs 4996–4998, 5013) and ground-clutter shadow work (revs 5008–5016) are
+separate passes. The rev-4942 screenshot transient above is unchanged and still open); a
+`RenderMainPass`/pipeline signature change surfaces at install time (caught, logged, feature
+self-disables).
 
 KSA runs `SuperMeshRenderSystem.RenderMainPass` on the **main thread** (the same thread as the GUI hooks
 and the command drain — per the ksa skill `quad.md`), so the render postfix, the command drain, and entry
@@ -206,7 +228,11 @@ statically 2026-07-22 against `2026.7.8.4980` — rev 4942's `ScreenshotCapture`
 insert immediately before the still-unique final 1-arg `End()` (`:4447`), the
 `ColorAttachmentWrite → SampledReadVfc` transition at `:4440` is intact, and the screenshot reads
 different images (`OffscreenTarget.ColorImage.ImageView` hi-res / swapchain grab) than gatOS's blit —
-the transpiler's final-`End()` anchor and image-layout assumption both hold) taps the **public** offscreen scene target and
+the transpiler's final-`End()` anchor and image-layout assumption both hold; re-verified statically
+2026-07-24 against `2026.7.9.5018` — **`RenderGame`'s entire body is byte-identical** to 4980
+(`Program.cs:4238`), so every injection-site and image-layout assumption carries over verbatim, and
+`GetRenderer` (`:486`) / `MainViewport` (`:439`) / `OffscreenTarget` (`:415`) / `SetViewport` (`:4080`)
+are unchanged) taps the **public** offscreen scene target and
 rides the engine's own frame command buffer — no private queue submit, no `WaitIdle` (an out-of-band
 variant corrupted the device). Per throttled frame (default 15 fps, gated on `enabled` **and** ≥1 open
 reader — near-zero cost otherwise), `FrameCapture.MaybeRecord` records, in-band:
@@ -284,14 +310,15 @@ These bind to KSA via reflection, so a rename/removal **cannot** fail the build 
 runtime as a degraded accessor (`/sim/status/accessors`). **Always re-verify these in a live flight after
 an update even when the build is green.**
 
-| Accessor | gatOS site | Reflected member | 4980 status |
+| Accessor | gatOS site | Reflected member | 5018 status |
 |---|---|---|---|
-| Manual throttle setter | `ThrottleActuator.cs:17,33` | `Vehicle._manualControlInputs` (private field) → `.EngineThrottle` (public field on the struct) | ✅ present (`Vehicle.cs:232` in both 4939 and 4980; `ManualControlInputs.cs` untouched since 4750) |
-| Light template clone | `LightActuator.cs:127` (`EnsureUnshared`/`ShallowClone`) | generic field-by-field clone of `LightModule.Template` + `Intensity`/`ColorRgb`/`OuterAngle`/`InnerAngle` (the per-instance "red-alert" unshare) | ✅ (`LightModule.cs` untouched since 4750 — not in the 4980 changed set) |
+| Manual throttle setter | `ThrottleActuator.cs:17,33` | `Vehicle._manualControlInputs` (private field) → `.EngineThrottle` (public field on the struct) | ✅ present (`Vehicle.cs:232` in 4939, 4980 **and 5018**; `ManualControlInputs.cs` untouched since 4750) |
+| Light template clone | `LightActuator.cs:127` (`EnsureUnshared`/`ShallowClone`) | generic field-by-field clone of `LightModule.Template` + `Intensity`/`ColorRgb`/`OuterAngle`/`InnerAngle` (the per-instance "red-alert" unshare) | ✅ (`LightModule.cs` untouched since 4750 — not in the 4980 **or 5018** changed set) |
 
 The throttle field is the single most fragile binding gatOS has (private field, reflection, High). It was
 explicitly confirmed present in 4750 and re-confirmed in 4826 (decomp diff, 2026-07-03), 4892
-(decomp diff, 2026-07-14), 4939 (decomp diff, 2026-07-16) and 4980 (decomp diff, 2026-07-22). If a future
+(decomp diff, 2026-07-14), 4939 (decomp diff, 2026-07-16), 4980 (decomp diff, 2026-07-22) and 5018
+(decomp diff, 2026-07-24). If a future
 update removes it, `ctl/throttle` writes return
 `Unsupported` ("manual throttle field not found in this build") and the read-back falls back to
 `GetManualThrottle()` (public, still present). A live `/sim/status/accessors` check after each update

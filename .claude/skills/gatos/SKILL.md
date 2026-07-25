@@ -98,6 +98,17 @@ vessels/active/…  (alias of the controlled vessel)   vessels/by-id/<id>/
     orbit/*  navball/*  environment/*  battery/*  power/*
     engines/<n>/*  tanks/<r>/*  rcs/<n>/*  solar/<n>/*  generators/<n>/*
     lights/<n>/*  docking/<n>/*  decouplers/<n>/*  animations/<n>/*  encounters
+    srb/<n>/{engine,part,substance,grain,grain_shape,segment_count,valid,error,active,
+             propellant,mass,mass_initial,mass_unburnable,mass_burnable,fraction,
+             mass_flow,burn_time,burning_area,chamber_pressure,chamber_temp,
+             exit_pressure,exit_temp,area_ratio,
+             segments/<m>/{part,substance,grain,mass,mass_initial,mass_unburnable,
+                           fraction,radius,length,volume,burn_depth}}
+                                        (solid rocket motors — READ-ONLY. Solid propellant is NOT a
+                                         tank, so tanks/ never shows a booster; srb/<n>/fraction and
+                                         /burn_time are the booster gauges. Ignite via the engine
+                                         surface: srb/<n>/engine names the engines/<n> entry. A lit
+                                         solid cannot be throttled or shut down.)
     parts/json                          (the whole part/subpart tree as ONE JSON doc — cat + jq it)
     parts/<n>/{instance_id,id,display_name,template,is_root,subpart_count,position,
                subparts/<m>/{instance_id,id,display_name,template,position}}

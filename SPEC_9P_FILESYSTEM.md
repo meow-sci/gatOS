@@ -232,7 +232,7 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 | `altitude/radar` | S | scalar | Altitude above terrain/ocean, meters (use for ground clearance). |
 | `mass/total` | S | scalar | Total (wet) mass, kg. |
 | `mass/dry` | S | scalar | Dry mass, kg. |
-| `mass/propellant` | S | scalar | Propellant mass, kg. |
+| `mass/propellant` | S | scalar | Propellant mass, kg. **Includes solid-rocket-motor grain mass** (KSA 5018+), which is itemized under `srb/` (§3.4.8), *not* `tanks/` — so `mass/propellant` − Σ `tanks/` = Σ `srb/<n>/mass`. |
 | `stream` | Sm | NDJSON | Growing-log of `{seq,ut,sit,alt,vel,att,mass}` per sample (`tail -f`). |
 
 #### 3.4.2 Orbit *(detail; present while in orbit)* — `…/orbit/`
@@ -302,11 +302,74 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 
 | Path | A | Format | Meaning |
 |---|---|---|---|
-| `tanks/<r>/amount` | S | scalar | Current amount. |
-| `tanks/<r>/capacity` | S | scalar | Capacity. |
+| `tanks/<r>/amount` | S | scalar | Current amount, kg. |
+| `tanks/<r>/capacity` | S | scalar | Capacity, kg. |
 | `tanks/<r>/fraction` | S | scalar | Fill fraction 0..1. |
 
-#### 3.4.8 RCS *(present when fitted)* — `…/rcs/<n>/`
+> **Liquids only — solid rocket motors live under `srb/` (§3.4.8), not here (KSA `2026.7.9.5018`+).**
+> `tanks/` enumerates KSA `Tank` modules. Solid propellant introduced with SRBs lives on a separate
+> `SolidGrainSegment` module, so a booster's grain contributes **no** `tanks/<r>/` entry, while
+> `mass/propellant` (§3.4.1) *does* count it — on a vessel carrying SRBs
+> **`mass/propellant` > Σ `tanks/<r>/amount`**, and the difference is Σ `srb/<n>/mass`.
+
+#### 3.4.8 Solid rocket motors *(present when fitted)* — `…/srb/<n>/` (n = SRB index)
+
+One entry per solid rocket motor. **Read-only** — a solid has no throttle and cannot be shut down
+once lit; it is ignited through the ordinary engine surface (`ctl/ignite`, `engines/<n>/active`, or
+staging) and then burns its grain to depletion. `srb/<n>/engine` names the `engines/<n>` entry that
+lights this motor — an SRB appears in **both** trees (`engines/` for thrust/Isp and ignition,
+`srb/` for the propellant and burn state that `tanks/` cannot show).
+
+| Path | A | Format | Meaning / units |
+|---|---|---|---|
+| `srb/<n>/engine` | S | scalar | Index of the `engines/<n>` entry that ignites this motor; `-1` if unresolved. |
+| `srb/<n>/part` | S | scalar | `instance_id` of the motor's part (the `parts/` handle, §3.4.17). |
+| `srb/<n>/substance` | S | text | Solid propellant substance name. |
+| `srb/<n>/grain` | S | text | Grain geometry id — the cast core shape that sets the thrust profile. |
+| `srb/<n>/grain_shape` | S | text | The grain geometry's shape name. |
+| `srb/<n>/segment_count` | S | scalar | Number of grain segments in the stack. |
+| `srb/<n>/valid` | S | flag | `1` when the segment stack resolved; `0` means the motor cannot fire. |
+| `srb/<n>/error` | S | text | Why the stack is invalid (empty when `valid` is `1`). |
+| `srb/<n>/active` | S | flag | `1` while burning. |
+| `srb/<n>/propellant` | S | flag | `1` when burnable grain remains and pressure can be sustained. |
+| `srb/<n>/mass` | S | scalar | Current grain mass across the stack, kg. |
+| `srb/<n>/mass_initial` | S | scalar | Full-stack grain mass when new, kg. |
+| `srb/<n>/mass_unburnable` | S | scalar | Sliver/slag that can never burn (pressure quenches first), kg. |
+| `srb/<n>/mass_burnable` | S | scalar | `max(mass − mass_unburnable, 0)`, kg — the usable propellant left. |
+| `srb/<n>/fraction` | S | scalar | `mass_burnable` ÷ usable grain when new, 0..1. **The pre-ignition "how much booster is left" read.** |
+| `srb/<n>/mass_flow` | S | scalar | Instantaneous propellant flow, kg/s (0 when not burning). |
+| `srb/<n>/burn_time` | S | scalar | Seconds of thrust left at the current flow. **0 while not burning** — use `fraction` before ignition. |
+| `srb/<n>/burning_area` | S | scalar | Current burning surface area, m² — what drives a solid's thrust curve as the grain regresses. |
+| `srb/<n>/chamber_pressure` | S | scalar | Chamber pressure, Pa (0 when not burning). |
+| `srb/<n>/chamber_temp` | S | scalar | Chamber temperature, K (0 when not burning). |
+| `srb/<n>/exit_pressure` | S | scalar | Nozzle exit pressure, Pa (0 when not burning). |
+| `srb/<n>/exit_temp` | S | scalar | Nozzle exit temperature, K (0 when not burning). |
+| `srb/<n>/area_ratio` | S | scalar | Nozzle expansion (exit/throat) area ratio as sized for this stack. |
+
+**Grain segments — `srb/<n>/segments/<m>/`.** The stacked casing sections holding the cast
+propellant (stacking them is how total impulse is sized in the editor); `<m>` is 0-based.
+
+| Path | A | Format | Meaning / units |
+|---|---|---|---|
+| `segments/<m>/part` | S | scalar | `instance_id` of the segment's part. |
+| `segments/<m>/substance` | S | text | Solid propellant substance name (empty when unconfigured). |
+| `segments/<m>/grain` | S | text | Grain geometry id cast into this segment. |
+| `segments/<m>/mass` | S | scalar | Current grain mass in this segment, kg. |
+| `segments/<m>/mass_initial` | S | scalar | This segment's grain mass when new, kg. |
+| `segments/<m>/mass_unburnable` | S | scalar | This segment's share of the unburnable sliver, kg. |
+| `segments/<m>/fraction` | S | scalar | Usable grain left in this segment, 0..1. |
+| `segments/<m>/radius` | S | scalar | Casing inner radius, m. |
+| `segments/<m>/length` | S | scalar | Segment length, m. |
+| `segments/<m>/volume` | S | scalar | Grain volume when new, m³. |
+| `segments/<m>/burn_depth` | S | scalar | How far the burning surface has regressed from the initial port wall, m. |
+
+> **No controls, by design.** KSA forces a solid's throttle to 0 or 1, so there is nothing to
+> actuate here: ignite via `ctl/ignite` / `engines/<n>/active` / `ctl/stage`, and expect the motor to
+> run to depletion. `debug/vessels/<id>/refill_fuel` (§3.7) **does** refill solid grains along with
+> liquid tanks. Grain geometry and nozzle area ratio are editor-time design choices and are exposed
+> read-only.
+
+#### 3.4.9 RCS *(present when fitted)* — `…/rcs/<n>/`
 
 | Path | A | Format | Meaning |
 |---|---|---|---|
@@ -314,7 +377,7 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 | `rcs/<n>/propellant` | S | flag | Propellant available. |
 | `rcs/<n>/map` | S | string | Active control-axis flags (e.g. `Pitch|Yaw`). |
 
-#### 3.4.9 Solar panels *(present when fitted)* — `…/solar/<n>/`
+#### 3.4.10 Solar panels *(present when fitted)* — `…/solar/<n>/`
 
 | Path | A | Format | Meaning |
 |---|---|---|---|
@@ -327,14 +390,14 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 | `solar/<n>/current` | S | scalar | Actual deploy fraction 0..1. |
 | `solar/<n>/state` | S | string | `Deployed`/`Retracted`/`Deploying`/`Retracting`/`Broken`. |
 
-#### 3.4.10 Generators *(present when fitted)* — `…/generators/<n>/`
+#### 3.4.11 Generators *(present when fitted)* — `…/generators/<n>/`
 
 | Path | A | Format | Meaning |
 |---|---|---|---|
 | `generators/<n>/active` | S | flag | Producing. |
 | `generators/<n>/produced` | S | scalar | Instantaneous power produced, W. |
 
-#### 3.4.11 Lights *(present when fitted)* — `…/lights/<n>/`
+#### 3.4.12 Lights *(present when fitted)* — `…/lights/<n>/`
 
 | Path | A | Format | Meaning |
 |---|---|---|---|
@@ -348,12 +411,12 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 | `lights/<n>/state` | S | string | Animation deployment state — `Deployed`/`Retracted`/`Deploying`/`Retracting`/`Broken` (only with an animation). |
 
 > The `goal`/`current`/`state` trio is **co-located** here for convenience: it is the *same*
-> vessel-level keyframe animation also reachable under `animations/<n>/` (§3.4.14). Both views write
+> vessel-level keyframe animation also reachable under `animations/<n>/` (§3.4.15). Both views write
 > the one `animation.goal` action by the animation's vessel-level ordinal, so writing either path
 > drives the same actuator — they are not independent. A light part with no animation omits the three
 > files entirely.
 
-#### 3.4.12 Docking ports *(present when fitted)* — `…/docking/<n>/`
+#### 3.4.13 Docking ports *(present when fitted)* — `…/docking/<n>/`
 
 | Path | A | Format | Meaning |
 |---|---|---|---|
@@ -362,14 +425,14 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 | `docking/<n>/pushoff_impulse` | S | scalar | Separation impulse applied on undock, N·s (newton-seconds). |
 | `docking/<n>/undock` | T | write `1` | Undock this port (action `docking.undock`; `EBUSY` if not docked). |
 
-#### 3.4.13 Decouplers *(present when fitted)* — `…/decouplers/<n>/`
+#### 3.4.14 Decouplers *(present when fitted)* — `…/decouplers/<n>/`
 
 | Path | A | Format | Meaning |
 |---|---|---|---|
 | `decouplers/<n>/fired` | S | flag | Has fired (irreversible). |
 | `decouplers/<n>/fire` | T | write `1` | Fire (action `decoupler.fire`; re-fire ⇒ `EBUSY`). |
 
-#### 3.4.14 Animations *(present when fitted)* — `…/animations/<n>/`
+#### 3.4.15 Animations *(present when fitted)* — `…/animations/<n>/`
 
 | Path | A | Format | Meaning |
 |---|---|---|---|
@@ -377,11 +440,17 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 | `animations/<n>/current` | S | scalar | Actual deploy fraction 0..1. |
 | `animations/<n>/state` | S | string | Deployment state. |
 
-#### 3.4.15 Encounters *(detail; present when any)* — `…/encounters`
+#### 3.4.16 Encounters *(detail; present when any)* — `…/encounters`
 
 NDJSON, one line per predicted closest approach: `{"body":<id>,"ut":<t>,"distance":<m>}`.
 
-#### 3.4.16 Parts *(present when `telemetry_vessel_parts` is on)* — `…/parts/<n>/` (n = part index)
+> **Coverage widened in KSA `2026.7.9.5018`.** Earlier builds skipped any sibling body whose sphere of
+> influence was below a flat 10 000 km cutoff; KSA now decides candidacy from orbital geometry (radius-band
+> overlap plus an approximate MOID at the mutual nodes). Small moons — Phobos, Deimos — therefore produce
+> encounter lines that previous builds silently omitted. The line format is unchanged; programs that treated
+> "no encounter entry" as "no approach possible" for small bodies should be re-checked.
+
+#### 3.4.17 Parts *(present when `telemetry_vessel_parts` is on)* — `…/parts/<n>/` (n = part index)
 
 Top-level parts, each with its subparts nested under `subparts/<m>/`; the **welds** anchor picker
 (§3.7). The list is cached per vehicle and rebuilt on part-count change or every 10 s. `<n>`/`<m>` are
@@ -406,7 +475,7 @@ its live pose).
 | `parts/<n>/subparts/<m>/template` | S | string | Subpart template id. |
 | `parts/<n>/subparts/<m>/position` | S | `x y z` | Subpart position in the vehicle assembly frame, m (sampled; the weld tracks the live pose). |
 
-#### 3.4.17 Control surface — `…/ctl/` *(present only when a command sink is wired)*
+#### 3.4.18 Control surface — `…/ctl/` *(present only when a command sink is wired)*
 
 | Path | A | Write | Action key | Phase | Meaning |
 |---|---|---|---|---|---|
@@ -419,8 +488,8 @@ its live pose).
 | `ctl/rcs` | **St** | `0`/`1` | `vessel.rcs` | Frame | Master RCS (the per-thruster `ThrusterController` active flags). ⚠ KSA ≥ 2026.7.8.4980 also has a separate **flight-computer RCS toggle** (keybind **R**) that this file neither reads nor writes — see the `ctl/attitude_mode` note. |
 | `ctl/translate` | **St** | `x y z` | `vessel.translate` | Frame | **Manual RCS translation** — the file twin of the player's translate keys. The **signs** command bang-bang thrust along the **body axes** (+x = forward/nose, −x = backward; +y = right, −y = left; +z = down, −z = up; `0` = that axis off — KSA's body frame is X-nose/Y-right/Z-down). Fires every RCS thruster whose `ControlMap` matches, at full thrust, each solver step (`ManualThrustMode.Direct`); magnitudes are ignored. **Latches like a held key** until overwritten — write `0 0 0` to stop. Composes with an active flight-computer attitude hold (auto-attitude strips only the rotation bits). Read = the latched command as signs. Needs translation-mapped RCS thrusters (e.g. the EVA kitten backpack); vessels without them accept the write but nothing fires. |
 | `ctl/rotate` | **St** | `x y z` | `vessel.rotate` | Frame | **Manual RCS rotation** — the file twin of the player's rotation keys and the symmetric sibling of `ctl/translate` (W1, plans/AGC_PLAN.md §7.4). The **signs** command bang-bang torque about the **body axes** (+x = roll right, −x = roll left; +y = pitch up, −y = pitch down; +z = yaw right, −z = yaw left — KSA's own torque-command convention on the X-nose/Y-right/Z-down body frame). Fires every RCS thruster whose `ControlMap` matches, at full thrust, each solver step (`ManualThrustMode.Direct`), and drives engine gimbals through the same bits (`ComputeTvcControl`); magnitudes are ignored. **Latches like a held key** until overwritten — write `0 0 0` to stop. **Full authority only with `ctl/attitude_mode = manual`**: an active auto-attitude hold strips the rotation bits (`WithNoRotation()`), the inverse of translate's compose behavior — under a hold, a manual rotation bit only biases the held axis's target rate. Composes with `ctl/translate` (each preserves the other's bits). Read = the latched command as signs. Vessels without rotation-mapped RCS/gimbals accept the write but nothing fires. |
-| `ctl/attitude_mode` | **St** | token | `vessel.attitude_mode` | **Solver** | `manual`, or an auto track-target (see §3.4.18). ⚠ KSA ≥ 2026.7.8.4980: the game's **RCS toggle** (`FlightComputer.RCSMode`, default keybind **R**) gates the autopilot's RCS authority — with it off, an auto hold on a vessel whose only attitude authority is RCS **silently does not actuate** (the read-back still reports the mode you set; only engine-gimbal TVC keeps working, and only while burning). gatOS does not surface the toggle; check it in-game if a hold seems dead. |
-| `ctl/attitude_frame` | **St** | token | `vessel.attitude_frame` | **Solver** | Reference frame for the named modes (see §3.4.18). |
+| `ctl/attitude_mode` | **St** | token | `vessel.attitude_mode` | **Solver** | `manual`, or an auto track-target (see §3.4.19). ⚠ KSA ≥ 2026.7.8.4980: the game's **RCS toggle** (`FlightComputer.RCSMode`, default keybind **R**) gates the autopilot's RCS authority — with it off, an auto hold on a vessel whose only attitude authority is RCS **silently does not actuate** (the read-back still reports the mode you set; only engine-gimbal TVC keeps working, and only while burning). gatOS does not surface the toggle; check it in-game if a hold seems dead. |
+| `ctl/attitude_frame` | **St** | token | `vessel.attitude_frame` | **Solver** | Reference frame for the named modes (see §3.4.19). |
 | `ctl/attitude_target` | **St** | `x y z w` | `vessel.attitude_target` | **Solver** | Custom **Body→CCI** quaternion; the autopilot points body **+X** along it. ⚠ KSA ≥ 2026.7.8.4980: the flight computer's roll mode defaults to **decoupled** ("ANY"), so on a fresh vessel the quaternion's **roll component is not held** — pointing converges, roll floats free unless the player sets a roll mode in-game (loaded saves keep their saved mode). |
 | `ctl/burn` | **St** | `ut dvx dvy dvz` | `vessel.burn` | **Solver** | Schedule an impulsive burn at `ut` with a CCI Δv vector. |
 | `ctl/focus` | T | `1` | `camera.focus` | Frame | Move the camera to this vessel (view-only; no control change). |
@@ -432,7 +501,7 @@ its live pose).
 > just write the file — but expect these to take effect on the **next solver step** (~10 Hz), not
 > instantly.
 
-#### 3.4.18 Attitude tokens (accepted values)
+#### 3.4.19 Attitude tokens (accepted values)
 
 `ctl/attitude_mode` (case-insensitive): `manual`, `Prograde`, `Retrograde`, `Normal`, `AntiNormal`,
 `RadialOut`, `RadialIn`, `Toward`, `Away`, `Antivel`, `Align`, `Forward`, `Backward`, `Up`, `Down`,
@@ -502,7 +571,7 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 
 **welds** (the "weld one vessel rigidly to another, anchored to a part" cheat — a game hack):
 - Discover anchors under `vessels/by-id/<target>/parts/<n>/` — top-level parts **and** their
-  `subparts/<m>/` (§3.4.16), or grab the whole tree in one read from `parts/json` (`cat parts/json | jq`);
+  `subparts/<m>/` (§3.4.17), or grab the whole tree in one read from `parts/json` (`cat parts/json | jq`);
   either level's `instance_id` is the stable handle you pass as `<part_iid>`
   (`0` ⇒ anchor to the target's body/CoM frame). A subpart anchor tracks its live pose, so welding to an
   animated subpart (robotics/landing-leg segment) follows the animation. A vessel may be the
@@ -710,8 +779,8 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `vessel.rcs` | — | value `0`/`1` | Frame | `ctl/rcs` | |
 | `vessel.translate` | — | values `[x,y,z]` | Frame | `ctl/translate` | body-axis signs, bang-bang; latches until rewritten (`0 0 0` stops) |
 | `vessel.rotate` | — | values `[x,y,z]` | Frame | `ctl/rotate` | body-axis torque signs (+x roll right, +y pitch up, +z yaw right), bang-bang; latches until rewritten (`0 0 0` stops); full authority needs `attitude_mode=manual` |
-| `vessel.attitude_mode` | — | token | **Solver** | `ctl/attitude_mode` | §3.4.18 |
-| `vessel.attitude_frame` | — | token | **Solver** | `ctl/attitude_frame` | §3.4.18 |
+| `vessel.attitude_mode` | — | token | **Solver** | `ctl/attitude_mode` | §3.4.19 |
+| `vessel.attitude_frame` | — | token | **Solver** | `ctl/attitude_frame` | §3.4.19 |
 | `vessel.attitude_target` | — | values `[x,y,z,w]` | **Solver** | `ctl/attitude_target` | Body→CCI quaternion |
 | `vessel.burn` | — | values `[ut,dvx,dvy,dvz]` | **Solver** | `ctl/burn` | CCI Δv |
 | `vessel.scale` | — | value > 0 | Frame | `vessels/by-id/<id>/scale` | positive-only (`EINVAL` if ≤ 0 / non-finite); one-shot; exempt from the active-vessel authority gate |

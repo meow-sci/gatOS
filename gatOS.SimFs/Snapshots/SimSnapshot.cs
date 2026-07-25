@@ -227,6 +227,15 @@ public sealed record VesselSnapshot(
     /// <summary>Decouplers, by index.</summary>
     public IReadOnlyList<DecouplerSnapshot> Decouplers { get; init; } = [];
 
+    /// <summary>
+    ///     Solid rocket motors (SRBs), by index — surfaced under <c>srb/&lt;n&gt;/</c>. Solid
+    ///     propellant is <b>not</b> a <see cref="Tanks">tank</see>: KSA stores it on a separate
+    ///     grain-segment module, so a booster contributes nothing to <see cref="Tanks"/> while it
+    ///     <i>is</i> counted in <see cref="MassPropellant"/>. This list is what makes a booster's
+    ///     remaining propellant and burn time readable. Empty on vessels with no SRB.
+    /// </summary>
+    public IReadOnlyList<SrbSnapshot> Srb { get; init; } = [];
+
     /// <summary>Upcoming encounters / closest approaches on the current patch.</summary>
     public IReadOnlyList<EncounterSnapshot> Encounters { get; init; } = [];
 
@@ -393,6 +402,135 @@ public sealed record DockingSnapshot(int Index, bool Docked, string? DockedToPar
 /// <param name="Index">Stable per-vessel decoupler index.</param>
 /// <param name="Fired">Whether the decoupler has fired (irreversible).</param>
 public sealed record DecouplerSnapshot(int Index, bool Fired);
+
+/// <summary>
+///     One solid rocket motor (SRB) — a KSA <c>SolidMotor</c> rocket core plus the stack of grain
+///     segments that feeds it (<c>srb/&lt;n&gt;/</c>). A solid is <b>not throttleable and cannot be
+///     shut down</b> once lit: it is ignited through the ordinary engine surface
+///     (<c>ctl/ignite</c>, <c>engines/&lt;n&gt;/active</c>, staging) and then burns its grain to
+///     depletion, so this record is read-only. <see cref="EngineIndex"/> points at the
+///     <c>engines/&lt;n&gt;</c> entry that ignites it.
+/// </summary>
+/// <param name="Index">Stable per-vessel SRB index (position among the vessel's solid motors).</param>
+/// <param name="Active">Whether the motor is currently burning (<c>RocketCoreState.Throttle &gt; 0</c>).</param>
+/// <param name="MassKg">Current total grain mass across the stack, kg.</param>
+/// <param name="MassInitialKg">Full-stack grain mass when new, kg.</param>
+public sealed record SrbSnapshot(int Index, bool Active, double MassKg, double MassInitialKg)
+{
+    /// <summary>
+    ///     The <c>engines/&lt;n&gt;</c> index of the engine controller that ignites this motor, or
+    ///     <c>-1</c> when it could not be resolved.
+    /// </summary>
+    public int EngineIndex { get; init; } = -1;
+
+    /// <summary>The <c>Part.InstanceId</c> of the motor's part — the handle <c>parts/</c> uses.</summary>
+    public uint PartInstanceId { get; init; }
+
+    /// <summary>The solid propellant substance name (<c>SolidMotor.Propellant.Name</c>).</summary>
+    public string Substance { get; init; } = "";
+
+    /// <summary>The grain geometry id driving the thrust profile (e.g. a star grain).</summary>
+    public string Grain { get; init; } = "";
+
+    /// <summary>The grain geometry's shape name.</summary>
+    public string GrainShape { get; init; } = "";
+
+    /// <summary>Whether the grain-segment stack resolved (<c>SolidMotorStack.IsValid</c>).</summary>
+    public bool StackValid { get; init; }
+
+    /// <summary>The stack's error message when <see cref="StackValid"/> is false; empty otherwise.</summary>
+    public string StackError { get; init; } = "";
+
+    /// <summary>Whether burnable grain remains and chamber pressure can be sustained.</summary>
+    public bool PropellantAvailable { get; init; }
+
+    /// <summary>
+    ///     Grain mass that can never burn (the sliver/slag left when chamber pressure falls below
+    ///     the quench threshold), kg. Subtract it to get usable propellant.
+    /// </summary>
+    public double MassUnburnableKg { get; init; }
+
+    /// <summary>Usable grain remaining: <c>max(<see cref="MassKg"/> − <see cref="MassUnburnableKg"/>, 0)</c>, kg.</summary>
+    public double MassBurnableKg { get; init; }
+
+    /// <summary>Usable grain remaining as a fraction 0..1 of the usable grain when new.</summary>
+    public double Fraction { get; init; }
+
+    /// <summary>Instantaneous propellant mass flow, kg/s (0 when not burning).</summary>
+    public double MassFlowKgS { get; init; }
+
+    /// <summary>
+    ///     Seconds of thrust left at the current mass flow (<c>RocketCoreState.ThrustTimeRemaining</c>).
+    ///     <b>0 while the motor is not burning</b> — use <see cref="Fraction"/> for a pre-ignition
+    ///     estimate.
+    /// </summary>
+    public double BurnTimeRemainingS { get; init; }
+
+    /// <summary>Chamber pressure, pascals (0 when not burning).</summary>
+    public double ChamberPressurePa { get; init; }
+
+    /// <summary>Chamber temperature, kelvin (0 when not burning).</summary>
+    public double ChamberTemperatureK { get; init; }
+
+    /// <summary>Nozzle exit pressure, pascals (0 when not burning).</summary>
+    public double ExitPressurePa { get; init; }
+
+    /// <summary>Nozzle exit temperature, kelvin (0 when not burning).</summary>
+    public double ExitTemperatureK { get; init; }
+
+    /// <summary>
+    ///     Current total burning surface area across the stack, m² — the geometric driver of a
+    ///     solid's thrust curve (it rises and falls as the grain regresses).
+    /// </summary>
+    public double BurningAreaM2 { get; init; }
+
+    /// <summary>Nozzle expansion (exit/throat) area ratio, as sized for this stack.</summary>
+    public double AreaRatio { get; init; }
+
+    /// <summary>The grain segments feeding this motor, under <c>segments/&lt;m&gt;/</c>.</summary>
+    public IReadOnlyList<SrbSegmentSnapshot> Segments { get; init; } = [];
+}
+
+/// <summary>
+///     One solid grain segment in an SRB's stack (<c>srb/&lt;n&gt;/segments/&lt;m&gt;/</c>) — a KSA
+///     <c>SolidGrainSegment</c> module, the physical casing section holding a cast propellant grain.
+///     Stacking segments is how a booster's total impulse is sized in the editor.
+/// </summary>
+/// <param name="Index">Segment index within the owning motor's stack (0-based, nozzle-ward order).</param>
+/// <param name="MassKg">Current grain mass in this segment, kg.</param>
+/// <param name="MassInitialKg">This segment's grain mass when new, kg.</param>
+public sealed record SrbSegmentSnapshot(int Index, double MassKg, double MassInitialKg)
+{
+    /// <summary>The <c>Part.InstanceId</c> of the segment's part — the handle <c>parts/</c> uses.</summary>
+    public uint PartInstanceId { get; init; }
+
+    /// <summary>The solid propellant substance name; empty when the segment is unconfigured.</summary>
+    public string Substance { get; init; } = "";
+
+    /// <summary>The grain geometry id cast into this segment.</summary>
+    public string Grain { get; init; } = "";
+
+    /// <summary>This segment's share of the unburnable sliver mass, kg.</summary>
+    public double MassUnburnableKg { get; init; }
+
+    /// <summary>Usable grain remaining in this segment as a fraction 0..1 of its usable grain when new.</summary>
+    public double Fraction { get; init; }
+
+    /// <summary>Casing inner radius, meters.</summary>
+    public double RadiusM { get; init; }
+
+    /// <summary>Segment length, meters.</summary>
+    public double LengthM { get; init; }
+
+    /// <summary>Grain volume when new, m³.</summary>
+    public double VolumeM3 { get; init; }
+
+    /// <summary>
+    ///     How far the burning surface has regressed from the initial port wall, meters (0 for an
+    ///     unlit grain, rising toward the casing wall as it burns).
+    /// </summary>
+    public double BurnDepthM { get; init; }
+}
 
 /// <summary>A predicted encounter / closest approach with another body on the current patch.</summary>
 /// <param name="Body">The other body's id.</param>

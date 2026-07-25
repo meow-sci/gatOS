@@ -389,6 +389,16 @@ errnos `EBUSY`/`ETIMEDOUT` added.
   throttle/propellant/min-throttle, tank `fraction`, battery `fraction`/`capacity`,
   `power/{produced,consumed}`, and module dirs `rcs/ solar/ generators/ lights/ docking/
   decouplers/`
+- **`srb/<n>/` (added with the KSA `2026.7.9.5018` upgrade)** — solid rocket motors, the one part of
+  the propellant surface `tanks/` structurally cannot show: KSA stores solid grain on a
+  `SolidGrainSegment` module rather than a `Tank`, so a booster contributes nothing to `tanks/` while
+  still counting in `mass/propellant`. Per motor: `engine` (cross-link to the `engines/<n>` that
+  ignites it), `part`, `substance`, `grain`/`grain_shape`, `valid`/`error`, `active`, `propellant`,
+  `mass`/`mass_initial`/`mass_unburnable`/`mass_burnable`/`fraction`, `mass_flow`, `burn_time`,
+  `burning_area`, `chamber_pressure`/`chamber_temp`, `exit_pressure`/`exit_temp`, `area_ratio`, plus a
+  per-segment `segments/<m>/` breakdown. **Read-only** — KSA forces a solid's throttle to 0 or 1, so
+  ignition stays on the engine surface. `Readers/VesselReader.SampleSrbs` →
+  `SrbSnapshot`/`SrbSegmentSnapshot`; catalog in `SPEC_9P_FILESYSTEM.md` §3.4.8.
 - New `/sim/events`: engine-state, flameout, docked/undocked, decoupled, animation-complete,
   battery-depleted/charged
 
@@ -685,7 +695,7 @@ anchor vehicle via `ResolveVehicle` from the command `Token`, the entry id trave
 `Brutal.Vulkan.Abstractions`/`Brutal.Vulkan.Vma`/`Planet.Render.Core` (all `<Private>false</Private>`,
 KSA-guarded), and set `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>`.
 
-Full catalog: **`SPEC_9P_FILESYSTEM.md`** §3.4.16 (parts) + §3.7 (`debug/welds/**`, `always_render_iva`,
+Full catalog: **`SPEC_9P_FILESYSTEM.md`** §3.4.17 (parts) + §3.7 (`debug/welds/**`, `always_render_iva`,
 `debug/thug_life/**`); anchors mirrored in `docs/KSA_INTEGRATION_MATRIX.md` and `scope/` (the `thug_life`
 render set is flagged the **deepest / highest-churn** KSA coupling). **Pending: the in-game pass**
 (checklist in `docs/VALIDATION.md`).

@@ -95,7 +95,7 @@ terminal/`vi`, not a big IDE); put the real explanation in the page prose.
 
 ### 4. `attitude-modes` — the flight computer, no math (**the "basic flight computer" rung**)
 - **Goal:** hold prograde, then retrograde, then radial-in, and watch the vessel steer itself.
-- **Surface:** `ctl/attitude_mode` (tokens, §3.4.18), `ctl/attitude_frame`.
+- **Surface:** `ctl/attitude_mode` (tokens, §3.4.19), `ctl/attitude_frame`.
 - **New idea:** the setpoint is **onboard** — the autopilot steers and tracks, warp-correct, no
   quaternion. Reach for a named mode whenever the direction has a name.
 - **Both transports:** `echo Prograde > …/ctl/attitude_mode` vs `POST /v1/fs/…`.

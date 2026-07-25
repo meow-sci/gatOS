@@ -74,8 +74,51 @@ internal static class TestData
                 Generators = [new GeneratorSnapshot(0, true, 50)],
                 Docking = [new DockingSnapshot(0, true, "part-7") { PushoffImpulseNs = 7000 }],
                 Encounters = [new EncounterSnapshot("Mun", 5000, 120000)],
+                Srb = [Srb()],
                 BatteryCapacityJoules = 9000,
             };
+
+    /// <summary>
+    ///     One solid rocket motor with a two-segment grain stack — half-burned, so the mass /
+    ///     fraction / burn-time reads are all non-trivial and the unburnable sliver is visible.
+    /// </summary>
+    internal static SrbSnapshot Srb(int index = 0)
+        => new(index, Active: true, MassKg: 21000, MassInitialKg: 40000)
+        {
+            EngineIndex = 1,
+            PartInstanceId = 4242,
+            Substance = "apcp",
+            Grain = "star",
+            GrainShape = "Star",
+            StackValid = true,
+            PropellantAvailable = true,
+            MassUnburnableKg = 1000,
+            MassBurnableKg = 20000,
+            Fraction = 20000.0 / 39000.0,
+            MassFlowKgS = 950,
+            BurnTimeRemainingS = 21.05,
+            ChamberPressurePa = 6.2e6,
+            ChamberTemperatureK = 3100,
+            ExitPressurePa = 101325,
+            ExitTemperatureK = 1500,
+            BurningAreaM2 = 18.4,
+            AreaRatio = 7.5,
+            Segments =
+            [
+                new SrbSegmentSnapshot(0, 11000, 20000)
+                {
+                    PartInstanceId = 4243, Substance = "apcp", Grain = "star",
+                    MassUnburnableKg = 500, Fraction = 10500.0 / 19500.0,
+                    RadiusM = 0.8, LengthM = 6, VolumeM3 = 11.3, BurnDepthM = 0.22,
+                },
+                new SrbSegmentSnapshot(1, 10000, 20000)
+                {
+                    PartInstanceId = 4244, Substance = "apcp", Grain = "star",
+                    MassUnburnableKg = 500, Fraction = 9500.0 / 19500.0,
+                    RadiusM = 0.8, LengthM = 6, VolumeM3 = 11.3, BurnDepthM = 0.24,
+                },
+            ],
+        };
 
     /// <summary>A body catalog + system summary, for crawling <c>/sim/bodies</c> and <c>/sim/system</c>.</summary>
     internal static SimSnapshot WithCelestials(this SimSnapshot snapshot)

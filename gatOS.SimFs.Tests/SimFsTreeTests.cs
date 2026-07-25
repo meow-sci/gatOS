@@ -191,6 +191,16 @@ public sealed class SimFsTreeTests
             "vessels/by-id/test-1/navball/twr", "vessels/by-id/test-1/navball/frame",
             "vessels/by-id/test-1/environment/pressure", "vessels/by-id/test-1/environment/g_force",
             "vessels/by-id/test-1/encounters",
+            // solid rocket motors (read-only; ignition lives on the engine surface)
+            "vessels/by-id/test-1/srb/0/engine", "vessels/by-id/test-1/srb/0/active",
+            "vessels/by-id/test-1/srb/0/substance", "vessels/by-id/test-1/srb/0/grain",
+            "vessels/by-id/test-1/srb/0/mass", "vessels/by-id/test-1/srb/0/mass_burnable",
+            "vessels/by-id/test-1/srb/0/mass_unburnable", "vessels/by-id/test-1/srb/0/fraction",
+            "vessels/by-id/test-1/srb/0/burn_time", "vessels/by-id/test-1/srb/0/burning_area",
+            "vessels/by-id/test-1/srb/0/chamber_pressure", "vessels/by-id/test-1/srb/0/area_ratio",
+            "vessels/by-id/test-1/srb/0/segment_count",
+            "vessels/by-id/test-1/srb/0/segments/0/mass",
+            "vessels/by-id/test-1/srb/0/segments/1/burn_depth",
             // celestial catalog
             "system/name", "bodies/Kerth/mass", "bodies/Kerth/orbit/sma",
             "bodies/Kerth/atmosphere/height", "bodies/Kerth/ocean/density", "bodies/Kerth/focus",
@@ -214,6 +224,16 @@ public sealed class SimFsTreeTests
             Assert.That(files["vessels/by-id/test-1/docking/0/pushoff_impulse"], Is.EqualTo("7000\n"));
             Assert.That(files["debug/vessels/test-1/docking/0/pushoff_impulse"], Is.EqualTo("7000\n"));
             Assert.That(files["bodies/Kerth/atmosphere/height"], Is.EqualTo("70000\n"));
+            // SRB: the engine cross-link, the two-segment stack, and the usable-grain reads.
+            Assert.That(files["vessels/by-id/test-1/srb/0/engine"], Is.EqualTo("1\n"),
+                "srb/<n>/engine names the engines/<n> entry that ignites this motor");
+            Assert.That(files["vessels/by-id/test-1/srb/0/substance"], Is.EqualTo("apcp\n"));
+            Assert.That(files["vessels/by-id/test-1/srb/0/segment_count"], Is.EqualTo("2\n"));
+            Assert.That(files["vessels/by-id/test-1/srb/0/mass_burnable"], Is.EqualTo("20000\n"),
+                "usable grain = mass - the unburnable sliver");
+            Assert.That(files["vessels/by-id/test-1/srb/0/segments/1/mass"], Is.EqualTo("10000\n"));
+            Assert.That(files.Keys, Has.No.Member("vessels/by-id/test-1/srb/0/throttle"),
+                "a lit solid cannot be throttled — no control file exists");
             // The active alias mirrors the control surface too.
             Assert.That(files.Keys, Does.Contain("vessels/active/ctl/ignite"));
         });

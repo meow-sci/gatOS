@@ -44,18 +44,26 @@ welds/IVA/parts, thug_life, per-vessel scale/always_render, debug impulse, `ctl/
 `/sim/audio` checklists) that require a live KSA flight; checklists are in
 [`docs/VALIDATION.md`](docs/VALIDATION.md). The purrTTY tip release is now cut.
 
-> **KSA baseline: `2026.7.8.4980`** (upgrade-ksa playbook pass 2026-07-22, from 4939): **one compile
-> break, fixed** — rev 4943 removed `InputEvents.VehicleDockingInputData.OldMeanRadius`;
-> `DockingActuator.Undock` now enqueues `{Vehicle, DockingPort, Undock}` like the stock UnDock menu
-> item (downstream `Vehicle.Split(Connector, PushoffImpulse)` byte-identical). Build + tests green;
-> no other bound member, reflection accessor, or Harmony hook target changed. Two inherited semantic
-> drifts (no API change): the new `FlightComputer.RCSMode` toggle (R key) silently disables auto
-> attitude holds on RCS-only vessels, and the roll-mode default flipped to decoupled — fresh flight
-> computers no longer hold `attitude_target`'s roll component (SPEC caveats added). Behavior notes
-> (splits keep control-module-stamped names; density fallback mass; fuel-flow drain-order default;
-> the high-warp verlet fix; the additive screenshot feature + its thug_life sample-count transient)
-> + the pass record live in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope pages; live
-> re-check items appended to [`docs/VALIDATION.md`](docs/VALIDATION.md).
+> **KSA baseline: `2026.7.9.5018`** (upgrade-ksa playbook pass 2026-07-24, from 4980): **one compile
+> break, fixed** — rev 4992 (solid rocket motors) generalized propellant storage from liquid-only to a
+> new `ISubstanceStore` (`Liquid | Solid`) abstraction, renaming `Mole.GetLiquidMass` → `GetStoredMass`;
+> `VesselReader.SampleTanks` was the one call site and the value is unchanged (`Tank` moles are liquids).
+> Build + tests green (0 warnings, 681 passed); no other bound member, reflection accessor, or Harmony
+> hook target changed (`Program.RenderGame` and `SuperMeshRenderSystem.cs` byte-identical; no `Brutal`
+> numerics drift; no celestial body-parameter edits). **One coverage gap opened and closed in the same
+> work item:** SRB solid propellant lives on the new `SolidGrainSegment` module — an `ISubstanceStore`
+> but **not** a `Tank` — so it is absent from `/sim`'s `tanks/`, while `Vehicle.PropellantMass` (now
+> computed from `Parts.SubstanceStores`) *does* include it. gatOS gained a dedicated **`srb/<n>/`** read
+> surface (SPEC §3.4.8, `VesselReader.SampleSrbs`, `SrbSnapshot`/`SrbSegmentSnapshot`): grain mass,
+> usable mass, fraction, burn time, mass flow, chamber/exit conditions, burning area, stack validity and
+> a per-segment `segments/<m>/` breakdown — **read-only**, since KSA forces a solid's throttle to 0 or 1,
+> so ignition stays on the engine surface (`srb/<n>/engine` cross-links to `engines/<n>`). Two inherited semantic drifts (no API change): encounter candidacy widened (rev 4991 — small
+> moons like Phobos/Deimos now yield `encounters/<n>/` rows) and `Module.List` concrete-type segmentation
+> (rev 4990 — API-compatible for every call gatOS makes). Behavior notes (`debug/refuel` now refills SRB
+> grains for free; SRBs are ordinary `EngineController`s so `engines/<n>` covers them, though throttle is
+> physically inert on a solid; `ModuleBase.OnPartCreated` → `OnFullPartCreated` leaves the `AnimationLinks`
+> solar link intact) + the pass record live in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope
+> pages; live re-check items appended to [`docs/VALIDATION.md`](docs/VALIDATION.md).
 
 > **Whole-mod perf pass (2026-07-02):** all seven plans of
 > [`plans/GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md`](plans/GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md)

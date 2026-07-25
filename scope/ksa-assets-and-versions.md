@@ -27,13 +27,64 @@ Two checkouts are kept side by side for diffing:
 
 | Checkout dir | Build | Date | Revisions | Role |
 |---|---|---|---|---|
-| `…/ksa-game-assemblies` | **2026.7.8.4980** | 2026-07-22 | 4939 → 4980 (**gapless** — `fromRevision` = the prior baseline) | **current / verified baseline** — full playbook pass 2026-07-22: one compile break (docking `OldMeanRadius`) fixed, everything else clean; `KSAFolder` default resolves here. The checkout is a **git repo whose history holds every prior drop** (`7cf5c0a` = 4892, `1265373` = 4826, `6fa343d` = 4750, …) — diff drops with `git diff <old>..<new>` inside it |
-| `…/ksa-game-assemblies_prev` | 2026.7.6.4939 | 2026-07-16 | 4892 → 4939 | prior verified baseline kept side-by-side; the 4980 pass diffed the two checkouts' `current/decomp` + `current/Content` trees directly |
+| `…/ksa-game-assemblies` | **2026.7.9.5018** | 2026-07-25 | 4980 → 5018 (**gapless** — `fromRevision` = the prior baseline) | **current / verified baseline** — full playbook pass 2026-07-24: one compile break (`Mole.GetLiquidMass`) fixed, one coverage gap opened (SRB solid propellant), everything else clean; `KSAFolder` default resolves here. The checkout is a **git repo whose history holds every prior drop** (`7cf5c0a` = 4892, `1265373` = 4826, `6fa343d` = 4750, …) — diff drops with `git diff <old>..<new>` inside it |
+| `…/ksa-game-assemblies_prev` | 2026.7.8.4980 | 2026-07-22 | 4939 → 4980 | prior verified baseline kept side-by-side; the 5018 pass diffed the two checkouts' `current/decomp` + `current/Content` trees directly |
 
 gatOS was originally built against the 4680-era sources (most `[KsaAnchor]` `Verified` dates span
 2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27; the touched
 anchors carry `GameVersion="2026.6.9.4750"` (see
 [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)).
+
+**The 4980 → 5018 pass (2026-07-24) — one compile break, fixed; one coverage gap opened.** {#5018-pass}
+The 5018 drop's `version.json` is gapless (`fromRevision` 4980 = the prior baseline; revs 4981–5018
+logged). Build-as-alarm caught the one break: **rev 4992 (solid rocket motors) renamed
+`Mole.GetLiquidMass` → `Mole.GetStoredMass`** as part of generalizing propellant storage from
+liquid-only to a new `ISubstanceStore` (`Liquid | Solid`) abstraction — `GetLiquidVolume` →
+`GetStoredVolume`, `ConsumeLiquid`/`ProduceLiquid` → `ConsumeStored`/`ProduceStored`, `ContainsLiquid`
+deleted, `Mole` gained `IsSolid`/`Solid`/`IsStorable`. `VesselReader.SampleTanks` was the single call
+site; after the one-word fix the full solution compiles 0-warning against the 5018 DLLs and the whole
+suite passes (681 passed / 11 skipped / 0 failed). **Values are unchanged** — `Tank` moles are liquids.
+
+**The coverage gap it opened — closed in the same work item.** Solid propellant lives on the **new
+`SolidGrainSegment` module**, which implements `ISubstanceStore` but is **not a `Tank`**, so it is
+absent from `/sim`'s `tanks/`; meanwhile `Vehicle.PropellantMass` is now recomputed from
+`Parts.SubstanceStores` (`VehicleProperties.RecomputeMassProperties` retyped `ReadOnlySpan<Tank>` →
+`ReadOnlySpan<ISubstanceStore>`) and **does** include grain mass — so on an SRB vessel
+`mass/propellant` > Σ `tanks/<r>/amount`. gatOS gained a dedicated **`srb/<n>/`** read surface
+(`VesselReader.SampleSrbs`, SPEC §3.4.8) binding `Parts.RocketCores.{Modules,GetState}` filtered to
+`SolidMotor` plus the `SolidGrainSegment` geometry/mass members: grain mass, usable mass (net of the
+unburnable sliver), fraction, burn time, mass flow, chamber + exit conditions, burning area, nozzle
+area ratio, stack validity, and a per-segment `segments/<m>/` breakdown. **Read-only** — KSA forces a
+solid's throttle to 0 or 1 (`SolidMotor.UpdateState`), so ignition stays on the engine surface and
+`srb/<n>/engine` cross-links to the `engines/<n>` entry that lights the motor.
+
+Everything else verified unchanged: `Universe.cs`, `FlightComputer.cs`, `DockingPort.cs`, `Decoupler.cs`,
+`LightModule.cs`, `ThrusterController.cs`, `InputEvents.cs`, `Battery.cs`, `Camera.cs`, `Orbit.cs`,
+`NavBallData.cs`, `Encounter.cs`, `RocketControllerData.cs`, `EngineControllerState.cs`,
+`ManualControlInputs.cs`, `PartModel*.cs`, `SuperMeshRenderSystem.cs` are **byte-identical**;
+`Vehicle._manualControlInputs` still `:232`; **`Program.RenderGame`'s body is byte-identical**, so the
+display transpiler's final-`End()` site is untouched; the two Harmony hook targets only moved lines
+(`DrawProgramMenusHook` `:3690`, `MainViewport` `:439`, `ModLibrary.Find` `:175` — all resolved by name).
+No `Brutal.*` decomp namespace changed except `RenderCore/SimpleVkTexture.cs` (a `[Conditional("DEBUG")]`
+logging helper removed) — **no frames/numerics drift**. **Semantic drift inherited, no API change**:
+encounter candidacy widened (rev 4991 — the flat SOI ≤ 10⁶·⁷ m cutoff became an orbital-geometry +
+approximate-MOID test, so small moons like Phobos/Deimos now produce `encounters/<n>/` rows that 4980
+skipped); `Module.List` now stores same-concrete-type modules in contiguous segments (rev 4990 —
+`IModuleTypeList.GetUsing<T>()` → `GetSegmentUsing<T>(int, out bool)`, but `ModuleList.Get<T>()`/
+`HasAny<T>()`/`GetState`/`TryGetFrom` are signature- and semantics-identical, so gatOS's positional
+`/sim` indices are unaffected). Behavior notes: `/sim/debug/refuel` now refills SRB grains for free
+(`ResourceManager.RefillAllTanks` walks `ISubstanceStore`); SRBs *are* `EngineController`s
+(`SolidMotor : RocketCore`) so `engines/<n>` covers them, though throttle commands are physically inert
+on a solid; `ModuleBase.OnPartCreated` → `OnFullPartCreated` is a rename of a virtual gatOS never
+overrides (the `Part.cs` call site is unchanged, so `AnimationLinks`' solar-panel link still forms);
+`Part.Connector` gained `Capabilities`/`EndpointCapabilities` and rev 5007 swapped `_decouplerConnections`
+for a `DecouplerJoint` flag — both additive, `Decoupler.cs` byte-identical. Content: `Astronomicals.xml`
+changed **only** in Earth ground-clutter/tree authoring — **no body mass/radius/SOI/orbital-element
+edits**, so `/sim/bodies/*` is untouched; `UnlitMeshVert`/`UnlitMeshFrag` and `Shaders/Mesh/UnlitMesh.*`
+(the thug_life quad) are unchanged, and rev 4988's MilkyWay split shrank `GlobalShaderBindings`
+(11 → 10 layout bindings) which the quad does not use. Findings detail:
+[read](ksa-read-surface.md#5018-findings) / [write](ksa-write-surface.md#5018-findings) 5018 sections.
+Live re-check items: `docs/VALIDATION.md`. 5018 is now the verified baseline.
 
 **The 4939 → 4980 pass (2026-07-22) — one compile break, fixed; otherwise clean.** The 4980 drop's
 `version.json` is gapless (`fromRevision` 4939 = the prior baseline; revs 4940–4980 logged, last logged

@@ -590,6 +590,7 @@ public static class SimFsTree
             var lights = LightsDir(p, vesselId);
             var docking = DockingDir(p, vesselId);
             var decouplers = DecouplersDir(p, vesselId);
+            var srb = SrbDir(p, vesselId);
             var encounters = new SnapshotTextFile("encounters", Qid($"{p}/encounters"), _store,
                 () => string.Concat(Vessel(vesselId).Encounters
                     .Select(e => Formats.EncounterLine(e) + "\n")));
@@ -607,7 +608,7 @@ public static class SimFsTree
                 () =>
                 {
                     var vessel = Vessel(vesselId);
-                    var children = new List<VfsNode>(prefix.Length + 18);
+                    var children = new List<VfsNode>(prefix.Length + 19);
                     children.AddRange(prefix);
                     if (vessel.Orbit is not null)
                         children.Add(orbit);
@@ -632,6 +633,8 @@ public static class SimFsTree
                         children.Add(docking);
                     if (vessel.Decouplers.Count > 0)
                         children.Add(decouplers);
+                    if (vessel.Srb.Count > 0)
+                        children.Add(srb);
                     if (vessel.Encounters.Count > 0)
                         children.Add(encounters);
                     if (vessel.Animations.Count > 0)
@@ -662,6 +665,7 @@ public static class SimFsTree
                         "lights" => vessel.Lights.Count > 0 ? lights : null,
                         "docking" => vessel.Docking.Count > 0 ? docking : null,
                         "decouplers" => vessel.Decouplers.Count > 0 ? decouplers : null,
+                        "srb" => vessel.Srb.Count > 0 ? srb : null,
                         "encounters" => vessel.Encounters.Count > 0 ? encounters : null,
                         "animations" => vessel.Animations.Count > 0 ? animations : null,
                         "parts" => vessel.Parts.Count > 0 ? parts : null,
@@ -764,6 +768,87 @@ public static class SimFsTree
             => IndexedDir("engines", $"{p}/engines",
                 () => Vessel(vesselId).Engines.Count,
                 index => EngineDir(p, vesselId, index));
+
+        // ---- solid rocket motors (SRBs) ---------------------------------------------------------
+        // Read-only by construction: a lit solid cannot be throttled or shut down, so ignition stays
+        // on the engine surface (ctl/ignite, engines/<n>/active, staging) — srb/<n>/engine names the
+        // engines/ entry that lights this motor. Solid propellant is NOT a tank (KSA keeps it on a
+        // separate grain-segment module), so this dir is the only place a booster's remaining
+        // propellant and burn time are readable.
+
+        private VfsDirectory SrbDir(string p, string vesselId)
+            => IndexedDir("srb", $"{p}/srb",
+                () => Vessel(vesselId).Srb.Count,
+                index => SrbMotorDir(p, vesselId, index));
+
+        private VfsDirectory SrbMotorDir(string p, string vesselId, int index)
+        {
+            var q = $"{p}/srb/{index}";
+            return DelegateDirectory.Fixed($"{index}", Qid(q),
+                Line($"{q}/engine", "engine",
+                    () => Srb(vesselId, index).EngineIndex.ToString(CultureInfo.InvariantCulture)),
+                Line($"{q}/part", "part", () => Formats.UInt(Srb(vesselId, index).PartInstanceId)),
+                Line($"{q}/substance", "substance", () => Srb(vesselId, index).Substance),
+                Line($"{q}/grain", "grain", () => Srb(vesselId, index).Grain),
+                Line($"{q}/grain_shape", "grain_shape", () => Srb(vesselId, index).GrainShape),
+                Line($"{q}/segment_count", "segment_count",
+                    () => Srb(vesselId, index).Segments.Count.ToString(CultureInfo.InvariantCulture)),
+                Line($"{q}/valid", "valid", () => Formats.Flag(Srb(vesselId, index).StackValid)),
+                Line($"{q}/error", "error", () => Srb(vesselId, index).StackError),
+                Line($"{q}/active", "active", () => Formats.Flag(Srb(vesselId, index).Active)),
+                Line($"{q}/propellant", "propellant",
+                    () => Formats.Flag(Srb(vesselId, index).PropellantAvailable)),
+                Line($"{q}/mass", "mass", () => Formats.Scalar(Srb(vesselId, index).MassKg)),
+                Line($"{q}/mass_initial", "mass_initial",
+                    () => Formats.Scalar(Srb(vesselId, index).MassInitialKg)),
+                Line($"{q}/mass_unburnable", "mass_unburnable",
+                    () => Formats.Scalar(Srb(vesselId, index).MassUnburnableKg)),
+                Line($"{q}/mass_burnable", "mass_burnable",
+                    () => Formats.Scalar(Srb(vesselId, index).MassBurnableKg)),
+                Line($"{q}/fraction", "fraction", () => Formats.Scalar(Srb(vesselId, index).Fraction)),
+                Line($"{q}/mass_flow", "mass_flow", () => Formats.Scalar(Srb(vesselId, index).MassFlowKgS)),
+                Line($"{q}/burn_time", "burn_time",
+                    () => Formats.Scalar(Srb(vesselId, index).BurnTimeRemainingS)),
+                Line($"{q}/burning_area", "burning_area",
+                    () => Formats.Scalar(Srb(vesselId, index).BurningAreaM2)),
+                Line($"{q}/chamber_pressure", "chamber_pressure",
+                    () => Formats.Scalar(Srb(vesselId, index).ChamberPressurePa)),
+                Line($"{q}/chamber_temp", "chamber_temp",
+                    () => Formats.Scalar(Srb(vesselId, index).ChamberTemperatureK)),
+                Line($"{q}/exit_pressure", "exit_pressure",
+                    () => Formats.Scalar(Srb(vesselId, index).ExitPressurePa)),
+                Line($"{q}/exit_temp", "exit_temp",
+                    () => Formats.Scalar(Srb(vesselId, index).ExitTemperatureK)),
+                Line($"{q}/area_ratio", "area_ratio", () => Formats.Scalar(Srb(vesselId, index).AreaRatio)),
+                SrbSegmentsDir(p, vesselId, index));
+        }
+
+        private VfsDirectory SrbSegmentsDir(string p, string vesselId, int srbIndex)
+            => IndexedDir("segments", $"{p}/srb/{srbIndex}/segments",
+                () => Srb(vesselId, srbIndex).Segments.Count,
+                index => SrbSegmentDir(p, vesselId, srbIndex, index));
+
+        private VfsDirectory SrbSegmentDir(string p, string vesselId, int srbIndex, int index)
+        {
+            var q = $"{p}/srb/{srbIndex}/segments/{index}";
+            return DelegateDirectory.Fixed($"{index}", Qid(q),
+                Line($"{q}/part", "part",
+                    () => Formats.UInt(SrbSegment(vesselId, srbIndex, index).PartInstanceId)),
+                Line($"{q}/substance", "substance", () => SrbSegment(vesselId, srbIndex, index).Substance),
+                Line($"{q}/grain", "grain", () => SrbSegment(vesselId, srbIndex, index).Grain),
+                Line($"{q}/mass", "mass", () => Formats.Scalar(SrbSegment(vesselId, srbIndex, index).MassKg)),
+                Line($"{q}/mass_initial", "mass_initial",
+                    () => Formats.Scalar(SrbSegment(vesselId, srbIndex, index).MassInitialKg)),
+                Line($"{q}/mass_unburnable", "mass_unburnable",
+                    () => Formats.Scalar(SrbSegment(vesselId, srbIndex, index).MassUnburnableKg)),
+                Line($"{q}/fraction", "fraction",
+                    () => Formats.Scalar(SrbSegment(vesselId, srbIndex, index).Fraction)),
+                Line($"{q}/radius", "radius", () => Formats.Scalar(SrbSegment(vesselId, srbIndex, index).RadiusM)),
+                Line($"{q}/length", "length", () => Formats.Scalar(SrbSegment(vesselId, srbIndex, index).LengthM)),
+                Line($"{q}/volume", "volume", () => Formats.Scalar(SrbSegment(vesselId, srbIndex, index).VolumeM3)),
+                Line($"{q}/burn_depth", "burn_depth",
+                    () => Formats.Scalar(SrbSegment(vesselId, srbIndex, index).BurnDepthM)));
+        }
 
         private VfsDirectory EngineDir(string p, string vesselId, int index)
             => DelegateDirectory.Fixed($"{index}", Qid($"{p}/engines/{index}"),
@@ -1582,6 +1667,12 @@ public static class SimFsTree
 
         private DecouplerSnapshot Decoupler(string vesselId, int index)
             => ByIndex(Vessel(vesselId).Decouplers, index, static d => d.Index, "decoupler");
+
+        private SrbSnapshot Srb(string vesselId, int index)
+            => ByIndex(Vessel(vesselId).Srb, index, static s => s.Index, "srb");
+
+        private SrbSegmentSnapshot SrbSegment(string vesselId, int srbIndex, int index)
+            => ByIndex(Srb(vesselId, srbIndex).Segments, index, static s => s.Index, "srb segment");
 
         private PartSnapshot Part(string vesselId, int index)
             => ByIndex(Vessel(vesselId).Parts, index, static pt => pt.Index, "part");

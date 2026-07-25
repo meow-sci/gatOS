@@ -348,6 +348,12 @@ public sealed class HttpServerTests
             ("vessels/by-id/v1/engines/0/active", "1"),
             ("vessels/by-id/v1/engines/0/vac_thrust", "250000"),
             ("vessels/by-id/v1/tanks/methalox/amount", "100"),
+            // Field-level parity for the SRB surface: the walk over the one /sim tree lights these
+            // up on HTTP (and MQTT) with no transport-specific code.
+            ("vessels/by-id/v1/srb/0/substance", "apcp"),
+            ("vessels/by-id/v1/srb/0/mass_burnable", "20000"),
+            ("vessels/by-id/v1/srb/0/engine", "0"),
+            ("vessels/by-id/v1/srb/0/segments/0/grain", "star"),
             ("vessels/by-id/v1/ctl/throttle", "0"),
             ("vessels/active/situation", "Freefall"),
         ];
@@ -512,6 +518,17 @@ public sealed class HttpServerTests
                 Engines = [new EngineSnapshot(0, true, 250000, 312)],
                 Lights = [new LightSnapshot(0, false, 1, new double3Snap(1, 1, 1))],
                 Tanks = [new TankSnapshot("methalox", 100, 200)],
+                // A solid motor: its propellant is NOT a tank, so srb/ is the only field-level
+                // path that reports a booster's remaining grain.
+                Srb =
+                [
+                    new SrbSnapshot(0, true, 21000, 40000)
+                    {
+                        EngineIndex = 0, Substance = "apcp", Grain = "star",
+                        MassUnburnableKg = 1000, MassBurnableKg = 20000,
+                        Segments = [new SrbSegmentSnapshot(0, 21000, 40000) { Grain = "star" }],
+                    },
+                ],
             }) with
             {
                 System = new SystemSnapshot("Kerbol", "Kerth", "Kerbol"),

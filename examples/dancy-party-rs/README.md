@@ -53,7 +53,7 @@ the bars, modal popups, and the live color band paint anything.
 ## Data interface — the `/sim` filesystem
 
 Everything is driven through the lights under each vessel (see
-[`SPEC_9P_FILESYSTEM.md` §3.4.11](../../SPEC_9P_FILESYSTEM.md)):
+[`SPEC_9P_FILESYSTEM.md` §3.4.12](../../SPEC_9P_FILESYSTEM.md)):
 
 | what                | path                                        | write              |
 | ------------------- | ------------------------------------------- | ------------------ |

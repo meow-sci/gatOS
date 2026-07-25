@@ -247,6 +247,7 @@ internal static class VesselReader
             Lights = SampleLights(vehicle, links),
             Docking = SampleDocking(vehicle),
             Decouplers = SampleDecouplers(vehicle),
+            Srb = SampleSrbs(vehicle),
             Encounters = SampleEncounters(vehicle),
         };
     }
@@ -431,13 +432,20 @@ internal static class VesselReader
 
     // ---- tanks -------------------------------------------------------------------------------
 
-    [KsaAnchor("vehicle.Parts.Modules.Get<Tank>().Moles; vehicle.Parts.Moles.GetState(mole).Mass; Mole.FilledFraction",
-        SourceFile = "KSA/Tank.cs / KSA/Mole.cs", Verified = "2026-07-14", GameVersion = "2026.7.5.4892", Risk = ChurnRisk.Low,
+    [KsaAnchor("vehicle.Parts.Modules.Get<Tank>().Moles; vehicle.Parts.Moles.GetState(mole).Mass; Mole.GetStoredMass; Mole.FilledFraction",
+        SourceFile = "KSA/Tank.cs / KSA/Mole.cs", Verified = "2026-07-24", GameVersion = "2026.7.9.5018", Risk = ChurnRisk.Low,
         Notes = "A Tank holds one Mole per substance; amounts live in the SoA Moles state list. "
             + "4892: the rev-4884 combustion->Reactions refactor is additive here (Tank gains "
             + "RoleAffinity/AssignedMix; Moles/MoleState/FilledFraction untouched) - tanks now "
             + "auto-assign a propellant mix by affinity and the substance catalog changed, so tank "
-            + "resource names on new vehicles differ from the 4826 era.")]
+            + "resource names on new vehicles differ from the 4826 era. "
+            + "5018/rev 4992 (solid rocket motors): Mole.GetLiquidMass -> GetStoredMass (and "
+            + "GetLiquidVolume -> GetStoredVolume) - a rename that generalizes Liquid to "
+            + "Liquid|Solid. Tank moles are liquids, so the value is unchanged here. Solid "
+            + "propellant lives on the NEW SolidGrainSegment module (ISubstanceStore, not a Tank) "
+            + "and is therefore NOT listed in tanks/ - but it IS counted in Vehicle.PropellantMass, "
+            + "so on SRB vehicles mass/propellant > sum(tanks). Solid propellant is surfaced "
+            + "separately by SampleSrbs (srb/<n>/), not here.")]
     private static List<TankSnapshot> SampleTanks(Vehicle vehicle)
     {
         var tanks = new List<TankSnapshot>();
@@ -448,7 +456,7 @@ internal static class VesselReader
             {
                 ref readonly var state = ref moleStates.GetState(mole);
                 double amount = state.Mass;
-                double capacity = mole.GetLiquidMass(mole.ContainerVolume);
+                double capacity = mole.GetStoredMass(mole.ContainerVolume);
                 tanks.Add(new TankSnapshot(mole.SubstancePhase.Name,
                     Sanitize.Finite(amount), Sanitize.Finite(capacity))
                 {
@@ -458,6 +466,132 @@ internal static class VesselReader
         }
 
         return tanks;
+    }
+
+    // ---- solid rocket motors (SRBs) -------------------------------------------------------------
+
+    [KsaAnchor("vehicle.Parts.RocketCores.{Modules,GetState} filtered to SolidMotor; "
+        + "SolidMotor.{Stack,Propellant,DefaultGeometry,UnburnableGrainMass,AreaRatio,ComputeBurningArea}; "
+        + "SolidGrainSegment.{Grain,Propellant,InitialGrainMass,UnburnableGrainMass,CasingInnerRadius,"
+        + "Length,GrainVolume,ComputeGrainDepth}; RocketCoreState.{Throttle,IsPropellantAvailable,"
+        + "MassFlowRate,ThrustTimeRemaining,Conditions.{Core,Exit}.{Pressure,Temperature}}",
+        SourceFile = "KSA/SolidMotor.cs / KSA/SolidGrainSegment.cs / KSA/RocketCoreState.cs",
+        Verified = "2026-07-24", GameVersion = "2026.7.9.5018", Risk = ChurnRisk.Medium,
+        Notes = "5018/rev 4992 added solid rocket motors. A SolidMotor is a RocketCore (so it lives in "
+            + "the shared Parts.RocketCores SoA list alongside Combustor) driven by an ordinary "
+            + "EngineController - which is why SRBs already appear in engines/<n>. Its propellant is "
+            + "NOT a Tank: it lives in SolidGrainSegment.Grain (a solid Mole), invisible to "
+            + "Modules.Get<Tank>() and therefore to tanks/. This reader is the only place solid "
+            + "propellant state is readable. Read-only by design: a lit solid cannot be throttled or "
+            + "shut down (SolidMotor.UpdateState forces Throttle to 0 or 1), so ignition stays on the "
+            + "engine surface. Filtering Parts.RocketCores.Modules by type deliberately avoids the "
+            + "brand-new rev-4990 StateList.GetUsing<TSub>() segment enumerator - Modules/GetState are "
+            + "the long-stable APIs the rest of this reader uses.")]
+    private static IReadOnlyList<SrbSnapshot> SampleSrbs(Vehicle vehicle)
+    {
+        var cores = vehicle.Parts.RocketCores;
+        var coreModules = cores.Modules;
+        if (coreModules.Length == 0)
+            return [];
+
+        // GP3/GP1: most vessels carry no SRB — allocate nothing until the first one is found.
+        List<SrbSnapshot>? srbs = null;
+        var moleStates = vehicle.Parts.Moles.States;
+        var engines = vehicle.Parts.Modules.Get<EngineController>();
+        var index = 0;
+
+        for (var i = 0; i < coreModules.Length; i++)
+        {
+            if (coreModules[i] is not SolidMotor motor)
+                continue;
+
+            ref readonly var st = ref cores.GetState(motor);
+            var stack = motor.Stack;
+            var segments = stack.Segments;
+
+            double mass = 0, massInitial = 0;
+            List<SrbSegmentSnapshot>? segSnaps = null;
+            for (var s = 0; s < segments.Length; s++)
+            {
+                var seg = segments[s];
+                var grain = seg.Grain;
+                double segMass = grain is not null ? moleStates[grain.StatesIdx].Mass : 0;
+                double segInitial = seg.InitialGrainMass;
+                double segUnburnable = seg.UnburnableGrainMass;
+                mass += segMass;
+                massInitial += segInitial;
+
+                (segSnaps ??= new List<SrbSegmentSnapshot>(segments.Length)).Add(
+                    new SrbSegmentSnapshot(s, Sanitize.Finite(segMass), Sanitize.Finite(segInitial))
+                    {
+                        PartInstanceId = seg.FullPart.InstanceId,
+                        Substance = seg.Propellant?.Name ?? "",
+                        Grain = seg.Geometry.Id,
+                        MassUnburnableKg = Sanitize.Finite(segUnburnable),
+                        Fraction = UsableFraction(segMass, segInitial, segUnburnable),
+                        RadiusM = Sanitize.Finite(seg.CasingInnerRadius),
+                        LengthM = Sanitize.Finite(seg.Length),
+                        VolumeM3 = Sanitize.Finite(seg.GrainVolume),
+                        // ComputeGrainDepth returns depth normalized by the casing radius (the LUT's
+                        // own unit); scale it back to meters so the published value has a real unit.
+                        BurnDepthM = Sanitize.Finite(seg.ComputeGrainDepth((float)segMass)
+                                                     * seg.CasingInnerRadius),
+                    });
+            }
+
+            double unburnable = motor.UnburnableGrainMass;
+            srbs ??= new List<SrbSnapshot>();
+            srbs.Add(new SrbSnapshot(index, st.Throttle > 0,
+                Sanitize.Finite(mass), Sanitize.Finite(massInitial))
+            {
+                EngineIndex = EngineIndexOf(engines, motor.Controller),
+                PartInstanceId = motor.Parent.FullPart.InstanceId,
+                Substance = motor.Propellant.Name,
+                Grain = motor.DefaultGeometry.Id,
+                GrainShape = motor.DefaultGeometry.Shape,
+                StackValid = stack.IsValid,
+                StackError = stack.ErrorMessage ?? "",
+                PropellantAvailable = st.IsPropellantAvailable,
+                MassUnburnableKg = Sanitize.Finite(unburnable),
+                MassBurnableKg = Sanitize.Finite(Math.Max(mass - unburnable, 0)),
+                Fraction = UsableFraction(mass, massInitial, unburnable),
+                MassFlowKgS = Sanitize.Finite(st.MassFlowRate),
+                BurnTimeRemainingS = Sanitize.Finite(st.ThrustTimeRemaining),
+                ChamberPressurePa = Sanitize.Finite(st.Conditions.Core.Pressure),
+                ChamberTemperatureK = Sanitize.Finite(st.Conditions.Core.Temperature),
+                ExitPressurePa = Sanitize.Finite(st.Conditions.Exit.Pressure),
+                ExitTemperatureK = Sanitize.Finite(st.Conditions.Exit.Temperature),
+                BurningAreaM2 = Sanitize.Finite(motor.ComputeBurningArea(moleStates)),
+                AreaRatio = Sanitize.Finite(motor.AreaRatio),
+                Segments = (IReadOnlyList<SrbSegmentSnapshot>?)segSnaps ?? [],
+            });
+            index++;
+        }
+
+        return (IReadOnlyList<SrbSnapshot>?)srbs ?? [];
+    }
+
+    /// <summary>Usable grain remaining as a fraction 0..1 of the usable grain when new.</summary>
+    private static double UsableFraction(double mass, double initial, double unburnable)
+    {
+        var usableNew = initial - unburnable;
+        if (!(usableNew > 0))
+            return 0;
+        return Math.Clamp(Sanitize.Finite((mass - unburnable) / usableNew), 0, 1);
+    }
+
+    /// <summary>
+    ///     The <c>engines/&lt;n&gt;</c> ordinal of the controller that ignites a solid motor, or
+    ///     <c>-1</c>. Matches <see cref="SampleEngines"/>'s indexing (position in the same span).
+    /// </summary>
+    private static int EngineIndexOf(ReadOnlySpan<EngineController> engines, IActivate? controller)
+    {
+        if (controller is not EngineController owner)
+            return -1;
+        for (var i = 0; i < engines.Length; i++)
+            if (ReferenceEquals(engines[i], owner))
+                return i;
+        return -1;
     }
 
     // ---- battery / power ----------------------------------------------------------------------

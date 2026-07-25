@@ -2,7 +2,7 @@
 
 > Every telemetry read gatOS performs against KSA. Each row: the `/sim` path it feeds, the gatOS code
 > site, the KSA member it binds to, the decompiled-source file that defines that member, the unit/format,
-> the churn risk, and the **4939 status** (✅ unaffected · ⚠️ silent semantic/unit drift · ❌ compile break).
+> the churn risk, and the **5018 status** (✅ unaffected · ⚠️ silent semantic/unit drift · ❌ compile break).
 >
 > Source of truth = the `[KsaAnchor]` attributes in the cited files. API catalog = [`SPEC_9P_FILESYSTEM.md`](../SPEC_9P_FILESYSTEM.md).
 > Anchor mirror = [`docs/KSA_INTEGRATION_MATRIX.md`](../docs/KSA_INTEGRATION_MATRIX.md). Decomp paths are
@@ -21,7 +21,7 @@ Performed directly in `gatOS.GameMod/Game/TelemetrySampler.cs` (not in a reader)
 2026-06-27):** the sampler methods now carry `[KsaAnchor]`s, so the census is complete. All `Universe`
 statics (+ `VersionInfo.Current`).
 
-| `/sim` path | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4980 |
+| `/sim` path | gatOS site | KSA member | Decomp file | Unit/format | Risk | 5018 |
 |---|---|---|---|---|---|---|
 | `time/ut` | `TelemetrySampler.cs:92` | `Universe.GetElapsedSimTime().Seconds()` | `KSA/Universe.cs` | seconds, double | Low | ✅ |
 | `time/warp` | `:93` | `Universe.SimulationSpeed` | `KSA/Universe.cs` | factor | Low | ✅ |
@@ -46,7 +46,7 @@ statics (+ `VersionInfo.Current`).
 `gatOS.GameMod/Game/Ksa/Readers/VesselReader.cs`. Sampled for every vessel regardless of the
 `telemetry_vessel_detail` gate. Anchor: `VesselReader.Sample`.
 
-| `/sim` path (under `vessels/by-id/<id>/`) | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4980 |
+| `/sim` path (under `vessels/by-id/<id>/`) | gatOS site | KSA member | Decomp file | Unit/format | Risk | 5018 |
 |---|---|---|---|---|---|---|
 | `id`, `name` | `:89,90` | `Vehicle.Id` (name = id; KSA has no display name) | `KSA/Vehicle.cs` | string | Low | ✅ |
 | `situation` | `:91` | `Vehicle.Situation.ToString()` | `KSA/Vehicle.cs`, `KSA/Situation*.cs` | string | Low | ⚠️ flags |
@@ -56,14 +56,14 @@ statics (+ `VersionInfo.Current`).
 | `attitude/quat` | `:84` | `Vehicle.GetBody2Cci()` | `KSA/Vehicle.cs` | quat `x y z w` | Low | ✅ |
 | `attitude/rates` | `:85` | `Vehicle.BodyRates` | `KSA/Vehicle.cs` | rad/s `x y z` | Low | ✅ |
 | `altitude/{barometric,radar}` | `:102,103` | `Vehicle.GetBarometricAltitude()` / `GetRadarAltitude()` | `KSA/Vehicle.cs` | m | Low | ✅ |
-| `mass/{total,dry,propellant}` | `:104-106` | `Vehicle.TotalMass` / `InertMass` / `PropellantMass` | `KSA/Vehicle.cs` | kg | Low | ✅ |
+| `mass/{total,dry,propellant}` | `:104-106` | `Vehicle.TotalMass` / `InertMass` / `PropellantMass` | `KSA/Vehicle.cs` | kg | Low | ⚠️ ˢ |
 | `orbit/{apoapsis,periapsis,ecc,inc,sma,period}` | `:75-82` | `Vehicle.Orbit` elements (radii→alt; inc rad→deg) | `KSA/Orbit.cs` | m / – / deg / s | Low | ✅ |
 | `battery/{charge,fraction}` | `:86,339` | `Vehicle.Parts.Batteries.GetState(b).Charge.Value()` ÷ `b.MaximumCapacity.Value()` | `KSA/Battery.cs` | fraction 0..1 | Low | ✅ (G2) |
 | `ctl/lights` (readback) | `:112` | `Vehicle.LightsOn` | `KSA/Vehicle.cs` | 0/1 | Low | ✅ |
 | `ctl/engine` (readback) | `:125` | `Vehicle.IsSet(VehicleEngine.MainIgnite, false)` | `KSA/Vehicle.cs` | 0/1 | Medium | ✅ ᵈ |
 | `controllable` | `:133` | `Vehicle.IsControllable` (`_overrideIsControllable \|\| Parts.Controls.NumModules > 0`) | `KSA/Vehicle.cs` | 0/1 | Medium | ✅ (G3, new) |
 | `engines/<n>/{active,vac_thrust,isp}` | `:256` | `Vehicle.Parts.Modules.Get<EngineController>()`; `.IsActive`, `.VacuumData.{ThrustMax,MassFlowRateMax}` | `KSA/EngineController.cs` | bool / N / s | Medium | ✅ ᵈ |
-| `tanks/<r>/{amount,capacity,fraction}` | `:312` | `Tank.Moles`; `Parts.Moles.GetState(mole).Mass`; `mole.GetLiquidMass(ContainerVolume)`; `mole.FilledFraction` | `KSA/Tank.cs`, `KSA/Mole.cs` | kg / kg / 0..1 | Low | ✅ |
+| `tanks/<r>/{amount,capacity,fraction}` | `:312` | `Tank.Moles`; `Parts.Moles.GetState(mole).Mass`; `mole.GetStoredMass(ContainerVolume)`; `mole.FilledFraction` | `KSA/Tank.cs`, `KSA/Mole.cs` | kg / kg / 0..1 | Low | ⚠️ **fixed** ˢ |
 | `animations/<n>/{current,state,goal}` | `:596` | `KeyframeAnimationModule.{TimeGoal,Shared.Duration}`; `State.{TimeCurrent,DeploymentState}` via `ModuleStateful` | `KSA/KeyframeAnimationModule.cs` | 0..1 / enum | Medium | ✅ |
 
 **⚠️ `situation`** — `Vehicle.Situation` became a `[Flags]` bitfield (KSA rev 4645, *already* in the
@@ -80,6 +80,25 @@ the strongly-typed `Joules` struct (rev 4681); `.Value()` still returns the joul
 decoupled/undocked stage now *inherits* the parent's control state instead of resetting to defaults —
 see the [4826 findings](#4826-findings) below.
 
+**ˢ solid rocket motors (5018, rev 4992)** — KSA generalized propellant storage from liquid-only to
+`ISubstanceStore` (`Liquid | Solid`). Three consequences:
+- **Compile break, fixed (the pass's only one):** `Mole.GetLiquidMass`/`GetLiquidVolume` were renamed
+  `GetStoredMass`/`GetStoredVolume` (and `ConsumeLiquid`/`ProduceLiquid` → `ConsumeStored`/`ProduceStored`;
+  `ContainsLiquid` deleted). `VesselReader.SampleTanks` was updated. **Values are unchanged** — `Tank`
+  moles are liquids, and for a liquid the new method is the old one.
+- **Coverage gap, closed by the new `srb/<n>/` surface:** solid propellant lives on the **new
+  `SolidGrainSegment` module**, which is an `ISubstanceStore` but **not a `Tank`**, so it is invisible
+  to `Modules.Get<Tank>()` and therefore **absent from `tanks/`** — while `Vehicle.PropellantMass`
+  (now recomputed from `Parts.SubstanceStores`) **does** include grain mass, making
+  **`mass/propellant` > Σ `tanks/<r>/amount`** on a booster vessel. `VesselReader.SampleSrbs` closes
+  it: `srb/<n>/` (SPEC §3.4.8) reports each motor's grain mass / usable mass / fraction / burn time /
+  mass flow, chamber + exit conditions, burning area and stack validity, with a per-segment
+  `segments/<m>/` breakdown — so `mass/propellant` − Σ `tanks/` = Σ `srb/<n>/mass` is checkable from
+  `/sim`. **Read-only**: KSA forces a solid's throttle to 0 or 1 (`SolidMotor.UpdateState`), so
+  ignition stays on the engine surface and `srb/<n>/engine` cross-links to `engines/<n>`.
+- **Free win:** `/sim/debug/refuel` (`Vehicle.RefillConsumables()`) now walks `ISubstanceStore` instead of
+  `Tank`, so it refills SRB grains too — no gatOS change needed.
+
 ---
 
 ## Vessel detail reads — `VesselReader.BuildFull` (gated by `telemetry_vessel_detail`)
@@ -91,7 +110,7 @@ are cached per vehicle in `Readers/AnimationLinks.cs` (GP3), rebuilt on module-c
 
 ### Position / navball / environment
 
-| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 4980 |
+| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 5018 |
 |---|---|---|---|---|---|
 | `position/ecl`, `velocity/cci`, `com` | `:154-156` | `Vehicle.GetPositionEcl()`, `GetVelocityCci()`, `CenterOfMassAsmb` | `KSA/Vehicle.cs` | Low | ✅ |
 | `navball/{pitch,yaw,roll,twr,deltav,frame,speed}` | `:223` | `Vehicle.NavBallData.{AttitudeAngles(int3 deg),ThrustWeightRatio,DeltaVInVacuum,Frame,Speed}` | `KSA/NavBallData.cs` | Medium | ✅ |
@@ -101,7 +120,7 @@ are cached per vehicle in `Readers/AnimationLinks.cs` (GP3), rebuilt on module-c
 
 ### Writable-setpoint read-backs (so `ctl/*` files report the real state)
 
-| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 4980 |
+| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 5018 |
 |---|---|---|---|---|---|
 | `ctl/throttle` | `:169` | `Vehicle.GetManualThrottle()` | `KSA/Vehicle.cs` (`:824`) | Medium | ✅ ᵈ |
 | `ctl/rcs` | `:170` | any `ThrusterController.IsActive` | `KSA/ThrusterController.cs` | Medium | ✅ |
@@ -110,9 +129,10 @@ are cached per vehicle in `Readers/AnimationLinks.cs` (GP3), rebuilt on module-c
 
 ### Per-module reads
 
-| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 4980 |
+| `/sim` path | gatOS site | KSA member | Decomp file | Risk | 5018 |
 |---|---|---|---|---|---|
 | `engines/<n>/{throttle,propellant,min_throttle}` | `:278` | `EngineControllerState.{CommandThrottle,IsPropellantAvailable}`; `EngineController.MinimumThrottle` | `KSA/EngineControllerState.cs` | Medium | ✅ |
+| `srb/<n>/*` + `srb/<n>/segments/<m>/*` | `:490` | `Vehicle.Parts.RocketCores.{Modules,GetState}` filtered to `SolidMotor`; `SolidMotor.{Stack,Propellant,DefaultGeometry,UnburnableGrainMass,AreaRatio,ComputeBurningArea}`; `SolidGrainSegment.{Grain,Propellant,InitialGrainMass,UnburnableGrainMass,CasingInnerRadius,Length,GrainVolume,ComputeGrainDepth}`; `RocketCoreState.{Throttle,IsPropellantAvailable,MassFlowRate,ThrustTimeRemaining,Conditions}` | `KSA/SolidMotor.cs`, `KSA/SolidGrainSegment.cs`, `KSA/RocketCoreState.cs` | Medium | ✅ **new (5018)** ˢ |
 | `rcs/<n>/{active,propellant,map}` | `:387` | `ThrusterController.IsActive`; `ThrusterControllerState.{ControlMap,IsPropellantAvailable}` | `KSA/ThrusterController.cs` | Medium | ✅ ᵈ |
 | `solar/<n>/{produced,occluded,sun_aoa,efficiency,tracker_angle}` | `:419` | `SolarPanelState.{Produced,IsOccluded,SunAoA,SunEfficiency}`; `SolarTrackerState.CurrentAngle` | `KSA/SolarPanel.cs`, `KSA/SolarTracker.cs`, `KSA/SolarPanelState.cs` | Medium | ✅ (G2: W) |
 | `generators/<n>/{active,produced}` | `:476` | `GeneratorState.{Active,Produced}` | `KSA/Generator.cs`, `KSA/GeneratorState.cs` | Medium | ✅ (G2: W) |
@@ -137,7 +157,7 @@ change (the cheap "vehicle was edited" signal — KSA exposes no part-tree versi
 counts are template-fixed, so the top-level count stays the right signal) or every 10 s of sim time.
 Hot path = one `Parts.Count` read per vehicle per tick. Anchor: `PartsReader.cs:30`.
 
-| `/sim` path (under `…/parts/<n>/`) | gatOS site | KSA member | Decomp file | Unit/format | Risk | 4980 |
+| `/sim` path (under `…/parts/<n>/`) | gatOS site | KSA member | Decomp file | Unit/format | Risk | 5018 |
 |---|---|---|---|---|---|---|
 | `instance_id` | `PartsReader.cs:60` | `Part.InstanceId` | `KSA/Part.cs` | uint (the **stable** weld handle) | Low | ✅ |
 | `id` | `:60` | `Part.Id` | `KSA/Part.cs` | string (can collide across instances) | Low | ✅ |
@@ -188,7 +208,7 @@ write side [`ksa-write-surface.md#thug-life`](ksa-write-surface.md#thug-life)). 
 build at the `[KsaAnchor]` site (these are non-reflective), so they are caught at compile time — but
 frame-math is the classic *silent* drift, so re-verify the quad's pose in a live flight after any update.
 
-| read | gatOS site | KSA / Brutal member | Decomp file | Risk | 4980 |
+| read | gatOS site | KSA / Brutal member | Decomp file | Risk | 5018 |
 |---|---|---|---|---|---|
 | camera view-projection | `ThugLifeQuadRenderer.TryComputeModelEgo` | `Program.GetMainCamera()`; `Camera.MVP.viewProjection`; `Program.SetViewport` | `KSA/Program.cs`, `KSA/Camera.cs` | **High** | ✅ |
 | vehicle ego transform | same | `Vehicle.GetMatrixAsmb2Ego(Camera)`; `Vehicle.Asmb2Ego` | `KSA/Vehicle.cs` | **High** | ✅ |
@@ -281,6 +301,73 @@ report faithfully, none a member drift:
 - **Content value tweak**: `CoreElectricalAGameData.xml` solar cell `SolarPanelB_CellA`
   `<Produced W="50"/>` → `W="100"` — same unit, read at runtime, so `solar/<n>/produced` simply reports
   the new stock value.
+
+---
+
+## ⚠️ 5018 read-surface findings (playbook pass 2026-07-24) {#5018-findings}
+
+Full playbook pass 2026-07-24, `2026.7.8.4980` → `2026.7.9.5018` (changelog gapless — `fromRevision`
+4980, revs 4981–5018 logged). **One compile break, fixed; one coverage gap opened; everything else
+clean.** Build + full test suite green against the 5018 DLLs (0 warnings, 681 passed / 11 skipped).
+
+- **⚠️ COMPILE BREAK, FIXED — `Mole.GetLiquidMass` → `Mole.GetStoredMass` (rev 4992, solid rocket
+  motors).** The whole propellant-storage layer was generalized from `Liquid` to `Liquid | Solid` behind
+  a new `ISubstanceStore` interface: `Mole` gained `IsSolid`/`Solid`/`IsStorable`,
+  `GetLiquidMass`/`GetLiquidVolume` became `GetStoredMass`/`GetStoredVolume`,
+  `ConsumeLiquid`/`ProduceLiquid` became `ConsumeStored`/`ProduceStored`, and `ContainsLiquid` was
+  deleted. `VesselReader.SampleTanks` (`tanks/<r>/capacity`) was the single call site;
+  anchor re-verified `2026-07-24`/`2026.7.9.5018`. **Zero value change** — `Tank` moles are liquids and
+  `GetStoredMass` reduces to `Liquid.ComputeMass` for them.
+- **✅ COVERAGE GAP CLOSED — the new `srb/<n>/` read surface.** The new `SolidGrainSegment` module
+  (`KSA/SolidGrainSegment.cs`) holds one solid `Mole` and implements `ISubstanceStore`, but it is
+  **not a `Tank`**, so `Modules.Get<Tank>()` never sees it and `tanks/` cannot show a booster. At the
+  same time `Vehicle.PropellantMass` is now recomputed from `Parts.SubstanceStores`
+  (`VehicleProperties.RecomputeMassProperties` retyped `ReadOnlySpan<Tank>` →
+  `ReadOnlySpan<ISubstanceStore>`) and **does** include grain mass — so on a booster vessel
+  `mass/propellant` > Σ `tanks/<r>/amount`. `VesselReader.SampleSrbs` closes this with a dedicated
+  `srb/<n>/` tree (SPEC §3.4.8): stack validity, propellant/grain identity, mass / usable mass /
+  fraction / burn time / mass flow, chamber + exit conditions, burning area, and a per-segment
+  `segments/<m>/` breakdown — so `mass/propellant` − Σ `tanks/` = Σ `srb/<n>/mass` is now checkable
+  from `/sim`. Read-only by design (see the ˢ footnote).
+- **Encounter candidacy widened (rev 4991)** — `PatchedConic` replaced the flat
+  `SphereOfInfluence <= 10_000_000` cutoff with an orbital-geometry test (radius-band overlap + an
+  approximate MOID at the mutual nodes, `ENCOUNTER_MOID_SOI_MARGIN = 4.0`), and also excludes siblings
+  orbiting entirely inside our periapsis. `FlightPlan.FAST_SOI_PATCH_SIZE` was removed (unbound).
+  `Encounter.cs` is byte-identical and `Vehicle.Patch.Encounters` is unchanged, so this is **more rows,
+  same shape**: small-SOI moons (Phobos, Deimos) now produce `encounters/<n>/` entries that 4980 silently
+  skipped. Guest programs that assumed "no encounter entry ⇒ no approach" for small moons should be
+  re-checked. Rev 4989 additionally ends a patch on a NaN `timeToFirstEncounter` (was infinity-only).
+- **Module storage restructured, API-compatible (rev 4990)** — `Module.List` now stores same-concrete-type
+  modules in contiguous segments (`IModuleTypeList.GetUsing<T>()` → `GetSegmentUsing<T>(int, out bool)`,
+  new `ModuleList.SegmentEnumerator<T>`, `ModuleStateful.StateList` sync callbacks). **gatOS is
+  unaffected**: it only calls `ModuleList.Get<TModule>()` / `HasAny<TModule>()` / `GetState` /
+  `TryGetFrom` / `GetModuleAndAllMutableStatesForInitialization`, all signature- and semantics-identical.
+  Worth noting for the positional `/sim` indices (`engines/<n>`, `rcs/<n>`, …): those come from a single
+  concrete-type span, which segmentation does not reorder.
+- **`ModuleBase.OnPartCreated` → `OnFullPartCreated`** — a virtual gatOS never overrides; the `Part.cs`
+  call site is unchanged, so the `SolarPanel.KeyframeAnimationModule` link that `AnimationLinks` reads is
+  still established at the same point.
+- **Power modules gained `IFlowManagerHost` (additive)** — `SolarPanel`, `Generator`, `PowerConsumer` now
+  implement it (a `RecreateManager`/`OnDrawUi` pair hoisted out of `Vehicle.OnDrawUi`). Every bound state
+  field (`SolarPanelState`, `GeneratorState`, `PowerConsumerState.Consumed`) is untouched.
+- **`Part.Connector` gained `Capabilities`/`EndpointCapabilities` (rev 4992/5007, additive)** — new
+  `ConnectorCapability` flags (Electricity / BulkFluid / ServiceFluid / SolidMotorCase / DecouplerJoint).
+  rev 5007 swapped `_decouplerConnections` for the `DecouplerJoint` flag, but `Decoupler.cs` is
+  byte-identical and gatOS binds only `Decoupler.IsActive`/`SetIsActive`, so decoupler reads and writes
+  are unaffected. `PartsReader`'s bound members (`InstanceId`/`Id`/`DisplayName`/`SubParts`/`Scale`/
+  `PositionVehicleAsmb`/`Asmb2VehicleAsmb`) are unchanged.
+- **No frames/numerics drift** — nothing under `Brutal.Core.Numerics` (or any `Brutal*` decomp namespace
+  except `RenderCore/SimpleVkTexture.cs`, which only lost a `[Conditional("DEBUG")]` logging helper)
+  changed. `Universe.cs`, `Orbit.cs`, `Celestial.cs` member surface, `NavBallData.cs`, `Encounter.cs`,
+  `Battery.cs`, `RocketControllerData.cs`, `EngineControllerState.cs`, `ThrusterController.cs`,
+  `FlightComputer.cs`, `DockingPort.cs`, `Decoupler.cs`, `LightModule.cs`, `InputEvents.cs`, `Camera.cs`
+  are byte-identical. `Content/Core/Astronomicals.xml` changed only in Earth ground-clutter/tree
+  authoring — **no body mass, radius, SOI, or orbital-element edits**, so `/sim/bodies/*` is untouched.
+- **`EngineController` covers SRBs for free** — `SolidMotor : RocketCore`, and an SRB is still an
+  `EngineController` with `SolidMotor` cores, so `engines/<n>/{active,vac_thrust,isp}` populates for
+  boosters. `EngineController`'s only diff is a `Combustor` type-test in save-data flow-rule handling;
+  `MinimumThrottle`/`IsActive`/`VacuumData`/`SetIsActive` are unchanged. (Throttle *commands* to a solid
+  are inert by physics, not by API — see the [write page](ksa-write-surface.md#5018-findings).)
 
 ---
 
@@ -430,7 +517,7 @@ differ, only change the values it observes. See [`non-ksa-surface.md`](non-ksa-s
 `gatOS.GameMod/Game/Ksa/Readers/BodyReader.cs`. Most reads go through the `IParentBody` interface
 (implemented by both `Celestial` and `StellarBody`), so a body-type rename surfaces in one place.
 
-| `/sim` path | gatOS site | KSA member | Decomp file | Unit | Risk | 4980 |
+| `/sim` path | gatOS site | KSA member | Decomp file | Unit | Risk | 5018 |
 |---|---|---|---|---|---|---|
 | (catalog) | `:24` | `Universe.CurrentSystem.All.UnsafeAsList()` → `Celestial`; `Universe.WorldSun` (`StellarBody`); `CelestialSystem.HomeBody` | `KSA/CelestialSystem.cs`, `KSA/Universe.cs` | – | Low | ✅ |
 | `system/{name,home,sun}` | `:35` | `WorldSun.Id`, `HomeBody.Id` | `KSA/Universe.cs` | string | Low | ✅ |

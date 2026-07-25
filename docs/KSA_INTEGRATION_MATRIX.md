@@ -15,22 +15,34 @@ new events) and **G4** (full control surface: throttle/staging/attitude/burn, RC
 they add **no** KSA coupling — every transport speaks the same `SnapshotStore` (reads) and
 `ICommandSink`/`SimCommand` (writes), so this matrix (the KSA-touching surface) is unaffected by them.
 
-**Verified:** **2026-07-22 against `2026.7.8.4980`** (full solution build green, 0 warnings; full
-decomp + Content diff between the side-by-side 4939 and 4980 checkouts — the 4980 changelog is gapless,
-`fromRevision` 4939 = the prior baseline). **One compile break, fixed same-day**: rev 4943 removed
-`InputEvents.VehicleDockingInputData.OldMeanRadius` — `DockingActuator.Undock` dropped the field from
-its enqueue (now `{Vehicle, DockingPort, Undock}`, matching the stock UnDock menu item; downstream
-`DockingPort.Undock` → `Vehicle.Split(Connector, PushoffImpulse)` byte-identical). No other bound
-member, reflection accessor, or Harmony hook target changed. Two inherited semantic drifts (no API
-change): the new `FlightComputer.RCSMode` toggle (revs 4946/4949 — auto attitude holds on an RCS-only
-vessel silently stop actuating while RCS is toggled off) and the `RollMode` default flip
-`Up`→`Decoupled` (rev 4978 — a fresh FC no longer holds `attitude_target`'s roll component). Behavior
-notes (control-module name stamps survive splits; density fallback mass; fuel-flow default/persistence;
-the verlet high-warp fix; the additive screenshot feature and its thug_life sample-count caveat) are
-catalogued in the [read-surface 4980 findings](../scope/ksa-read-surface.md#4980-findings) /
-[write-surface 4980 findings](../scope/ksa-write-surface.md#4980-findings). Rows showing an earlier
-per-member `Verified` date bind to members **unchanged** in 4980 (their compatibility is confirmed by
-the green build + the diff). Prior passes: 2026-07-16 against `2026.7.6.4939` (clean; fuel-line/
+**Verified:** **2026-07-24 against `2026.7.9.5018`** (full solution build green, 0 warnings; full test
+suite 681 passed / 11 skipped / 0 failed; full decomp + Content diff between the side-by-side 4980 and
+5018 checkouts — the 5018 changelog is gapless, `fromRevision` 4980 = the prior baseline). **One compile
+break, fixed**: rev 4992 (solid rocket motors) generalized propellant storage from liquid-only to a new
+`ISubstanceStore` (`Liquid | Solid`) abstraction and renamed `Mole.GetLiquidMass` → `Mole.GetStoredMass`
+(also `GetLiquidVolume` → `GetStoredVolume`, `Consume`/`ProduceLiquid` → `…Stored`, `ContainsLiquid`
+deleted) — `VesselReader.SampleTanks` (`tanks/<r>/capacity`) was the one call site, and the **value is
+unchanged** because `Tank` moles are liquids. No other bound member, reflection accessor, or Harmony
+hook target changed (`Program.RenderGame` and `SuperMeshRenderSystem.cs` are byte-identical; the two
+hook targets only moved lines and resolve by name). **One coverage gap opened and closed in the same
+work item**: SRB solid propellant lives on the new **`SolidGrainSegment`** module — an
+`ISubstanceStore`, **not** a `Tank` — so it is absent from `tanks/`, while `Vehicle.PropellantMass`
+(now computed from `Parts.SubstanceStores`) *does* include it. gatOS gained a dedicated **`srb/<n>/`**
+read surface (SPEC §3.4.8, `VesselReader.SampleSrbs`) covering each motor's grain mass / usable mass /
+fraction / burn time / mass flow, chamber + exit conditions, burning area, stack validity and a
+per-segment `segments/<m>/` breakdown — read-only, because KSA forces a solid's throttle to 0 or 1, so
+ignition stays on the engine surface (`srb/<n>/engine` cross-links to `engines/<n>`). Two inherited semantic
+drifts (no API change): encounter candidacy widened (rev 4991 — small moons like Phobos/Deimos now
+produce `encounters/<n>/` rows) and `Module.List` concrete-type segmentation (rev 4990 —
+API-compatible for every call gatOS makes). Behavior notes (`/sim/debug/refuel` now refills SRB grains;
+SRBs are ordinary `EngineController`s so `engines/<n>` covers them but throttle is physically inert on a
+solid; `ModuleBase.OnPartCreated` → `OnFullPartCreated` leaves the `AnimationLinks` solar link intact;
+`Part.Connector` capability flags are additive) are catalogued in the
+[read-surface 5018 findings](../scope/ksa-read-surface.md#5018-findings) /
+[write-surface 5018 findings](../scope/ksa-write-surface.md#5018-findings). Rows showing an earlier
+per-member `Verified` date bind to members **unchanged** in 5018 (their compatibility is confirmed by
+the green build + the diff). Prior passes: 2026-07-22 against `2026.7.8.4980` (one break — docking
+`OldMeanRadius`; FC `RCSMode`/`RollMode` drifts), 2026-07-16 against `2026.7.6.4939` (clean; fuel-line/
 tank-transfer notes, UI-only control-module lockout), 2026-07-14 against `2026.7.5.4892` (clean; rev
 4884 combustion→Reactions notes), 2026-07-03 against `2026.7.3.4826` (clean; post-decouple
 control-state inheritance notes), 2026-06-27 against `2026.6.9.4750` (the G1–G4 fix-pass).
@@ -90,11 +102,12 @@ Anchors live in `gatOS.GameMod/Game/Ksa/Readers/VesselReader.cs`. Formats are fr
 | `…/velocity/{orbital,surface,inertial}` | S | `Vehicle.OrbitalSpeed/.GetSurfaceSpeed()/.GetInertialSpeed()` | Low |
 | `…/attitude/{quat,rates}` | S | `Vehicle.GetBody2Cci()`, `Vehicle.BodyRates` | Low |
 | `…/altitude/{barometric,radar}` | S | `Vehicle.GetBarometricAltitude()/.GetRadarAltitude()` | Low |
-| `…/mass/{total,dry,propellant}` | S | `Vehicle.TotalMass/.InertMass/.PropellantMass` | Low |
+| `…/mass/{total,dry,propellant}` | S | `Vehicle.TotalMass/.InertMass/.PropellantMass` — **5018: `PropellantMass` includes SRB solid-grain mass, so it exceeds Σ `tanks/` by Σ `srb/<n>/mass`** | Low |
 | `…/orbit/{apoapsis,periapsis,ecc,inc,sma,period}` | S | `Vehicle.Orbit` elements (radii→altitudes; inc rad→deg) | Low |
 | `…/battery/charge` | S | `Vehicle.Parts.Batteries.GetState(b).Charge`, `b.MaximumCapacity` | Low |
 | `…/engines/<n>/{active,vac_thrust,isp}` | S | `vehicle.Parts.Modules.Get<EngineController>()`; `.IsActive`, `.VacuumData` | Medium |
-| `…/tanks/<resource>/{amount,capacity}` | S | `vehicle.Parts.Modules.Get<Tank>().Moles`; `Parts.Moles.GetState(mole).Mass` | Low |
+| `…/tanks/<resource>/{amount,capacity}` | S | `vehicle.Parts.Modules.Get<Tank>().Moles`; `Parts.Moles.GetState(mole).Mass`; `Mole.GetStoredMass` — **liquids only; SRB grains live under `srb/` (5018)** | Low |
+| `…/srb/<n>/*`, `…/srb/<n>/segments/<m>/*` | S | `Parts.RocketCores.{Modules,GetState}` filtered to `SolidMotor`; `SolidMotor.{Stack,Propellant,DefaultGeometry,UnburnableGrainMass,AreaRatio,ComputeBurningArea}`; `SolidGrainSegment.{Grain,InitialGrainMass,UnburnableGrainMass,CasingInnerRadius,Length,GrainVolume,ComputeGrainDepth}`; `RocketCoreState.*` — **read-only** (a lit solid has no throttle) | Medium |
 | `…/animations/<n>/{current,state}` | S | `KeyframeAnimationModule` State via `ModuleStateful.TryGetFrom(Parts.States,…)` | Medium |
 | `…/stream` | Sm | whole `VesselSnapshot` (growing-log) | — |
 | `events` | Sm | snapshot-diff (`EventDiffer`); KSA has no native event bus | — |
