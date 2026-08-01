@@ -22,12 +22,13 @@ namespace gatOS.GameMod.Game.Ksa.Actuators;
 internal static class DockingActuator
 {
     [KsaAnchor("DockingPort.Docked; InputEvents.VehicleDockingInputData{Undock=true} → DockingPort.Undock "
-            + "→ Vehicle.Split(Connector, PushoffImpulse); Vehicle.MeanRadius",
-        SourceFile = "KSA/DockingPort.cs / KSA/InputEvents.cs", Verified = "2026-06-27",
-        GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium,
+            + "→ Vehicle.Split(Connector, PushoffImpulse)",
+        SourceFile = "KSA/DockingPort.cs / KSA/InputEvents.cs", Verified = "2026-08-01",
+        GameVersion = "2026.7.10.5056", Risk = ChurnRisk.Medium,
         Notes = "Mirrors the UnDock context-menu enqueue. Undocking a port that is not docked is rejected "
             + "(EBUSY) rather than handing Split a null connection. 4750 (rev 4683): Undock now hands "
-            + "Vehicle.Split an impulse (PushoffImpulse, N·s) — Undock itself enqueues, never calls Split.")]
+            + "Vehicle.Split an impulse (PushoffImpulse, N·s) — Undock itself enqueues, never calls Split. "
+            + "5056: VehicleDockingInputData dropped OldMeanRadius — Apply() reads Vehicle.MeanRadius itself.")]
     internal static CommandResult Undock(Vehicle vehicle, int ordinal)
     {
         var ports = vehicle.Parts.Modules.Get<DockingPort>();
@@ -40,7 +41,6 @@ internal static class DockingActuator
         {
             Vehicle = vehicle,
             DockingPort = port,
-            OldMeanRadius = vehicle.MeanRadius,
             Undock = true,
         });
         return CommandResult.Ok;
