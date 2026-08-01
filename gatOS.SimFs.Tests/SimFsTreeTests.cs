@@ -155,7 +155,7 @@ public sealed class SimFsTreeTests
         await client.VersionAsync();
         await client.AttachAsync(0);
 
-        store.Publish(TestData.Snapshot(1, TestData.FullVessel()).WithCelestials());
+        store.Publish(TestData.Snapshot(1, TestData.FullVessel()).WithCelestials().WithFxEditors());
 
         var files = new Dictionary<string, string>();
         await CrawlWithAsync(client, 0, "", files);
@@ -199,6 +199,27 @@ public sealed class SimFsTreeTests
             "debug/vessels/test-1/refill_fuel",
             "debug/vessels/test-1/refill_battery", "debug/vessels/test-1/docking/0/pushoff_impulse",
             "debug/time/warp", "debug/focus", "debug/control_vessel",
+            // FX editors: catalog-driven leaves, the per-entity json/reset docs, the family helps
+            "debug/engineplume/help", "debug/engineplume/templates/kerolox/core/radius_weight",
+            "debug/engineplume/templates/kerolox/emission/color0",
+            "debug/engineplume/templates/kerolox/quality/vessel_shadows",
+            "debug/engineplume/templates/kerolox/json", "debug/engineplume/templates/kerolox/reset",
+            "debug/engineplume/templates/methalox/emission/brightness",
+            "debug/plumetrail/help", "debug/plumetrail/render/max_distance",
+            "debug/plumetrail/render/trail_color", "debug/plumetrail/json",
+            "debug/plumetrail/clear", "debug/plumetrail/reset",
+            "debug/clouds/help", "debug/clouds/bodies/Kerth/shared/transition_start_km",
+            "debug/clouds/bodies/Kerth/layers/0/color",
+            "debug/clouds/bodies/Kerth/layers/0/two_d/lambertian",
+            "debug/clouds/bodies/Kerth/layers/1/raymarch/step_size",
+            "debug/clouds/bodies/Kerth/layers/1/types/0/density",
+            "debug/clouds/bodies/Kerth/layers/1/types/1/interpolate",
+            "debug/clouds/bodies/Kerth/json", "debug/clouds/bodies/Kerth/reset",
+            "debug/terrain/help", "debug/terrain/wireframe",
+            "debug/terrain/bodies/Kerth/max_height",
+            "debug/terrain/bodies/Kerth/biomes/blend_strength",
+            "debug/terrain/bodies/Kerth/tessellation/factor",
+            "debug/terrain/bodies/Kerth/json", "debug/terrain/bodies/Kerth/reset",
         ];
 
         Assert.That(files.Keys, Is.SupersetOf(expectedPresent));

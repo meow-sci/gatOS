@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using gatOS.SimFs.Fx;
 using gatOS.SimFs.Snapshots;
 
 namespace gatOS.SimFs;
@@ -62,6 +63,45 @@ public static class Formats
            + $"{Scalar(t.Position.X)} {Scalar(t.Position.Y)} {Scalar(t.Position.Z)} "
            + $"{Scalar(t.Rotation.X)} {Scalar(t.Rotation.Y)} {Scalar(t.Rotation.Z)} "
            + $"{Scalar(t.Width)} {Scalar(t.Height)}";
+
+    /// <summary>
+    ///     One FX-editor entity's live field set as a compact JSON object, one member per concrete
+    ///     field path — scalars as numbers, multi-component fields as arrays
+    ///     (<c>{"emission/brightness":12,"emission/color0":[1,0.5,0]}</c>). Keys are ordered with
+    ///     <c>FxCatalog.KeyComparer</c> so the document reads in the same order as the tree. The
+    ///     <c>&lt;entity&gt;/json</c> document is for discovery and profile capture; writes always go
+    ///     to the individual leaves.
+    /// </summary>
+    /// <param name="fields">An <c>FxEntitySnapshot</c>'s field dictionary (concrete path → components).</param>
+    public static string FxFields(IReadOnlyDictionary<string, double[]> fields)
+    {
+        var keys = fields.Keys.ToArray();
+        Array.Sort(keys, FxCatalog.KeyComparer);
+
+        var buffer = new ArrayBufferWriter<byte>(256);
+        using (var json = new Utf8JsonWriter(buffer, JsonOptions))
+        {
+            json.WriteStartObject();
+            foreach (var key in keys)
+            {
+                var values = fields[key];
+                if (values.Length == 1)
+                {
+                    json.WriteNumber(key, values[0]);
+                    continue;
+                }
+
+                json.WriteStartArray(key);
+                foreach (var value in values)
+                    json.WriteNumberValue(value);
+                json.WriteEndArray();
+            }
+
+            json.WriteEndObject();
+        }
+
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
 
     /// <summary>
     ///     One <c>/sim/audio/status</c> row — space-separated, stable column order:

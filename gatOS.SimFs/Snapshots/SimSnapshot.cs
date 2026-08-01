@@ -74,6 +74,13 @@ public sealed record SimSnapshot(
     ///     only ever populated when the debug namespace is on. A pure cosmetic runtime cheat; never persisted.
     /// </summary>
     public IReadOnlyList<ThugLifeSnapshot> ThugLife { get; init; } = [];
+
+    /// <summary>
+    ///     The live values behind the FX editors (<c>/sim/debug/{engineplume,plumetrail,clouds,terrain}</c>);
+    ///     null when not sampled (debug namespace off, or before the first FX sample). Only ever
+    ///     populated when the debug namespace is on; a pure runtime cheat surface, never persisted.
+    /// </summary>
+    public FxEditorsSnapshot? FxEditors { get; init; }
 }
 
 /// <summary>One vessel's telemetry.</summary>
@@ -476,6 +483,44 @@ public sealed record WeldSnapshot(
 public sealed record ThugLifeSnapshot(
     int Id, string VesselId, uint PartInstanceId, double3Snap Position, double3Snap Rotation,
     double Width, double Height, bool Visible);
+
+/// <summary>
+///     One addressable FX-editor entity — a volumetric-exhaust template, the (single) trail
+///     renderer, or one body's clouds/terrain (plans/FX_EDITORS_PLAN.md §1). The field set an
+///     entity publishes is what defines its <c>/sim</c> subtree: every key is a <b>concrete</b>
+///     field path (<c>emission/color0</c>, <c>layers/1/types/0/density</c>) that resolves against
+///     the family's <c>FxCatalog</c> table, and its value array is exactly the spec's arity long
+///     (flags are <c>0</c>/<c>1</c>).
+/// </summary>
+/// <param name="Id">The entity id — the directory name source; <c>""</c> for a singleton entity.</param>
+/// <param name="Fields">Live values, keyed by concrete field path.</param>
+public sealed record FxEntitySnapshot(string Id, IReadOnlyDictionary<string, double[]> Fields);
+
+/// <summary>
+///     The sampled FX-editor surface: one entity roster per family. Rebuilt only when an FX write
+///     happened or the resample interval elapsed (in-game imgui edits), else republished by
+///     reference — so the whole subtree is allocation-free while idle.
+/// </summary>
+public sealed record FxEditorsSnapshot
+{
+    /// <summary>Volumetric-exhaust templates, keyed by template id. Shared: an edit hits every nozzle using it.</summary>
+    public IReadOnlyList<FxEntitySnapshot> PlumeTemplates { get; init; } = [];
+
+    /// <summary>The global volumetric-trail renderer (<c>Id</c> <c>""</c>); null when unavailable.</summary>
+    public FxEntitySnapshot? Trail { get; init; }
+
+    /// <summary>Bodies that carry a cloud definition, keyed by body id.</summary>
+    public IReadOnlyList<FxEntitySnapshot> CloudBodies { get; init; } = [];
+
+    /// <summary>Bodies that currently hold a terrain render slot, keyed by body id.</summary>
+    public IReadOnlyList<FxEntitySnapshot> TerrainBodies { get; init; } = [];
+
+    /// <summary>
+    ///     The terrain family's <b>global</b> fields (<c>wireframe</c>) as a singleton entity
+    ///     (<c>Id</c> <c>""</c>); null when unavailable. Addressed with an empty entity token.
+    /// </summary>
+    public FxEntitySnapshot? TerrainGlobal { get; init; }
+}
 
 /// <summary>NavBall-derived attitude and performance figures.</summary>
 /// <param name="PitchDeg">Pitch, degrees.</param>
