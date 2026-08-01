@@ -5,7 +5,9 @@ build a palette of colors, and turn every light on those vessels into a synchron
 strobing **dance party** — driven entirely by writing the `/sim` light files.
 
 Where [`gogogo-rs`](../gogogo-rs) is a throttle quadrant and [`simfs-dashboard`](../simfs-dashboard)
-is a build-your-own dashboard, this one is pure, gratuitous fun over the same filesystem API.
+is a build-your-own dashboard, this one is pure, gratuitous fun over the same filesystem API — and
+where this console makes the *lights* dance, its near-fork [`nyan-fire-rs`](../nyan-fire-rs) repaints
+the *fire*, scrolling the same kind of palette across an engine plume's emission gradient.
 
 ## What it does
 

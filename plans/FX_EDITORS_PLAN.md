@@ -29,6 +29,11 @@ Consequences (AGENTS.md §7):
 
 All four families share one game-free mechanism in `gatOS.SimFs/Fx/`:
 
+> The pattern now has a first-party FX consumer: **`examples/nyan-fire-rs`** — a ratatui console that
+> drives `debug/engineplume/templates/<id>/emission/color0..3` as a scrolling stripe window (batched
+> through `ctl/batch`, deduped per leaf, `reset` on stop), i.e. exactly the §0 "light show" bar.
+
+
 ```csharp
 public enum FxKind { Number, Flag, Color3, Color4 }
 

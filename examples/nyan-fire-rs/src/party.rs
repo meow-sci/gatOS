@@ -219,8 +219,8 @@ mod tests {
         let p = six();
         let plan = Plan::new(p.clone(), 1000).with_steps(1);
         // At t = 0 the window sits on P[0..4], one entry per gradient slot.
-        for slot in 0..SLOTS {
-            assert_eq!(plan.slot_color_at(0, slot, 0.0).0, p[slot]);
+        for (slot, expect) in p.iter().enumerate().take(SLOTS) {
+            assert_eq!(plan.slot_color_at(0, slot, 0.0).0, *expect);
         }
         // One stripe segment later the whole window has scrolled one entry nozzle-ward.
         for slot in 0..SLOTS {
