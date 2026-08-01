@@ -1,9 +1,11 @@
 using Brutal.Numerics;
 using gatOS.GameMod.Game.Ksa.Actuators;
+using gatOS.GameMod.Game.Ksa.Fx;
 using gatOS.GameMod.Game.Ksa.Render;
 using gatOS.GameMod.Game.Ksa.ThugLife;
 using gatOS.GameMod.Game.Ksa.Welds;
 using gatOS.SimFs.Commands;
+using gatOS.SimFs.Fx;
 using KSA;
 
 namespace gatOS.GameMod.Game.Ksa;
@@ -47,6 +49,18 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
             // add), so all of it is handled vessel-agnostically here, before the per-vessel resolution.
             if (command.Action.StartsWith("debug.thug_life", StringComparison.Ordinal))
                 return Finish(accessor, ThugLife(command));
+
+            // FX editors (plans/FX_EDITORS_PLAN.md): the addressed entity is a render template, the one
+            // trail renderer, or a celestial body — never a vehicle — so all four families route here,
+            // vessel-agnostically, before the per-vessel resolution (the thug_life precedent).
+            if (command.Action.StartsWith("debug.engineplume", StringComparison.Ordinal))
+                return Finish(accessor, EnginePlume(command));
+            if (command.Action.StartsWith("debug.plumetrail", StringComparison.Ordinal))
+                return Finish(accessor, PlumeTrail(command));
+            if (command.Action.StartsWith("debug.clouds", StringComparison.Ordinal))
+                return Finish(accessor, Clouds(command));
+            if (command.Action.StartsWith("debug.terrain", StringComparison.Ordinal))
+                return Finish(accessor, Terrain(command));
 
             // Userland audio playback (GATOS_CUSTOM_AUDIO_PLAN): vessel-agnostic — the target is a
             // clip/channel, never a vehicle, so it bypasses vehicle resolution and the authority gate.
@@ -215,6 +229,94 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
                 return new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'");
         }
     }
+
+    /// <summary>
+    ///     <c>/sim/debug/engineplume</c>: the entity is a shared volumetric-exhaust template named by
+    ///     <see cref="SimCommand.Token"/>, the concrete field path rides in <see cref="SimCommand.Aux"/>.
+    /// </summary>
+    private CommandResult EnginePlume(SimCommand c)
+    {
+        if (c.Action == FxCatalog.EnginePlumeReset)
+            return PlumeActuator.Reset(c.Token ?? "");
+        if (c.Action != FxCatalog.EnginePlumeSet)
+            return new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'");
+        if (FxField(c, out var match, out var field, out var values) is { } rejected)
+            return rejected;
+        return PlumeActuator.Set(c.Token ?? "", match.Spec, field, values);
+    }
+
+    /// <summary><c>/sim/debug/plumetrail</c>: one global renderer, so no entity token.</summary>
+    private CommandResult PlumeTrail(SimCommand c)
+    {
+        if (c.Action == FxCatalog.PlumeTrailReset)
+            return TrailActuator.Reset(health);
+        if (c.Action == FxCatalog.PlumeTrailClear)
+            return TrailActuator.Clear(health);
+        if (c.Action != FxCatalog.PlumeTrailSet)
+            return new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'");
+        if (FxField(c, out var match, out var field, out var values) is { } rejected)
+            return rejected;
+        return TrailActuator.Set(health, match.Spec, field, values);
+    }
+
+    /// <summary><c>/sim/debug/clouds</c>: the entity is the body named by the token.</summary>
+    private CommandResult Clouds(SimCommand c)
+    {
+        if (c.Action == FxCatalog.CloudsReset)
+            return CloudActuator.Reset(health, c.Token ?? "");
+        if (c.Action != FxCatalog.CloudsSet)
+            return new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'");
+        if (FxField(c, out var match, out var field, out var values) is { } rejected)
+            return rejected;
+        return CloudActuator.Set(health, c.Token ?? "", match, field, values);
+    }
+
+    /// <summary>
+    ///     <c>/sim/debug/terrain</c>: the entity is the body named by the token, or the family-global
+    ///     pseudo-entity (empty token) that carries <c>wireframe</c>.
+    /// </summary>
+    private CommandResult Terrain(SimCommand c)
+    {
+        if (c.Action == FxCatalog.TerrainReset)
+            return TerrainActuator.Reset(health, c.Token ?? "");
+        if (c.Action != FxCatalog.TerrainSet)
+            return new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'");
+        if (FxField(c, out var match, out var field, out var values) is { } rejected)
+            return rejected;
+        return TerrainActuator.Set(health, c.Token ?? "", match, field, values);
+    }
+
+    /// <summary>
+    ///     Re-validates an FX <c>_set</c> payload game-side: the action picks the family table, the
+    ///     concrete field path (<see cref="SimCommand.Aux"/>) must match a catalog row, and the payload
+    ///     must satisfy that row's arity/range/finiteness. The 9p control files already enforce all of
+    ///     this at parse time, but <c>POST /v1/command</c> and <c>gatos/command</c> bypass that parse.
+    ///     Returns non-null only when the command is rejected.
+    /// </summary>
+    private static CommandResult? FxField(SimCommand c, out FxFieldMatch match, out string field,
+        out IReadOnlyList<double> values)
+    {
+        match = EmptyMatch;
+        field = c.Aux ?? "";
+        values = [];
+        if (FxCatalog.FieldsFor(c.Action) is not { } table)
+            return new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'");
+        if (FxCatalog.Match(table, field) is not { } resolved)
+            return new CommandResult(CommandOutcome.Invalid, $"unknown fx field '{field}'");
+
+        match = resolved;
+        // A scalar may arrive in Values or — from a hand-written HTTP/MQTT command — in Value alone.
+        values = c.Values ?? (resolved.Spec.Arity == 1 ? [c.Value] : []);
+        return FxCatalog.IsValid(resolved.Spec, values)
+            ? null
+            : new CommandResult(CommandOutcome.Invalid,
+                $"'{field}' expects {resolved.Spec.Arity} finite value(s) "
+                + $"in [{resolved.Spec.Min}, {resolved.Spec.Max}]");
+    }
+
+    /// <summary>The placeholder assigned to a rejected <see cref="FxField"/> out-parameter.</summary>
+    private static readonly FxFieldMatch EmptyMatch =
+        new(new FxFieldSpec("", FxKind.Number, 0, 0, "", ""), []);
 
     private CommandResult WeldCreate(Vehicle source, SimCommand c)
     {
