@@ -810,6 +810,69 @@ be exercised headlessly.
 
 ---
 
+## FX editors: `/sim/debug/{engineplume,plumetrail,clouds,terrain}` (issue #2, plans/FX_EDITORS_PLAN.md): Code DONE; in-game pass pending
+
+The game's four built-in imgui render editors — "Volumetric Exhausts", "Plume Trails", "Clouds",
+"Terrain Editor" — exposed as filesystems, landed 2026-08-01 in two phases (A: `81f8a36` game-free,
+B: `3904f9e` GameMod). One writable leaf per knob, so a shell loop or a TUI can animate render state at
+10–60 Hz (the AGENTS.md §7 "light show" bar). Gated by the existing `[control] debug_namespace` — **no
+new config key**. The first feature built end-to-end under the `AGENTS.md` schema-change constitution.
+
+**Phase A — game-free** (`gatOS.SimFs`, `81f8a36`): the *declarative field-catalog* pattern.
+`Fx/FxCatalog.cs` holds four tables (`EnginePlume` 28 rows, `PlumeTrail` 11, `Clouds` 20, `Terrain` 11)
+of `FxFieldSpec(Key, Kind, Min, Max, Unit, Doc)` — `FxKind` fixes the arity and the control archetype
+(`Number`→`ControlFile.Ranged` (new), `Flag`→`ControlFile.Flag`, `Color3`/`Color4`→ranged
+`VectorControlFile` (new overload)) — plus `Match`/`Matches`/`IsValid` (a `*` key segment matches a
+non-negative integer index) and the nine action-key consts. `Snapshots`: `FxEntitySnapshot(Id, Fields)`
+keyed by **concrete** field paths + `FxEditorsSnapshot{PlumeTemplates, Trail, CloudBodies, TerrainBodies,
+TerrainGlobal}` on `SimSnapshot.FxEditors` (null ⇒ not sampled). `SimFsTree` builds all four subtrees from
+**one** generic builder (`FxEntityNodes`/`FxChildren`/`FxLeaf`): the entity's live field keys × the family
+table define which leaves and indexed subdirs exist, nested per path segment, in catalog order with
+numeric index ordering (`layers/2` before `layers/10`), cached by (path, field count). Each entity also
+gets a `json` document (`Formats.FxFields`, memoized on the field-dictionary reference) and a `reset`
+trigger; each family a `help` readme; `plumetrail` additionally a `clear` trigger and `terrain` the
+family-global `wireframe` leaf. Tests: `FxCatalogTests` + `Commands/FxEditorsTreeTests` (read-back,
+write→exact `SimCommand`, EINVAL boundaries, indexed cloud paths) and the tree-crawl guard extended with
+29 new paths.
+
+**Phase B — GameMod** (`Game/Ksa/Fx/`, `3904f9e`, 24 `[KsaAnchor]`s, verified against
+**`2026.7.10.5056`**): `FxReflect` — the six lazily-resolved, cached, null-tolerant private handles
+(`Program._volumetricTrailRenderer`, `_planetTransparenciesRenderer`→`GetCloudRenderer()`,
+`VolumetricExhaustTemplate.References`, `CloudRenderer._renderer`/`_cloudShadowsRenderer`/
+`_worleyNoise3dTarget`, `PlanetRenderer._renderUboMap`/`_meshUboMap`) each behind its own `KsaHealth`
+latch key (`fx.trail_renderer`, `fx.plume_templates`, `fx.cloud_renderer`, `fx.cloud_apply`,
+`fx.terrain_renderer`, `fx.terrain_ubo`). `PlumeActuator` writes the shared `VolumetricExhaustTemplate`
+(colours **construct-new + `OnDataLoad`** — the `Value` setter is protected) then runs the editor's own
+propagation loop over every live nozzle. `TrailActuator` writes public renderer fields (no apply needed)
+and `Clear` calls the public **instance** `Program.ClearPlumeTrails()`. `CloudActuator` writes the public
+`CloudsReference` graph then re-derives the affected layer's render data + repopulates the shadow atlas;
+a missing apply handle degrades the **apply only and still returns `Ok`**. `TerrainActuator` does the
+paired write — reference object **and** the `PlanetUbo`/`MeshUbo` structs at the body's slot, plus the
+frames-in-flight mirror copy (no public repopulate exists; verified). `FxEditorReader` samples all four
+families through the actuators' own read halves, memoized: rebuilt only on an FX write
+(`Invalidate`) or after 2 s (catching in-game imgui edits), else republished by reference.
+`TelemetrySampler` gates the whole sample on `[control] debug_namespace` (new ctor flag from `Mod`);
+`KsaCatalog` routes the four families vessel-agnostically before vehicle resolution and re-validates
+every payload against the catalog (HTTP/MQTT bypass the 9p parse). `FxPristine` records a field's
+pre-gatOS value on first write and replays it through the same write path on `reset`;
+`Mod.TeardownGameCheats` runs `FxPristine.RestoreAll()` first, then `FxEditorReader.Reset()`. **No
+Harmony patch, no per-frame driver, no GPU resources.**
+
+**Deferred (documented as such):** plume startup/shutdown transient curves + LUT re-bake, test grid and
+wireframe debug; the trail simulation/LOD/wind tier and the two rebuild-forcing toggles; cloud
+`NoiseScale` (would force `RecreateLayerPipelines`), shape/density splines, texture slots; terrain
+per-biome materials, procedural modifiers, ground clutter/ecotypes, BVH debug and exporters.
+
+**Plan-vs-code deviations** (the code won, and the docs record them for the next break-check):
+`ClearPlumeTrails` and `PlanetRenderer.Wireframe` are **instance**, not static; `CloudTypes` hangs off
+`layer.VolumetricCloud`; `PlanetUbo.TanMeanSlopeRoughnessRadians` stores plain radians despite the name.
+Catalog: `SPEC_9P_FILESYSTEM.md` §3.7 + §5.1; `docs/KSA_INTEGRATION_MATRIX.md` (FX editors);
+`scope/ksa-{write,read}-surface.md#fx-editors`, `scope/ksa-runtime-coupling.md#fx-accessors`.
+**Pending: the in-game pass** (18-item checklist in `docs/VALIDATION.md`) — the reflected handles, the
+apply paths and the terrain UBO write cannot be exercised headlessly.
+
+---
+
 ## Suite totals and pending work
 
 **Full non-IT suite**: green, zero warnings.
@@ -819,9 +882,9 @@ be exercised headlessly.
 `HostMountIntegrationTests` fixture requires guest v10 to be published.
 
 **Still pending: the in-game passes** — T6.6/T9.3/G1–G4 and the welds/IVA/parts, thug_life,
-per-vessel `scale`/`always_render`, `debug/vessels/<id>/impulse`, `ctl/translate`, and `/sim/audio`
-checklists in `docs/VALIDATION.md` are runnable now that the purrTTY tip release is cut, but need a
-live KSA flight to complete.
+per-vessel `scale`/`always_render`, `debug/vessels/<id>/impulse`, `ctl/translate`, `/sim/audio`, and the
+**FX editors** checklists in `docs/VALIDATION.md` are runnable now that the purrTTY tip release is cut,
+but need a live KSA flight to complete.
 
 **Next**: M10 (persistence & savegame shape). Everything past M9 is not yet implemented, with
 the single exception of T11.1 (QEMU win-x64 bundle) which was pulled forward and is done.

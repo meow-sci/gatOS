@@ -209,6 +209,49 @@ the in-flight main camera stays perspective, `MVP`/`viewProjection` shape unchan
 
 ---
 
+## FX editors — `FxEditorReader` (gated by `[control] debug_namespace`) {#fx-editors}
+
+`gatOS.GameMod/Game/Ksa/Fx/FxEditorReader.cs` (plans/FX_EDITORS_PLAN.md; issue #2). Samples the four FX
+families into `SimSnapshot.FxEditors` (`FxEditorsSnapshot`: `PlumeTemplates`, `Trail`, `CloudBodies`,
+`TerrainBodies`, `TerrainGlobal` — each an `FxEntitySnapshot` of **concrete field path → components**),
+which is what materializes the `/sim/debug/{engineplume,plumetrail,clouds,terrain}` leaves. Off ⇒ the
+families are never read and `FxEditors` stays null, so no transport serves them.
+
+Two properties make this section short: **every value is read through the same accessor the write goes
+through** (`PlumeActuator.TryRead`, `TrailActuator.TryRead`, `CloudActuator.TryRead`,
+`TerrainActuator.Read` — so read-back round-trips a write, and the pristine capture records a real live
+value), and the **write-surface page already lists those members** —
+[`ksa-write-surface.md#fx-editors`](ksa-write-surface.md#fx-editors). The rows below are the reads that
+are *only* the reader's: the rosters and the two reflective handles it needs.
+
+| read | gatOS site | KSA member | Decomp file | Unit/format | Risk | 5056 |
+|---|---|---|---|---|---|---|
+| plume-template roster | `FxEditorReader.SamplePlumeTemplates` | `FxReflect.PlumeTemplates` → reflected `VolumetricExhaustTemplate.References` (internal static `SerializedCollection<…>`) `.GetList()`; latch `fx.plume_templates` | `KSA/VolumetricExhaustTemplate.cs:37`, `KSA/SerializedCollection.cs` | list of templates | **High** | ✅ |
+| plume-template roster (fallback) | `FxEditorReader.HarvestPlumeTemplates` | `Universe.CurrentSystem.All.UnsafeAsList()`; `Vehicle.Parts.RocketNozzles.ModulesAndAllStates`; `RocketNozzle.ReactionPlumes[].VolumetricExhaust.Id`; `VolumetricExhaustTemplate.Get(string)` | `KSA/RocketNozzle.cs:15,40`, `KSA/VolumetricExhaustReference.cs`, `KSA/VolumetricExhaustTemplate.cs:48` | ids of templates in use | Medium | ✅ |
+| trail settings | `FxEditorReader.SampleTrail` | `FxReflect.Trail` (reflected `Program.Instance._volumetricTrailRenderer`) → `TrailActuator.TryRead` public fields | `KSA/Program.cs:160`, `KSA/VolumetricTrailRenderer.cs:173-196` | floats (single precision) | **High** | ✅ |
+| cloud-body roster + fields | `FxEditorReader.SampleCloudBodies` / `ExpandClouds` | `AtmosphericBody.BodyTemplate.CloudsReference` over `Universe.CurrentSystem.All.UnsafeAsList()`; layer count and `layer.VolumetricCloud.CloudTypes.Count` define which indexed leaves exist | `KSA/AstronomicalTemplate.cs:60`, `KSA/CloudsReference.cs`, `KSA/VolumetricCloudReference.cs` | km / m / m/s / rgb / vec3 (per leaf) | Low | ✅ |
+| terrain-body roster + fields | `FxEditorReader.SampleTerrainBodies` | `Universe.CurrentSystem.All.UnsafeAsList()`; `PlanetRenderer.RenderUboSlot`/`MeshUboSlot` (only slotted bodies); values via `TerrainActuator.Read` out of the reflected `_renderUboMap`/`_meshUboMap` rings (latch `fx.terrain_ubo`) | `KSA/PlanetRenderer.cs:37-125,250-252,374,379` | m / deg / px / – | **High** | ✅ |
+| terrain global | `FxEditorReader.SampleTerrainGlobal` | `PlanetRenderer.Wireframe` (public **instance** field) via `Program.GetPlanetRenderer()` | `KSA/PlanetRenderer.cs:216`, `KSA/Program.cs:491` | flag | Medium | ✅ |
+
+**Terrain reads come out of the UBO**, i.e. the struct the GPU actually samples (frame slot 0 at the
+body's slot index) — not from the reference objects — which is why read-back is the live truth and why a
+degraded `fx.terrain_ubo` **empties the per-body roster** while `wireframe` stays live.
+
+**Memoization (the `parts/json` precedent, on steroids).** The whole surface is rebuilt only when an FX
+write landed since the last build (`FxEditorReader.Invalidate`, bumped by every successful actuator
+write) **or** 2 s elapsed (`Stopwatch.Frequency * 2` — the beat that catches edits made in the game's own
+imgui editors). Otherwise the previous `FxEditorsSnapshot` is republished **by reference**, so an idle
+tick costs one comparison and allocates nothing; the `<entity>/json` documents memoize on the field
+dictionary's reference on top of that. The sampler call is wrapped in its own try/catch (logged once via
+`_fxErrorLogged`) and can never fail a tick — a family that cannot be read is simply empty/absent.
+
+Values are **32-bit floats** in the game, so a read-back is single-precision, and integer-valued counts
+are rounded on apply (documented in [SPEC §3.7](../SPEC_9P_FILESYSTEM.md)). Verified `2026-08-01` against
+`2026.7.10.5056` (new feature; the column above ticks `5056` while the rest of this page still ticks the
+`4939` playbook pass). Live pass pending — `docs/VALIDATION.md`.
+
+---
+
 ## ✅ 4750 read-surface findings (detail)
 
 ### ✅ Docking pushoff — `docking/<n>/pushoff_impulse` (G1 FIXED, 2026-06-27) {#docking}

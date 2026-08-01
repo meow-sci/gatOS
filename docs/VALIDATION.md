@@ -318,6 +318,39 @@ pending a live flight.**
 | 12 | From the **host**: `curl -T alarm.mp3 http://127.0.0.1:4242/v1/audio/file/curl.mp3` then `curl -X POST --data 'curl.mp3' http://127.0.0.1:4242/v1/fs/audio/play` plays it; `curl http://127.0.0.1:4242/v1/audio/files` lists it; `curl -X DELETE …/v1/audio/file/curl.mp3` evicts it | ☐ | HTTP binary routes + field-mirror control |
 | 13 | Mod unload (quit) with channels playing → **immediate silence**, clean unload, no FMOD errors in the log; `[audio] audio_enabled=false` → `/sim/audio` absent and `audio.*` via `/v1/command` answers `EOPNOTSUPP` 501 | ☐ | `TeardownGameCheats` + config gate |
 
+## FX editors (`/sim/debug/{engineplume,plumetrail,clouds,terrain}`) — validation pass — **NOT YET RUN**
+
+Prereq: the T6.6 pass. `[control] debug_namespace = true` and `control_enabled = true` (both default) —
+no other gate. Be in a **flight scene** with at least one vessel that has a rocket engine, near a body
+with clouds and terrain (so all four families have live entities). The game-free half (field tables,
+tree, ranges, EINVAL boundaries, command shapes) is covered by
+`gatOS.SimFs.Tests/{FxCatalogTests,Commands/FxEditorsTreeTests}`; these items exercise the game half —
+the reflected renderer handles, the propagation/apply paths and the terrain UBO write — that needs a live
+game. See `SPEC_9P_FILESYSTEM.md` §3.7 (the four family blocks) + §5.1,
+`docs/KSA_INTEGRATION_MATRIX.md` (FX editors) and `scope/ksa-write-surface.md#fx-editors`. **All items
+pending a live flight.**
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | `ls /sim/debug/{engineplume/templates,clouds/bodies,terrain/bodies}` each list entities; `cat /sim/debug/plumetrail/json` and one `<entity>/json` per family return a populated object; `cat /sim/status/accessors` shows **no** `fx.*` entry | ☐ | rosters + all six handles resolve |
+| 2 | **engineplume, live effect:** with an engine **burning**, `echo 120 > /sim/debug/engineplume/templates/<id>/emission/brightness` and `echo "1 0.35 0.05" > …/emission/color0` visibly change that plume **within a frame** | ☐ | the propagation pass (`OnSettingsChanged`/`UpdateModifiers`/`RecomputeGasVisibilityDensity`) |
+| 3 | **engineplume, shared scope:** two vessels using the **same** template both change from one write; a vessel on a different template does not | ☐ | per-TEMPLATE scope is the documented surprise |
+| 4 | **engineplume, round-trip + reset:** each written leaf reads back the written value (single-precision, `quality/samples` rounded); `echo 1 > …/<id>/reset` restores the original look exactly | ☐ | pristine capture/replay |
+| 5 | **plumetrail, live effect:** `echo 200000 > /sim/debug/plumetrail/render/max_distance` and `echo "0.9 0.6 0.4 1" > …/render/trail_color` change the trails with no apply call; values read back | ☐ | public fields re-read each frame |
+| 6 | **plumetrail:** `echo 1 > /sim/debug/plumetrail/clear` removes the trails currently in the world (settings unchanged); `echo 1 > …/reset` restores the settings but does **not** clear trails | ☐ | `clear` vs `reset` are different things |
+| 7 | **clouds, live effect:** `echo "0.9 0.9 1" > /sim/debug/clouds/bodies/<body>/layers/0/color` (and a `types/<m>/density`) changes the clouds **immediately, with no hitch/stall and no visible pipeline recreate** | ☐ | the layer re-upload + shadow repopulate; `NoiseScale` deliberately unexposed |
+| 8 | **clouds:** a shared field (`shared/transition_start_km`) re-uploads **every** layer; `echo 1 > …/<body>/reset` restores the body's original clouds; an out-of-range layer/type index answers `ENOENT` | ☐ | `Apply(layer:-1)` + errnos |
+| 9 | **terrain, global:** `echo 1 > /sim/debug/terrain/wireframe` puts all planet terrain in wireframe; `echo 0` restores it; the leaf reads back the live value | ☐ | public instance field, no reflection |
+| 10 | **terrain, per body:** `echo 0.35 > /sim/debug/terrain/bodies/<body>/tessellation/factor`, `echo 9000 > …/max_height`, `echo 45 > …/slope_roughness_deg` each visibly change the surface **with no flicker or strobing over several seconds** | ☐ | the frames-in-flight UBO mirror copy — flicker here means the mirror loop is wrong |
+| 11 | **terrain:** `slope_roughness_deg` reads back the degrees written (not radians); `biomes/detail_fade_*_km` read back in km; a body with no render slot is absent from `bodies/` | ☐ | the `TanMeanSlopeRoughnessRadians` unit trap |
+| 12 | **terrain reset:** `echo 1 > /sim/debug/terrain/bodies/<body>/reset` restores every touched value | ☐ | pristine replay through the paired write |
+| 13 | **Animation rate:** a loop writing `emission/color0` + `emission/brightness` (and a cloud `color`) at ~20 Hz for a minute stays smooth — no frame-time spike, no command timeouts; a `/sim/ctl/batch` group of several FX leaves lands in one tick | ☐ | the "light show" bar (AGENTS.md §7) |
+| 14 | **In-game editor round-trip:** change a value in the game's own imgui editor ("Volumetric Exhausts" / "Clouds" / "Terrain Editor") — the matching `/sim` leaf reflects it within ~2 s | ☐ | the 2 s resample beat |
+| 15 | **Errnos:** an out-of-range or wrong-arity write fails with `EINVAL` and does **not** change the game; an unknown template/body id ⇒ `ENOENT`; the same via `POST /v1/command` with a bad `values` array is rejected game-side | ☐ | parse-time **and** game-side re-validation |
+| 16 | **Transports:** `curl http://127.0.0.1:4242/v1/fs/debug/terrain/wireframe` reads it and `POST` sets it; the MQTT topic `gatos/sim/debug/clouds/bodies/<body>/layers/0/color` mirrors and `…/set` actuates; `GET /v1/snapshot` carries `fxEditors` | ☐ | field-level parity |
+| 17 | **Teardown:** with several FX values changed across all four families, unload the mod (quit) — **every** value is restored and the log shows the restore count; reloading starts from pristine values | ☐ | `FxPristine.RestoreAll` in `TeardownGameCheats` |
+| 18 | `[control] debug_namespace = false` ⇒ the four family dirs are absent and the `debug.*` FX actions answer `EACCES`; with it on but the game in a menu/no flight scene, the rosters are simply empty (no errors, no log spam) | ☐ | config gate + empty-roster behavior |
+
 ## KSA 2026.7.3.4826 upgrade — live re-check items — **NOT YET RUN**
 
 The 2026.6.9.4750 → 2026.7.3.4826 playbook pass (2026-07-03) was **clean** — build + tests green, full

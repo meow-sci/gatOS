@@ -112,6 +112,11 @@ debug/                                  (only when debug_namespace=true)
     welds/{clear,count,<source>/{target,part,offset,rotation,lock_rotation,enabled}}
     thug_life/{add,clear,count,<id>/{vessel,part,position,rotation,size,visible,remove,spec}}
     always_render_iva   time/warp   focus   control_vessel
+    engineplume/{help,templates/<id>/{core,absorption,emission,mach_diamonds,noise,quality}/*,json,reset}
+    plumetrail/{help,render/*,json,clear,reset}       (one GLOBAL trail renderer)
+    clouds/{help,bodies/<body>/{shared/*,layers/<n>/{*,two_d/*,raymarch/*,types/<m>/*},json,reset}}
+    terrain/{help,wireframe,bodies/<body>/{min_height,max_height,slope_roughness_deg,hapke_albedo,
+                                           biomes/*,tessellation/*,json,reset}}
 ```
 
 Each leaf's format, units, archetype (read-only vs control vs trigger), and backing command action
@@ -131,6 +136,18 @@ top-level parts only.) Full arg shapes, action keys, and errnos are in [SPEC §3
 worked `weld_here` example is in [`recipes.md` §9](recipes.md) and a `thug_life` example in
 [`recipes.md` §10](recipes.md). The render-side internals (how the quad is drawn into KSA's scene) are
 documented in the **ksa skill's `quad.md`**.
+
+**FX editors (`/sim/debug/{engineplume,plumetrail,clouds,terrain}`):** the game's four built-in render
+editors as filesystems — **one writable leaf per knob**, each with a fixed inclusive range (out of range
+⇒ `EINVAL` before it reaches the game), live read-back, a per-entity `json` document for discovery, and a
+per-entity `reset` that restores the values from before gatOS first wrote them. Scopes differ and this is
+the thing to get right: `engineplume` is **per template** (an edit repaints *every* nozzle using that
+template), `plumetrail` is a **single global** renderer (plus a one-shot `clear` that deletes existing
+trails), `clouds` is per body → layer → cloud type, `terrain` is per body (only bodies with a live render
+slot) plus a **global** `wireframe`. All writes are Frame-phase, cheap enough to animate at 10–60 Hz —
+group simultaneous ones through `/sim/ctl/batch`. Values are stored as 32-bit floats (read-back is
+single-precision) and the surface is session-scoped (never persisted; restored at unload). Every field,
+range and unit is in [SPEC §3.7](../../../SPEC_9P_FILESYSTEM.md); `cat <family>/help` in-guest.
 
 **Audio playback (`/sim/audio`, gated by `audio_enabled=true` — NOT a debug cheat):** play real
 audio (mp3/ogg/wav/flac) through the game's speakers. Upload with `cat clip.mp3 >
