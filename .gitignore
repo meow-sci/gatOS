@@ -14,6 +14,11 @@ target/
 !guest/rootfs-overlay/usr/local/bin/**
 !guest/rootfs-overlay/usr/local/sbin/
 !guest/rootfs-overlay/usr/local/sbin/**
+# Rust example crates put their [[bin]] entry points under src/bin/ (the Cargo convention) —
+# keep those SOURCE dirs tracked despite the broad .NET `bin/` rule above (which once silently
+# swallowed examples/agc/src/bin/*.rs out of a commit).
+!examples/*/src/bin/
+!examples/*/src/bin/**
 
 # --- IDE / OS ---
 .idea/
