@@ -18,6 +18,13 @@ internal static class TrailActuator
     private const string Entity = "";
 
     /// <summary>
+    ///     The one field that does not live on the renderer itself: since 2026.8.3.5117 (revs
+    ///     5059/5097) it hangs off the renderer's private <c>PlumeTrailSettings</c>, which is what
+    ///     the game's own Plume Trails debug window edits in its "Profile" section.
+    /// </summary>
+    private const string ExpansionTimeKey = "render/expansion_time";
+
+    /// <summary>
     ///     Sets one trail field, capturing its pristine value on the first write.
     ///     <c>Unsupported</c> (health-latched) while the renderer cannot be resolved.
     /// </summary>
@@ -27,6 +34,15 @@ internal static class TrailActuator
         if (FxReflect.Trail(out var error) is not { } trail)
             return FxReflect.Degrade(health, FxReflect.TrailAccessor, error);
         FxReflect.Healthy(health, FxReflect.TrailAccessor);
+
+        // The settings-backed field latches its own capability, so a future move of the private
+        // settings hop degrades render/expansion_time alone and leaves the other ten fields healthy.
+        if (spec.Key == ExpansionTimeKey)
+        {
+            if (FxReflect.TrailSettings(trail, out var settingsError) is null)
+                return FxReflect.Degrade(health, FxReflect.TrailSettingsAccessor, settingsError);
+            FxReflect.Healthy(health, FxReflect.TrailSettingsAccessor);
+        }
 
         var pristine = new double[spec.Arity];
         if (TryRead(trail, spec, pristine))
@@ -51,8 +67,8 @@ internal static class TrailActuator
 
     /// <summary>Drops every live trail — a one-shot, not a settings change.</summary>
     [KsaAnchor("Program.Instance.ClearPlumeTrails() → VolumetricTrailRenderer.ClearPlumeTrails()",
-        SourceFile = "KSA/Program.cs:4610 / KSA/VolumetricTrailRenderer.cs:259",
-        Verified = "2026-08-01", GameVersion = "2026.7.10.5056", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Program.cs / KSA/VolumetricTrailRenderer.cs:251",
+        Verified = "2026-08-01", GameVersion = "2026.8.3.5117", Risk = ChurnRisk.Medium,
         Notes = "DISCREPANCY vs plans/FX_EDITORS_PLAN.md §3: ClearPlumeTrails is a public INSTANCE method "
             + "on Program (not static), so it is reached through the public Program.Instance — no reflection.")]
     internal static CommandResult Clear(KsaHealth health)
@@ -81,13 +97,16 @@ internal static class TrailActuator
     ///     the sampler and the pristine capture so read-back and write agree by construction.
     /// </summary>
     [KsaAnchor("VolumetricTrailRenderer.{MaxDistance,VoxelDepthFirstSliceThickness,MinStepSize,"
-            + "StepSizeDistanceScale,ExpansionTimeSeconds,ErosionMaxDepth,ErosionEdgeSharpness,"
-            + "SelfShadowStepCount,LightBrightness,SkyAmbientBrightness,DebugTrailColor} (public fields)",
-        SourceFile = "KSA/VolumetricTrailRenderer.cs:173-196", Verified = "2026-08-01",
-        GameVersion = "2026.7.10.5056", Risk = ChurnRisk.Medium,
+            + "StepSizeDistanceScale,ErosionMaxDepth,ErosionEdgeSharpness,SelfShadowStepCount,"
+            + "LightBrightness,SkyAmbientBrightness,DebugTrailColor} (public fields); "
+            + "PlumeTrailSettings.ExpansionTimeSeconds via FxReflect.TrailSettings",
+        SourceFile = "KSA/VolumetricTrailRenderer.cs:172-194 / KSA/PlumeTrailSettings.cs:11",
+        Verified = "2026-08-01", GameVersion = "2026.8.3.5117", Risk = ChurnRisk.Medium,
         Notes = "Plain public instance fields, read fresh by the renderer every frame — read-back is "
             + "always the live value and a write needs no apply call. Floats, so a value round-trips at "
-            + "single precision.")]
+            + "single precision. ExpansionTimeSeconds is the exception: revs 5059/5097 moved it off the "
+            + "renderer onto the private PlumeTrailSettings (High risk, separately latched), matching "
+            + "where the game's own Plume Trails debug window now edits it.")]
     internal static bool TryRead(VolumetricTrailRenderer r, FxFieldSpec spec, double[] dst)
     {
         switch (spec.Key)
@@ -96,7 +115,11 @@ internal static class TrailActuator
             case "render/voxel_first_slice": dst[0] = r.VoxelDepthFirstSliceThickness; return true;
             case "render/min_step_size": dst[0] = r.MinStepSize; return true;
             case "render/step_size_distance_scale": dst[0] = r.StepSizeDistanceScale; return true;
-            case "render/expansion_time": dst[0] = r.ExpansionTimeSeconds; return true;
+            case ExpansionTimeKey:
+                if (FxReflect.TrailSettings(r, out _) is not { } readSettings)
+                    return false;
+                dst[0] = readSettings.ExpansionTimeSeconds;
+                return true;
             case "render/erosion_max_depth": dst[0] = r.ErosionMaxDepth; return true;
             case "render/erosion_edge_sharpness": dst[0] = r.ErosionEdgeSharpness; return true;
             case "render/self_shadow_steps": dst[0] = r.SelfShadowStepCount; return true;
@@ -121,7 +144,11 @@ internal static class TrailActuator
             case "render/voxel_first_slice": r.VoxelDepthFirstSliceThickness = (float)v[0]; return true;
             case "render/min_step_size": r.MinStepSize = (float)v[0]; return true;
             case "render/step_size_distance_scale": r.StepSizeDistanceScale = (float)v[0]; return true;
-            case "render/expansion_time": r.ExpansionTimeSeconds = (float)v[0]; return true;
+            case ExpansionTimeKey:
+                if (FxReflect.TrailSettings(r, out _) is not { } writeSettings)
+                    return false;
+                writeSettings.ExpansionTimeSeconds = (float)v[0];
+                return true;
             case "render/erosion_max_depth": r.ErosionMaxDepth = (float)v[0]; return true;
             case "render/erosion_edge_sharpness": r.ErosionEdgeSharpness = (float)v[0]; return true;
             case "render/self_shadow_steps": r.SelfShadowStepCount = (int)Math.Round(v[0]); return true;

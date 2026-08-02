@@ -343,15 +343,22 @@ internal static class VesselReader
         return dt > 0 ? dt : 0;
     }
 
-    [KsaAnchor("Vehicle.NavBallData{AttitudeAngles(int3,deg),ThrustWeightRatio,DeltaVInVacuum,Frame,Speed}",
-        SourceFile = "KSA/NavBallData.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium,
-        Notes = "AttitudeAngles X/Y/Z = pitch/yaw/roll in whole degrees.")]
+    [KsaAnchor("Vehicle.NavBallData{AttitudeAngles(int3,deg),ThrustWeightRatio,DeltaV,Frame,Speed}",
+        SourceFile = "KSA/NavBallData.cs", Verified = "2026-08-01", GameVersion = "2026.8.3.5117",
+        Risk = ChurnRisk.Medium,
+        Notes = "AttitudeAngles X/Y/Z = pitch/yaw/roll in whole degrees. SEMANTIC DRIFT at rev 5114 — "
+            + "BOTH navball performance values changed meaning while keeping their names: DeltaVInVacuum "
+            + "was renamed to DeltaV and is now Parts.PerformanceSequences.FindActiveSequenceDeltaV() "
+            + "(the ACTIVE staging sequence's propellant-aware dV) rather than the whole-stack vacuum "
+            + "rocket equation; ThrustWeightRatio's numerator moved from TotalEngineVacuumThrust to "
+            + "ComputeActiveThrust(AtmosphericPressure), so it is now atmosphere-corrected and excludes "
+            + "engines that cannot produce thrust. Both flow to /sim navball/deltav + navball/twr.")]
     private static NavballSnapshot SampleNavball(Vehicle vehicle)
     {
         ref readonly var nb = ref vehicle.NavBallData;
         return new NavballSnapshot(
             nb.AttitudeAngles.X, nb.AttitudeAngles.Y, nb.AttitudeAngles.Z,
-            Sanitize.Finite(nb.ThrustWeightRatio), Sanitize.Finite(nb.DeltaVInVacuum),
+            Sanitize.Finite(nb.ThrustWeightRatio), Sanitize.Finite(nb.DeltaV),
             EnumText.Of(nb.Frame), Sanitize.Finite(nb.Speed));
     }
 

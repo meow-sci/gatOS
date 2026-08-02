@@ -45,7 +45,8 @@ impulse, `ctl/translate`, `/sim/audio` and IVA-cabin-physics checklists) that re
 flight; checklists are in [`docs/VALIDATION.md`](docs/VALIDATION.md). The purrTTY tip release is now
 cut.
 
-> **KSA baseline: `2026.7.9.5018`** (upgrade-ksa playbook pass 2026-07-24, from 4980): **one compile
+> **Prior pass — `2026.7.9.5018`** (upgrade-ksa playbook pass 2026-07-24, from 4980; superseded as the
+> baseline by the 5117 pass below): **one compile
 > break, fixed** — rev 4992 (solid rocket motors) generalized propellant storage from liquid-only to a
 > new `ISubstanceStore` (`Liquid | Solid`) abstraction, renaming `Mole.GetLiquidMass` → `GetStoredMass`;
 > `VesselReader.SampleTanks` was the one call site and the value is unchanged (`Tank` moles are liquids).
@@ -66,12 +67,40 @@ cut.
 > solar link intact) + the pass record live in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope
 > pages; live re-check items appended to [`docs/VALIDATION.md`](docs/VALIDATION.md).
 >
-> **Assemblies since bumped to `2026.7.10.5056`** (2026-08-01): **no additional code change needed** —
-> the two bound members that drifted since 4939 (`InputEvents.VehicleDockingInputData` dropping
-> `OldMeanRadius`, rev 4943; `Mole.GetLiquidMass` → `GetStoredMass`, rev 4992) were already fixed by
-> the 4980/5018 passes above. Build + tests green against 5056; the **full `upgrade-ksa` playbook pass
-> (changelog/decomp/Content diff) for 5056 is still pending**, so 5018 remains the last fully-audited
-> baseline.
+> **KSA baseline superseded → `2026.8.3.5117`** (upgrade-ksa playbook pass 2026-08-01). Because the
+> intermediate `2026.7.10.5056` bump was build-only and never audited, this pass diffed the **full
+> `5018 → 5117` window** (revs 5019–5116, 97 commits) via the assemblies checkout's own git history —
+> closing the 5056 gap and validating 5117 together. **Two compile breaks, both fixed; two silent
+> semantic drifts documented; everything else clean.** Build + tests green (0 warnings, 769 passed).
+> - **`NavBallData.DeltaVInVacuum` → `DeltaV`** (rev 5114), `VesselReader.SampleNavball` the single call
+>   site. The rename was the *visible* half: the same revision also changed **both** navball values'
+>   meaning — `deltav` is now the **active staging sequence's** propellant-aware Δv
+>   (`Parts.PerformanceSequences.FindActiveSequenceDeltaV()`) instead of the whole-stack vacuum rocket
+>   equation, and `twr`'s numerator became `ComputeActiveThrust(AtmosphericPressure)`, so TWR is
+>   **atmosphere-corrected** and skips engines that cannot produce thrust. TWR compiles clean — it would
+>   have drifted silently. Per maintainer decision this pass applied the **binding fix only**: no
+>   `SimSnapshot` field rename and no SPEC rewording, so `NavballSnapshot.DeltaVVacuumMs` and SPEC §3.4.3's
+>   "vacuum Δv" wording now overstate the value's provenance.
+> - **`VolumetricTrailRenderer.ExpansionTimeSeconds` removed** (revs 5059/5097 split the plume-trail
+>   subsystem apart). It moved onto the new `PlumeTrailSettings` with the same default and meaning, and
+>   the game's own Plume Trails debug window still exposes it, so the `/sim` node was **re-bound, not
+>   dropped** — new two-hop `FxReflect.TrailSettings` accessor (`VolumetricTrailRenderer.
+>   _plumeTrailSegmentsManager` → `PlumeTrailSegmentsManager._settings`) with its own `fx.trail_settings`
+>   health latch, so a future move degrades `render/expansion_time` alone. No SPEC change.
+> - **Semantic drift, no code change:** substance phase **names** (rev 5095 — a new `DefaultPhase` XML
+>   attribute makes the default phase render bare, so `tanks/<n>/substance` reports `"Kerosene"` not
+>   `"Liquid Kerosene"`, `srb/<n>/substance` `"APCP"` not `"Solid APCP"`; gas-default substances keep
+>   `"Liquid O2"`/`"Liquid H2"`); **encounter population** (revs 5106/5110 — final-trajectory-only, plus an
+>   excessive-entry fix); **docking identity** (rev 5076 — larger vehicles now absorb smaller ones).
+> - **Verified clean:** all eight Harmony hook targets, every reflection accessor, the whole `thug_life`
+>   render pipeline (`SuperMeshRenderSystem.cs` **byte-identical**; the conditional alpha-to-coverage
+>   attachment of revs 5057/5058 is not a member of the offscreen render pass), the terrain UBO writes,
+>   the audio actuator, and the new `Part` matrix cache (rev 5112 — the pose setters gatOS writes through
+>   all call `ResetCachedPosMatrixValues()`).
+>
+> Pass record + full detail: [`scope/ksa-assets-and-versions.md`](scope/ksa-assets-and-versions.md#5117-pass),
+> [read](scope/ksa-read-surface.md#5117-findings) / [write](scope/ksa-write-surface.md#5117-findings);
+> live re-check items appended to [`docs/VALIDATION.md`](docs/VALIDATION.md).
 
 > **Whole-mod perf pass (2026-07-02):** all seven plans of
 > [`plans/GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md`](plans/GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md)

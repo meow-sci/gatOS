@@ -70,7 +70,59 @@ update's blast radius is small and discoverable. The procedure:
    (`EOPNOTSUPP`), logs once, and shows up in `/sim/status/accessors`. The guest sees a failed sensor,
    not a crashed mod. This is the safety net for the things steps 2–3 miss.
 
-> **Current applied result of this playbook:** the **2026.7.8.4980 → 2026.7.9.5018** update was run
+> **Current applied result of this playbook:** the **2026.7.9.5018 → 2026.8.3.5117** update was run
+> through it on 2026-08-01 — **two compile breaks, both fixed; two silent semantic drifts documented;
+> nothing else needed.** The pass deliberately spanned the intermediate `2026.7.10.5056` drop (revs
+> 5019–5116, 97 commits), because 5056 had only ever been build-checked — its changelog/decomp/Content
+> diff was never run, so 5018 was the last fully-audited baseline and a 5056→5117 diff would have
+> silently skipped 37 revisions. **Method note:** the `_prev` sibling checkout was *not* the right
+> baseline here; the main checkout is a git repo holding every prior drop, so
+> `git diff 3106557 HEAD` (5018 → HEAD) gave the true window. Prefer that whenever `_prev` is not
+> itself an audited baseline.
+>
+> **Break 1 — `NavBallData.DeltaVInVacuum` → `DeltaV` (rev 5114)**, `VesselReader.SampleNavball` the
+> single call site. The rename was only the visible half: the same revision changed **both** navball
+> performance values' *meaning*. `navball/deltav` is now the **active staging sequence's**
+> propellant-aware Δv (`Parts.PerformanceSequences.FindActiveSequenceDeltaV()`) instead of the
+> whole-stack vacuum rocket equation; `navball/twr`'s numerator moved from `TotalEngineVacuumThrust` to
+> `ComputeActiveThrust(AtmosphericPressure)`, making it **atmosphere-corrected** and excluding engines
+> that cannot produce thrust. TWR **compiles clean** — a textbook example of why step 3 exists.
+> Per maintainer decision the fix was **binding-only**: no `SimSnapshot` field rename and no SPEC
+> rewording, so `NavballSnapshot.DeltaVVacuumMs` and SPEC §3.4.3's "vacuum Δv" now overstate provenance.
+>
+> **Break 2 — `VolumetricTrailRenderer.ExpansionTimeSeconds` removed (revs 5059/5097)**, when the
+> volumetric-trail subsystem was split into `PlumeSegmentStore`/`PlumeSegmentMaintenance`/
+> `PlumeTimingProfile`/`PlumeTrailSettings`/`PlumeTrailUploadBuilder`/`PlumeTrailEmitterTracker`. The
+> field moved onto the new `PlumeTrailSettings` with the **same default (`5f`) and meaning**. Because the
+> game's own Plume Trails debug window still exposes it — `VolumetricTrailRenderer.OnDrawUi` now delegates
+> its "Profile" section to `PlumeTrailSegmentsManager.OnDrawProfileUi()`, which draws
+> `_settings.ExpansionTimeSeconds` — the `/sim` node was **re-bound rather than dropped**, via a new
+> two-hop `FxReflect.TrailSettings` accessor carrying its own `fx.trail_settings` health latch (so a
+> future move degrades `render/expansion_time` alone). No SPEC change. *Standing rule this applied:
+> gatOS exposes what the built-in debug windows expose, reached the way they reach it.*
+>
+> **Semantic drift, no code change:** substance phase **names** (rev 5095 — a new `DefaultPhase` XML
+> attribute makes the default phase render bare, so `tanks/<n>/substance` now reports `"Kerosene"` not
+> `"Liquid Kerosene"` and `srb/<n>/substance` `"APCP"` not `"Solid APCP"`, while gas-default substances
+> keep `"Liquid O2"`/`"Liquid H2"`; audited — no example, tutorial or SDK code string-matches these);
+> **encounter population** (revs 5106/5110 — final-trajectory-only plus an excessive-entry fix; the
+> `Encounter` struct is unchanged and gained `TaMainOrbit`); **docking identity** (rev 5076 — larger
+> vehicles now absorb smaller ones, so which `/sim/vessels/<id>` survives a dock can differ).
+>
+> **Verified clean:** all eight Harmony hook targets and every reflection accessor (re-checked
+> member-by-member, since neither can fail at compile time); the whole `thug_life` pipeline —
+> `SuperMeshRenderSystem.cs` is **byte-identical** across the window, and the alpha-to-coverage rework of
+> revs 5057/5058 does not reach it because A2C is a transient attachment that is *not* a member of the
+> offscreen render pass; the terrain UBO writes (`PlanetRenderer`'s UBO plumbing unchanged, and gatOS
+> derives offsets from the public strides); the audio actuator (`GameAudio.System`/`GetChannelGroup`
+> intact through 249 lines of churn); and the new `Part` matrix cache (rev 5112 — safe, because the
+> `PositionParentAsmb`/`Asmb2ParentAsmb`/`Scale` setters gatOS writes through all call
+> `ResetCachedPosMatrixValues()`). Build + full test suite green against 5117 (0 warnings; 769 passed /
+> 11 skipped). ([read 5117 findings](ksa-read-surface.md#5117-findings) /
+> [write 5117 findings](ksa-write-surface.md#5117-findings)). Live re-check items are queued in
+> `../docs/VALIDATION.md`. **5117 is now the verified baseline.**
+>
+> The prior **2026.7.8.4980 → 2026.7.9.5018** update was run
 > through it on 2026-07-24 — **one compile break, fixed; one coverage gap opened; nothing else needed.**
 > Rev 4992 (solid rocket motors) generalized propellant storage from liquid-only to a new
 > `ISubstanceStore` (`Liquid | Solid`) abstraction, renaming `Mole.GetLiquidMass` → `GetStoredMass`

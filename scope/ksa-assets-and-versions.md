@@ -27,13 +27,46 @@ Two checkouts are kept side by side for diffing:
 
 | Checkout dir | Build | Date | Revisions | Role |
 |---|---|---|---|---|
-| `…/ksa-game-assemblies` | **2026.7.9.5018** | 2026-07-25 | 4980 → 5018 (**gapless** — `fromRevision` = the prior baseline) | **current / verified baseline** — full playbook pass 2026-07-24: one compile break (`Mole.GetLiquidMass`) fixed, one coverage gap opened (SRB solid propellant), everything else clean; `KSAFolder` default resolves here. The checkout is a **git repo whose history holds every prior drop** (`7cf5c0a` = 4892, `1265373` = 4826, `6fa343d` = 4750, …) — diff drops with `git diff <old>..<new>` inside it |
-| `…/ksa-game-assemblies_prev` | 2026.7.8.4980 | 2026-07-22 | 4939 → 4980 | prior verified baseline kept side-by-side; the 5018 pass diffed the two checkouts' `current/decomp` + `current/Content` trees directly |
+| `…/ksa-game-assemblies` | **2026.8.3.5117** | 2026-08-01 | 5056 → 5117 | **current / verified baseline** — full playbook pass 2026-08-01 spanning **5018 → 5117** (see below): one compile break (`NavBallData.DeltaVInVacuum`) fixed, one High-risk binding re-routed (`ExpansionTimeSeconds`), two silent semantic drifts documented; `KSAFolder` default resolves here. The checkout is a **git repo whose history holds every prior drop** (`13595c1` = 5056, `3106557` = 5018, `cdb7391` = 4980, `7cf5c0a` = 4892, …) — diff drops with `git diff <old>..<new>` inside it |
+| `…/ksa-game-assemblies_prev` | 2026.7.10.5056 | 2026-07-28 | 5018 → 5056 | prior side-by-side checkout. **Note:** 5056 was a build-only bump and was never itself playbook-audited, so the 5117 pass used the *git history* of the main checkout (`3106557` = 5018) as its true baseline rather than this tree — see the method note below |
 
 gatOS was originally built against the 4680-era sources (most `[KsaAnchor]` `Verified` dates span
 2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27; the touched
 anchors carry `GameVersion="2026.6.9.4750"` (see
 [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)).
+
+**The 5018 → 5117 pass (2026-08-01) — one compile break fixed, one High-risk binding re-routed, two
+silent semantic drifts documented.** {#5117-pass}
+The drop supplied as PREVIOUS was `2026.7.10.5056`, but 5056 had only ever been build-checked — the
+changelog/decomp/Content diff was never run — so **5018 was the last fully-audited baseline** and a
+5056→5117 diff would have silently skipped 37 revisions. The pass instead diffed
+**`git diff 3106557 HEAD`** inside the main checkout (5018 → 5117, revs 5019–5116, 97 commits), which
+both closes the 5056 gap and validates 5117 in one sweep. *Method note for next time: prefer the main
+checkout's git history over the `_prev` sibling whenever `_prev` is not itself an audited baseline.*
+
+Build-as-alarm caught one break: **rev 5114 renamed `NavBallData.DeltaVInVacuum` → `DeltaV`**
+(`VesselReader.SampleNavball`, the single call site). The same revision silently changed **both**
+navball performance values — `DeltaV` is now the active staging sequence's propellant-aware Δv
+(`Parts.PerformanceSequences.FindActiveSequenceDeltaV()`) rather than the whole-stack vacuum rocket
+equation, and `ThrustWeightRatio`'s numerator became `ComputeActiveThrust(AtmosphericPressure)`, making
+it atmosphere-corrected; the latter compiles clean and would otherwise have gone unnoticed. Per the
+maintainer's call this pass applied the **binding fix only** (no `SimSnapshot` field rename, no SPEC
+rewording), so `NavballSnapshot.DeltaVVacuumMs` and SPEC §3.4.3's "vacuum Δv" wording now overstate the
+value's provenance.
+
+The second fix was **revs 5059/5097**, which split the volumetric-trail subsystem apart and moved
+`VolumetricTrailRenderer.ExpansionTimeSeconds` onto the new `PlumeTrailSettings`. Because the game's own
+Plume Trails debug window still exposes that field (its "Profile" section now delegates to
+`PlumeTrailSegmentsManager.OnDrawProfileUi`), the node was **re-bound rather than dropped**, via the new
+two-hop `FxReflect.TrailSettings` accessor with its own `fx.trail_settings` health latch — no `/sim` or
+SPEC change. Beyond that: two **semantic drifts with no code change** (substance phase names, rev 5095;
+encounter population, revs 5106/5110), one docking-identity behaviour change (rev 5076), and a clean
+bill for every Harmony hook, every reflection accessor, the `thug_life` render pipeline
+(`SuperMeshRenderSystem.cs` byte-identical), the terrain UBO writes and the audio actuator.
+Full detail: [read](ksa-read-surface.md#5117-findings) / [write](ksa-write-surface.md#5117-findings).
+Build + suite green against 5117 (0 warnings, 769 passed / 11 skipped). 5117 is now the verified baseline.
+
+---
 
 **The 4980 → 5018 pass (2026-07-24) — one compile break, fixed; one coverage gap opened.** {#5018-pass}
 The 5018 drop's `version.json` is gapless (`fromRevision` 4980 = the prior baseline; revs 4981–5018
@@ -209,6 +242,7 @@ and the fastest way to confirm a rename actually landed. Concrete files (current
 | Solar / generator production | `Core/CoreElectricalAGameData.xml` | `<SolarPanel><Produced W="200"/></SolarPanel>` (cells `W="100"` — 4826 doubled the stock `SolarPanelB_CellA` value from `W="50"`, same unit) | rev 4681: production authored in **Watts** — confirms `power/produced`, `solar/<n>/produced` are instantaneous W. |
 | Control authority (`IsControllable`) | `Core/CoreCommandAGameData.xml` | `CoreCommandA_Prefab_MediumCapsuleVariantA` has `<Control />` | rev 4699: the new Control Module is on the capsule in XML; vehicles without `<Control />` are not controllable. |
 | Engines / tanks / lights / RCS / decouplers / animations | `Core/Core*GameData.xml` (Propulsion, Electrical, Coupling, …) | `<EngineController>`, `<Tank>`/`<Mole>`, `<LightModule>`, `<ThrusterController>`, `<Decoupler>`, `<KeyframeAnimation>` | the module element names the readers/actuators bind to; no 4750 changes; 4826 adds only `<ConnectorRef>`/`<Aligned>` (the new symmetry connectors) + `<CombustionProcess>` entries; 4892 (rev 4884) migrates `<Combustion Id="…"/>` → `<Reaction Id="…">` and adds `<RoleAffinity>` on tanks (`PartGameData.xml`); 4939 (rev 4934) moves all `<Tank>` game data out of `PartGameData.xml` into `CoreFuelTankAGameData.xml` (identical element schema) and adds the `<FuelPort>` module — template *configuration* churn only, no module element gatOS binds changed. |
+| **Substance / propellant display names** (`tanks/<n>/substance`, `srb/<n>/substance`) | `Core/Volatiles.xml`, `Core/SolidPropellants.xml` | `<Substance Id="Kerosene" DefaultPhase="Liquid">`, `<Substance Id="He" DefaultPhase="Gas">`, `<Substance Id="APCP" DefaultPhase="Solid">`, plus the new `<Color>` element | **rev 5095 changed the published strings.** The new `DefaultPhase` attribute drives `SubstanceTemplate.BuildPhaseName`: the default phase renders **bare** and non-default phases take a qualifier (`Gas` → `"X Vapor"`, `Liquid` → `"Liquid X"`, `Solid` → `"X Ice"`), replacing the old unconditional `"Solid "`/`"Liquid "`/`"Gaseous "` prefixes. Net: `"Liquid Kerosene"` → `"Kerosene"`, `"Solid APCP"` → `"APCP"`; gas-default substances keep `"Liquid O2"`/`"Liquid H2"`/`"Liquid CH4"`. gatOS passes the string through verbatim — no code change, but string-matching guest programs break. |
 | Part template ids (dynamic add) | `Core/Core*GameData.xml` `PartGameData Id="…"` | e.g. `CoreCouplingA_Prefab_DockingPort1WA` | the string ids `ModLibrary.Get<PartTemplate>(id)` resolves (not used by `/sim` reads; reference). |
 | **`thug_life` quad shaders** | `Core/Shaders/Mesh/UnlitMesh.{vert,frag}` | the `"UnlitMeshVert"`/`"UnlitMeshFrag"` `ShaderReference` keys `ThugLifeQuadRenderer.BuildPipeline` resolves via `ModLibrary.Get<ShaderReference>(...)` | the world-space quad reuses KSA's stock unlit-mesh shaders; if these keys/assets are renamed/removed the pipeline build fails (caught, feature self-disables). |
 
@@ -236,13 +270,27 @@ breaks the draw — re-verify live):
   `ThugLifeTexturePattern` → `ThugLifeTextureFactory`).
 - **Reverse-Z** depth convention and the **`Program.OffScreenPass.{Pass,SampleCount}`** render-pass /
   MSAA sample count (the quad must be depth-tested and MSAA-resolved consistently with the scene).
+  **5117 note (revs 5057/5058):** the alpha-to-coverage attachment became conditional
+  (`OffscreenTarget.HasAlphaToCoverageAttachment` — MSAA-only — and its format was pinned to a new
+  `OffscreenTarget.AlphaToCoverageFormat = R8UNorm`). This does **not** affect the quad: A2C is a
+  transient attachment that is *not* a member of the offscreen render pass, whose
+  `OffscreenTarget.CreateRenderPass` is still the same four attachments (resolve colour/depth + MSAA
+  colour/depth), so the pipeline's single colour-blend attachment stays compatible. The rev 5058
+  `SimplePipelineCreator` A2C stale-state fix is likewise out of reach — `BuildPipeline` supplies its own
+  `VkPipelineMultisampleStateCreateInfo` instead of going through that creator.
 - Draw injected via a Harmony postfix on `SuperMeshRenderSystem.RenderMainPass(CommandBuffer)`
   (`KSA/SuperMeshRenderSystem.cs:329`) — the runtime coupling, see
   [`ksa-runtime-coupling.md#thug-life-patch`](ksa-runtime-coupling.md#thug-life-patch).
 
 Full anchor list: [`ksa-read-surface.md#thug-life`](ksa-read-surface.md#thug-life) (anchor math),
 [`ksa-write-surface.md#thug-life`](ksa-write-surface.md#thug-life) (the seven actions),
-[`../docs/KSA_INTEGRATION_MATRIX.md`](../docs/KSA_INTEGRATION_MATRIX.md) (render set). **Re-verified
+[`../docs/KSA_INTEGRATION_MATRIX.md`](../docs/KSA_INTEGRATION_MATRIX.md) (render set).
+**Re-verified (static) 2026-08-01 against `2026.8.3.5117`**: `SuperMeshRenderSystem.cs` is
+**byte-identical** across the whole 5018→5117 window (so `RenderMainPass` and the postfix target are
+untouched); `Program.OffScreenPass` and `OffscreenTarget.CreateRenderPass` unchanged; the
+`UnlitMeshVert`/`UnlitMeshFrag` keys still resolve (`NavBallRenderer` uses the same pair) and
+`RenderingPresets.ReverseZDepthStencil.DepthTestWrite` is intact — see the A2C note above for the one
+render-side change that *looked* relevant and is not. Prior stamp — **Re-verified
 (static) 2026-07-22 against `2026.7.8.4980`**: `RenderMainPass(CommandBuffer)` and its body
 **identical** — the whole `SuperMeshRenderSystem.cs` diff is the cascaded-shadow rework
 (`RenderShadowPass` gained an `int cascadeIndex` param, depth pipelines an int push-constant, PBR

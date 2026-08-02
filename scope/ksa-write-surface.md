@@ -441,7 +441,8 @@ renderer re-reads every frame, so a write needs **no apply call**:
 
 | `/sim` path | action key | phase | KSA member | Decomp file | Risk | 5056 |
 |---|---|---|---|---|---|---|
-| `debug/plumetrail/render/*` | `debug.plumetrail_set` | Frame | `TrailActuator.TryWrite` → `VolumetricTrailRenderer.{MaxDistance,VoxelDepthFirstSliceThickness,MinStepSize,StepSizeDistanceScale,ExpansionTimeSeconds,ErosionMaxDepth,ErosionEdgeSharpness,SelfShadowStepCount,LightBrightness,SkyAmbientBrightness,DebugTrailColor}` (public `float`/`int`/`float4` fields) | `KSA/VolumetricTrailRenderer.cs:173-196` | Medium | ✅ |
+| `debug/plumetrail/render/*` | `debug.plumetrail_set` | Frame | `TrailActuator.TryWrite` → `VolumetricTrailRenderer.{MaxDistance,VoxelDepthFirstSliceThickness,MinStepSize,StepSizeDistanceScale,ErosionMaxDepth,ErosionEdgeSharpness,SelfShadowStepCount,LightBrightness,SkyAmbientBrightness,DebugTrailColor}` (public `float`/`int`/`float4` fields) | `KSA/VolumetricTrailRenderer.cs:172-194` | Medium | ✅ |
+| `debug/plumetrail/render/expansion_time` | `debug.plumetrail_set` | Frame | `TrailActuator.TryWrite` → `FxReflect.TrailSettings` → `PlumeTrailSettings.ExpansionTimeSeconds` (**two private hops**) | `KSA/VolumetricTrailRenderer.cs:166` → `KSA/PlumeTrailSegmentsManager.cs:19` → `KSA/PlumeTrailSettings.cs:11` | **High** | ⚠️ **5117: moved off the renderer** (revs 5059/5097), re-bound — see [5117 findings](#5117-findings) |
 | (renderer handle) | — | — | `FxReflect.Trail` → reflected `Program.Instance._volumetricTrailRenderer` (the only handle; latch `fx.trail_renderer`) | `KSA/Program.cs:160` | **High** | ✅ |
 | `debug/plumetrail/clear` | `debug.plumetrail_clear` | Frame | `Program.Instance.ClearPlumeTrails()` → `VolumetricTrailRenderer.ClearPlumeTrails()` | `KSA/Program.cs:4610`, `KSA/VolumetricTrailRenderer.cs:259` | Medium | ✅¹ |
 | `debug/plumetrail/reset` | `debug.plumetrail_reset` | Frame | `FxPristine.Restore` replays through `TryWrite` | — | Medium | ✅ |
@@ -555,6 +556,66 @@ anchors (the two here + `VesselReader.SampleDocking`) were re-verified to `Verif
   see the docking section above).
 - **Lights / animations / decouplers / RCS / engines / flight computer / teleport / refills** — all
   members compiled clean and none appear in the changelog with an API-affecting change.
+
+---
+
+## ⚠️ 5117 write-surface findings (playbook pass 2026-08-01) {#5117-findings}
+
+Full playbook pass 2026-08-01, `2026.7.9.5018` → `2026.8.3.5117` (revs 5019–5116 — the pass spans the
+un-audited 5056 drop as well). **One compile break, fixed; every other actuator, Harmony hook and
+reflection accessor clean.** Build + full test suite green against the 5117 DLLs (0 warnings,
+769 passed / 11 skipped).
+
+- **⚠️ COMPILE BREAK, FIXED — `VolumetricTrailRenderer.ExpansionTimeSeconds` removed (revs 5059/5097).**
+  The volumetric-trail subsystem was refactored and split (`PlumeSegmentStore`, `PlumeSegmentMaintenance`,
+  `PlumeTimingProfile`, `PlumeTrailSettings`, `PlumeTrailUploadBuilder`, `PlumeTrailEmitterTracker`,
+  `TrailCursor*` are all new files); `ExpansionTimeSeconds` moved off the renderer onto the new
+  `PlumeTrailSettings`, with the **same default (`5f`) and the same meaning**. The renderer's other ten
+  public fields gatOS binds are untouched.
+
+  **Re-bound rather than dropped**, per the standing rule that gatOS should expose what the game's own
+  debug windows expose, by the same route they use: the built-in **Plume Trails** window still shows
+  `expansionTime` in its "Profile" section — `VolumetricTrailRenderer.OnDrawUi` now delegates that
+  section to `PlumeTrailSegmentsManager.OnDrawProfileUi()`, which draws `_settings.ExpansionTimeSeconds`.
+  gatOS reaches the identical object via the new `FxReflect.TrailSettings` accessor (two private hops:
+  `VolumetricTrailRenderer._plumeTrailSegmentsManager` → `PlumeTrailSegmentsManager._settings`).
+  It carries its own health latch (`fx.trail_settings`), so a future move degrades
+  `render/expansion_time` **alone** to `EOPNOTSUPP` and leaves the other ten fields healthy.
+  No SPEC change — the `/sim` path, type, range and action key are all unchanged.
+- **✅ All eight Harmony hook targets intact** — re-checked by hand against the 5117 decomp, since a
+  renamed target fails at patch-install time rather than at compile: `Universe.ExecuteNextVehicleSolvers`
+  (`:1784`), `Program.DrawProgramMenusHook` (`:3622`), `Program.RenderGame` (`:4173`),
+  `Vehicle.GetWorldMatrix` (`:3428`) / `UpdateRenderData` (`:3441`),
+  `SuperMeshRenderSystem.RenderMainPass` (`:329`), `PartModel` ctor / `AddInstance` (`:375`).
+- **✅ All reflection accessors intact** — the compiler-blind set, re-verified member-by-member:
+  `Vehicle._manualControlInputs` → `ManualControlInputs{EngineOn,EngineThrottle,ThrusterCommandFlags}`
+  (throttle/rotate/translate), the `KittenEva._renderable` → `KittenRenderable._characterAvatar` → `.Core`
+  scale chain, the light-template clone path, and all six FX handles
+  (`Program._volumetricTrailRenderer`, `VolumetricExhaustTemplate.References`,
+  `VolumetricExhaustRenderer._currentAtmosphericPressure`/`_debugThrottle`,
+  `Program._planetTransparenciesRenderer`, `CloudRenderer._renderer`/`_cloudShadowsRenderer`/
+  `_worleyNoise3dTarget`, `PlanetRenderer._renderUboMap`/`_meshUboMap`).
+- **✅ `thug_life` render internals clean despite a heavy render-side changelog.**
+  `SuperMeshRenderSystem.cs` is **byte-identical** across the whole window. `Program.OffScreenPass`
+  (`.Pass`/`.SampleCount`) is unchanged, and critically the offscreen render pass is still exactly four
+  attachments — the alpha-to-coverage rework (revs 5057/5058) made the A2C attachment conditional on MSAA,
+  but it is a **transient attachment that is not a member of that render pass**, so the pipeline's single
+  colour-blend attachment stays compatible. `UnlitMeshVert`/`UnlitMeshFrag` and
+  `RenderingPresets.ReverseZDepthStencil.DepthTestWrite` are intact. The rev 5058
+  `SimplePipelineCreator` alpha-to-coverage stale-state fix cannot reach gatOS — the quad renderer
+  supplies its own `VkPipelineMultisampleStateCreateInfo` rather than going through that creator.
+- **✅ Terrain FX live-apply clean.** `PlanetRenderer`'s UBO plumbing is **unchanged across the entire
+  5018→5117 window**, and gatOS derives its offsets from the public `PlanetUboStride`/`MeshUboStride`/
+  `NumCelestials` rather than hardcoding them, so even a future `PlanetUbo` resize is absorbed.
+- **✅ Audio actuator clean.** `GameAudio.cs` churned heavily (revs 5047/5050/5051/5054/5064/5069 — engine
+  cluster channels became per-vehicle, streamed sounds went non-blocking), but every member gatOS binds is
+  untouched: `GameAudio.System` (`FmodSystem`) and `GameAudio.GetChannelGroup(ChannelGroupType)` with the
+  same `Master`/`Sfx`/`Ui`/`Music` mapping. The removed `GameAudio.PlaySound(SoundEvent, …)` overload is a
+  game-internal path gatOS never used.
+- **✅ Cloud FX clean.** The atmosphere push-constants → per-planet UBO migration (rev 5100) is renderer
+  shader plumbing; gatOS's cloud editor writes the **template data**
+  (`AtmosphericBody.BodyTemplate.CloudsReference`) and applies via `CloudLayerRenderData.UpdateStaticData`
+  + `CloudShadowsRenderer.PopulatePlanets`, all compile-verified unchanged.
 
 ---
 

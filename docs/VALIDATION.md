@@ -511,6 +511,32 @@ settle:
 | 6 | `/sim/status/accessors` reports **no** degraded accessor after a fresh flight load (the reflection set: manual throttle, thruster flags, light-template clone) | ☐ | standing post-update check — decomp can lag the shipping binary |
 | 7 | thug_life quad still draws correctly, and `/sim/display` still streams | ☐ | statically clean (`SuperMeshRenderSystem.cs` and `Program.RenderGame` byte-identical), but rev 4988's MilkyWay renderer split and the plume-trail/ground-clutter pass churn are only provable live |
 
+## KSA 2026.8.3.5117 upgrade — live re-check items — **NOT YET RUN**
+
+The 2026.7.9.5018 → 2026.8.3.5117 playbook pass (2026-08-01, spanning the un-audited 5056 drop — revs
+5019–5116) found **two compile breaks, both fixed** (`NavBallData.DeltaVInVacuum` → `DeltaV`;
+`VolumetricTrailRenderer.ExpansionTimeSeconds` moved onto `PlumeTrailSettings`) and **three drifts with
+no code change** (substance phase names, encounter population, docking identity). See
+`scope/ksa-assets-and-versions.md#5117-pass` and the 5117
+[read](../scope/ksa-read-surface.md#5117-findings) / [write](../scope/ksa-write-surface.md#5117-findings)
+findings. All prior items above remain valid and can run on 5117. Residual items static review cannot
+settle:
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | `cat /sim/vessels/active/navball/deltav` on a **multi-stage** vehicle now reports the **active sequence's** Δv, not the whole stack's: it should step *up* as a spent stage is dropped (the new stage's own Δv), where the old value fell monotonically | ☐ | rev 5114 rewired it onto `Parts.PerformanceSequences.FindActiveSequenceDeltaV()` — the headline semantic change |
+| 1a | `navball/twr` is now **atmosphere-corrected**: on the pad it should read visibly **lower** than the same vessel's vacuum TWR, rise with altitude, and ignore engines that are out of propellant | ☐ | numerator moved to `ComputeActiveThrust(AtmosphericPressure)`; this drift compiles clean, so only a live read proves it |
+| 1b | Confirm the value is still finite/sane in edge cases the old formula handled: no engines, all engines dry, zero throttle, on-rails/warp | ☐ | `Sanitize.Finite` guards NaN, but a new divide-by-zero path would surface as 0 rather than a crash |
+| 2 | `cat /sim/vessels/active/tanks/*/substance` reports the **new bare names** — `Kerosene`, not `Liquid Kerosene` — while cryogenic (gas-default) substances keep `Liquid O2` / `Liquid H2` / `Liquid CH4`; `srb/<n>/substance` reports `APCP`, not `Solid APCP` | ☐ | rev 5095 `DefaultPhase`; **check `examples/`, `site/guides/` and the SDK for any string match on substance names before relying on this** |
+| 3 | `echo 3.5 > /sim/debug/plumetrail/render/expansion_time` still visibly changes plume-trail expansion, `cat` reads the value back, and the game's own Plume Trails debug window shows the same number in its "Profile" section | ☐ | the re-bound two-hop accessor — the round-trip through `PlumeTrailSettings` is the whole point of the fix |
+| 3a | The other ten `debug/plumetrail/render/*` fields still read/write, and `debug/plumetrail/reset` restores every captured pristine value **including** `expansion_time` | ☐ | confirms the pristine capture/restore path still covers the relocated field |
+| 4 | `/sim/status/accessors` reports **no** degraded accessor after a fresh flight load — specifically the new **`fx.trail_settings`** latch alongside the existing set (manual throttle, thruster flags, light-template clone, the five other FX handles) | ☐ | standing post-update check; the new latch is the one most likely to fire, since it walks two private fields |
+| 5 | In an orbit whose period greatly exceeds the target's, `encounters/` no longer floods with entries, and the listed approaches reflect the **final** trajectory including planned burns | ☐ | revs 5106/5110 — row count/content change only, struct unchanged |
+| 6 | Dock a **small** vessel to a **larger** one and confirm which `/sim/vessels/<id>` survives; re-check that any docking program keying off the surviving id still works | ☐ | rev 5076 "larger vehicles absorb smaller vehicles"; also re-check contact docking after the rev 5061 origin-snap fix |
+| 7 | thug_life quad still draws correctly, and `/sim/display` still streams — **test with MSAA both on and off** | ☐ | statically clean (`SuperMeshRenderSystem.cs` byte-identical; A2C is not a member of the offscreen pass), but revs 5057/5058 made the alpha-to-coverage attachment MSAA-conditional, so both paths deserve a look |
+| 8 | IVA cabin physics (`/sim/debug/iva`) still tracks: adopted objects follow the cabin without drift or stale poses | ☐ | rev 5112 added a `Part.MatrixAsmb2VehicleAsmb` cache; statically safe (the pose setters invalidate), but this is the one place a stale cache would show as visible lag |
+| 9 | Vehicles can now be **destroyed** by structural g-limit / dynamic pressure (rev 5115). Confirm a destroyed vessel disappears cleanly from `/sim/vessels/`, the sampler's despawn pruning fires, and no accessor latches degraded | ☐ | a new way for a vessel to vanish mid-flight — not modelled in `/sim` yet, but the pruning paths must tolerate it |
+
 ## AGC (examples/agc — Luminary099 in-guest) — mission cards M-A…M-E — **NOT YET RUN IN-GAME**
 
 Prereq: the T6.6 pass; `examples/agc` built + installed in the guest (`tools/build-agc.sh` —

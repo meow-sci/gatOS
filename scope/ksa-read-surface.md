@@ -113,7 +113,7 @@ are cached per vehicle in `Readers/AnimationLinks.cs` (GP3), rebuilt on module-c
 | `/sim` path | gatOS site | KSA member | Decomp file | Risk | 5018 |
 |---|---|---|---|---|---|
 | `position/ecl`, `velocity/cci`, `com` | `:154-156` | `Vehicle.GetPositionEcl()`, `GetVelocityCci()`, `CenterOfMassAsmb` | `KSA/Vehicle.cs` | Low | ✅ |
-| `navball/{pitch,yaw,roll,twr,deltav,frame,speed}` | `:223` | `Vehicle.NavBallData.{AttitudeAngles(int3 deg),ThrustWeightRatio,DeltaVInVacuum,Frame,Speed}` | `KSA/NavBallData.cs` | Medium | ✅ |
+| `navball/{pitch,yaw,roll,twr,deltav,frame,speed}` | `:223` | `Vehicle.NavBallData.{AttitudeAngles(int3 deg),ThrustWeightRatio,DeltaV,Frame,Speed}` | `KSA/NavBallData.cs` | Medium | ⚠️ **5117: renamed + semantic drift** (rev 5114) — see below |
 | `environment/{pressure,density,dynamic_pressure,ocean_density,terrain_radius,accel,angular_accel,g_force}` | `:235` | `Vehicle.PhysicsEnvironment.{AtmosphericPressure,AtmosphericDensity,OceanDensity,TerrainRadius}`; `PhysicalAtmosphereReference.GetDynamicPressure(vehicle)`; `Vehicle.AccelerationBody`/`AngularAccelerationBody` | `KSA/PhysicsEnvironment.cs`, `KSA/Vehicle.cs` | Low | ✅ |
 | `orbit/{lan,argpe,true_anomaly,time_to_ap,time_to_pe,next_patch}` | `:199` | `Orbit.{LongitudeOfAscendingNode,ArgumentOfPeriapsis,StateVectors.TrueAnomaly.Degrees}`; `Vehicle.Next{Apoapsis,Periapsis,PatchEvent}Time` | `KSA/Orbit.cs`, `KSA/Vehicle.cs` | Low | ✅ |
 | `encounters` (NDJSON) | `:573` | `Vehicle.Patch.Encounters`; `Encounter.{Body.Id,GameTime,ClosestDistance}` | `KSA/PatchedConic.cs`, `KSA/Encounter.cs` | Medium | ✅ |
@@ -393,6 +393,68 @@ report faithfully, none a member drift:
 
 ---
 
+## ⚠️ 5117 read-surface findings (playbook pass 2026-08-01) {#5117-findings}
+
+Full playbook pass 2026-08-01, `2026.7.9.5018` → `2026.8.3.5117`. The pass deliberately spans **both**
+the 5056 and 5117 drops (revs 5019–5116, 97 revisions): 5056 was a build-only bump whose changelog/decomp
+diff was never run, so 5018 was the last fully-audited baseline. **One compile break, fixed; two silent
+semantic drifts found; everything else clean.** Build + full test suite green against the 5117 DLLs
+(0 warnings, 769 passed / 11 skipped).
+
+- **⚠️ COMPILE BREAK + SEMANTIC DRIFT, FIXED — `NavBallData.DeltaVInVacuum` → `DeltaV` (rev 5114).**
+  `VesselReader.SampleNavball` was the single call site; anchor re-verified
+  `2026-08-01`/`2026.8.3.5117`. The rename is the *visible* half — **both** navball performance values
+  changed meaning at the same revision, and only one of them failed to compile:
+  - `navball/deltav`: was `TotalEngineExhaustVelocity × ln(TotalMass / InertMass)` — a naive whole-stack
+    vacuum rocket equation — now `Parts.PerformanceSequences.FindActiveSequenceDeltaV()`, i.e. the
+    **currently active staging sequence's** propellant-aware Δv (revs 5035/5036/5114 made the flight
+    computer stop crediting thrust from engines that are out of propellant, and made sequences end at
+    the first decoupling engine group).
+  - `navball/twr`: **compiles clean, value silently changed.** The numerator moved from
+    `FlightComputer.VehicleConfig.TotalEngineVacuumThrust` to
+    `ComputeActiveThrust(_environment.AtmosphericPressure)` — so TWR is now atmosphere-corrected
+    (lower at sea level) and excludes engines incapable of producing thrust.
+
+  Per the maintainer's call (2026-08-01) this pass made the **binding fix only**: no `SimSnapshot` field
+  rename and no SPEC rewording. Consequence to be aware of: `NavballSnapshot.DeltaVVacuumMs` and
+  SPEC §3.4.3's "Remaining vacuum Δv" now describe a value that is neither vacuum-based nor whole-stack.
+- **⚠️ SEMANTIC DRIFT — substance phase *names* changed (rev 5095).** `SubstanceTemplate` gained a
+  `DefaultPhase` XML attribute and a `BuildPhaseName` helper: the default phase now renders **bare**,
+  and the non-default phases take a qualifier (`Gas` → `"X Vapor"`, `Liquid` → `"Liquid X"`, `Solid` →
+  `"X Ice"`). Previously every phase was prefixed (`"Solid X"` / `"Liquid X"` / `"Gaseous X"`).
+  `Content/Core/Volatiles.xml` + `SolidPropellants.xml` confirm the assignments. Net effect on the
+  published `/sim` strings (`tanks/<n>/substance` ← `Mole.SubstancePhase.Name`, `srb/<n>/substance` ←
+  `SolidMotor.Propellant.Name`): `"Liquid Kerosene"` → **`"Kerosene"`**, `"Solid APCP"` → **`"APCP"`**,
+  while gas-default substances keep their liquid names (`"Liquid O2"`, `"Liquid H2"`, `"Liquid CH4"`).
+  **No gatOS code change** — the game's string is passed through verbatim — but any guest program,
+  example or tutorial matching substance names by string breaks. Flagged for live confirmation.
+- **⚠️ BEHAVIOURAL DRIFT — encounter population (revs 5106/5110).** The `Encounter` struct gatOS binds
+  (`Body`, `GameTime`, `ClosestDistance`) is intact and gained `TaMainOrbit`, but *which* closest
+  approaches are published changed: only those from the final trajectory (including planned burns), plus
+  a fix for excessive entries when the orbiter's period greatly exceeds the target's. Affects the row
+  count and contents of `encounters/<n>/`. No code change; live re-verify.
+- **⚠️ BEHAVIOURAL DRIFT — docking absorbs by size (rev 5076).** "Larger vehicles absorb smaller vehicles
+  when docking", plus a contact-docking origin-snap fix (rev 5061). gatOS's `InputEvents`-mediated
+  docking path is unchanged, but **which vessel id survives a dock** can now differ — a `/sim/vessels/<id>`
+  identity consideration for docking programs. No code change; live re-verify.
+- **✅ Part matrix caching (rev 5112) — safe.** `Part` gained a cached `_matrixAsmb2VehicleAsmb` (a real
+  time-warp win), and the existing `_positionVehicleAsmb`/`_asmb2VehicleAsmb` caches switched from
+  identity- to NaN-sentinels. This *could* have silently served stale poses to the IVA cabin driver,
+  which writes part poses every frame — but the `PositionParentAsmb`, `Asmb2ParentAsmb` and `Scale`
+  setters all call `ResetCachedPosMatrixValues()`, which is exactly the path `FloatingObject` and
+  `ScaleActuator` write through. No change required.
+- **✅ Additive-only on the bound module surface**: `Vehicle` gained `Crew`/`SeatCount`/`HasLaunched`/
+  `CanRecover`/`AddCrew`/`RemoveCrew` (kitten roster, revs 5074–5105) and `SolidMotor` gained
+  `FilledFraction`/`DrawFillBar` (rev 5084) — no bound member moved. `Vehicle.PropellantMass`,
+  `IsControllable`, `GetManualThrottle`, `Parts`, and every `Modules.Get<T>` state struct are unchanged.
+- **⚠️ Not yet surfaced (new game features, no action required)**: vehicle **destruction** by structural
+  g-limit / dynamic-pressure limit (rev 5115, `VehicleStructuralLimits.cs`, `VehicleDestructionCause.cs`,
+  `WreckageMarker.cs`), vehicle **recovery** (rev 5101), and the **kitten roster / crew** model
+  (revs 5074–5105). All are candidates for future additive reads; note that destruction gives vessels a
+  new way to disappear mid-flight, which the despawn-pruning paths already tolerate.
+
+---
+
 ## ⚠️ 5018 read-surface findings (playbook pass 2026-07-24) {#5018-findings}
 
 Full playbook pass 2026-07-24, `2026.7.8.4980` → `2026.7.9.5018` (changelog gapless — `fromRevision`
@@ -582,8 +644,10 @@ changes the reads report faithfully, none a member drift:
   `VacuumData` reads unchanged), `PhysicsEnvironment.AtmosphereRadius` — both candidates for future
   additive reads, no action required.
 - **SequencePerformance live recompute (revs 4868/4880)**: `SequencePerformanceList` is new and
-  sequences are double-buffered for the UI — gatOS reads neither (`navball/deltav` comes from
-  `Vehicle.NavBallData.DeltaVInVacuum`, unchanged).
+  sequences are double-buffered for the UI — gatOS read neither at 4892. **Superseded at 5117**: rev 5114
+  rewired `NavBallData.DeltaV` onto `Parts.PerformanceSequences.FindActiveSequenceDeltaV()`, so
+  `navball/deltav` is now sourced from exactly this machinery — see
+  [5117 findings](#5117-findings).
 - **EVA spawn tweak (rev 4869)**: kittens now spawn just *outside* the door part (pushed along the
   door direction) and `KittenBackPackPart` gained a real 0.35 m collider — affects where a fresh EVA
   kitten vessel appears in position reads (benign; fixes the old spawn-spin).

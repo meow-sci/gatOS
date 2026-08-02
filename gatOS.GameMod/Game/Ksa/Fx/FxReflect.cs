@@ -25,6 +25,9 @@ internal static class FxReflect
     /// <summary>Health-latch key: the global volumetric-trail renderer instance.</summary>
     internal const string TrailAccessor = "fx.trail_renderer";
 
+    /// <summary>Health-latch key: the trail renderer's private plume-trail settings object.</summary>
+    internal const string TrailSettingsAccessor = "fx.trail_settings";
+
     /// <summary>Health-latch key: the volumetric-exhaust template registry (enumeration only).</summary>
     internal const string PlumeTemplatesAccessor = "fx.plume_templates";
 
@@ -47,6 +50,8 @@ internal static class FxReflect
         BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
 
     private static FieldInfo? _trailField;
+    private static FieldInfo? _trailManagerField;
+    private static FieldInfo? _trailSettingsField;
     private static FieldInfo? _transparenciesField;
     private static FieldInfo? _templateReferencesField;
     private static FieldInfo? _exhaustPressureField;
@@ -57,6 +62,7 @@ internal static class FxReflect
     private static FieldInfo? _renderUboMapField;
     private static FieldInfo? _meshUboMapField;
     private static bool _trailResolved;
+    private static bool _trailSettingsResolved;
     private static bool _transparenciesResolved;
     private static bool _templateReferencesResolved;
     private static bool _exhaustModifiersResolved;
@@ -80,7 +86,7 @@ internal static class FxReflect
     ///     public instance fields the renderer re-reads every frame, so no apply call exists.
     /// </summary>
     [KsaAnchor("Program.Instance._volumetricTrailRenderer (private instance field)",
-        SourceFile = "KSA/Program.cs:160", Verified = "2026-08-01", GameVersion = "2026.7.10.5056",
+        SourceFile = "KSA/Program.cs:160", Verified = "2026-08-01", GameVersion = "2026.8.3.5117",
         Risk = ChurnRisk.High,
         Notes = "Reflection: the only handle on the one VolumetricTrailRenderer. The renderer type and "
             + "every field gatOS writes are public; only the Program field is private. Null while the "
@@ -103,6 +109,47 @@ internal static class FxReflect
         if (_trailField?.GetValue(program) is VolumetricTrailRenderer trail)
             return trail;
         error = "Program._volumetricTrailRenderer is missing in this build";
+        return null;
+    }
+
+    /// <summary>
+    ///     The trail renderer's plume-trail settings object, or null with a reason. This is the
+    ///     <b>same object the game's own "Plume Trails" debug window edits</b> — its "Profile"
+    ///     section delegates to <c>PlumeTrailSegmentsManager.OnDrawProfileUi()</c>, which draws
+    ///     <c>_settings.ExpansionTimeSeconds</c> — so gatOS exposes exactly what that window exposes.
+    /// </summary>
+    /// <remarks>
+    ///     Two private hops, hence <see cref="ChurnRisk.High"/>: the 2026.8.3.5117 plume refactor
+    ///     (revs 5059/5097) split <c>PlumeTrailSegmentsManager</c> apart and moved
+    ///     <c>ExpansionTimeSeconds</c> off <see cref="VolumetricTrailRenderer"/> onto this object.
+    ///     A future move degrades <c>render/expansion_time</c> alone (EOPNOTSUPP) — the other ten
+    ///     trail fields are public on the renderer and unaffected.
+    /// </remarks>
+    [KsaAnchor("VolumetricTrailRenderer._plumeTrailSegmentsManager (private) → "
+            + "PlumeTrailSegmentsManager._settings (private) → PlumeTrailSettings.ExpansionTimeSeconds (public)",
+        SourceFile = "KSA/VolumetricTrailRenderer.cs:166 / KSA/PlumeTrailSegmentsManager.cs:19 / "
+            + "KSA/PlumeTrailSettings.cs:11", Verified = "2026-08-01", GameVersion = "2026.8.3.5117",
+        Risk = ChurnRisk.High,
+        Notes = "Was VolumetricTrailRenderer.ExpansionTimeSeconds (a public field) up to 2026.7.10.5056; "
+            + "revs 5059/5097 moved it onto the new PlumeTrailSettings. Same default (5f) and meaning. "
+            + "Mirrors PlumeTrailSegmentsManager.OnDrawProfileUi, which edits this exact field.")]
+    internal static PlumeTrailSettings? TrailSettings(VolumetricTrailRenderer trail, out string error)
+    {
+        error = "";
+        if (!_trailSettingsResolved)
+        {
+            _trailSettingsResolved = true;
+            _trailManagerField = typeof(VolumetricTrailRenderer)
+                .GetField("_plumeTrailSegmentsManager", AnyInstance);
+            _trailSettingsField = typeof(PlumeTrailSegmentsManager).GetField("_settings", AnyInstance);
+        }
+
+        if (_trailManagerField?.GetValue(trail) is PlumeTrailSegmentsManager manager
+            && _trailSettingsField?.GetValue(manager) is PlumeTrailSettings settings)
+            return settings;
+
+        error = "VolumetricTrailRenderer._plumeTrailSegmentsManager/PlumeTrailSegmentsManager._settings "
+                + "are missing in this build";
         return null;
     }
 

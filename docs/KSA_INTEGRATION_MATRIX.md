@@ -155,7 +155,7 @@ core telemetry and the extension dirs vanish (logged once) rather than the sampl
 | `…/controlled`, `…/com` | S | `Program.ControlledVehicle`; `Vehicle.CenterOfMassAsmb` | L |
 | `…/controllable` | S | `Vehicle.IsControllable` (`_overrideIsControllable \|\| Parts.Controls.NumModules > 0`; 4750/rev 4699) | M |
 | `…/position/ecl`, `…/velocity/cci` | S | `Vehicle.GetPositionEcl()`, `Vehicle.GetVelocityCci()` (vectors) | L |
-| `…/navball/{pitch,yaw,roll,twr,deltav,frame,speed}` | S | `Vehicle.NavBallData` (`AttitudeAngles` int3 deg) | M |
+| `…/navball/{pitch,yaw,roll,twr,deltav,frame,speed}` | S | `Vehicle.NavBallData` (`AttitudeAngles` int3 deg; `DeltaV` — renamed from `DeltaVInVacuum` at rev 5114, and **both `deltav` and `twr` changed meaning**: active-sequence Δv, atmosphere-corrected TWR) | M |
 | `…/environment/{pressure,density,dynamic_pressure,ocean_density,terrain_radius,accel,angular_accel,g_force}` | S | `Vehicle.PhysicsEnvironment`; `PhysicalAtmosphereReference.GetDynamicPressure`; `AccelerationBody`/`AngularAccelerationBody` | L |
 | `…/orbit/{lan,argpe,true_anomaly,time_to_ap,time_to_pe,next_patch}` | S | `Orbit.{LongitudeOfAscendingNode,ArgumentOfPeriapsis,StateVectors.TrueAnomaly}`; `Vehicle.Next{Apoapsis,Periapsis,PatchEvent}Time` | L |
 | `…/encounters` | S | `Vehicle.Patch.Encounters` (`Encounter.{Body.Id,GameTime,ClosestDistance}`), NDJSON | M |
@@ -441,7 +441,8 @@ re-reads each frame, so there is **no apply call**:
 
 | Path | A | Write | KSA anchor | Risk | Phase |
 |---|---|---|---|---|---|
-| `debug/plumetrail/render/*` | St | per-field (see SPEC §3.7) | `TrailActuator.TryRead`/`TryWrite`: `VolumetricTrailRenderer.{MaxDistance,VoxelDepthFirstSliceThickness,MinStepSize,StepSizeDistanceScale,ExpansionTimeSeconds,ErosionMaxDepth,ErosionEdgeSharpness,SelfShadowStepCount,LightBrightness,SkyAmbientBrightness,DebugTrailColor}` (public fields, `float`/`float4`) | M | Frame |
+| `debug/plumetrail/render/*` | St | per-field (see SPEC §3.7) | `TrailActuator.TryRead`/`TryWrite`: `VolumetricTrailRenderer.{MaxDistance,VoxelDepthFirstSliceThickness,MinStepSize,StepSizeDistanceScale,ErosionMaxDepth,ErosionEdgeSharpness,SelfShadowStepCount,LightBrightness,SkyAmbientBrightness,DebugTrailColor}` (public fields, `float`/`float4`) | M | Frame |
+| `debug/plumetrail/render/expansion_time` | St | number, `0.001..10000` s | `TrailActuator` → `FxReflect.TrailSettings` → `PlumeTrailSettings.ExpansionTimeSeconds`; two private hops (`VolumetricTrailRenderer._plumeTrailSegmentsManager` → `PlumeTrailSegmentsManager._settings`), moved off the renderer at revs 5059/5097. Latch `fx.trail_settings` | **H** | Frame |
 | (renderer handle) | — | — | `FxReflect.Trail`: `Program.Instance._volumetricTrailRenderer` (private field — the only handle) | **H** | — |
 | `debug/plumetrail/clear` | T | `1` | `TrailActuator.Clear`: `Program.Instance.ClearPlumeTrails()` — **public instance** method (no reflection) | M | Frame |
 | `debug/plumetrail/reset` | T | `1` | `TrailActuator.Reset` → `FxPristine.Restore` (replays through `TryWrite`) | M | Frame |
