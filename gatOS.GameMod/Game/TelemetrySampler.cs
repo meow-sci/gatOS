@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using gatOS.GameMod.Game.Ksa;
+using gatOS.GameMod.Game.Ksa.Fx;
 using gatOS.GameMod.Game.Ksa.Iva;
 using gatOS.GameMod.Game.Ksa.Readers;
 using gatOS.GameMod.Game.Ksa.Render;
@@ -41,12 +42,14 @@ internal sealed class TelemetrySampler
     private readonly IvaPhysicsManager _iva;
     private readonly PerfStat _ivaStats;
     private readonly AudioStore? _audio;
+    private readonly bool _debugNamespace;
     private int _appliedRateHz;
     private IReadOnlyList<double> _warpSpeeds = [];
     private SimSnapshot? _previous;
     private long _sequence;
     private bool _vehicleErrorLogged;
     private bool _bodyErrorLogged;
+    private bool _fxErrorLogged;
     private string _gameVersion = "";
 
     // Bodies sub-cadence (GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md GP3): when
@@ -78,10 +81,16 @@ internal sealed class TelemetrySampler
     ///     <see cref="SimSnapshot.NewEvents"/> (so they reach <c>/sim/events</c> and every event
     ///     transport). Null when audio is disabled.
     /// </param>
+    /// <param name="debugNamespace">
+    ///     <c>[control] debug_namespace</c>: gates the FX-editor sample (<c>/sim/debug/{engineplume,
+    ///     plumetrail,clouds,terrain}</c>). Off ⇒ the families are never read and
+    ///     <see cref="SimSnapshot.FxEditors"/> stays null, so no transport serves them.
+    /// </param>
     internal TelemetrySampler(SnapshotStore store, TelemetrySettings settings, KsaHealth health,
         PerfStat sampleStats, ValueStat allocStats, WeldManager welds, ThugLifeManager thugLife,
-        IvaPhysicsManager iva, PerfStat ivaStats, AudioStore? audio = null)
+        IvaPhysicsManager iva, PerfStat ivaStats, AudioStore? audio = null, bool debugNamespace = false)
     {
+        _debugNamespace = debugNamespace;
         _store = store;
         _settings = settings;
         _appliedRateHz = settings.SampleRateHz;
@@ -204,9 +213,35 @@ internal sealed class TelemetrySampler
             AlwaysRenderIva = IvaForceRender.Enabled,
             ThugLife = _thugLife.Snapshot(),
             Iva = _iva.Snapshot(_ivaStats),
+            // FX editors: gated by the debug namespace and memoized inside the reader — an idle tick
+            // republishes the previous instance by reference (no KSA reads, no allocation).
+            FxEditors = _debugNamespace ? SampleFxEditors() : null,
         };
         _previous = snapshot;
         _store.Publish(snapshot);
+    }
+
+    /// <summary>
+    ///     Samples the FX-editor surface (plans/FX_EDITORS_PLAN.md). Never fails the tick: a family
+    ///     that cannot be read is simply absent, and the memoized instance is reused while nothing
+    ///     changed. Logged once on first failure, like the other per-stream readers.
+    /// </summary>
+    private FxEditorsSnapshot? SampleFxEditors()
+    {
+        try
+        {
+            return FxEditorReader.Sample(_health);
+        }
+        catch (Exception ex)
+        {
+            if (!_fxErrorLogged)
+            {
+                _fxErrorLogged = true;
+                ModLog.Log.Debug($"telemetry: the fx-editor sample failed (logged once): {ex.Message}");
+            }
+
+            return null;
+        }
     }
 
     /// <summary>

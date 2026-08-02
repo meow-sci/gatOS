@@ -65,6 +65,13 @@ cut.
 > physically inert on a solid; `ModuleBase.OnPartCreated` → `OnFullPartCreated` leaves the `AnimationLinks`
 > solar link intact) + the pass record live in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope
 > pages; live re-check items appended to [`docs/VALIDATION.md`](docs/VALIDATION.md).
+>
+> **Assemblies since bumped to `2026.7.10.5056`** (2026-08-01): **no additional code change needed** —
+> the two bound members that drifted since 4939 (`InputEvents.VehicleDockingInputData` dropping
+> `OldMeanRadius`, rev 4943; `Mole.GetLiquidMass` → `GetStoredMass`, rev 4992) were already fixed by
+> the 4980/5018 passes above. Build + tests green against 5056; the **full `upgrade-ksa` playbook pass
+> (changelog/decomp/Content diff) for 5056 is still pending**, so 5018 remains the last fully-audited
+> baseline.
 
 > **Whole-mod perf pass (2026-07-02):** all seven plans of
 > [`plans/GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md`](plans/GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md)
@@ -96,6 +103,7 @@ cut.
 | `thug_life` sunglasses quad (ex-`unscience`) | Code DONE; in-game pending | `Game/Ksa/ThugLife/` (GPU quad renderer + dynamic render postfix), `SimFs` `debug/thug_life` |
 | IVA cabin physics (`/sim/debug/iva` — free-floating cabin objects; plans/IVA_MOVEMENTS.md) | Code DONE; in-game pending | `gatOS.SimFs/Iva/CabinPhysics.cs` (the game-free forcing field, unit-tested), `SimFs` `debug/iva` registry, `Game/Ksa/Iva/` (`CabinSim`/`CabinCallbacks` = a **gatOS-owned BepuPhysics 2.5 `Simulation`** in the vessel assembly frame; `InteriorGeometry` = collision mesh from the IVA art; `FloatingObject` = the driven SubPart; `IvaPhysicsManager` = registry + `Mod.DriveIvaPhysics` driver) — **off by default behind the `/sim/debug/iva/enabled` master switch**; no Harmony patch; new `BepuPhysics`/`BepuUtilities` refs |
 | Custom audio (`/sim/audio` — userland playback through the game's FMOD; plans/GATOS_CUSTOM_AUDIO_PLAN.md P1–P3) | Code DONE; in-game pending | `gatOS.SimFs/Audio/` (store + writable `file/` dir + play/set/stop grammar), `Game/Ksa/Actuators/AudioActuator.cs` (FMOD Sound cache/channels/tick over `GameAudio.System`; new `Brutal.Fmod.dll` ref), HTTP `/v1/audio` binary upload routes, `audio.finished` events; gated by `[audio] audio_enabled` |
+| FX editors (`/sim/debug/{engineplume,plumetrail,clouds,terrain}` — the game's four built-in imgui render editors as filesystems; issue #2, `plans/FX_EDITORS_PLAN.md`) | Code DONE; in-game pending | `gatOS.SimFs/Fx/FxCatalog.cs` (the four declarative field tables + the nine action keys) driving the `SimFsTree` debug dirs; `Game/Ksa/Fx/` (`FxReflect` handles + per-capability health latches, Plume/Trail/Cloud/Terrain actuators, `FxEditorReader` sampler, `FxPristine` reset/teardown) — no Harmony patch, gated by `[control] debug_namespace` |
 | Screen stream (`/sim/display`) | Code DONE; misrender **root-caused + fixed** (purrTTY libghostty `o=z` corruption → default `rgba`, + purrTTY content-hash re-decode; STREAM_PLAN.md §11); **perf/stability P0–P7 of [`plans/PERF_IMPROVEMENT_PLAN.md`](plans/PERF_IMPROVEMENT_PLAN.md) landed 2026-07-02, confirmed working in-game (informal pass)** (SSH read-pump, a=t keyframes, GPU blit downscale, zero-alloc encoder, demand pacing, 9p pooling + msize 512 KiB/guest v15, purrtty consumption fixes, P6: the purrTTY native rebuilt from ghostty main + `purrtty/vt-video-fixes` — the zig-0.15.2 `o=z` flate corruption and the placement-pin leak are FIXED, so `display_encoding` defaults to `rgba-zlib` again, 3–10× less wire; and P7: the native APC bulk lane, 82→1185 MiB/s consumption throughput); formal S6/S9 + P8 soak checklists still open | `SimFs/Display/`, `Game/Ksa/FrameCapture.cs` + `DisplayRenderPatch.cs` (in-band render-hook capture), `STREAM_PLAN.md` |
 | `ctl/rotate` (W1, AGC_PLAN §7.4) | Code DONE; in-game pending | `Game/Ksa/Actuators/RotateActuator.cs`, `SimFs/Commands/RotateRules.cs` — manual RCS rotation signs, the translate sibling; full authority needs `attitude_mode=manual` (auto strips rotation bits) |
 | AGC (`examples/agc` — Luminary099/yaAGC in-guest, plans/AGC_PLAN.md A0–A7) | Code DONE (host+wire-verified); in-game mission cards pending | one Rust crate: `proto/` wire codec + SocketPort + embedded `agc_engine.c` FFI (`--features embedded`), virtual IMU/PIPA/LR, RCS duty→`ctl/batch` demodulation, THRUST clocking, padload generator (+KSA audit), P27 uplink, downlink recorder, ratatui `dsky`; `tools/agc` launcher; `apollo11-system/` July-1969 Earth/Moon system generator; `APOLLO_11_FLIGHT_GUIDE.md`; mission cards in `docs/VALIDATION.md` |
@@ -155,6 +163,10 @@ prerequisites are hard failures, not skips (see `gatOS.Vm.Tests/TestEnv.cs`); te
 gatos.slnx                      XML solution (17 projects: 9 libs/mod + 8 test projects)
 Directory.Build.props           shared build config + KSA/dist path resolution
 CLAUDE.md / README.md           this file; user-facing readme
+AGENTS.md                       the /sim schema-change constitution: the step-by-step playbook for
+                                adding/changing a /sim node, action key, config gate or transport
+                                mirror (archetypes, addressing modes, actuator + read-back rules,
+                                the docs-lockstep matrix, tests, definition of done)
 OS_IDEA.md / OS_ANALYSIS.md / OS_PLAN.md   goals / research / execution plan
 KSA_GAME_INTEGRATION_PLAN.md    proposed plan: /sim read/write expansion, control files, HTTP +
                                 bus transports, KSA-churn integration layer (G-series phases)

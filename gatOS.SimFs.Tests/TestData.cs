@@ -1,3 +1,5 @@
+using System.Globalization;
+using gatOS.SimFs.Fx;
 using gatOS.SimFs.Snapshots;
 
 namespace gatOS.SimFs.Tests;
@@ -134,6 +136,78 @@ internal static class TestData
                     new OceanSnapshot(1000)),
             ],
         };
+
+    /// <summary>
+    ///     A fully populated FX-editor surface for crawling <c>/sim/debug/{engineplume,plumetrail,
+    ///     clouds,terrain}</c>: two plume templates, the trail singleton, one cloud body with
+    ///     2 layers × 2 cloud types, one terrain body, and the terrain global toggle. Field values
+    ///     are derived from the catalog (see <see cref="FxValue"/>) so a fixture never drifts from
+    ///     the tables.
+    /// </summary>
+    internal static FxEditorsSnapshot FxEditors()
+        => new()
+        {
+            PlumeTemplates =
+            [
+                FxEntity("kerolox", FxCatalog.EnginePlume),
+                FxEntity("methalox", FxCatalog.EnginePlume),
+            ],
+            Trail = FxEntity("", FxCatalog.PlumeTrail),
+            CloudBodies = [FxEntity("Kerth", FxCatalog.Clouds, 2, 2)],
+            TerrainBodies = [FxEntity("Kerth", FxCatalog.Terrain.Where(s => s.Key != "wireframe"))],
+            TerrainGlobal = FxEntity("", FxCatalog.Terrain.Where(s => s.Key == "wireframe")),
+        };
+
+    /// <summary>Attaches <see cref="FxEditors"/> to a snapshot.</summary>
+    internal static SimSnapshot WithFxEditors(this SimSnapshot snapshot)
+        => snapshot with { FxEditors = FxEditors() };
+
+    /// <summary>
+    ///     Builds one FX entity from a family table: every non-indexed key once, every <c>*</c>
+    ///     segment expanded over <paramref name="dims"/> (outermost wildcard first).
+    /// </summary>
+    internal static FxEntitySnapshot FxEntity(string id, IEnumerable<FxFieldSpec> specs, params int[] dims)
+    {
+        var fields = new Dictionary<string, double[]>(StringComparer.Ordinal);
+        foreach (var spec in specs)
+            foreach (var key in ExpandFxKey(spec.Key, dims))
+                fields[key] = FxValue(spec);
+        return new FxEntitySnapshot(id, fields);
+    }
+
+    /// <summary>
+    ///     The fixture value for a field: a flag is <c>1</c>; anything else is
+    ///     <c>0.5, 0.75, 1.0…</c> per component, clamped into the spec's range (so it is always
+    ///     valid and always distinguishable per component).
+    /// </summary>
+    internal static double[] FxValue(FxFieldSpec spec)
+    {
+        var values = new double[spec.Arity];
+        for (var i = 0; i < values.Length; i++)
+            values[i] = spec.Kind == FxKind.Flag ? 1 : Math.Clamp(0.5 + (0.25 * i), spec.Min, spec.Max);
+        return values;
+    }
+
+    private static List<string> ExpandFxKey(string key, int[] dims)
+    {
+        var current = new List<string> { key };
+        for (var depth = 0; current.Count > 0 && current[0].Contains('*'); depth++)
+        {
+            var count = depth < dims.Length ? dims[depth] : 0;
+            var next = new List<string>(current.Count * count);
+            foreach (var pattern in current)
+            {
+                var star = pattern.IndexOf('*');
+                for (var i = 0; i < count; i++)
+                    next.Add(string.Concat(pattern.AsSpan(0, star),
+                        i.ToString(CultureInfo.InvariantCulture), pattern.AsSpan(star + 1)));
+            }
+
+            current = next;
+        }
+
+        return current;
+    }
 
     internal static SimSnapshot Snapshot(long sequence, params VesselSnapshot[] vessels)
         => new(sequence, sequence * 0.1, 1, vessels.Length > 0 ? vessels[0].Id : null, vessels, [],

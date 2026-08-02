@@ -432,8 +432,9 @@ internal static class VesselReader
 
     // ---- tanks -------------------------------------------------------------------------------
 
-    [KsaAnchor("vehicle.Parts.Modules.Get<Tank>().Moles; vehicle.Parts.Moles.GetState(mole).Mass; Mole.GetStoredMass; Mole.FilledFraction",
-        SourceFile = "KSA/Tank.cs / KSA/Mole.cs", Verified = "2026-07-24", GameVersion = "2026.7.9.5018", Risk = ChurnRisk.Low,
+    [KsaAnchor("vehicle.Parts.Modules.Get<Tank>().Moles; vehicle.Parts.Moles.GetState(mole).Mass; "
+            + "Mole.FilledFraction; Mole.GetStoredMass(ContainerVolume) (capacity; 5018/rev 4992: renamed from GetLiquidMass)",
+        SourceFile = "KSA/Tank.cs / KSA/Mole.cs", Verified = "2026-08-01", GameVersion = "2026.7.10.5056", Risk = ChurnRisk.Low,
         Notes = "A Tank holds one Mole per substance; amounts live in the SoA Moles state list. "
             + "4892: the rev-4884 combustion->Reactions refactor is additive here (Tank gains "
             + "RoleAffinity/AssignedMix; Moles/MoleState/FilledFraction untouched) - tanks now "

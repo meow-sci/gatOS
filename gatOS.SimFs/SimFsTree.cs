@@ -5,6 +5,7 @@ using gatOS.NineP.Vfs;
 using gatOS.SimFs.Audio;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Display;
+using gatOS.SimFs.Fx;
 using gatOS.SimFs.Snapshots;
 
 namespace gatOS.SimFs;
@@ -106,6 +107,11 @@ public static class SimFsTree
         private readonly ConcurrentDictionary<NodeKey, VfsDirectory> _debugVesselDirs = new();
         private readonly ConcurrentDictionary<NodeKey, VfsDirectory> _bodyDirs = new();
 
+        // Per-FX-entity subtrees (same GP1 discipline): an entity's field set is fixed by the
+        // catalog plus the entity's layer/cloud-type shape, so its nodes are materialized once and
+        // reused; a shape change moves the field count and rebuilds under a new key.
+        private readonly ConcurrentDictionary<FxKey, VfsNode[]> _fxNodes = new();
+
         // Per-roster memo (GP1): the sanitized-name list + name/id indexes for the current
         // snapshot's vessel (and body) rosters, rebuilt only when the underlying list reference
         // changes — the old code re-sanitized every vessel id on every walk step through by-id.
@@ -113,6 +119,8 @@ public static class SimFsTree
         private volatile Roster<BodySnapshot>? _bodyRoster;
 
         private readonly record struct NodeKey(string Name, string Id);
+
+        private readonly record struct FxKey(string Path, int FieldCount);
 
         private sealed class Roster<T>
             where T : class
@@ -1080,7 +1088,12 @@ public static class SimFsTree
                 ThugLifeDir(),
                 // The IVA free-floating-object simulation: the master on/off, the adopt/release
                 // grammar, diagnostics, and one entry per floating object.
-                IvaDir());
+                IvaDir(),
+                // The four FX editors (the game's built-in imgui render editors as filesystems).
+                EnginePlumeDir(),
+                PlumeTrailDir(),
+                CloudsDir(),
+                TerrainDir());
         }
 
         // ---- IVA free-floating objects (plans/IVA_MOVEMENTS.md; gated by debug_namespace) ---------
@@ -1501,6 +1514,450 @@ public static class SimFsTree
                 Values = values,
             };
         }
+
+        // ---- FX editors (G-D; gated by debug_namespace — plans/FX_EDITORS_PLAN.md) -----------------
+
+        /// <summary>The sampled FX-editor surface, or null when it has not been sampled.</summary>
+        private FxEditorsSnapshot? Fx() => _store.Current.FxEditors;
+
+        /// <summary>
+        ///     <c>debug/engineplume</c>: the volumetric-exhaust templates. Scope is <b>per template</b> —
+        ///     a template is shared by every nozzle that references it, so one edit repaints all of them.
+        /// </summary>
+        private VfsDirectory EnginePlumeDir()
+        {
+            const string q = "debug/engineplume";
+            return DelegateDirectory.Fixed("engineplume", Qid(q),
+                new StaticTextFile("help", Qid($"{q}/help"), () => EnginePlumeHelp),
+                FxEntitiesDir("templates", $"{q}/templates", () => Fx()?.PlumeTemplates ?? [],
+                    FxCatalog.EnginePlume, FxCatalog.EnginePlumeSet, FxCatalog.EnginePlumeReset));
+        }
+
+        /// <summary>
+        ///     <c>debug/plumetrail</c>: the one global volumetric-trail renderer, so its fields sit
+        ///     directly in the family dir (no entity roster) beside the <c>clear</c> one-shot.
+        /// </summary>
+        private VfsDirectory PlumeTrailDir()
+        {
+            const string q = "debug/plumetrail";
+            var help = new StaticTextFile("help", Qid($"{q}/help"), () => PlumeTrailHelp);
+            var clear = new TriggerFile("clear", Qid($"{q}/clear"), _commands!,
+                new SimCommand("", FxCatalog.PlumeTrailClear, SimCommand.NoOrdinal, 1));
+            VfsNode[] Entity() => FxEntityNodes(q, FxCatalog.PlumeTrail, FxCatalog.PlumeTrailSet,
+                FxCatalog.PlumeTrailReset, null, () => Fx()?.Trail, withDocs: true);
+            return new DelegateDirectory("plumetrail", Qid(q),
+                () =>
+                {
+                    var entity = Entity();
+                    var children = new VfsNode[entity.Length + 2];
+                    children[0] = help;
+                    children[1] = clear;
+                    entity.CopyTo(children, 2);
+                    return children;
+                },
+                name => name switch
+                {
+                    "help" => help,
+                    "clear" => clear,
+                    _ => FindByName(Entity(), name),
+                });
+        }
+
+        /// <summary>
+        ///     <c>debug/clouds</c>: per-body cloud layers (body → layer → cloud type). Only bodies
+        ///     that carry a cloud definition appear.
+        /// </summary>
+        private VfsDirectory CloudsDir()
+        {
+            const string q = "debug/clouds";
+            return DelegateDirectory.Fixed("clouds", Qid(q),
+                new StaticTextFile("help", Qid($"{q}/help"), () => CloudsHelp),
+                FxEntitiesDir("bodies", $"{q}/bodies", () => Fx()?.CloudBodies ?? [],
+                    FxCatalog.Clouds, FxCatalog.CloudsSet, FxCatalog.CloudsReset));
+        }
+
+        /// <summary>
+        ///     <c>debug/terrain</c>: per-body terrain, plus the family-global <c>wireframe</c> toggle.
+        ///     The global fields are addressed with an empty entity token and carry no <c>json</c>/
+        ///     <c>reset</c> of their own — those are per body.
+        /// </summary>
+        private VfsDirectory TerrainDir()
+        {
+            const string q = "debug/terrain";
+            var help = new StaticTextFile("help", Qid($"{q}/help"), () => TerrainHelp);
+            var bodies = FxEntitiesDir("bodies", $"{q}/bodies", () => Fx()?.TerrainBodies ?? [],
+                FxCatalog.Terrain, FxCatalog.TerrainSet, FxCatalog.TerrainReset);
+            VfsNode[] Global() => FxEntityNodes(q, FxCatalog.Terrain, FxCatalog.TerrainSet,
+                FxCatalog.TerrainReset, "", () => Fx()?.TerrainGlobal, withDocs: false);
+            return new DelegateDirectory("terrain", Qid(q),
+                () =>
+                {
+                    var global = Global();
+                    var children = new VfsNode[global.Length + 2];
+                    children[0] = help;
+                    global.CopyTo(children, 1);
+                    children[^1] = bodies;
+                    return children;
+                },
+                name => name switch
+                {
+                    "help" => help,
+                    "bodies" => bodies,
+                    _ => FindByName(Global(), name),
+                });
+        }
+
+        /// <summary>
+        ///     The <c>&lt;id&gt;/</c> roster of an FX family (plume templates, cloud/terrain bodies):
+        ///     one subdir per sampled entity, named by the sanitized id — the command still carries the
+        ///     raw id. Empty (and ENOENT on walk) while the family has not been sampled.
+        /// </summary>
+        private VfsDirectory FxEntitiesDir(string dirName, string qidPrefix,
+            Func<IReadOnlyList<FxEntitySnapshot>> roster, IReadOnlyList<FxFieldSpec> specs,
+            string setAction, string resetAction)
+            => new DelegateDirectory(dirName, Qid(qidPrefix),
+                () =>
+                {
+                    var entities = SanitizeNames(roster(), static e => e.Id);
+                    var children = new VfsNode[entities.Count];
+                    for (var i = 0; i < children.Length; i++)
+                        children[i] = FxEntityDir(qidPrefix, entities[i].Name, entities[i].Item.Id,
+                            specs, setAction, resetAction, roster);
+                    return children;
+                },
+                name =>
+                {
+                    foreach (var (entityName, entity) in SanitizeNames(roster(), static e => e.Id))
+                        if (entityName == name)
+                            return FxEntityDir(qidPrefix, name, entity.Id, specs, setAction, resetAction, roster);
+                    return null;
+                });
+
+        private VfsDirectory FxEntityDir(string qidPrefix, string dirName, string entityId,
+            IReadOnlyList<FxFieldSpec> specs, string setAction, string resetAction,
+            Func<IReadOnlyList<FxEntitySnapshot>> roster)
+        {
+            var q = $"{qidPrefix}/{dirName}";
+            VfsNode[] Nodes() => FxEntityNodes(q, specs, setAction, resetAction, entityId,
+                () => FxFind(roster(), entityId), withDocs: true);
+            return new DelegateDirectory(dirName, Qid(q), Nodes, name => FindByName(Nodes(), name));
+        }
+
+        /// <summary>
+        ///     Materializes one FX entity's subtree from the family table + the entity's live field
+        ///     keys: the nested control leaves (one per concrete field, in catalog order), then the
+        ///     <c>json</c> discovery document and the <c>reset</c> trigger. Cached by (path, field
+        ///     count); the nodes themselves always read the live snapshot. Empty while the entity is
+        ///     not sampled, so its directory simply lists nothing.
+        /// </summary>
+        private VfsNode[] FxEntityNodes(string qidPrefix, IReadOnlyList<FxFieldSpec> specs,
+            string setAction, string resetAction, string? token, Func<FxEntitySnapshot?> find,
+            bool withDocs)
+        {
+            var entity = find();
+            if (entity is null)
+                return [];
+            var cacheKey = new FxKey(qidPrefix, entity.Fields.Count);
+            if (_fxNodes.TryGetValue(cacheKey, out var cached))
+                return cached;
+
+            // Catalog order drives the listing; within one spec the concrete keys differ only by
+            // their indices, which the key comparer orders numerically (layers/2 before layers/10).
+            var keys = entity.Fields.Keys.ToArray();
+            Array.Sort(keys, FxCatalog.KeyComparer);
+            var root = new FxTreeNode();
+            foreach (var spec in specs)
+            {
+                foreach (var field in keys)
+                {
+                    if (!FxCatalog.Matches(spec, field))
+                        continue;
+                    var node = root;
+                    foreach (var segment in field.Split('/'))
+                        node = node.Child(segment);
+                    node.Leaf = spec;
+                    node.Key = field;
+                }
+            }
+
+            var fields = FxChildren(root, qidPrefix, setAction, token, find);
+            var nodes = fields;
+            if (withDocs)
+            {
+                nodes = new VfsNode[fields.Length + 2];
+                fields.CopyTo(nodes, 0);
+                nodes[^2] = FxJsonFile(qidPrefix, find);
+                nodes[^1] = new TriggerFile("reset", Qid($"{qidPrefix}/reset"), _commands!,
+                    new SimCommand("", resetAction, SimCommand.NoOrdinal, 1) { Token = token });
+            }
+
+            _fxNodes[cacheKey] = nodes;
+            return nodes;
+        }
+
+        private VfsNode[] FxChildren(FxTreeNode node, string qidPrefix, string action, string? token,
+            Func<FxEntitySnapshot?> find)
+        {
+            var children = new VfsNode[node.Children.Count];
+            for (var i = 0; i < children.Length; i++)
+            {
+                var (name, child) = node.Children[i];
+                var path = $"{qidPrefix}/{name}";
+                children[i] = child.Leaf is { } spec
+                    ? FxLeaf(path, name, spec, child.Key, action, token, find)
+                    : DelegateDirectory.Fixed(name, Qid(path), FxChildren(child, path, action, token, find));
+            }
+
+            return children;
+        }
+
+        /// <summary>
+        ///     One FX field leaf. The archetype follows the spec's kind and the accepted values follow
+        ///     the spec's inclusive range, so a wrong-arity / non-finite / out-of-range write fails
+        ///     EINVAL <b>before</b> the sink. The write emits the family's single <c>_set</c> action
+        ///     with the entity in <see cref="SimCommand.Token"/> and the concrete field path in
+        ///     <see cref="SimCommand.Aux"/>; the payload always rides <see cref="SimCommand.Values"/>
+        ///     (a scalar additionally in <see cref="SimCommand.Value"/>, so a hand-written
+        ///     <c>POST /v1/command</c> may use either).
+        /// </summary>
+        private VfsFile FxLeaf(string qidPath, string name, FxFieldSpec spec, string field, string action,
+            string? token, Func<FxEntitySnapshot?> find)
+        {
+            var sink = _commands!;
+            Func<string> read = () => FxRead(spec, field, find, qidPath);
+            return spec.Kind switch
+            {
+                FxKind.Flag => ControlFile.Flag(name, Qid(qidPath), sink, read,
+                    v => FxSet(action, token, field, [v])),
+                FxKind.Number => ControlFile.Ranged(name, Qid(qidPath), sink, read, spec.Min, spec.Max,
+                    v => FxSet(action, token, field, [v])),
+                _ => VectorControlFile.Create(name, Qid(qidPath), sink, read, spec.Arity, spec.Min, spec.Max,
+                    values => FxSet(action, token, field, values)),
+            };
+        }
+
+        private static SimCommand FxSet(string action, string? token, string field, IReadOnlyList<double> values)
+            => new("", action, SimCommand.NoOrdinal, values.Count == 1 ? values[0] : 0)
+            {
+                Token = token,
+                Aux = field,
+                Values = values,
+            };
+
+        /// <summary>
+        ///     The <c>json</c> discovery document for one entity — every field of the entity in one
+        ///     object, memoized on the field-dictionary reference (the sampler republishes the same
+        ///     instance while nothing changed, the <c>parts/json</c> precedent).
+        /// </summary>
+        private VfsFile FxJsonFile(string qidPrefix, Func<FxEntitySnapshot?> find)
+        {
+            FxJsonCache? cache = null;
+            return Line($"{qidPrefix}/json", "json", () =>
+            {
+                var fields = FxRequire(find, qidPrefix).Fields;
+                var c = cache;
+                if (c is null || !ReferenceEquals(c.Fields, fields))
+                    cache = c = new FxJsonCache(fields, Formats.FxFields(fields));
+                return c.Json;
+            });
+        }
+
+        private sealed class FxJsonCache(IReadOnlyDictionary<string, double[]> fields, string json)
+        {
+            public readonly IReadOnlyDictionary<string, double[]> Fields = fields;
+            public readonly string Json = json;
+        }
+
+        /// <summary>Formats one FX field's live value; ENOENT when the entity or the field is gone.</summary>
+        private static string FxRead(FxFieldSpec spec, string field, Func<FxEntitySnapshot?> find, string qidPath)
+        {
+            var entity = FxRequire(find, qidPath);
+            if (!entity.Fields.TryGetValue(field, out var values) || values.Length != spec.Arity)
+                throw new VfsErrorException(LinuxErrno.ENOENT, $"fx field '{qidPath}' is gone");
+            return spec.Kind switch
+            {
+                FxKind.Flag => Formats.Flag(values[0] != 0),
+                FxKind.Number => Formats.Scalar(values[0]),
+                _ => string.Join(' ', values.Select(Formats.Scalar)),
+            };
+        }
+
+        private static FxEntitySnapshot FxRequire(Func<FxEntitySnapshot?> find, string what)
+            => find() ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"fx entity '{what}' is gone");
+
+        private static FxEntitySnapshot? FxFind(IReadOnlyList<FxEntitySnapshot> roster, string id)
+        {
+            for (var i = 0; i < roster.Count; i++)
+                if (roster[i].Id == id)
+                    return roster[i];
+            return null;
+        }
+
+        /// <summary>
+        ///     The mutable scaffold used only while materializing an FX entity's directory tree:
+        ///     children in first-seen (catalog) order, plus the concrete field key on a leaf.
+        /// </summary>
+        private sealed class FxTreeNode
+        {
+            private readonly Dictionary<string, FxTreeNode> _index = new(StringComparer.Ordinal);
+
+            public List<(string Name, FxTreeNode Node)> Children { get; } = [];
+
+            public FxFieldSpec? Leaf { get; set; }
+
+            public string Key { get; set; } = "";
+
+            public FxTreeNode Child(string name)
+            {
+                if (_index.TryGetValue(name, out var existing))
+                    return existing;
+                var child = new FxTreeNode();
+                _index[name] = child;
+                Children.Add((name, child));
+                return child;
+            }
+        }
+
+        /// <summary>The console readme behind <c>/sim/debug/engineplume/help</c>.</summary>
+        private const string EnginePlumeHelp =
+            """
+            engineplume — the game's "Volumetric Exhausts" editor as files. Live-tunes the
+            volumetric rocket exhaust plumes. Paths are under /sim/debug/engineplume/
+            (needs the debug namespace enabled).
+
+            SCOPE — PER TEMPLATE, NOT PER ENGINE
+              templates/<id>/ edits the shared VolumetricExhaustTemplate, so the change hits
+              EVERY nozzle in the universe that references that template, immediately.
+
+            USAGE
+              ls  templates/                          # which templates are loaded
+              cat templates/<id>/json                 # every field of one template, as JSON
+              cat templates/<id>/emission/brightness  # read one knob
+              echo 60 > templates/<id>/emission/brightness
+              echo "1 0.35 0.05" > templates/<id>/emission/color0
+              echo 1  > templates/<id>/reset          # restore the pristine values
+
+            FIELDS  (one leaf per knob; a read shows the live value)
+              core/*             plume-length model weights
+              absorption/*       medium density, scattering, refraction   (+ fake_clean_burn 0|1)
+              emission/*         brightness + the 4-stop colour gradient  (color0 = nozzle exit)
+              mach_diamonds/*    shock-diamond placement along the plume
+              noise/*            density / radial / shape noise strength, size, speed
+              quality/*          sample counts and the vessel self-shadow toggle
+            Colours are "r g b", each channel 0..1. Every field has a fixed inclusive range —
+            a value outside it, the wrong component count, or a non-number fails with EINVAL and
+            never reaches the game. See SPEC_9P_FILESYSTEM.md for the full table with ranges.
+
+            ANIMATING
+              Writes are cheap and fire per frame; write only the leaves that changed. Group
+              simultaneous changes through /sim/ctl/batch so they land in one tick. reset
+              restores whatever the values were before gatOS first wrote them, so an aborted
+              light show never strands the game. The same fields work over HTTP /v1 and MQTT.
+
+            """;
+
+        /// <summary>The console readme behind <c>/sim/debug/plumetrail/help</c>.</summary>
+        private const string PlumeTrailHelp =
+            """
+            plumetrail — the game's "Plume Trails" editor as files. Live-tunes the volumetric
+            exhaust trails left behind vehicles. Paths are under /sim/debug/plumetrail/
+            (needs the debug namespace enabled).
+
+            SCOPE — GLOBAL
+              There is one trail renderer for the whole game; these settings are not per vessel.
+              The renderer re-reads them every frame, so a write takes effect immediately.
+
+            USAGE
+              cat json                             # every field at once, as JSON
+              cat render/max_distance
+              echo 200000 > render/max_distance    # metres
+              echo "0.9 0.6 0.4 1" > render/trail_color   # r g b a, each 0..1
+              echo 1 > clear                       # drop the trails currently in the world
+              echo 1 > reset                       # restore the pristine render settings
+
+            FIELDS  (all under render/)
+              max_distance, voxel_first_slice, min_step_size, step_size_distance_scale
+              expansion_time, erosion_max_depth, erosion_edge_sharpness, self_shadow_steps
+              light_brightness, sky_ambient_brightness, trail_color
+            Each has a fixed inclusive range; out-of-range or unparseable writes fail with EINVAL
+            before reaching the game. See SPEC_9P_FILESYSTEM.md for the ranges and units.
+
+            clear is a one-shot (it deletes existing trail geometry); reset only restores settings.
+            The same fields work over HTTP /v1 and MQTT.
+
+            """;
+
+        /// <summary>The console readme behind <c>/sim/debug/clouds/help</c>.</summary>
+        private const string CloudsHelp =
+            """
+            clouds — the game's "Clouds" editor as files. Live-tunes a body's cloud layers.
+            Paths are under /sim/debug/clouds/ (needs the debug namespace enabled).
+
+            SCOPE — PER BODY, THEN PER LAYER, THEN PER CLOUD TYPE
+              bodies/<body>/                       only bodies that define clouds appear
+                shared/                            the body-wide altitude blend + shadow limits
+                layers/<n>/                        one cloud layer
+                  two_d/                           the flat, distant representation
+                  raymarch/                        the volumetric marching parameters
+                  types/<m>/                       one cloud type inside that layer
+
+            USAGE
+              ls  bodies/                          # which bodies have clouds
+              cat bodies/Kerth/json                # every field of that body, as JSON
+              echo "0.9 0.9 1" > bodies/Kerth/layers/0/color
+              echo 4 > bodies/Kerth/layers/1/types/0/density
+              echo 1 > bodies/Kerth/reset          # restore that body's pristine clouds
+
+            FIELDS
+              shared/{transition_start_km,transition_end_km,max_shadows_altitude_km}
+              layers/<n>/{rotation_speed,detail_tile_km,color,scroll_speed}
+              layers/<n>/two_d/{lambertian,color}
+              layers/<n>/raymarch/{step_size,step_scale,max_step,light_distance,light_samples}
+              layers/<n>/types/<m>/{start_altitude,height,density,edge_sharpness,multi_scatter,
+                                    interpolate}
+            Colours are "r g b" (0..1 per channel); rotation_speed is a plain 3-vector "x y z".
+            Every field has a fixed inclusive range — an out-of-range, wrong-arity or
+            unparseable write fails with EINVAL and never reaches the game. See
+            SPEC_9P_FILESYSTEM.md for the full table with ranges and units.
+
+            The noise scale is deliberately NOT exposed: changing it would rebuild the layer's
+            GPU pipelines. reset restores the values as they were before gatOS first wrote them.
+            The same fields work over HTTP /v1 and MQTT.
+
+            """;
+
+        /// <summary>The console readme behind <c>/sim/debug/terrain/help</c>.</summary>
+        private const string TerrainHelp =
+            """
+            terrain — the game's "Terrain Editor" as files (a deliberately small first slice).
+            Paths are under /sim/debug/terrain/ (needs the debug namespace enabled).
+
+            SCOPE
+              wireframe                            GLOBAL toggle: draw all terrain as wireframe
+              bodies/<body>/                       per body; only bodies with a live render slot
+
+            USAGE
+              echo 1 > wireframe
+              ls  bodies/
+              cat bodies/Kerth/json                # every field of that body, as JSON
+              echo 9000  > bodies/Kerth/max_height          # metres
+              echo 0.35  > bodies/Kerth/tessellation/factor
+              echo 1     > bodies/Kerth/reset               # restore pristine terrain values
+
+            FIELDS  (per body)
+              min_height, max_height               height-field range, metres
+              slope_roughness_deg                  micro-slope roughness of the surface BRDF
+              hapke_albedo                         mean single-scattering albedo
+              biomes/{blend_strength,detail_fade_start_km,detail_fade_end_km}
+              tessellation/{edge_length_px,factor,range_m}
+            Every field has a fixed inclusive range; out-of-range or unparseable writes fail with
+            EINVAL before reaching the game. See SPEC_9P_FILESYSTEM.md for ranges and units.
+
+            Per-biome materials, procedural modifiers and ground clutter are not exposed. reset
+            restores the values as they were before gatOS first wrote them (per body; the global
+            wireframe toggle is just written back). The same fields work over HTTP /v1 and MQTT.
+
+            """;
 
         private VfsDirectory DebugVesselDir(string sanitized, string vesselId)
             => _debugVesselDirs.GetOrAdd(new NodeKey(sanitized, vesselId),

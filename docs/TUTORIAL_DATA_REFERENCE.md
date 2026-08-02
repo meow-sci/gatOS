@@ -328,7 +328,16 @@ Tutorials often need to *place* a vessel before demonstrating control. `debug/**
 - **Switch controlled vessel** — `echo Polaris > /sim/debug/control_vessel` (focuses + takes control).
 
 Other `debug/**` surface (welds, thug_life, always_render_iva) is cosmetic/advanced and cataloged in
-[SPEC §3.7](../SPEC_9P_FILESYSTEM.md) — reserve it for late/bonus tutorials.
+[SPEC §3.7](../SPEC_9P_FILESYSTEM.md) — reserve it for late/bonus tutorials. So are the four **FX
+editors** (the game's built-in render editors as files, one writable leaf per knob — good "light show"
+bonus material, animatable at 10–60 Hz, every entity has a `reset`):
+
+- `debug/engineplume/templates/<id>/…` — engine plume look; **per template, shared** by every nozzle using it.
+- `debug/plumetrail/render/…` — the exhaust trail renderer; **global** (plus a one-shot `clear`).
+- `debug/clouds/bodies/<body>/layers/<n>/…` — a body's cloud layers and cloud types.
+- `debug/terrain/wireframe` + `debug/terrain/bodies/<body>/…` — terrain height range, tessellation, biome fades.
+
+Ranges, units and the per-family caveats are in [SPEC §3.7](../SPEC_9P_FILESYSTEM.md).
 
 ---
 

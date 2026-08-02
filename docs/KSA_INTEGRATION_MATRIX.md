@@ -412,6 +412,84 @@ already loaded in-process).
 | `FloatingObject.{ReadBodyPose,RestoreRestPose}` | `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb,PositionParentAsmb(set),Asmb2ParentAsmb(set)}` | L | Adopt-time seed pose and exact rest-pose restore. The rest pose is captured into gatOS's own fields, **not** KSA's `PositionParentAsmbSafe`/`Asmb2ParentAsmbSafe` (which belong to the animation system). |
 | `IvaPhysicsManager.{Adopt,TryMeasure,IsInteriorProp,FindSubPart,IsLive}` | `Vehicle.{Id,Parts}`; `Part.{InstanceId,SubParts,PartParent,DisplayName,Template.Id,PositionParentAsmb,Asmb2ParentAsmb,Scale,Modules}`; `ModuleList.Get<PartModelModule>()`; `PartModelModule.Template.{Internal,RayTracing,Mesh}`; `MeshReference.PositionCompare`; `Universe.CurrentSystem.All.UnsafeAsList()` | L–M | SubPart lookup (top-level parts refused by design), collision-proxy sizing from the mesh AABB (box only in this build — Bepu's `Box` needs no shape-local rotation, so body orientation *is* part orientation), interior-prop candidacy for `adopt_all`, and liveness. |
 
+## FX editors (`plans/FX_EDITORS_PLAN.md` — `/sim/debug/{engineplume,plumetrail,clouds,terrain}`)
+
+The game's four built-in imgui render editors ("Volumetric Exhausts", "Plume Trails", "Clouds",
+"Terrain Editor") as `/sim` filesystems. Part of `debug.*` (gated by `[control] debug_namespace`,
+authority-exempt); routed **vessel-agnostically before** vehicle resolution — the addressed entity is a
+render template, the one trail renderer, or a celestial body, never a vehicle. Anchors live under
+`gatOS.GameMod/Game/Ksa/Fx/` (`FxReflect`, `PlumeActuator`, `TrailActuator`, `CloudActuator`,
+`TerrainActuator`, `FxEditorReader`; `FxPristine` holds no KSA type). The field tables, the tree, the
+ranges and the validation are **game-free** (`gatOS.SimFs/Fx/FxCatalog.cs` — one row per field drives
+both the tree and the game-side re-validation). Anchors verified **2026-08-01 against
+`2026.7.10.5056`**; the feature is code-complete with the in-game pass pending (`docs/VALIDATION.md`).
+
+**engineplume** — scope is **per template** (shared by every nozzle referencing it):
+
+| Path | A | Write | KSA anchor | Risk | Phase |
+|---|---|---|---|---|---|
+| `debug/engineplume/templates/<id>/**` | St | per-field (see SPEC §3.7) | `PlumeActuator.TryWrite`: `VolumetricExhaustTemplate.{LengthWeights,Absorption,Emission,Noise,Quality}` → `DoubleReference.Value`/`BoolReference.Value` in place; `ColorGradient.Color0..3 = new ColorRgbReference(float3)` + `OnDataLoad(Mod.Empty)` (the `Value` setter is `protected` — in-place colour writes silently do nothing) | **H** | Frame |
+| (apply, after every write) | — | — | `PlumeActuator.Propagate`: `Universe.CurrentSystem.All.UnsafeAsList()`; `Vehicle.Parts.RocketNozzles.ModulesAndAllStates`; `RocketNozzleFxState.VolumetricExhaust`; `VolumetricExhaustInstance.{OnSettingsChanged,UpdateModifiers}`; `RocketNozzle.RecomputeGasVisibilityDensity(in …)` — the in-game editor's own post-edit loop | **H** | Frame |
+| (read-back / pristine capture) | S | — | `PlumeActuator.TryRead` (same members, read half; colours off the serialized `R`/`G`/`B`) | **H** | — |
+| (id resolution) | — | — | `PlumeActuator.Resolve`: `VolumetricExhaustTemplate.Get(string)` (public static; null ⇒ `ENOENT`) | M | — |
+| (roster) | S | — | `FxReflect.PlumeTemplates`: `VolumetricExhaustTemplate.References` (internal static) `.GetList()`; fallback `FxEditorReader.HarvestPlumeTemplates` harvests ids off live nozzles (`RocketNozzle.ReactionPlumes[].VolumetricExhaust.Id`) | **H** / M | — |
+| (propagation args) | — | — | `FxReflect.PlumeModifierArgs`: `Program.VolumetricExhaustRenderer` (public static) + `_currentAtmosphericPressure`/`_debugThrottle` (private) — **best-effort**, falls back to `(0, 1)`; the per-frame draw path recomputes both for every live nozzle | **H** | — |
+| `debug/engineplume/templates/<id>/reset` | T | `1` | `PlumeActuator.Reset` → `FxPristine.Restore` (replays captures through `TryWrite`) + `Propagate` | **H** | Frame |
+
+**plumetrail** — scope is the one **global** renderer; fields are public instance fields the renderer
+re-reads each frame, so there is **no apply call**:
+
+| Path | A | Write | KSA anchor | Risk | Phase |
+|---|---|---|---|---|---|
+| `debug/plumetrail/render/*` | St | per-field (see SPEC §3.7) | `TrailActuator.TryRead`/`TryWrite`: `VolumetricTrailRenderer.{MaxDistance,VoxelDepthFirstSliceThickness,MinStepSize,StepSizeDistanceScale,ExpansionTimeSeconds,ErosionMaxDepth,ErosionEdgeSharpness,SelfShadowStepCount,LightBrightness,SkyAmbientBrightness,DebugTrailColor}` (public fields, `float`/`float4`) | M | Frame |
+| (renderer handle) | — | — | `FxReflect.Trail`: `Program.Instance._volumetricTrailRenderer` (private field — the only handle) | **H** | — |
+| `debug/plumetrail/clear` | T | `1` | `TrailActuator.Clear`: `Program.Instance.ClearPlumeTrails()` — **public instance** method (no reflection) | M | Frame |
+| `debug/plumetrail/reset` | T | `1` | `TrailActuator.Reset` → `FxPristine.Restore` (replays through `TryWrite`) | M | Frame |
+
+**clouds** — scope is **per body → per layer → per cloud type**; the data itself needs **no** reflection:
+
+| Path | A | Write | KSA anchor | Risk | Phase |
+|---|---|---|---|---|---|
+| `debug/clouds/bodies/<id>/**` | St | per-field (see SPEC §3.7) | `CloudActuator.TryWrite`: `CloudsReference` / `CloudLayerReference` / `VolumetricCloudReference` / `TwoDimensionalCloudReference` / `RaymarchingReference` / `CloudTypeReference` members — `DistanceReference`/`Vector3Reference`/`ColorRgbReference` **construct-new** (they cache a derived value / have a protected setter), `DoubleReference.Value` + `Step.Scale` + `CloudShape.InterpolateShapes` in place | **H** | Frame |
+| (apply, after every write) | — | — | `CloudActuator.Apply`: `CloudLayerReference.OnDataLoad(Mod.Empty)`; `CloudRenderer._planetToCloudRenderData` (public) keyed on `Astronomical.Hash`; `CloudLayerRenderData.UpdateStaticData(Renderer, AtmosphericBody, CloudLayerReference, float, float, float)`; `CloudShadowsRenderer.PopulatePlanets(…, RenderTarget)` — the editor's exact sequence; never rebuilds a pipeline (`NoiseScale` is deliberately unexposed) | **H** | Frame |
+| (renderer + apply handles) | — | — | `FxReflect.Clouds`: `Program.Instance._planetTransparenciesRenderer` (private) → `GetCloudRenderer()` (public). `FxReflect.CloudApply`: `CloudRenderer._renderer`/`_cloudShadowsRenderer`/`_worleyNoise3dTarget` (private) | **H** | — |
+| (read-back / roster) | S | — | `CloudActuator.TryRead` (same members, read half); `FxEditorReader.SampleCloudBodies`: `AtmosphericBody.BodyTemplate.CloudsReference` over `Universe.CurrentSystem.All.UnsafeAsList()` | **H** / L | — |
+| `debug/clouds/bodies/<id>/reset` | T | `1` | `CloudActuator.Reset` → `FxPristine.Restore` + `Apply(layer: -1)` (re-uploads every layer) | **H** | Frame |
+
+**terrain** — two tiers: a **global** toggle with no reflection, and per-body **paired** writes:
+
+| Path | A | Write | KSA anchor | Risk | Phase |
+|---|---|---|---|---|---|
+| `debug/terrain/wireframe` | St | `0`/`1` | `PlanetRenderer.Wireframe` (public **instance** field) via `Program.GetPlanetRenderer()` | M | Frame |
+| `debug/terrain/bodies/<id>/**` | St | per-field (see SPEC §3.7) | `TerrainActuator.Write`: `Celestial.BodyTemplate.HeightReference.{Minimum,Maximum}` + `TerrainReference.BiomeMaterials.{BlendStrength.Value,DetailFadeInStart,DetailFadeInEnd}` (construct-new `DistanceReference`) **and** the `PlanetUbo`/`MeshUbo` structs at `(NumCelestials*frame + slot)*Stride` over the mapped memory, then the frame-in-flight mirror copy (`PlanetRenderer.cs:2388-2398`) | **H** | Frame |
+| (slot resolution) | — | — | `TerrainActuator.Resolve`/`HasSlot`: `PlanetRenderer.RenderUboSlot(Celestial)`/`MeshUboSlot(Celestial)` (public; `-1` ⇒ unslotted ⇒ absent from the tree) | M | — |
+| (UBO handles) | — | — | `FxReflect.TerrainUbo`: `PlanetRenderer._renderUboMap`/`_meshUboMap` (private `MappedMemory`, host-visible + coherent); strides/counts from the public `PlanetUboStride`/`MeshUboStride`/`NumCelestials`; frame count from `Program.GetRenderer().MaxFramesInFlight` | **H** | — |
+| (read-back) | S | — | `TerrainActuator.Read`: `PlanetUbo.{TanMeanSlopeRoughnessRadians,HapkeMeanAlbedo,BiomeBlendStrength,DetailFadeStartMeters,DetailFadeEndMeters,Tessellation*}`, `MeshUbo.{MinHeight,MaxHeight}` — read out of the UBO, i.e. what the GPU samples | **H** | — |
+| `debug/terrain/bodies/<id>/reset` | T | `1` | `TerrainActuator.Reset` → `FxPristine.Restore` (replays through the same paired write) | **H** | Frame |
+
+**Health latches and degraded behavior.** Each reflective handle carries its own `KsaHealth` key, so a
+decomp drift degrades one capability rather than the feature: **`fx.trail_renderer`**,
+**`fx.plume_templates`**, **`fx.cloud_renderer`**, **`fx.cloud_apply`**, **`fx.terrain_renderer`**,
+**`fx.terrain_ubo`** (all visible in `/sim/status/accessors`). Degrade behaviors are deliberately
+different per family:
+- `fx.plume_templates` → the roster falls back to templates harvested off live nozzles (narrower, but the
+  family keeps working; `VolumetricExhaustTemplate.Get(id)` is public and unaffected).
+- `fx.trail_renderer` / `fx.terrain_renderer` → the family's writes answer `EOPNOTSUPP`.
+- `fx.cloud_apply` (or `fx.cloud_renderer`) → the write is **still performed on the reference data and
+  still returns `Ok`**; only the immediate GPU re-upload is skipped, so the change appears on the
+  renderer's next natural repopulate. The latch still records the degrade.
+- `fx.terrain_ubo` → the **per-body roster empties** (`debug/terrain/bodies/` lists nothing, since values
+  are read out of the UBO) while the global `wireframe` leaf stays fully live.
+
+Reads are sampled by `FxEditorReader` on the game thread inside `TelemetrySampler`, gated on
+`[control] debug_namespace` (off ⇒ the families are never read and `SimSnapshot.FxEditors` stays null),
+and memoized: rebuilt only when an FX write landed (`FxEditorReader.Invalidate`, bumped by every
+successful actuator write) or after 2 s (which catches edits made in the game's own imgui editors),
+otherwise republished by reference. Every field is read back through the **same accessor it is written
+through**, which is also what the pristine capture records. Teardown: `Mod.TeardownGameCheats` runs
+`FxPristine.RestoreAll()` **first** (while the game reads are still live) and then
+`FxEditorReader.Reset()`. No Harmony patches, no per-frame driver, no GPU resources of gatOS's own.
+
 ## Screen stream (STREAM_PLAN.md)
 
 The one KSA binding for the `/sim/display` screen stream — a render-thread GPU readback, not a

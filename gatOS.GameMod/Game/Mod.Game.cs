@@ -2,6 +2,7 @@ using Brutal.ImGuiApi;
 using gatOS.GameMod.Game;
 using gatOS.GameMod.Game.Ksa;
 using gatOS.GameMod.Game.Ksa.Actuators;
+using gatOS.GameMod.Game.Ksa.Fx;
 using gatOS.GameMod.Game.Ksa.Iva;
 using gatOS.GameMod.Game.Ksa.Render;
 using gatOS.GameMod.Game.Ksa.ThugLife;
@@ -198,7 +199,8 @@ public sealed partial class Mod
         {
             EnsureControlObjects();
             _telemetry ??= new TelemetrySampler(store, _telemetrySettings, _health!, _sampleStats,
-                _sampleAllocStats, _weldManager!, _thugLife!, _ivaPhysics!, _ivaStats, _audioStore);
+                _sampleAllocStats, _weldManager!, _thugLife!, _ivaPhysics!, _ivaStats, _audioStore,
+                Config.DebugNamespace);
             // Sample only while something can actually read /sim: the VM is up, or a host-side
             // transport client is connected (9p / HTTP / MQTT). Otherwise the sampler idles for free.
             var state = CurrentVmStatus.State;
@@ -387,6 +389,18 @@ public sealed partial class Mod
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     partial void TeardownGameCheats()
     {
+        try
+        {
+            // FX editors first: every touched plume template / trail setting / cloud layer / terrain
+            // body goes back to the value it had before gatOS wrote it (the reads are still live here).
+            FxPristine.RestoreAll();
+            FxEditorReader.Reset();
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS fx-editor teardown error: {ex.Message}");
+        }
+
         try
         {
             _audioActuator?.Shutdown(); // stops every channel, releases every FMOD Sound, clears the store

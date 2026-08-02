@@ -379,6 +379,44 @@ update removes it, `ctl/throttle` writes return
 `GetManualThrottle()` (public, still present). A live `/sim/status/accessors` check after each update
 remains standard practice (decomp can lag the shipping binary).
 
+### FX-editor reflection accessors — `FxReflect` (no patches, no driver) {#fx-accessors}
+
+The four FX editors (`/sim/debug/{engineplume,plumetrail,clouds,terrain}`,
+`Game/Ksa/Fx/FxReflect.cs`, plans/FX_EDITORS_PLAN.md) are gatOS's **largest reflection surface** — but
+also its most contained one: **no Harmony patch, no per-frame driver, no GPU resources**. All the
+reflection does is reach a handful of handles KSA keeps private; everything gatOS then reads or writes
+through those handles is public API. The write/read rows are on
+[`ksa-write-surface.md#fx-editors`](ksa-write-surface.md#fx-editors) /
+[`ksa-read-surface.md#fx-editors`](ksa-read-surface.md#fx-editors).
+
+| Latch key | gatOS site | Reflected member | 5056 status |
+|---|---|---|---|
+| `fx.trail_renderer` | `FxReflect.Trail` | `Program.Instance._volumetricTrailRenderer` (private instance field) — the only handle on the one `VolumetricTrailRenderer` | ✅ present (`Program.cs:160`) |
+| `fx.plume_templates` | `FxReflect.PlumeTemplates` | `VolumetricExhaustTemplate.References` (internal static `SerializedCollection<…>`) → public `GetList()` | ✅ present (`VolumetricExhaustTemplate.cs:37`); degrade falls back to harvesting ids off live nozzles |
+| (best-effort, unlatched) | `FxReflect.PlumeModifierArgs` | `VolumetricExhaustRenderer._currentAtmosphericPressure` / `_debugThrottle` (private) off the public `Program.VolumetricExhaustRenderer` | ✅ present (`VolumetricExhaustRenderer.cs:253,277`); falls back to `(0, 1)` — the per-frame draw path recomputes both for every live nozzle, so it cannot disturb a plume |
+| `fx.cloud_renderer` | `FxReflect.Clouds` | `Program.Instance._planetTransparenciesRenderer` (private) → `GetCloudRenderer()` (public) | ✅ present (`Program.cs:152`, `PlanetTransparenciesRenderer.cs:87`) |
+| `fx.cloud_apply` | `FxReflect.CloudApply` | `CloudRenderer._renderer` / `_cloudShadowsRenderer` / `_worleyNoise3dTarget` (private) — the three arguments the layer re-upload needs (`_planetToCloudRenderData` itself is public) | ✅ present (`CloudRenderer.cs:95,151,235`) |
+| `fx.terrain_renderer` | `FxReflect.Terrain` | *(none — `Program.GetPlanetRenderer()` is public)*; the latch exists so a missing renderer degrades terrain alone | ✅ present (`Program.cs:491`) |
+| `fx.terrain_ubo` | `FxReflect.TerrainUbo` | `PlanetRenderer._renderUboMap` / `_meshUboMap` (private readonly `MappedMemory`, host-visible + coherent); strides/counts from the public `PlanetUboStride`/`MeshUboStride`/`NumCelestials`, frames from `Program.GetRenderer().MaxFramesInFlight` | ✅ present (`PlanetRenderer.cs:250-252`) |
+
+**Lifecycle.** Each `FieldInfo` is resolved **lazily on first use, once, and cached** in a plain static
+(resolution is idempotent, so a torn read at worst re-resolves); every accessor is **null-tolerant** —
+it returns `null` plus a human-readable reason instead of throwing, and the caller turns that into a
+`KsaHealth` latch (`FxReflect.Degrade` → `EOPNOTSUPP` for that capability only) or, for the cloud apply,
+into a **silent degrade that still reports `Ok`** because the data write already landed. A later success
+clears the latch (`FxReflect.Healthy`). All resolution and use is **game-thread only** — the Frame
+command drain and the sampler tick. **Teardown** is `Mod.TeardownGameCheats` → `FxPristine.RestoreAll()`
+(replays every captured pristine value through the actuators' own write paths, so a restore runs the same
+propagation/apply a set does) then `FxEditorReader.Reset()` (drops the sampler memo). There is nothing
+else to unwind: no patch to remove, no GPU object to free.
+
+The terrain UBO write is the one place gatOS writes **GPU-mapped memory** (unsafe `ref` spans over the
+reflected `MappedMemory`, frame slot 0 + the frames-in-flight mirror copy) — on the same main thread the
+game's own Terrain Editor writes it from, into host-visible + host-coherent memory. Verified
+`2026-08-01` against `2026.7.10.5056`; because none of these can fail the build, they belong on the
+"re-verify live after every update" list with the throttle field — live pass pending in
+[`../docs/VALIDATION.md`](../docs/VALIDATION.md).
+
 ---
 
 ## Churn machinery (how the coupling defends itself)

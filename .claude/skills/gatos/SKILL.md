@@ -128,6 +128,11 @@ debug/                                  (only when debug_namespace=true)
          <id>/{vessel,part,name,template,position,velocity,angular_velocity,mass,shape,size,
                asleep,nudge,release,spec}}                   (OFF by default — see below)
     always_render_iva   time/warp   focus   control_vessel
+    engineplume/{help,templates/<id>/{core,absorption,emission,mach_diamonds,noise,quality}/*,json,reset}
+    plumetrail/{help,render/*,json,clear,reset}       (one GLOBAL trail renderer)
+    clouds/{help,bodies/<body>/{shared/*,layers/<n>/{*,two_d/*,raymarch/*,types/<m>/*},json,reset}}
+    terrain/{help,wireframe,bodies/<body>/{min_height,max_height,slope_roughness_deg,hapke_albedo,
+                                           biomes/*,tessellation/*,json,reset}}
 ```
 
 Each leaf's format, units, archetype (read-only vs control vs trigger), and backing command action
@@ -171,6 +176,18 @@ file. Objects park (frozen) under time warp, in the VAB, and outside the IVA cam
 `run_outside_iva=1`. Emits `iva.impact` / `iva.escape` / `iva.release` events — wiring `iva.impact` to
 `/sim/audio` gives you clunks. `cat /sim/debug/iva/help` is a full readme; the surface, tuning knobs and
 errnos are in [SPEC §3.7](../../../SPEC_9P_FILESYSTEM.md) (**iva**).
+
+**FX editors (`/sim/debug/{engineplume,plumetrail,clouds,terrain}`):** the game's four built-in render
+editors as filesystems — **one writable leaf per knob**, each with a fixed inclusive range (out of range
+⇒ `EINVAL` before it reaches the game), live read-back, a per-entity `json` document for discovery, and a
+per-entity `reset` that restores the values from before gatOS first wrote them. Scopes differ and this is
+the thing to get right: `engineplume` is **per template** (an edit repaints *every* nozzle using that
+template), `plumetrail` is a **single global** renderer (plus a one-shot `clear` that deletes existing
+trails), `clouds` is per body → layer → cloud type, `terrain` is per body (only bodies with a live render
+slot) plus a **global** `wireframe`. All writes are Frame-phase, cheap enough to animate at 10–60 Hz —
+group simultaneous ones through `/sim/ctl/batch`. Values are stored as 32-bit floats (read-back is
+single-precision) and the surface is session-scoped (never persisted; restored at unload). Every field,
+range and unit is in [SPEC §3.7](../../../SPEC_9P_FILESYSTEM.md); `cat <family>/help` in-guest.
 
 **Audio playback (`/sim/audio`, gated by `audio_enabled=true` — NOT a debug cheat):** play real
 audio (mp3/ogg/wav/flac) through the game's speakers. Upload with `cat clip.mp3 >

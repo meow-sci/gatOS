@@ -607,6 +607,54 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/iva/<id>/nudge` | **St** | `vx vy vz` | `debug.iva_nudge` | Frame | One-shot velocity kick in the vessel assembly frame (m/s), added to the current velocity; wakes the body. Read = `0 0 0` (no read-back). |
 | `debug/iva/<id>/release` | T | `1` | `debug.iva_release` | Frame | Un-adopt: restore the SubPart's exact rest pose and drop the body. |
 | `debug/iva/<id>/spec` | S | spec line | — | — | The write-compatible 2-token spec (echo to `adopt` to re-adopt this SubPart). |
+| `debug/engineplume/help` | S | — | — | — | Console-friendly readme for the engine-plume family (scope, usage, field groups). `cat` it. |
+| `debug/engineplume/templates/<id>/core/{radius_weight,nozzle_pressure_weight,jet_expansion_weight,exit_mach_weight}` | **St** | number (each `0.0001..100`) | `debug.engineplume_set` | Frame | The four term weights of the plume-length model. |
+| `debug/engineplume/templates/<id>/absorption/{density,scattering_brightness,phase_eccentricity,refraction_intensity}` | **St** | number (`0.0001..100`, `0..100`, `-1..1`, `0..10`) | `debug.engineplume_set` | Frame | Medium absorption density, scattered-light brightness, scattering phase eccentricity (−1 back-scatter … +1 forward-scatter), refraction/heat-haze strength. |
+| `debug/engineplume/templates/<id>/absorption/fake_clean_burn` | **St** | `0`/`1` | `debug.engineplume_set` | Frame | Fake a soot-free burn while inside an atmosphere. |
+| `debug/engineplume/templates/<id>/emission/brightness` | **St** | number (`0..200`) | `debug.engineplume_set` | Frame | Overall emissive brightness of the plume. |
+| `debug/engineplume/templates/<id>/emission/color{0,1,2,3}` | **St** | `r g b` (each `0..1`) | `debug.engineplume_set` | Frame | The 4-stop emission gradient — `color0` at the nozzle exit, `color3` at the plume tip. |
+| `debug/engineplume/templates/<id>/mach_diamonds/{lead_in,lead_out,middle_radius}` | **St** | number (`0..1`) | `debug.engineplume_set` | Frame | Where the shock-diamond pattern fades in/out along the plume, and a diamond's bright-core radius (fraction of plume radius). |
+| `debug/engineplume/templates/<id>/noise/{density_strength,radial_strength,shape_strength}` | **St** | number (`0..2`) | `debug.engineplume_set` | Frame | Intensity of the density / radial-shape / overall-shape noise. |
+| `debug/engineplume/templates/<id>/noise/radial_barrel_shock` | **St** | number (`0..4`) | `debug.engineplume_set` | Frame | Extra radial-noise intensity applied at the barrel shock. |
+| `debug/engineplume/templates/<id>/noise/{density_size,radial_size,radial_speed,shape_size}` | **St** | number (`0..100`) | `debug.engineplume_set` | Frame | Feature sizes of the three noise fields + the radial noise's scroll speed. |
+| `debug/engineplume/templates/<id>/quality/{samples,self_shadow_samples}` | **St** | number (`1..100` / `0..10`) | `debug.engineplume_set` | Frame | Raymarch and self-shadow sample counts — **rounded to an integer** on apply (`0` self-shadow = off). |
+| `debug/engineplume/templates/<id>/quality/vessel_shadows` | **St** | `0`/`1` | `debug.engineplume_set` | Frame | Whether the plume casts volumetric shadows onto the vessel. |
+| `debug/engineplume/templates/<id>/json` | S | JSON object | — | — | Every field of this template in one line: `{"<field path>": value \| [components], …}`. Discovery / profile capture — writes always go to the individual leaves. |
+| `debug/engineplume/templates/<id>/reset` | T | `1` | `debug.engineplume_reset` | Frame | Restore this template's pristine (pre-gatOS) values. |
+| `debug/plumetrail/help` | S | — | — | — | Console-friendly readme for the trail family. `cat` it. |
+| `debug/plumetrail/render/{max_distance,voxel_first_slice,min_step_size}` | **St** | number, meters (`0.01..1e7`, `0.001..1e5`, `0.001..1e5`) | `debug.plumetrail_set` | Frame | Maximum render distance, first voxel-slice depth, minimum raymarch step. |
+| `debug/plumetrail/render/{step_size_distance_scale,expansion_time,erosion_max_depth,erosion_edge_sharpness}` | **St** | number (`0..10`, `0.001..10000` s, `0..1`, `0..0.999`) | `debug.plumetrail_set` | Frame | Step growth with camera distance, segment expansion time, noise-erosion depth and edge sharpness. |
+| `debug/plumetrail/render/self_shadow_steps` | **St** | number (`0..64`) | `debug.plumetrail_set` | Frame | Self-shadow raymarch step count, **rounded to an integer** (`0` = off). |
+| `debug/plumetrail/render/{light_brightness,sky_ambient_brightness}` | **St** | number (`0..1000`) | `debug.plumetrail_set` | Frame | Direct-light and sky-ambient brightness on the trail. |
+| `debug/plumetrail/render/trail_color` | **St** | `r g b a` (each `0..1`) | `debug.plumetrail_set` | Frame | Debug tint applied to every trail. |
+| `debug/plumetrail/json` | S | JSON object | — | — | Every trail field in one line (same shape as the plume `json`). |
+| `debug/plumetrail/clear` | T | `1` | `debug.plumetrail_clear` | Frame | Drop the trail geometry currently in the world (a one-shot — **not** a settings change). |
+| `debug/plumetrail/reset` | T | `1` | `debug.plumetrail_reset` | Frame | Restore the trail renderer's pristine values. |
+| `debug/clouds/help` | S | — | — | — | Console-friendly readme for the clouds family. `cat` it. |
+| `debug/clouds/bodies/<id>/shared/{transition_start_km,transition_end_km,max_shadows_altitude_km}` | **St** | number, km (`≥0`) | `debug.clouds_set` | Frame | Where the ground→orbit cloud representation starts/finishes blending, and the altitude above which cloud shadows stop. |
+| `debug/clouds/bodies/<id>/layers/<n>/rotation_speed` | **St** | `x y z` (a plain 3-vector, unbounded) | `debug.clouds_set` | Frame | Layer rotation rate about each body axis. |
+| `debug/clouds/bodies/<id>/layers/<n>/detail_tile_km` | **St** | number, km (`≥0`) | `debug.clouds_set` | Frame | Tiling size of the layer's detail texture. |
+| `debug/clouds/bodies/<id>/layers/<n>/color` | **St** | `r g b` (each `0..1`) | `debug.clouds_set` | Frame | Volumetric cloud colour of the layer. |
+| `debug/clouds/bodies/<id>/layers/<n>/scroll_speed` | **St** | number, m/s (`0..1e6`) | `debug.clouds_set` | Frame | Scroll speed of the layer's noise. |
+| `debug/clouds/bodies/<id>/layers/<n>/two_d/{lambertian,color}` | **St** | number (`0..1`) / `r g b` (each `0..1`) | `debug.clouds_set` | Frame | Lambertian shading weight and colour of the flat (distant) cloud representation. |
+| `debug/clouds/bodies/<id>/layers/<n>/raymarch/{step_size,max_step,light_distance}` | **St** | number, meters (`0..1e6`) | `debug.clouds_set` | Frame | Base raymarch step, its upper clamp, and the distance marched toward the light when sampling in-scattering. |
+| `debug/clouds/bodies/<id>/layers/<n>/raymarch/step_scale` | **St** | number (`0..1`) | `debug.clouds_set` | Frame | How fast the raymarch step grows with distance. |
+| `debug/clouds/bodies/<id>/layers/<n>/raymarch/light_samples` | **St** | number (`0..20`) | `debug.clouds_set` | Frame | Light samples per raymarch step, **rounded to an integer**. |
+| `debug/clouds/bodies/<id>/layers/<n>/types/<m>/{start_altitude,height}` | **St** | number, meters (`-1e6..1e6` / `0..1e6`) | `debug.clouds_set` | Frame | Bottom altitude and vertical thickness of one cloud type inside the layer. |
+| `debug/clouds/bodies/<id>/layers/<n>/types/<m>/{density,edge_sharpness,multi_scatter}` | **St** | number (`0..100`, `0..1`, `0..1`) | `debug.clouds_set` | Frame | Optical density, edge-falloff sharpness and multiple-scattering brightness of that cloud type. |
+| `debug/clouds/bodies/<id>/layers/<n>/types/<m>/interpolate` | **St** | `0`/`1` | `debug.clouds_set` | Frame | Whether that cloud type's shapes are interpolated. |
+| `debug/clouds/bodies/<id>/json` | S | JSON object | — | — | Every cloud field of the body in one line (indexed keys included). |
+| `debug/clouds/bodies/<id>/reset` | T | `1` | `debug.clouds_reset` | Frame | Restore that body's pristine cloud values. |
+| `debug/terrain/help` | S | — | — | — | Console-friendly readme for the terrain family. `cat` it. |
+| `debug/terrain/wireframe` | **St** | `0`/`1` | `debug.terrain_set` | Frame | **Global** (not per body): draw all planet terrain as wireframe. Addressed with an empty entity token. |
+| `debug/terrain/bodies/<id>/{min_height,max_height}` | **St** | number, meters (`-20000..0` / `0..20000`) | `debug.terrain_set` | Frame | The height range the body's height field maps to. |
+| `debug/terrain/bodies/<id>/slope_roughness_deg` | **St** | number, degrees (`0..90`) | `debug.terrain_set` | Frame | Mean micro-slope roughness used by the surface BRDF (stored internally in radians). |
+| `debug/terrain/bodies/<id>/hapke_albedo` | **St** | number (`0.0001..0.99999`) | `debug.terrain_set` | Frame | Mean single-scattering albedo of the Hapke surface model. |
+| `debug/terrain/bodies/<id>/biomes/blend_strength` | **St** | number (`1..10`) | `debug.terrain_set` | Frame | Sharpness of the blend between neighbouring biome materials. |
+| `debug/terrain/bodies/<id>/biomes/{detail_fade_start_km,detail_fade_end_km}` | **St** | number, km (`≥0`) | `debug.terrain_set` | Frame | Altitudes where biome detail textures start / finish fading in. |
+| `debug/terrain/bodies/<id>/tessellation/{edge_length_px,factor,range_m}` | **St** | number (`0.1..20` px, `0..1`, `1..20000` m) | `debug.terrain_set` | Frame | Target screen-space edge length, the global tessellation-factor scale, and the camera distance over which tessellation falls off. |
+| `debug/terrain/bodies/<id>/json` | S | JSON object | — | — | Every terrain field of the body in one line. |
+| `debug/terrain/bodies/<id>/reset` | T | `1` | `debug.terrain_reset` | Frame | Restore that body's pristine terrain values. |
 
 **welds** (the "weld one vessel rigidly to another, anchored to a part" cheat — a game hack):
 - Discover anchors under `vessels/by-id/<target>/parts/<n>/` — top-level parts **and** their
@@ -672,6 +720,67 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
   switch is off, or the subpart has no CPU mesh to size a proxy from), `ENOENT` (vessel/subpart/object id
   gone), `EBUSY` (per-vessel cap reached, or that subpart already floats), `EINVAL` (bad arity/values, or
   the subpart is larger than `iva_max_object_size`), `EIO` (the cabin simulation is unavailable).
+
+**FX editors** (`engineplume` / `plumetrail` / `clouds` / `terrain` — the game's four built-in imgui
+render editors exposed as filesystems). Shared rules for all four:
+- **One leaf per knob.** Every field is its own file with its own inclusive range; a wrong component
+  count, a non-finite number, or a value outside the range fails **`EINVAL` before reaching the game**
+  (and is re-checked game-side, so a hand-written `POST /v1/command` cannot bypass it). Each entity also
+  publishes a whole-entity `json` document for **discovery and profile capture** — reads only; writes
+  always go to the leaves.
+- **Read-back is live**, sampled from the same accessor the write goes through, so a value round-trips.
+  The game stores most of these as **32-bit floats**, so a read-back is single-precision (`0.1` reads
+  back as `0.100000001`); integer-valued counts are **rounded** on apply and read back rounded.
+- **Cadence.** The FX surface is re-read when a `/sim` write lands (immediately) or every **2 s**
+  otherwise — the 2 s beat is what catches edits made in the game's own imgui editors. Between rebuilds
+  the previous values are republished by reference (an idle FX subtree costs nothing).
+- **`reset` restores the pristine value**: the first time gatOS writes a field it records what was there
+  before; `reset` replays every recorded field of that entity through the normal write path and drops the
+  record (a reset with nothing recorded is a successful no-op). Everything is **session-scoped** — never
+  persisted, and every touched field is restored at mod unload.
+- **Animating.** All FX writes are **Frame**-phase, so one command lands per frame drain; group
+  simultaneous changes through `/sim/ctl/batch` (§3.10) to land them in one tick. Writes are cheap enough
+  to drive from a 10–60 Hz light-show loop — write only the leaves that changed.
+- **Errnos:** `EINVAL` unknown field path / wrong arity / out of range / non-finite; `ENOENT` unknown or
+  vanished template/body (also on a read of a leaf whose entity went away, or an out-of-range
+  layer/cloud-type index); `EOPNOTSUPP` the family's game-side accessor is latched degraded (it also
+  shows in `status/accessors`); `EIO` a KSA call threw.
+- The whole surface is gated by `debug_namespace` like the rest of `/sim/debug`, is mirrored leaf-by-leaf
+  over HTTP `/v1/fs/debug/…` and MQTT `gatos/sim/debug/…`, and rides `GET /v1/snapshot` as `fxEditors`.
+
+**engineplume** — **per TEMPLATE, shared, not per engine.** `templates/<id>/` edits the one
+`VolumetricExhaustTemplate` with that id, so an edit repaints **every nozzle in the universe** that
+references it, immediately. Discovery: `ls templates/` (the loaded template ids; if the game's template
+registry cannot be read, the roster degrades to the templates actually referenced by live nozzles).
+After each write gatOS runs the game editor's own propagation pass over every live nozzle instance
+(settings-changed → modifier refresh → gas-visibility recompute), so a burning engine repaints within the
+frame. Startup/shutdown transient curves, the test grid and the wireframe debug view are **not** exposed.
+
+**plumetrail** — **one global renderer**, not per vessel: the fields sit directly in the family dir. The
+renderer re-reads them every frame, so a write takes effect with no apply call. `clear` is a **one-shot**
+that deletes the trail geometry currently in the world (`reset` only restores settings, it does not clear
+trails). The trail simulation/LOD/wind parameters are **not** exposed (they live behind private
+segment-manager state), nor are the two toggles that would force a GPU frame-resource rebuild.
+
+**clouds** — **per body → per layer → per cloud type.** Only bodies that actually define clouds appear
+under `bodies/`; the `layers/<n>/` and `types/<m>/` indices that exist are exactly the ones that body
+defines. Discovery: `ls bodies/`, then `cat bodies/<id>/json`. After each write gatOS re-derives the
+affected layer's GPU render data and repopulates the cloud-shadow atlas — exactly the sequence the
+in-game editor runs, and one that never rebuilds a Vulkan pipeline. If that render-side handle is
+unavailable the **data write still stands and the write still succeeds** (`Ok`) — the change simply
+appears on the renderer's next natural repopulate. The layer noise scale is **deliberately not exposed**
+(changing it would force a pipeline rebuild); shape/density splines and texture slots are deferred.
+
+**terrain** — a deliberately small first slice, in two tiers. `wireframe` is **family-global** (one
+toggle for all planet terrain, addressed with an empty entity token) and has no `json`/`reset` of its
+own. Everything under `bodies/<id>/` is **per body and only for bodies that currently hold a terrain
+render slot** — a body with no slot is simply absent. A per-body write is a **paired write**: the body's
+reference object (where the field has one) *and* the GPU-mapped uniform struct at the body's slot,
+mirrored into every frame-in-flight copy so the change does not flicker; values are read back out of that
+same uniform struct, so read-back is what the GPU samples. If the uniform-buffer handles cannot be
+resolved, the per-body roster is empty (`bodies/` lists nothing) while `wireframe` stays live. Per-biome
+materials, procedural modifiers, ground clutter/ecotypes, the BVH debug views and the exporters are
+**not** exposed.
 
 ### 3.8 `/display` *(the screen stream — STREAM_PLAN.md)*
 
@@ -842,8 +951,8 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `ordinal` | int | module index (engine/rcs/light/animation/decoupler/docking); `-1` for vessel-level. |
 | `value` | number | scalar arg: `0`/`1` flag, `0..1` fraction, or number. |
 | `values` | number[] | vector arg: quaternion (4), burn `ut dvx dvy dvz` (4), color `r g b` (3), teleport `px py pz vx vy vz` (6), impulse `x y z` (3), translate `x y z` (3, signs), rotate `x y z` (3, signs), the audio play slots / set pairs (§3.9 notes below). |
-| `token` | string | symbolic arg: attitude mode/frame token, a target id for focus/control, the audio clip name (`audio.play`) or channel target (`audio.set`/`audio.stop`), the impulse frame keyword (`cci`/`body`; omit ⇒ `cci`). |
-| `aux` | string | secondary symbolic arg — `audio.play` uses it for the caller-chosen channel `id=` (omit ⇒ auto `#N`); `debug.impulse` for the unit keyword (`ns`/`dv`; omit ⇒ `ns`). |
+| `token` | string | symbolic arg: attitude mode/frame token, a target id for focus/control, the audio clip name (`audio.play`) or channel target (`audio.set`/`audio.stop`), the impulse frame keyword (`cci`/`body`; omit ⇒ `cci`), the FX-editor entity (template id / body id; absent for `plumetrail`, `""` for the terrain globals). |
+| `aux` | string | secondary symbolic arg — `audio.play` uses it for the caller-chosen channel `id=` (omit ⇒ auto `#N`); `debug.impulse` for the unit keyword (`ns`/`dv`; omit ⇒ `ns`); the FX-editor `*_set` actions for the concrete field path. |
 
 ### 5.1 Action key catalog (the complete write surface)
 
@@ -903,6 +1012,15 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `debug.iva_release` | object id | value `1` | Frame | `debug/iva/<id>/release` | vessel-agnostic; id in `ordinal`; restores the exact rest pose |
 | `debug.iva_clear` | — | — | Frame | `debug/iva/clear` | vessel-agnostic; releases all (the sim stays enabled) |
 | `debug.iva_nudge` | object id | values `[vx,vy,vz]` | Frame | `debug/iva/<id>/nudge` | id in `ordinal`; assembly-frame velocity kick (m/s) |
+| `debug.engineplume_set` | — | token = template id; aux = field path; `values` per the field's arity (a scalar is additionally mirrored in `value`) | Frame | `debug/engineplume/templates/<id>/<field>` | vessel-agnostic; edits the **shared** template (every nozzle using it) |
+| `debug.engineplume_reset` | — | token = template id | Frame | `debug/engineplume/templates/<id>/reset` | vessel-agnostic; restores the pristine (pre-gatOS) values |
+| `debug.plumetrail_set` | — | token **absent**; aux = field path; `values` per arity (scalar also in `value`) | Frame | `debug/plumetrail/render/<field>` | vessel-agnostic; one global renderer, so no entity id |
+| `debug.plumetrail_reset` | — | — | Frame | `debug/plumetrail/reset` | vessel-agnostic; restores the pristine render settings |
+| `debug.plumetrail_clear` | — | — | Frame | `debug/plumetrail/clear` | vessel-agnostic; drops the live trail geometry (one-shot, not a settings change) |
+| `debug.clouds_set` | — | token = body id; aux = field path (carries the layer/cloud-type indices); `values` per arity (scalar also in `value`) | Frame | `debug/clouds/bodies/<id>/<field>` | vessel-agnostic; re-uploads the affected layer |
+| `debug.clouds_reset` | — | token = body id | Frame | `debug/clouds/bodies/<id>/reset` | vessel-agnostic; restores that body's pristine cloud values |
+| `debug.terrain_set` | — | token = body id (**`""`** for the global `wireframe`); aux = field path; `values` per arity (scalar also in `value`) | Frame | `debug/terrain/wireframe`, `debug/terrain/bodies/<id>/<field>` | vessel-agnostic; per-body fields write the reference object **and** the GPU uniform slot |
+| `debug.terrain_reset` | — | token = body id | Frame | `debug/terrain/bodies/<id>/reset` | vessel-agnostic; restores that body's pristine terrain values |
 | `audio.play` | — | token = clip name; aux = channel id (optional); values `[start_ms, end_ms, vol, loop, pan, pitch, group]` (defaults `[0,0,1,0,0,1,0]`; `end_ms` 0 = whole clip; group `0`=sfx `1`=music `2`=ui) | Frame | `audio/play` | vessel-agnostic; not a `debug.*` action but gated by `audio_enabled` (`EOPNOTSUPP` when off) |
 | `audio.set` | — | token = channel id or clip name; values = flat `[key, value, …]` pairs (keys: `0`=vol `1`=pan `2`=pitch `3`=paused(0/1) `4`=seek_ms) | Frame | `audio/set` | vessel-agnostic |
 | `audio.stop` | — | token = `all` \| channel id \| clip name | Frame | `audio/stop` | vessel-agnostic |
@@ -1050,6 +1168,7 @@ curl -X POST --data 'alarm.mp3 vol=0.8' "http://127.0.0.1:4242/v1/fs/audio/play"
 | power | W; energy/capacity J |
 | pressure | Pa; density kg/m³ |
 | attitude quaternion | unit `x y z w`, Body→CCI |
+| `/sim/debug` FX-editor fields (§3.7) | **per field** — the unit is in the leaf's name or its §3.7 row (`…_km` km, `…_deg` degrees, `…_px` pixels, `…_m`/raymarch/height meters, `s`, `m/s`, `r g b`/`r g b a` each `0..1`); these do **not** follow the "everything is meters" rule |
 
 ---
 
