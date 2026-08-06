@@ -47,6 +47,8 @@ internal static class TestData
             EngineOn = engineOn,
             Scale = scale,
             AlwaysRender = alwaysRender,
+            // The FlightComputer default — RCS available, so manual translate/rotate actually fire.
+            RcsMode = "Enabled",
         };
 
     /// <summary>

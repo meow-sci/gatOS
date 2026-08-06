@@ -4,6 +4,7 @@ using Core;
 using gatOS.SimFs.Commands;
 using KSA;
 using KSA.Atmosphere.Rendering;
+using KSA.Rendering;
 
 namespace gatOS.GameMod.Game.Ksa.Fx;
 
@@ -74,7 +75,7 @@ internal static class FxReflect
     /// <param name="Shadows">The cloud-shadow renderer that re-populates the shadow atlas.</param>
     /// <param name="WorleyNoise">The shared 3-D worley-noise target <c>PopulatePlanets</c> takes.</param>
     internal readonly record struct CloudApplyHandles(
-        Renderer Renderer, CloudShadowsRenderer Shadows, RenderTarget WorleyNoise);
+        Renderer Renderer, CloudShadowsRenderer Shadows, RenderImage WorleyNoise);
 
     /// <summary>The terrain UBO mapped-memory handles (both host-visible, coherent).</summary>
     /// <param name="RenderUbo">The per-celestial <c>PlanetUbo</c> ring.</param>
@@ -249,10 +250,14 @@ internal static class FxReflect
     ///     repopulate picks up.
     /// </summary>
     [KsaAnchor("CloudRenderer._renderer/_cloudShadowsRenderer/_worleyNoise3dTarget (private fields)",
-        SourceFile = "KSA.Atmosphere.Rendering/CloudRenderer.cs:95,151,235",
-        Verified = "2026-08-01", GameVersion = "2026.7.10.5056", Risk = ChurnRisk.High,
+        SourceFile = "KSA.Atmosphere.Rendering/CloudRenderer.cs:95,151,160",
+        Verified = "2026-08-05", GameVersion = "2026.8.5.5168", Risk = ChurnRisk.High,
         Notes = "The three arguments CloudLayerRenderData.UpdateStaticData + CloudShadowsRenderer."
-            + "PopulatePlanets need; the render-data map itself (_planetToCloudRenderData) is public.")]
+            + "PopulatePlanets need; the render-data map itself (_planetToCloudRenderData) is public. "
+            + "_worleyNoise3dTarget was KSA.RenderTarget up to 2026.8.3.5117; rev 5154's dynamic-rendering "
+            + "migration retyped it to KSA.Rendering.RenderImage (and PopulatePlanets' parameter with it). "
+            + "The old KSA.RenderTarget/KSA.OffscreenTarget classes are gone; the NEW KSA.Rendering."
+            + "RenderTarget is an unrelated type, so do not re-bind this to the name alone.")]
     internal static CloudApplyHandles? CloudApply(CloudRenderer renderer, out string error)
     {
         error = "";
@@ -267,7 +272,7 @@ internal static class FxReflect
 
         if (_cloudRendererField?.GetValue(renderer) is Renderer engine
             && _cloudShadowsField?.GetValue(renderer) is CloudShadowsRenderer shadows
-            && _worleyField?.GetValue(renderer) is RenderTarget worley)
+            && _worleyField?.GetValue(renderer) is RenderImage worley)
             return new CloudApplyHandles(engine, shadows, worley);
 
         error = "CloudRenderer._renderer/_cloudShadowsRenderer/_worleyNoise3dTarget are missing in this build";

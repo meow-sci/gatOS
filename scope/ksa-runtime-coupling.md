@@ -82,6 +82,30 @@ image-layout assumption are untouched. `VehicleUpdateData.cs`/`VehicleUpdateTask
 carry `ISubstanceStore[] SubstanceStores` alongside tanks (rev 4992, solid motors) — nothing gatOS
 binds.
 
+**Re-verified 2026-08-05 against `2026.8.5.5168`** — this is the pass where `Program.RenderGame`
+finally *did* change, so the assumptions above were re-derived rather than re-asserted. Rev 5154 moved
+offscreen rendering onto Vulkan **dynamic rendering**, rewriting the body (275 → 233 lines: the
+`BeginRenderPass`/`EndRenderPass` pair around the scene became
+`_offscreenTarget.BeginRendering`/`EndRendering`, and the explicit `TransitionImages2` calls became
+`BarrierBatch`). Both transpiler preconditions nevertheless **still hold**:
+
+- **The injection anchor survives.** The transpiler deliberately matches the *last* 1-arg
+  `Brutal.VulkanApi` `End()` rather than a fixed offset; `commandBuffer2.End()` is still the final call
+  (`Program.cs:4320`), still after `EndRenderPass()` — i.e. outside any render pass.
+- **The layout assumption survives.** `commandBuffer2.PipelineBarrier2(_offscreenTarget.ColorImage,
+  ImageBarrierInfo.Presets.SampledReadVfc)` (`:4312`) still leaves the offscreen colour image in
+  `ShaderReadOnlyOptimal` at that point, and **the new CMAA2 pass (rev 5156) does not disturb it** —
+  `Cmaa2Renderer` renders into its own `_sceneLdrTarget` and only *samples* the offscreen image
+  (`Cmaa2Renderer.cs:166,319,324`), so the state is identical whether AA is off, MSAA, or CMAA2.
+- **The captured image is still the right one.** `Program.MainViewport.OffscreenTarget` is assigned
+  directly from `Program._offscreenTarget` (`Program.cs:1385`), so `FrameCapture`'s per-viewport read
+  and the global barrier above refer to the same object — as before.
+
+The one required change was nullability: `KSA.Rendering.RenderTarget.ColorImage` is `RenderImage?`
+(a depth-only target has no colour), so `FrameCapture` now returns early instead of dereferencing it.
+`Universe.ExecuteNextVehicleSolvers`, `Program.DrawProgramMenusHook`, `Program.MainViewport` and
+`ModLibrary.Find` are all unchanged in shape and still resolve by name.
+
 ### Dynamic IVA patches (`gatos.iva`) {#iva-patches}
 
 The `debug/always_render_iva` cheat (`Game/Ksa/Render/IvaForceRender.cs`, ported from `unscience`)
@@ -438,6 +462,19 @@ catches *semantic* drift (units/frames) — that needs the decomp diff (playbook
 
 These are couplings to the **mod ecosystem**, separate from KSA-game churn — they change on their own
 schedules and a KSA update does not touch them. Listed so the coupling census is complete.
+
+> ⚠️ **Refined at 5168 — "a KSA update does not touch them" is about the *ABI*, not the *companion
+> mod*.** The purrTTY **contract** is indeed KSA-independent, but purrTTY the mod has its own
+> game-coupled render patches, and rev 5154 broke them: `purrTTY.GameMod`'s
+> `RenderTranslucencyPassPatch` and `OffscreenRenderTarget` bound to the deleted `KSA.OffscreenTarget`
+> / `KSA.RenderTarget` / `Program.OffScreenPass`, so an unpatched purrTTY **hard-crashes KSA on the
+> first rendered frame** with `TypeLoadException: Could not load type 'KSA.OffscreenTarget'` — a
+> failure that looks like a gatOS crash (gatOS is loaded and in the log) but is not. **Operational
+> rule: when a KSA update breaks gatOS's render bindings, assume purrTTY needs the same migration and
+> rebuild both before attempting any in-game validation.** Fixed 2026-08-05: purrTTY's offscreen target
+> now owns its attachments/render pass/framebuffer outright (rather than borrowing KSA's deleted
+> helpers), its quad pipeline sources formats + sample count from `Program.OffscreenTarget`, and its
+> scene barrier uses the tracked-state `PipelineBarrier2(IRenderImage, ImageBarrierInfo)`.
 
 | ABI | gatOS site | Pin / source | Notes |
 |---|---|---|---|

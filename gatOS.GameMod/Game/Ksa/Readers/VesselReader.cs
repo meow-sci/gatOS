@@ -234,13 +234,14 @@ internal static class VesselReader
             PowerProducedW = Sanitize.Finite(solarProducedW + generatorProducedW),
             PowerConsumedW = SamplePowerConsumed(vehicle),
             // The writable-setpoint read-backs the control files surface (ctl/throttle, ctl/rcs,
-            // ctl/translate, ctl/rotate, ctl/attitude_mode, ctl/attitude_frame).
+            // ctl/translate, ctl/rotate, ctl/attitude_mode, ctl/attitude_frame, ctl/rcs_mode).
             ThrottleCmd = Sanitize.Finite(vehicle.GetManualThrottle()),
             TranslateCmd = SampleTranslate(vehicle),
             RotateCmd = SampleRotate(vehicle),
             RcsOn = rcsOn,
             AttitudeMode = attitudeMode,
             AttitudeFrame = attitudeFrame,
+            RcsMode = FlightComputerActuator.ReadRcsMode(vehicle),
             Rcs = rcs,
             Solar = solar,
             Generators = generators,
@@ -802,11 +803,16 @@ internal static class VesselReader
         return result;
     }
 
-    [KsaAnchor("vehicle.Parts.Modules.Get<Decoupler>(); .IsActive (fired, irreversible)",
-        SourceFile = "KSA/Decoupler.cs", Verified = "2026-07-03", GameVersion = "2026.7.3.4826", Risk = ChurnRisk.Medium,
+    [KsaAnchor("vehicle.Parts.Modules.Get<Decoupler>(); .IsActive (fired, irreversible); .IsEnabled",
+        SourceFile = "KSA/Decoupler.cs:33,35", Verified = "2026-08-05", GameVersion = "2026.8.5.5168",
+        Risk = ChurnRisk.Medium,
         Notes = "4826: Decoupler.Decouple dropped its fire-time cascade that walked the separated vehicle "
             + "deactivating every IActivate module — module active/fired state on the separated stage now "
-            + "persists as-is. IsActive itself (fired, irreversible) is unchanged.")]
+            + "persists as-is. IsActive itself (fired, irreversible) is unchanged. 5168 (rev 5132): "
+            + "Decoupler gained IEnable + IsEnabled/SetIsEnabled (players can disable a part's decoupler "
+            + "module, e.g. to turn an adapter into a static fairing) and SetIsActive is now gated on it, "
+            + "so a disabled decoupler silently ignores a fire — surfaced as decouplers/<n>/enabled and "
+            + "enforced with EOPNOTSUPP in DecouplerActuator.")]
     private static IReadOnlyList<DecouplerSnapshot> SampleDecouplers(Vehicle vehicle)
     {
         var modules = vehicle.Parts.Modules.Get<Decoupler>();
@@ -814,7 +820,7 @@ internal static class VesselReader
             return [];
         var result = new List<DecouplerSnapshot>(modules.Length);
         for (var i = 0; i < modules.Length; i++)
-            result.Add(new DecouplerSnapshot(i, modules[i].IsActive));
+            result.Add(new DecouplerSnapshot(i, modules[i].IsActive, modules[i].IsEnabled));
         return result;
     }
 

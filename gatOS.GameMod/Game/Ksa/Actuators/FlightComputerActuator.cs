@@ -36,6 +36,32 @@ internal static class FlightComputerActuator
         return CommandResult.Ok;
     }
 
+    /// <summary>
+    ///     The flight computer's RCS master switch (<c>ctl/rcs_mode</c>) — the file twin of the
+    ///     in-game <b>R</b> keybind. Solver-phase like every other FC setpoint, because
+    ///     <c>FlightComputer.CopyFrom</c> snapshots and restores it.
+    /// </summary>
+    [KsaAnchor("FlightComputer.RCSMode (FlightComputerRCSMode)", SourceFile = "KSA/FlightComputer.cs:41,471,884",
+        Verified = "2026-08-05", GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
+        Notes = "5168 (rev 5143) turned this into a HARD master cut-off: ComputeRcsControl now zeroes "
+            + "inputs.ThrusterCommandFlags outright when RCSMode != Enabled (FlightComputer.cs:471), and "
+            + "UpdateRcsParams zeroes the thruster authority (:884). Before 5168 only auto attitude holds "
+            + "were gated and manual translate/rotate fired regardless — gatOS's scope/ docs said exactly "
+            + "that, and 5143 falsified it. Exposed as a read + control so a flight program can see and "
+            + "clear the condition instead of watching ctl/translate silently do nothing.")]
+    internal static CommandResult SetRcsMode(Vehicle vehicle, string token)
+    {
+        if (!Enum.TryParse<FlightComputerRCSMode>(token, ignoreCase: true, out var mode))
+            return new CommandResult(CommandOutcome.Invalid, $"unknown rcs mode '{token}'");
+        vehicle.FlightComputer.RCSMode = mode;
+        return CommandResult.Ok;
+    }
+
+    /// <summary>Read-back for the sampler: the live RCS master mode name.</summary>
+    [KsaAnchor("FlightComputer.RCSMode (read)", SourceFile = "KSA/FlightComputer.cs:41",
+        Verified = "2026-08-05", GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium)]
+    internal static string ReadRcsMode(Vehicle vehicle) => vehicle.FlightComputer.RCSMode.ToString();
+
     [KsaAnchor("FlightComputer.AttitudeFrame (VehicleReferenceFrame)", SourceFile = "KSA/FlightComputer.cs",
         Verified = "2026-06-12", Risk = ChurnRisk.Medium)]
     internal static CommandResult SetAttitudeFrame(Vehicle vehicle, string token)

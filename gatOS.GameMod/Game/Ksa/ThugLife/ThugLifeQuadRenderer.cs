@@ -102,13 +102,22 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
         (_vb, _ib, _indexCount) = BuildGeometry(renderer);
     }
 
-    [KsaAnchor("Program.OffScreenPass.{Pass,SampleCount}; ModLibrary.Get<ShaderReference>(\"UnlitMeshVert\"/"
+    [KsaAnchor("Program.OffscreenTarget.SetupGraphicsPipeline(ref VkGraphicsPipelineCreateInfo); "
+            + "ModLibrary.Get<ShaderReference>(\"UnlitMeshVert\"/"
             + "\"UnlitMeshFrag\"); RenderTechnique.CreateShaderStages; Presets/RenderingPresets; "
             + "Renderer.{Device,Allocator,DynamicStateInfo,ViewportState,Graphics}; VkUtils.StageAndUploadToBuffer",
-        SourceFile = "KSA/Program.cs / KSA/ModLibrary.cs / KSA/RenderingPresets.cs / Planet.Render.Core / Brutal.Vulkan*",
-        Verified = "2026-06-28", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.High,
-        Notes = "Builds the GPU pipeline for the thug-life quad against KSA's offscreen pass + stock UnlitMesh "
-            + "shaders. Deepest render-internals coupling in gatOS; off by default and self-disables on fault.")]
+        SourceFile = "KSA/Program.cs:411 / KSA.Rendering/RenderTarget.cs:356 / KSA/ModLibrary.cs / "
+            + "KSA/RenderingPresets.cs / Planet.Render.Core / Brutal.Vulkan*",
+        Verified = "2026-08-05", GameVersion = "2026.8.5.5168", Risk = ChurnRisk.High,
+        Notes = "Builds the GPU pipeline for the thug-life quad against KSA's offscreen scene target + stock "
+            + "UnlitMesh shaders. Deepest render-internals coupling in gatOS; off by default and self-disables "
+            + "on fault. Rev 5154 moved offscreen rendering off VkRenderPass/framebuffers onto Vulkan dynamic "
+            + "rendering and DELETED Program.OffScreenPass (and the RenderPassState/OffscreenTarget classes). "
+            + "The pipeline now stamps itself via Program.OffscreenTarget.SetupGraphicsPipeline, which supplies "
+            + "VkPipelineRenderingCreateInfo (color/depth/stencil formats), forces RenderPass=NullHandle and "
+            + "sets RasterizationSamples from the target — the same call KSA's own GenericMeshRenderer/"
+            + "PartModelRenderer/PartModelGlass make, so gatOS tracks the engine's MSAA + CMAA2 (rev 5156) "
+            + "sample-count choice automatically instead of hard-binding a sample count.")]
     private static VkPipeline BuildPipeline(DeviceEx device, Renderer renderer, VkPipelineLayout layout)
     {
         var shaderRefs = new[]
@@ -124,18 +133,9 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
             .AddAttribute(1, 0, VkFormat.R32G32SFloat, ByteSize.Of<float3>())
             .Check();
 
-        // CRITICAL (quad.md): bind to Program.OffScreenPass (the MSAA scene pass), NOT Program.MainPass
-        // (the 1-sample swapchain pass) — wrong pass passes validation but silently breaks depth.
-        var multisample = new VkPipelineMultisampleStateCreateInfo
-        {
-            RasterizationSamples = Program.OffScreenPass.SampleCount,
-        };
-
         var info = new VkGraphicsPipelineCreateInfo
         {
             Layout = layout,
-            RenderPass = Program.OffScreenPass.Pass,
-            Subpass = 0,
             StageCount = stages.Count,
             Stages = stages,
             DynamicState = renderer.DynamicStateInfo,
@@ -145,8 +145,15 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
             RasterizationState = Presets.Rasterization.Fill.CullNone, // double-sided
             DepthStencilState = RenderingPresets.ReverseZDepthStencil.DepthTestWrite, // offscreen pass is reverse-Z
             ColorBlendState = Presets.BlendState.BlendColorAlpha,
-            MultisampleState = &multisample,
         };
+
+        // CRITICAL (quad.md): bind to the OFFSCREEN scene target, NOT the swapchain/main pass — the wrong
+        // one passes validation but silently breaks depth. Since rev 5154 the offscreen pass is Vulkan
+        // dynamic rendering rather than a VkRenderPass, so the target stamps the pipeline itself: it fills
+        // VkPipelineRenderingCreateInfo (color/depth/stencil formats), nulls RenderPass and sets
+        // RasterizationSamples from its own MSAA state. This is the identical call KSA's own
+        // GenericMeshRenderer/PartModelRenderer make, so the quad follows the engine's sample count.
+        Program.OffscreenTarget.SetupGraphicsPipeline(ref info);
         return device.CreateGraphicsPipeline(default(VkPipelineCache), info, null);
     }
 

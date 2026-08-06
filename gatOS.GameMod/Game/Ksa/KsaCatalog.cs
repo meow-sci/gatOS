@@ -150,6 +150,9 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
         // only in manual attitude mode — auto strips the rotation bits).
         "vessel.rotate" => RotateActuator.SetRotation(vehicle, c.Values ?? []),
         "vessel.attitude_mode" => FlightComputerActuator.SetAttitudeMode(vehicle, c.Token ?? ""),
+        // The FC's RCS master switch (in-game R). Disabled zeroes the manual thruster flags, so
+        // ctl/translate + ctl/rotate go dead until it is re-enabled.
+        "vessel.rcs_mode" => FlightComputerActuator.SetRcsMode(vehicle, c.Token ?? ""),
         "vessel.attitude_frame" => FlightComputerActuator.SetAttitudeFrame(vehicle, c.Token ?? ""),
         "vessel.attitude_target" => FlightComputerActuator.SetAttitudeTarget(vehicle, c.Values ?? []),
         "vessel.burn" => FlightComputerActuator.SetBurn(vehicle, c.Values ?? []),

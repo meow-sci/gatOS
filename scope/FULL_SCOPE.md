@@ -70,7 +70,52 @@ update's blast radius is small and discoverable. The procedure:
    (`EOPNOTSUPP`), logs once, and shows up in `/sim/status/accessors`. The guest sees a failed sensor,
    not a crashed mod. This is the safety net for the things steps 2–3 miss.
 
-> **Current applied result of this playbook:** the **2026.7.9.5018 → 2026.8.3.5117** update was run
+> **Current applied result of this playbook:** the **2026.8.3.5117 → 2026.8.5.5168** update was run
+> through it on 2026-08-05 — **four compile breaks, all fixed; three silent semantic breaks found and
+> closed.** PREVIOUS was itself an audited baseline and CURRENT's `fromRevision` is 5117, so the two
+> side-by-side trees chained with no gap (revs 5118–5168, 49 commits) and no git-history fallback was
+> needed.
+>
+> **All four compile breaks trace to one revision — rev 5154**, which moved offscreen rendering off
+> `VkRenderPass`/framebuffers onto **Vulkan dynamic rendering** and deleted `Program.OffScreenPass`,
+> `KSA.OffscreenTarget`, `KSA.RenderTarget`, `KSA.Framebuffer`, `Core.RenderPassState` and
+> `Core.DynamicRenderState`. `FxReflect`'s cloud worley-noise handle was retyped
+> (`RenderTarget` → `RenderImage`), `FrameCapture` had to null-guard the now-nullable
+> `RenderTarget.ColorImage`, and `ThugLifeQuadRenderer.BuildPipeline` was migrated to
+> `Program.OffscreenTarget.SetupGraphicsPipeline(ref info)` — the same call KSA's own renderers make,
+> which also means the quad now **tracks** the engine's sample count (including the new CMAA2 option,
+> rev 5156) rather than hard-binding one. ⚠️ **Name-collision trap:** the *new*
+> `KSA.Rendering.RenderTarget` is an unrelated class reusing the deleted one's name — never re-bind by
+> name alone. The render **preconditions** were re-verified rather than assumed: the main viewport's
+> offscreen target is still literally `Program._offscreenTarget`, the offscreen colour still ends the
+> frame in `SampledReadVfc` before the final composite and `End()`, and CMAA2 renders into its own
+> target — so the display transpiler and capture both still hold. **The sibling purrTTY mod took the
+> same break** (an unpatched purrTTY hard-crashes KSA at the first frame with
+> `TypeLoadException: KSA.OffscreenTarget`) and was migrated in the same work item.
+>
+> **Three silent semantic breaks — each one "a gatOS write now does nothing, with no read to explain
+> it":** (1) **rev 5143** made `FlightComputer.RCSMode` a hard cut-off for *manual* RCS, so
+> `ctl/translate`/`ctl/rotate` do nothing while RCS is off — **this falsified an explicit claim in
+> `ksa-write-surface.md`** and inverted a `VALIDATION.md` checklist item; closed by exposing
+> `ctl/rcs_mode` (read + Solver-phase write). (2) **rev 5128** added `Vehicle.ClearHeldPlayerInput()`,
+> which clears the latched thruster flags on vessel switch, window focus loss, camera-mode switch and —
+> *every update* — while ImGui holds keyboard focus or warp exceeds 30×, so the "latches until
+> rewritten" contract is now conditional (documented; throttle/ignite unaffected). (3) **rev 5132** let
+> players disable a decoupler module and gated `SetIsActive` on it, making `decoupler.fire` a silent
+> no-op **reported as success**; closed with `EOPNOTSUPP` + a new `decouplers/<n>/enabled` read.
+>
+> **Inherited value drift, no API change:** encounter population widened again (rev 5141 — near-coplanar
+> SOI encounters like Hohmann-to-Luna are now predicted), RCS thrust reduced (rev 5119), size-D/E SRB
+> grain sizes corrected (rev 5124), part mass/moment-of-inertia computation fixed plus a tangent-ogive
+> mass type (rev 5166). **Verified clean:** all 13 reflection accessors and all 7 Harmony targets,
+> including the `KittenEva` scale chain despite heavy kitten-locomotion churn. Build + full test suite
+> green against 5168 (0 warnings; 772 passed / 11 skipped).
+> ([read 5168 findings](ksa-read-surface.md#5168-findings) /
+> [write 5168 findings](ksa-write-surface.md#5168-findings) /
+> [pass record](ksa-assets-and-versions.md#5168-pass)). Live re-check items are queued in
+> `../docs/VALIDATION.md`. **5168 is now the verified baseline.**
+>
+> The prior **2026.7.9.5018 → 2026.8.3.5117** update was run
 > through it on 2026-08-01 — **two compile breaks, both fixed; two silent semantic drifts documented;
 > nothing else needed.** The pass deliberately spanned the intermediate `2026.7.10.5056` drop (revs
 > 5019–5116, 97 commits), because 5056 had only ever been build-checked — its changelog/decomp/Content
@@ -120,7 +165,7 @@ update's blast radius is small and discoverable. The procedure:
 > `ResetCachedPosMatrixValues()`). Build + full test suite green against 5117 (0 warnings; 769 passed /
 > 11 skipped). ([read 5117 findings](ksa-read-surface.md#5117-findings) /
 > [write 5117 findings](ksa-write-surface.md#5117-findings)). Live re-check items are queued in
-> `../docs/VALIDATION.md`. **5117 is now the verified baseline.**
+> `../docs/VALIDATION.md`. ~~5117 is now the verified baseline.~~ *(superseded by 5168 above)*
 >
 > The prior **2026.7.8.4980 → 2026.7.9.5018** update was run
 > through it on 2026-07-24 — **one compile break, fixed; one coverage gap opened; nothing else needed.**

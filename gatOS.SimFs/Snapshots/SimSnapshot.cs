@@ -188,6 +188,15 @@ public sealed record VesselSnapshot(
     /// <summary>The flight computer's attitude reference frame name (<c>ctl/attitude_frame</c> read).</summary>
     public string AttitudeFrame { get; init; } = "";
 
+    /// <summary>
+    ///     The flight computer's RCS master mode — <c>Enabled</c> or <c>Disabled</c>
+    ///     (<c>ctl/rcs_mode</c> read; the in-game <b>R</b> keybind). While <c>Disabled</c>, KSA zeroes
+    ///     the manual thruster command flags entirely, so <c>ctl/translate</c> and <c>ctl/rotate</c>
+    ///     have no effect and auto attitude holds lose RCS torque authority. Distinct from
+    ///     <see cref="RcsOn"/>, which reports whether any thruster <i>controller module</i> is active.
+    /// </summary>
+    public string RcsMode { get; init; } = "";
+
     /// <summary>Whether any RCS thruster controller is active (<c>ctl/rcs</c> read).</summary>
     public bool RcsOn { get; init; }
 
@@ -416,7 +425,14 @@ public sealed record DockingSnapshot(int Index, bool Docked, string? DockedToPar
 /// <summary>One decoupler's state.</summary>
 /// <param name="Index">Stable per-vessel decoupler index.</param>
 /// <param name="Fired">Whether the decoupler has fired (irreversible).</param>
-public sealed record DecouplerSnapshot(int Index, bool Fired);
+/// <param name="Enabled">
+///     Whether the decoupler module is enabled. KSA 2026.8.5.5168 (rev 5132) let players disable a
+///     part's decoupler module — turning e.g. an adapter into a static fairing — and gated
+///     <c>Decoupler.SetIsActive</c> on it. A disabled decoupler <b>cannot</b> fire, so
+///     <c>decouplers/&lt;n&gt;/fire</c> reports EOPNOTSUPP rather than a false success. Defaults to
+///     true (the state of every decoupler the player has not explicitly disabled).
+/// </param>
+public sealed record DecouplerSnapshot(int Index, bool Fired, bool Enabled = true);
 
 /// <summary>
 ///     One solid rocket motor (SRB) — a KSA <c>SolidMotor</c> rocket core plus the stack of grain

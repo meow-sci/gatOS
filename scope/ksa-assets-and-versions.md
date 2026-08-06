@@ -27,13 +27,71 @@ Two checkouts are kept side by side for diffing:
 
 | Checkout dir | Build | Date | Revisions | Role |
 |---|---|---|---|---|
-| `…/ksa-game-assemblies` | **2026.8.3.5117** | 2026-08-01 | 5056 → 5117 | **current / verified baseline** — full playbook pass 2026-08-01 spanning **5018 → 5117** (see below): one compile break (`NavBallData.DeltaVInVacuum`) fixed, one High-risk binding re-routed (`ExpansionTimeSeconds`), two silent semantic drifts documented; `KSAFolder` default resolves here. The checkout is a **git repo whose history holds every prior drop** (`13595c1` = 5056, `3106557` = 5018, `cdb7391` = 4980, `7cf5c0a` = 4892, …) — diff drops with `git diff <old>..<new>` inside it |
-| `…/ksa-game-assemblies_prev` | 2026.7.10.5056 | 2026-07-28 | 5018 → 5056 | prior side-by-side checkout. **Note:** 5056 was a build-only bump and was never itself playbook-audited, so the 5117 pass used the *git history* of the main checkout (`3106557` = 5018) as its true baseline rather than this tree — see the method note below |
+| `…/ksa-game-assemblies` | **2026.8.5.5168** | 2026-08-05 | 5117 → 5168 | **current / verified baseline** — full playbook pass 2026-08-05 (see below): **four compile breaks** (all from rev 5154's dynamic-rendering migration) fixed, **three silent semantic breaks** found and closed (`RCSMode` gating manual RCS, the game clearing latched thruster flags, disabled decouplers); `KSAFolder` default resolves here. The checkout is a **git repo whose history holds every prior drop** (`13595c1` = 5056, `3106557` = 5018, `cdb7391` = 4980, `7cf5c0a` = 4892, …) — diff drops with `git diff <old>..<new>` inside it |
+| `…/ksa-game-assemblies_prev` | 2026.8.3.5117 | 2026-08-01 | 5056 → 5117 | prior side-by-side checkout — and, unlike the 5117 pass's `_prev`, a **genuinely audited baseline**, so the 5168 pass diffed the two trees directly (no git-history fallback needed) |
 
 gatOS was originally built against the 4680-era sources (most `[KsaAnchor]` `Verified` dates span
 2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27; the touched
 anchors carry `GameVersion="2026.6.9.4750"` (see
 [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)).
+
+**The 5117 → 5168 pass (2026-08-05) — four compile breaks fixed (one render refactor), three silent
+semantic breaks found and closed.** {#5168-pass}
+PREVIOUS (`2026.8.3.5117`) was itself a fully audited baseline and CURRENT's `fromRevision` is 5117,
+so the two trees chain with no gap and were diffed directly (revs 5118–5168, 49 commits).
+
+**Compile breaks — all four trace to rev 5154**, which moved offscreen rendering off
+`VkRenderPass`/framebuffers onto **Vulkan dynamic rendering** and deleted `KSA.OffscreenTarget`,
+`KSA.RenderTarget`, `KSA.Framebuffer`, `Core.RenderPassState` and `Core.DynamicRenderState`:
+
+| Site | Break | Resolution |
+|---|---|---|
+| `Fx/FxReflect.cs:77,270` | `CloudRenderer._worleyNoise3dTarget` retyped `RenderTarget` → `RenderImage` (and `CloudShadowsRenderer.PopulatePlanets`'s parameter with it) | re-typed + re-anchored |
+| `ThugLife/ThugLifeQuadRenderer.cs:131,137` | `Program.OffScreenPass` **deleted** | migrated to `Program.OffscreenTarget.SetupGraphicsPipeline(ref info)` — KSA's own pattern; the quad now tracks the engine sample count instead of hard-binding one |
+| `FrameCapture.cs:145,162` | `RenderTarget.ColorImage` is now nullable (`RenderImage?`) | null-guarded (a depth-only target has no colour to capture) |
+
+> **Name-collision trap:** the **new** `KSA.Rendering.RenderTarget` is an *unrelated* class that
+> reuses the deleted `KSA.RenderTarget` name. Do not re-bind by name alone — the anchors say so.
+
+**Render preconditions re-verified rather than assumed** (the compiler cannot see these):
+`Program.MainViewport.OffscreenTarget` is still literally `Program._offscreenTarget`
+(`Program.cs:1385`); the offscreen colour image still ends the frame in `SampledReadVfc`
+(`:4312`) before the final composite and `commandBuffer2.End()`, so the `DisplayRenderPatch`
+transpiler's injection point and `FrameCapture`'s layout assumption both still hold; and the new
+**CMAA2** anti-aliasing path (rev 5156) renders into *its own* `_sceneLdrTarget` and only *samples*
+the offscreen image, so it does not disturb that layout in either AA mode.
+`SuperMeshRenderSystem.{RenderMainPass,RenderTranslucencyPass}` signatures are unchanged, and
+`RenderMainPass` is still called inside the offscreen target's `BeginRendering`/`EndRendering` scope.
+
+**Three silent semantic breaks — all "a gatOS write now does nothing, with no read to explain it":**
+1. **rev 5143 — `FlightComputer.RCSMode` now gates MANUAL RCS.** `ComputeRcsControl` zeroes
+   `ThrusterCommandFlags` outright when RCS is off (`FlightComputer.cs:471`), so `ctl/translate` and
+   `ctl/rotate` become no-ops. **This falsified an explicit claim in `ksa-write-surface.md`** (that
+   manual flags were *not* gated by `RCSMode`) and inverted a `docs/VALIDATION.md` checklist item.
+   Closed by exposing `ctl/rcs_mode` (read + Solver-phase write).
+2. **rev 5128 — the game now clears the latched thruster flags** via the new
+   `Vehicle.ClearHeldPlayerInput()`, including *every update* while ImGui holds keyboard focus or
+   time warp exceeds 30×. gatOS's "latches until rewritten" contract no longer holds unilaterally.
+   Documented (no code change); throttle/ignite are unaffected.
+3. **rev 5132 — a decoupler can be disabled** (`Decoupler` gained `IEnable`; `SetIsActive` is gated on
+   `IsEnabled`), so `decoupler.fire` was a silent no-op **reported as success**. Closed: `Fire`
+   returns **EOPNOTSUPP** and `decouplers/<n>/enabled` is now readable.
+
+**Inherited drift, no code change:** encounter *population* widened again (rev 5141 — near-coplanar
+SOI encounters such as a Hohmann transfer to Luna are now predicted; the API is identical), RCS thrust
+reduced overall with small thrusters weakened (rev 5119), size-D/E SRB nozzle grain sizes corrected
+(rev 5124), and part mass/moment-of-inertia computation fixed plus a new tangent-ogive mass type
+(rev 5166) — all of which move `/sim` *values* without moving the surface.
+
+Clean bill for every other binding: all 13 reflection accessors and all 7 Harmony targets resolve
+against 5168 (including the `KittenEva._renderable → _characterAvatar → Core → Scale` chain, despite
+heavy kitten-locomotion churn in revs 5128–5144). Full detail:
+[read](ksa-read-surface.md#5168-findings) / [write](ksa-write-surface.md#5168-findings).
+Build + suite green against 5168 (0 warnings, 772 passed / 11 skipped); the sibling **purrTTY** mod
+needed the same rev-5154 migration and was fixed alongside (see `ksa-runtime-coupling.md`).
+5168 is now the verified baseline.
+
+---
 
 **The 5018 → 5117 pass (2026-08-01) — one compile break fixed, one High-risk binding re-routed, two
 silent semantic drifts documented.** {#5117-pass}
@@ -258,7 +316,7 @@ worth re-verifying on any game update. It pulled in **new reference DLLs** and a
 | Added to `gatOS.GameMod.csproj` | Why | Notes |
 |---|---|---|
 | `Brutal.Vulkan`, `Brutal.Vulkan.Abstractions`, `Brutal.Vulkan.Vma` | the Vulkan pipeline/descriptor/buffer/staging surface (`SimpleVkTexture`, `VkUtils.{UploadBufferToImage,StageAndUploadToBuffer}`, `DeviceEx.CreateSampler`, allocator/VMA staging pools) | `<Private>false</Private>`, condition-guarded on `$(KSAFolder)` like the other KSA refs |
-| `Planet.Render.Core` | `Renderer` (Device/Allocator/DynamicStateInfo/ViewportState/Graphics), `RenderTechnique.CreateShaderStages`, `Presets`/`RenderingPresets`, `Program.{GetRenderer,OffScreenPass,SetViewport}` | `<Private>false</Private>`, guarded |
+| `Planet.Render.Core` | `Renderer` (Device/Allocator/DynamicStateInfo/ViewportState/Graphics), `RenderTechnique.CreateShaderStages`, `Presets`/`RenderingPresets`, `Program.{GetRenderer,OffscreenTarget,SetViewport}` (was `OffScreenPass` before 5168/rev 5154) | `<Private>false</Private>`, guarded |
 | `Brutal.Core.Memory` | unmanaged buffer/staging helpers for the GPU upload path | `<Private>false</Private>`, guarded |
 | `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` | `ThugLifeQuadRenderer` is `unsafe` (raw pointer work for the Vulkan buffer uploads / descriptor writes) | first use of `unsafe` in gatOS |
 
@@ -268,8 +326,24 @@ breaks the draw — re-verify live):
   (assets `Content/Core/Shaders/Mesh/UnlitMesh.{vert,frag}` — see the asset table above).
 - Texture format `R8G8B8A8UNorm` (the sunglasses texture, built from a static 26×5 char grid in
   `ThugLifeTexturePattern` → `ThugLifeTextureFactory`).
-- **Reverse-Z** depth convention and the **`Program.OffScreenPass.{Pass,SampleCount}`** render-pass /
-  MSAA sample count (the quad must be depth-tested and MSAA-resolved consistently with the scene).
+- **Reverse-Z** depth convention and — **since 5168 (rev 5154)** — the
+  **`Program.OffscreenTarget.SetupGraphicsPipeline(ref VkGraphicsPipelineCreateInfo)`** call that
+  stamps the pipeline's attachment formats and MSAA sample count (the quad must be depth-tested and
+  MSAA-resolved consistently with the scene).
+  > **5168 BREAKING (rev 5154):** offscreen rendering moved off `VkRenderPass`/framebuffers onto
+  > **Vulkan dynamic rendering**, and `Program.OffScreenPass` — together with the whole
+  > `Core.RenderPassState`, `Core.DynamicRenderState`, `KSA.OffscreenTarget`, `KSA.RenderTarget` and
+  > `KSA.Framebuffer` set — was **deleted**. `BuildPipeline` no longer sets `RenderPass`/`Subpass` or
+  > builds its own `VkPipelineMultisampleStateCreateInfo`; it calls
+  > `Program.OffscreenTarget.SetupGraphicsPipeline(ref info)` last, exactly as KSA's own
+  > `GenericMeshRenderer`/`PartModelRenderer`/`PartModelGlass` do. That helper supplies
+  > `VkPipelineRenderingCreateInfo` (colour/depth/stencil formats), forces `RenderPass = NullHandle`
+  > and sets `RasterizationSamples` from the target — so the quad now **tracks** the engine's sample
+  > count (including the new CMAA2 option, rev 5156) instead of hard-binding one. Beware the name
+  > collision: the **new** `KSA.Rendering.RenderTarget` is an unrelated class that reuses the deleted
+  > one's name. Verified `RenderMainPass` is still called inside `_offscreenTarget.BeginRendering(…)`
+  > … `EndRendering(…)` (`KSA/Program.cs:4185/4226/4233`), so the postfix still draws into the scene
+  > target.
   **5117 note (revs 5057/5058):** the alpha-to-coverage attachment became conditional
   (`OffscreenTarget.HasAlphaToCoverageAttachment` — MSAA-only — and its format was pinned to a new
   `OffscreenTarget.AlphaToCoverageFormat = R8UNorm`). This does **not** affect the quad: A2C is a

@@ -51,6 +51,15 @@ public static class SimFsTree
     private static readonly string[] AttitudeFrameTokens =
         ["EclBody", "EnuBody", "Lvlh", "VlfBody", "BurnBody", "Dock"];
 
+    /// <summary>
+    ///     Accepted <c>ctl/rcs_mode</c> tokens (the <c>FlightComputerRCSMode</c> names) — the file twin
+    ///     of the in-game <b>R</b> keybind. <c>Disabled</c> is a hard master cut-off: KSA zeroes the
+    ///     manual thruster command flags outright, so <c>ctl/translate</c> and <c>ctl/rotate</c> do
+    ///     nothing at all, and auto attitude holds lose RCS torque authority (only gimballed TVC
+    ///     survives, and only while burning).
+    /// </summary>
+    private static readonly string[] RcsModeTokens = ["Enabled", "Disabled"];
+
     /// <summary>Builds the read-only <c>/sim</c> tree (no control surface, no status).</summary>
     public static VfsDirectory Build(SnapshotStore store) => Build(store, null, null);
 
@@ -1036,6 +1045,11 @@ public static class SimFsTree
                     AttitudeModeTokens, () => Vessel(vesselId).AttitudeMode),
                 EnumControl($"{q}/attitude_frame", "attitude_frame", vesselId, "vessel.attitude_frame",
                     AttitudeFrameTokens, () => Vessel(vesselId).AttitudeFrame),
+                // The flight computer's RCS master switch (the in-game R key). Disabled zeroes the
+                // manual thruster flags, so translate/rotate become no-ops — read this before
+                // concluding an RCS command was ignored for some other reason.
+                EnumControl($"{q}/rcs_mode", "rcs_mode", vesselId, "vessel.rcs_mode",
+                    RcsModeTokens, () => Vessel(vesselId).RcsMode),
                 VectorControl($"{q}/attitude_target", "attitude_target", vesselId, "vessel.attitude_target",
                     SimCommand.NoOrdinal, 4, () => Formats.Quat(Vessel(vesselId).AttitudeBody2Cci)),
                 VectorControl($"{q}/burn", "burn", vesselId, "vessel.burn", SimCommand.NoOrdinal, 4,
@@ -2220,6 +2234,8 @@ public static class SimFsTree
             var children = new List<VfsNode>
             {
                 Line($"{q}/fired", "fired", () => Formats.Flag(Decoupler(vesselId, index).Fired)),
+                // rev 5132: a player-disabled decoupler cannot fire — `fire` returns EOPNOTSUPP.
+                Line($"{q}/enabled", "enabled", () => Formats.Flag(Decoupler(vesselId, index).Enabled)),
             };
             if (_commands is { } sink)
                 children.Add(new TriggerFile("fire", Qid($"{q}/fire"), sink,

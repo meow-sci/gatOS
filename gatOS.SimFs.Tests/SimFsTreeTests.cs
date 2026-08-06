@@ -171,6 +171,7 @@ public sealed class SimFsTreeTests
             "vessels/by-id/test-1/ctl/lights", "vessels/by-id/test-1/ctl/rcs",
             "vessels/by-id/test-1/ctl/translate", "vessels/by-id/test-1/ctl/rotate",
             "vessels/by-id/test-1/ctl/attitude_mode", "vessels/by-id/test-1/ctl/attitude_frame",
+            "vessels/by-id/test-1/ctl/rcs_mode",
             "vessels/by-id/test-1/ctl/attitude_target", "vessels/by-id/test-1/ctl/burn",
             "vessels/by-id/test-1/ctl/focus",
             // per-module reads + controls
@@ -187,6 +188,7 @@ public sealed class SimFsTreeTests
             "vessels/by-id/test-1/docking/0/docked", "vessels/by-id/test-1/docking/0/docked_to",
             "vessels/by-id/test-1/docking/0/pushoff_impulse", "vessels/by-id/test-1/docking/0/undock",
             "vessels/by-id/test-1/decouplers/0/fired", "vessels/by-id/test-1/decouplers/0/fire",
+            "vessels/by-id/test-1/decouplers/0/enabled",
             "vessels/by-id/test-1/animations/1/goal", "vessels/by-id/test-1/animations/1/state",
             "vessels/by-id/test-1/navball/twr", "vessels/by-id/test-1/navball/frame",
             "vessels/by-id/test-1/environment/pressure", "vessels/by-id/test-1/environment/g_force",

@@ -67,7 +67,51 @@ cut.
 > solar link intact) + the pass record live in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope
 > pages; live re-check items appended to [`docs/VALIDATION.md`](docs/VALIDATION.md).
 >
-> **KSA baseline superseded → `2026.8.3.5117`** (upgrade-ksa playbook pass 2026-08-01). Because the
+> **KSA baseline → `2026.8.5.5168`** (upgrade-ksa playbook pass 2026-08-05, from 5117; revs 5118–5168,
+> 49 commits — PREVIOUS was an audited baseline and CURRENT's `fromRevision` is 5117, so the trees chain
+> with no gap). **Four compile breaks, all fixed; three silent semantic breaks, all closed.** Build +
+> tests green (0 warnings, 772 passed).
+> - **All four breaks are rev 5154**, which moved offscreen rendering off `VkRenderPass`/framebuffers
+>   onto **Vulkan dynamic rendering** and deleted `Program.OffScreenPass`, `KSA.OffscreenTarget`,
+>   `KSA.RenderTarget`, `KSA.Framebuffer`, `Core.RenderPassState`, `Core.DynamicRenderState`:
+>   `FxReflect`'s cloud worley handle retyped `RenderTarget`→`RenderImage`; `FrameCapture` null-guards
+>   the now-nullable `RenderTarget.ColorImage`; `ThugLifeQuadRenderer.BuildPipeline` migrated to
+>   **`Program.OffscreenTarget.SetupGraphicsPipeline(ref info)`** (KSA's own pattern — the quad now
+>   *tracks* the engine sample count, incl. the new CMAA2 option of rev 5156, instead of hard-binding
+>   one). ⚠️ The **new** `KSA.Rendering.RenderTarget` is an *unrelated* class reusing the deleted name —
+>   never re-bind by name alone. Render preconditions were re-derived, not assumed:
+>   `MainViewport.OffscreenTarget` is still literally `Program._offscreenTarget` (`:1385`), the offscreen
+>   colour still ends in `SampledReadVfc` (`:4312`) before the final composite + `End()`, and CMAA2 uses
+>   its own target — so the `/sim/display` transpiler and capture both still hold.
+> - **`ctl/translate`/`ctl/rotate` silently died when RCS is off** (rev 5143 — `ComputeRcsControl` now
+>   zeroes the manual `ThrusterCommandFlags` whenever `FlightComputer.RCSMode != Enabled`). This
+>   **falsified an explicit `scope/` claim** and inverted a VALIDATION item. Closed by exposing
+>   **`ctl/rcs_mode`** (`Enabled`/`Disabled`; read + **Solver**-phase write, because `CopyFrom` copies it).
+> - **`decoupler.fire` returned false success** on a player-disabled decoupler (rev 5132 — `Decoupler`
+>   gained `IEnable` and `SetIsActive` is gated on `IsEnabled`). Now **EOPNOTSUPP**, plus a new
+>   **`decouplers/<n>/enabled`** read.
+> - **The game now clears the latched thruster flags** (rev 5128, `Vehicle.ClearHeldPlayerInput()`): on
+>   vessel switch, **window focus loss**, camera-mode switch, and — *every update* — while **ImGui holds
+>   keyboard focus** or **warp > 30×**. So `ctl/translate`/`ctl/rotate` no longer latch unconditionally
+>   (documented in SPEC §3.4.19; `ctl/throttle`/`ctl/ignite` are unaffected — different fields).
+> - **Inherited value drift, no API change:** encounters now predict near-coplanar SOI transfers (rev
+>   5141, e.g. Hohmann to Luna), RCS thrust reduced (5119), size-D/E SRB grains resized (5124), part
+>   mass/moment-of-inertia computation fixed + tangent-ogive mass type (5166).
+> - **Verified clean:** all 13 reflection accessors and all 7 Harmony hook targets, including the
+>   `KittenEva._renderable → _characterAvatar → Core → Scale` chain despite heavy kitten-locomotion churn
+>   (revs 5128–5144); `SuperMeshRenderSystem.{RenderMainPass,RenderTranslucencyPass}` signatures unchanged.
+> - **Sibling repo:** `../purrtty` took the *same* rev-5154 break — an unpatched purrTTY hard-crashes KSA
+>   on the first frame with `TypeLoadException: KSA.OffscreenTarget` (it looks like a gatOS crash but is
+>   not). Migrated in the same work item: its offscreen target now owns its attachments/render
+>   pass/framebuffer outright, its quad pipeline sources formats + samples from `Program.OffscreenTarget`,
+>   and its scene barrier uses the tracked-state `PipelineBarrier2`. **Rule: when a KSA update breaks
+>   gatOS's render bindings, rebuild purrTTY too before attempting in-game validation.**
+>
+> Pass record + full detail: [`scope/ksa-assets-and-versions.md`](scope/ksa-assets-and-versions.md#5168-pass),
+> [read](scope/ksa-read-surface.md#5168-findings) / [write](scope/ksa-write-surface.md#5168-findings);
+> live re-check items appended to [`docs/VALIDATION.md`](docs/VALIDATION.md).
+
+> **Prior baseline — `2026.8.3.5117`** (upgrade-ksa playbook pass 2026-08-01). Because the
 > intermediate `2026.7.10.5056` bump was build-only and never audited, this pass diffed the **full
 > `5018 → 5117` window** (revs 5019–5116, 97 commits) via the assemblies checkout's own git history —
 > closing the 5056 gap and validating 5117 together. **Two compile breaks, both fixed; two silent

@@ -393,6 +393,45 @@ report faithfully, none a member drift:
 
 ---
 
+## ⚠️ 5168 read-surface findings (playbook pass 2026-08-05) {#5168-findings}
+
+Full playbook pass 2026-08-05, `2026.8.3.5117` → `2026.8.5.5168` (revs 5118–5168, 49 commits). PREVIOUS
+was an audited baseline and CURRENT's `fromRevision` is 5117, so the trees chain with no gap.
+**Two reads added, one silent read/actual divergence closed, three inherited value drifts; every
+existing binding verified.** Build + suite green against the 5168 DLLs (0 warnings, 772 passed).
+
+**Reads added (both close a "the write silently did nothing" blind spot):**
+
+| New node | Source | Why |
+|---|---|---|
+| `vessels/by-id/<id>/ctl/rcs_mode` | `FlightComputer.RCSMode` (`FlightComputerRCSMode.{Enabled,Disabled}`), `FlightComputerActuator.ReadRcsMode` → `VesselSnapshot.RcsMode` | rev 5143 made this a hard master cut-off for **manual** RCS: with it `Disabled`, `ctl/translate`/`ctl/rotate` do nothing. gatOS's own read-back (`Vehicle.GetThrusterFlags()`) reports the *commanded* flags, so nothing in `/sim` revealed the condition. Also writable — see [write findings](ksa-write-surface.md#5168-findings). |
+| `vessels/by-id/<id>/decouplers/<n>/enabled` | `Decoupler.IsEnabled` → `DecouplerSnapshot.Enabled` | rev 5132 lets players disable a part's decoupler module; a disabled one cannot fire. |
+
+**Inherited value drift (API identical — no code change, but `/sim` numbers move):**
+- **Encounter population widened again (rev 5141).** The flight plan previously never predicted an SOI
+  encounter for **near-coplanar transfers** (e.g. a Hohmann transfer to Luna); two candidate-filter
+  gaps were fixed (pe/ap reachability had no margin for the sibling's own SOI, and a patch with zero
+  surviving candidates left its expiry at infinity, disabling the periodic re-verification scan), plus
+  a live SOI-proximity check now runs on every coasting vehicle's motion update. `encounters/<n>/` rows
+  therefore appear where they previously did not. This compounds the 5117 drift (revs 5106/5110).
+- **RCS thrust values (rev 5119)** — reduced overall, and small thrusters are now noticeably weaker
+  than large ones. Affects `rcs/<n>` derived performance and any Δv budgeting a flight program does.
+- **SRB grain geometry (rev 5124)** — the solid-propellant grain built into the **size-D/E** nozzle
+  segments was resized, moving `srb/<n>/` masses, burn times and mass flow for those motors.
+- **Part mass / moments of inertia (rev 5166)** — several errors in how mass properties were computed
+  were fixed, masses were added to all fairing parts, a **tangent-ogive** mass type was added, and
+  masses of revolution may now be a sector rather than a full circle. `mass`, `center_of_mass` and
+  every inertia-derived navball/attitude figure shift accordingly.
+
+**Verified clean:** every anchored read compiles and resolves; the `KittenEva._renderable` →
+`KittenRenderable._characterAvatar` → `CharacterAvatar.Core` → `Scale` reflection chain used by
+`ScaleActuator` survives the heavy kitten-locomotion churn of revs 5128–5144 intact;
+`ManualControlInputs` gained only a `Sprint` field (the three fields gatOS reflects into are
+unchanged, and the box-mutate-write-back pattern preserves it); `NavBallData`, `Tank`,
+`SolidGrainSegment`, `DockingPort` and the celestial/orbit surface are structurally unchanged.
+
+---
+
 ## ⚠️ 5117 read-surface findings (playbook pass 2026-08-01) {#5117-findings}
 
 Full playbook pass 2026-08-01, `2026.7.9.5018` → `2026.8.3.5117`. The pass deliberately spans **both**

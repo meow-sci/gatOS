@@ -113,7 +113,8 @@ internal sealed class FrameCapture : IDisposable
                + "Allocator.CreateBuffer/CreateImage, CommandBufferEx.TransitionImages2 + "
                + "ImageBarrierInfo.Presets + ImageTransition, CommandBuffer.BlitImage, "
                + "CommandBuffer.CopyImageToBuffer, BufferEx.Map, PhysicalDevice.GetFormatProperties",
-        SourceFile = "KSA/Program.cs", Verified = "2026-07-02", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Program.cs / KSA/Viewport.cs:54 / KSA.Rendering/RenderTarget.cs:36,48",
+        Verified = "2026-08-05", GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
         Notes = "In-band GPU downscale capture (perf plan P1): barrier offscreen->TransferSrc + scratch "
                 + "Undefined->TransferDst, BlitImage(offscreen->B8G8R8A8 scratch, LINEAR — downscale + "
                 + "float->UNORM clamp in one op), CopyImageToBuffer(small scratch->host), restore "
@@ -135,6 +136,10 @@ internal sealed class FrameCapture : IDisposable
             return;
         if (Program.MainViewport?.OffscreenTarget is not { } offscreen)
             return;
+        // Since rev 5154 the offscreen target is the dynamic-rendering KSA.Rendering.RenderTarget, whose
+        // ColorImage is nullable (a depth-only target has none). No color attachment => nothing to capture.
+        if (offscreen.ColorImage is not { } color)
+            return;
 
         var srcExtent = offscreen.Extent;
         if (srcExtent.Width <= 0 || srcExtent.Height <= 0)
@@ -142,8 +147,8 @@ internal sealed class FrameCapture : IDisposable
 
         if (_mode == CaptureMode.Undecided)
         {
-            _mode = DetectMode(renderer.PhysicalDevice, offscreen.ColorImage.Format);
-            Trace($"capture mode: {_mode} (offscreen format {offscreen.ColorImage.Format})");
+            _mode = DetectMode(renderer.PhysicalDevice, color.Format);
+            Trace($"capture mode: {_mode} (offscreen format {color.Format})");
             // Surface the decision in the main log (GP6): a driver silently missing blit support
             // would otherwise eat 30-80 ms per captured frame on the render thread unnoticed.
             if (_mode == CaptureMode.CpuFullRes)
@@ -159,7 +164,7 @@ internal sealed class FrameCapture : IDisposable
 
         using (surface.CaptureStat.Measure()) // render-thread cost: record + the deferred copy hand-off
             RecordInto(renderer.Allocator, cb, program.ResourceFrameIndex, renderer.MaxFramesInFlight,
-                offscreen.ColorImage.Image, srcExtent.Width, srcExtent.Height, dstW, dstH, surface);
+                color.Image, srcExtent.Width, srcExtent.Height, dstW, dstH, surface);
         _lastCaptureTs = now;
     }
 

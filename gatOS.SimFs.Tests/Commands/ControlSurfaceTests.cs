@@ -158,6 +158,26 @@ public sealed class ControlSurfaceTests
     }
 
     [Test]
+    public async Task CtlRcsMode_EmitsCanonicalTokenInSolverPhase()
+    {
+        await WriteAsync("disabled\n", "vessels", "by-id", "test-1", "ctl", "rcs_mode");
+        Assert.That(_sink.Last, Is.EqualTo(
+            new SimCommand("test-1", "vessel.rcs_mode", SimCommand.NoOrdinal, 0) { Token = "Disabled" }));
+        // FlightComputer.CopyFrom snapshots RCSMode with the other setpoints, so a frame-phase
+        // write would be reverted by the in-flight solve.
+        Assert.That(_sink.Last!.Phase, Is.EqualTo(CommandPhase.Solver),
+            "RCSMode is a flight-computer setpoint and must drain in the solver phase");
+    }
+
+    [Test]
+    public async Task CtlRcsMode_RejectsUnknownToken()
+    {
+        var ex = Assert.ThrowsAsync<NinePErrorException>(
+            () => WriteAsync("maybe\n", "vessels", "by-id", "test-1", "ctl", "rcs_mode"));
+        Assert.That(ex!.Errno, Is.EqualTo(LinuxErrno.EINVAL));
+    }
+
+    [Test]
     public async Task CtlAttitudeMode_RejectsUnknownToken()
     {
         var ex = Assert.ThrowsAsync<NinePErrorException>(
@@ -228,6 +248,15 @@ public sealed class ControlSurfaceTests
     {
         await WriteAsync("1\n", "vessels", "by-id", "test-1", "decouplers", "0", "fire");
         Assert.That(_sink.Last, Is.EqualTo(new SimCommand("test-1", "decoupler.fire", 0, 1)));
+    }
+
+    [Test]
+    public async Task DecouplerEnabled_ReadsFlag()
+    {
+        // rev 5132 let players disable a part's decoupler module; a disabled one cannot fire, so the
+        // state has to be readable rather than only discoverable by a failed fire.
+        Assert.That(await ReadAsync("vessels", "by-id", "test-1", "decouplers", "0", "enabled"),
+            Is.EqualTo("1\n"));
     }
 
     [Test]

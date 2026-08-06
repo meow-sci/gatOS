@@ -15,7 +15,35 @@ new events) and **G4** (full control surface: throttle/staging/attitude/burn, RC
 they add **no** KSA coupling — every transport speaks the same `SnapshotStore` (reads) and
 `ICommandSink`/`SimCommand` (writes), so this matrix (the KSA-touching surface) is unaffected by them.
 
-**Verified:** **2026-07-24 against `2026.7.9.5018`** (full solution build green, 0 warnings; full test
+**Verified:** **2026-08-05 against `2026.8.5.5168`** (full solution build green, 0 warnings; full test
+suite 772 passed / 11 skipped / 0 failed; full decomp + Content diff between the side-by-side 5117 and
+5168 checkouts — chainless-gap: CURRENT's `fromRevision` 5117 = the prior audited baseline, revs
+5118–5168). **Four compile breaks, all fixed — every one from rev 5154**, which moved offscreen
+rendering off `VkRenderPass`/framebuffers onto Vulkan **dynamic rendering** and deleted
+`Program.OffScreenPass`, `KSA.OffscreenTarget`, `KSA.RenderTarget`, `KSA.Framebuffer`,
+`Core.RenderPassState` and `Core.DynamicRenderState`: `FxReflect.CloudApply`'s worley-noise handle
+retyped `RenderTarget` → `RenderImage` (as did `CloudShadowsRenderer.PopulatePlanets`'s parameter),
+`FrameCapture` null-guards the now-nullable `RenderTarget.ColorImage`, and
+`ThugLifeQuadRenderer.BuildPipeline` migrated to `Program.OffscreenTarget.SetupGraphicsPipeline(ref
+info)` (KSA's own pattern — the quad now tracks the engine sample count, incl. the new CMAA2 option of
+rev 5156, instead of hard-binding one). ⚠️ The **new** `KSA.Rendering.RenderTarget` is an unrelated
+class reusing the deleted name — do not re-bind by name. **Three silent semantic breaks, all closed:**
+rev 5143 made `FlightComputer.RCSMode` gate **manual** RCS (so `ctl/translate`/`ctl/rotate` do nothing
+while RCS is off) → new **`ctl/rcs_mode`** read + Solver-phase control; rev 5132 let players disable a
+decoupler and gated `SetIsActive` on it (making `decoupler.fire` a silent no-op reported as success) →
+`EOPNOTSUPP` + new **`decouplers/<n>/enabled`** read; rev 5128's new
+`Vehicle.ClearHeldPlayerInput()` clears the latched thruster flags on vessel switch / window focus loss
+/ camera switch / — every update — ImGui keyboard capture or warp > 30× (documented; throttle+ignite
+unaffected). All 13 reflection accessors and all 7 Harmony targets verified; the display transpiler's
+`End()` anchor and image-layout assumption re-derived against the rewritten `Program.RenderGame` and
+still hold. Inherited value drift (no API change): encounters widened for near-coplanar transfers (rev
+5141), RCS thrust reduced (rev 5119), size-D/E SRB grains resized (rev 5124), mass/inertia computation
+fixed (rev 5166). Full detail: [read 5168](../scope/ksa-read-surface.md#5168-findings) /
+[write 5168](../scope/ksa-write-surface.md#5168-findings) /
+[pass record](../scope/ksa-assets-and-versions.md#5168-pass). **The sibling purrTTY mod took the same
+rev-5154 break and was migrated alongside** — an unpatched purrTTY hard-crashes KSA at the first frame.
+
+Prior: **2026-07-24 against `2026.7.9.5018`** (full solution build green, 0 warnings; full test
 suite 681 passed / 11 skipped / 0 failed; full decomp + Content diff between the side-by-side 4980 and
 5018 checkouts — the 5018 changelog is gapless, `fromRevision` 4980 = the prior baseline). **One compile
 break, fixed**: rev 4992 (solid rocket motors) generalized propellant storage from liquid-only to a new
@@ -201,6 +229,7 @@ Anchors in `Game/Ksa/Actuators/**`; routed by `KsaCatalog`. Frame phase unless n
 | `…/ctl/attitude_frame` | St | token | `FlightComputer.AttitudeFrame` (`VehicleReferenceFrame`) | M | **Solver** |
 | `…/ctl/attitude_target` | St | `x y z w` | `FlightComputer.AttitudeTarget = {Target2Cci,RatesCci}` (+Custom track) | M | **Solver** |
 | `…/ctl/burn` | St | `ut dvx dvy dvz` | `FlightComputer.Burn = BurnTarget{ImpulsiveInstant,DeltaVTargetCci}` | M | **Solver** |
+| `…/ctl/rcs_mode` | St | token | `FlightComputer.RCSMode` (`FlightComputerRCSMode.{Enabled,Disabled}`) — the in-game **R** keybind. Since 5168/rev 5143 this is a hard cut-off for **manual** RCS too: `ComputeRcsControl` zeroes `ThrusterCommandFlags` (`:471`) so `ctl/translate`+`ctl/rotate` go dead, and `UpdateRcsParams` zeroes the RCS torque authority (`:884`). **Solver** phase because `CopyFrom` copies it. Added 2026-08-05 | M | **Solver** |
 | `…/engines/<n>/min_throttle` | St | `0..1` | `EngineController.MinimumThrottle` | M | Frame |
 | `…/rcs/<n>/active` | St | `0`/`1` | `ThrusterController.SetIsActive` | M | Frame |
 | `…/lights/<n>/on` | St | `0`/`1` | `PowerConsumer.LightIsActive` | M | Frame |
@@ -208,7 +237,7 @@ Anchors in `Game/Ksa/Actuators/**`; routed by `KsaCatalog`. Frame phase unless n
 | `…/lights/<n>/color` | St | `r g b` | `Template.ColorRgb.{R,G,B}`+`OnDataLoad` (per-instance clone) | H | Frame |
 | `…/lights/<n>/outer_angle` | St | number (deg) | `Template.OuterAngle.Value` (radians, per-instance clone); write clamped to `Light.CreateSpotLight`'s `[1E-05, 1.5697963]` rad, and lowers `InnerAngle` to ≤ outer (else CreateSpotLight swaps them) | H | Frame |
 | `…/lights/<n>/inner_angle` | St | number (deg) | `Template.InnerAngle.Value` (radians, per-instance clone); write clamped to `[0, OuterAngle]` | H | Frame |
-| `…/decouplers/<n>/fire` | T | `1` | `Decoupler.SetIsActive` (re-fire → EBUSY) | M | Frame |
+| `…/decouplers/<n>/fire` | T | `1` | `Decoupler.SetIsActive` (re-fire → EBUSY; **disabled → EOPNOTSUPP** — since 5168/rev 5132 `SetIsActive` is gated on the new `Decoupler.IsEnabled`, so an unguarded call was a silent no-op) | M | Frame |
 | `…/docking/<n>/undock` | T | `1` | `InputEvents.VehicleDockingInputData{Undock=true}` → `DockingPort.Undock` → `Vehicle.Split(Connector, PushoffImpulse)` (not docked → EBUSY) | M | Frame |
 | `…/ctl/focus` | T | `1` | `Program.GetMainCamera().SetFollow(vehicle, tidalLocking:true, changeControl:false)` — moves the view only | M | Frame |
 | `bodies/<id>/focus` | T | `1` | same `camera.focus` action on a celestial (`CurrentSystem.Get(id)` → `Astronomical`); view-only, exempt from the authority gate | M | Frame |
@@ -219,7 +248,11 @@ that samples it back. These are populated in `VesselReader.BuildFull` (anchor `S
 `ThrusterController.IsActive`, `ctl/translate` ← `Vehicle.GetThrusterFlags()` decoded to body-axis
 signs (anchor `TranslateActuator.Read`), `ctl/rotate` ← the same flags' rotation bits decoded to
 body-axis torque signs (anchor `RotateActuator.Read`), `ctl/attitude_mode` ← `FlightComputer.AttitudeMode`/`AttitudeTrackTarget`
-(`manual` when Manual, else the track-target name), `ctl/attitude_frame` ← `FlightComputer.AttitudeFrame`.
+(`manual` when Manual, else the track-target name), `ctl/attitude_frame` ← `FlightComputer.AttitudeFrame`,
+`ctl/rcs_mode` ← `FlightComputer.RCSMode` (anchor `FlightComputerActuator.ReadRcsMode`).
+Note the `ctl/translate`/`ctl/rotate` read-backs report the **commanded** signs, not whether jets
+actually fire — with `ctl/rcs_mode = Disabled` the command reads back intact while the game ignores it,
+which is precisely why `rcs_mode` is exposed.
 (Before this wiring the snapshot reported the record defaults — throttle `0`, attitude `""` — on every
 transport regardless of the real state.)
 

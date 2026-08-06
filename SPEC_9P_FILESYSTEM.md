@@ -440,7 +440,8 @@ propellant (stacking them is how total impulse is sized in the editor); `<m>` is
 | Path | A | Format | Meaning |
 |---|---|---|---|
 | `decouplers/<n>/fired` | S | flag | Has fired (irreversible). |
-| `decouplers/<n>/fire` | T | write `1` | Fire (action `decoupler.fire`; re-fire ⇒ `EBUSY`). |
+| `decouplers/<n>/enabled` | S | flag | Whether the decoupler module is enabled. KSA ≥ 2026.8.5.5168 lets players **disable** a part's decoupler module (turning e.g. an adapter into a static fairing); a disabled decoupler **cannot fire**. `1` for every decoupler the player has not explicitly disabled. |
+| `decouplers/<n>/fire` | T | write `1` | Fire (action `decoupler.fire`; re-fire ⇒ `EBUSY`; **disabled ⇒ `EOPNOTSUPP`**). |
 
 #### 3.4.15 Animations *(present when fitted)* — `…/animations/<n>/`
 
@@ -495,16 +496,17 @@ its live pose).
 | `ctl/stage` | T | `1` | `vessel.stage` | Frame | Activate the next stage. |
 | `ctl/throttle` | **St** | `0..1` | `vessel.throttle` | Frame | Manual throttle fraction; read = current setpoint. |
 | `ctl/lights` | **St** | `0`/`1` | `vessel.lights` | Frame | Master lights. |
-| `ctl/rcs` | **St** | `0`/`1` | `vessel.rcs` | Frame | Master RCS (the per-thruster `ThrusterController` active flags). ⚠ KSA ≥ 2026.7.8.4980 also has a separate **flight-computer RCS toggle** (keybind **R**) that this file neither reads nor writes — see the `ctl/attitude_mode` note. |
+| `ctl/rcs` | **St** | `0`/`1` | `vessel.rcs` | Frame | Master RCS (the per-thruster `ThrusterController` active flags). ⚠ This is **not** the flight computer's RCS toggle (keybind **R**) — that is a separate switch, exposed as **`ctl/rcs_mode`** below, and it overrides this one. |
 | `ctl/translate` | **St** | `x y z` | `vessel.translate` | Frame | **Manual RCS translation** — the file twin of the player's translate keys. The **signs** command bang-bang thrust along the **body axes** (+x = forward/nose, −x = backward; +y = right, −y = left; +z = down, −z = up; `0` = that axis off — KSA's body frame is X-nose/Y-right/Z-down). Fires every RCS thruster whose `ControlMap` matches, at full thrust, each solver step (`ManualThrustMode.Direct`); magnitudes are ignored. **Latches like a held key** until overwritten — write `0 0 0` to stop. Composes with an active flight-computer attitude hold (auto-attitude strips only the rotation bits). Read = the latched command as signs. Needs translation-mapped RCS thrusters (e.g. the EVA kitten backpack); vessels without them accept the write but nothing fires. |
 | `ctl/rotate` | **St** | `x y z` | `vessel.rotate` | Frame | **Manual RCS rotation** — the file twin of the player's rotation keys and the symmetric sibling of `ctl/translate` (W1, plans/AGC_PLAN.md §7.4). The **signs** command bang-bang torque about the **body axes** (+x = roll right, −x = roll left; +y = pitch up, −y = pitch down; +z = yaw right, −z = yaw left — KSA's own torque-command convention on the X-nose/Y-right/Z-down body frame). Fires every RCS thruster whose `ControlMap` matches, at full thrust, each solver step (`ManualThrustMode.Direct`), and drives engine gimbals through the same bits (`ComputeTvcControl`); magnitudes are ignored. **Latches like a held key** until overwritten — write `0 0 0` to stop. **Full authority only with `ctl/attitude_mode = manual`**: an active auto-attitude hold strips the rotation bits (`WithNoRotation()`), the inverse of translate's compose behavior — under a hold, a manual rotation bit only biases the held axis's target rate. Composes with `ctl/translate` (each preserves the other's bits). Read = the latched command as signs. Vessels without rotation-mapped RCS/gimbals accept the write but nothing fires. |
-| `ctl/attitude_mode` | **St** | token | `vessel.attitude_mode` | **Solver** | `manual`, or an auto track-target (see §3.4.19). ⚠ KSA ≥ 2026.7.8.4980: the game's **RCS toggle** (`FlightComputer.RCSMode`, default keybind **R**) gates the autopilot's RCS authority — with it off, an auto hold on a vessel whose only attitude authority is RCS **silently does not actuate** (the read-back still reports the mode you set; only engine-gimbal TVC keeps working, and only while burning). gatOS does not surface the toggle; check it in-game if a hold seems dead. |
+| `ctl/attitude_mode` | **St** | token | `vessel.attitude_mode` | **Solver** | `manual`, or an auto track-target (see §3.4.19). ⚠ KSA ≥ 2026.7.8.4980: the game's **RCS toggle** (`FlightComputer.RCSMode`, default keybind **R**) gates the autopilot's RCS authority — with it off, an auto hold on a vessel whose only attitude authority is RCS **silently does not actuate** (the read-back still reports the mode you set; only engine-gimbal TVC keeps working, and only while burning). That toggle is exposed as **`ctl/rcs_mode`** — read it if a hold seems dead. |
 | `ctl/attitude_frame` | **St** | token | `vessel.attitude_frame` | **Solver** | Reference frame for the named modes (see §3.4.19). |
+| `ctl/rcs_mode` | **St** | token | `vessel.rcs_mode` | **Solver** | **The flight computer's RCS master switch** — `Enabled` or `Disabled` (case-insensitive), the file twin of the in-game **R** keybind. Distinct from `ctl/rcs`, which toggles the per-thruster `ThrusterController` active flags. ⚠ **Since KSA 2026.8.5.5168 this is a hard cut-off for *manual* RCS too:** while `Disabled`, the game zeroes the manual thruster command flags outright, so **`ctl/translate` and `ctl/rotate` do nothing at all**, and auto attitude holds lose RCS torque authority (only engine-gimbal TVC survives, and only while burning). Read this first when an RCS command appears to be ignored — the `ctl/translate`/`ctl/rotate` read-backs report the *commanded* signs and cannot reveal the condition. |
 | `ctl/attitude_target` | **St** | `x y z w` | `vessel.attitude_target` | **Solver** | Custom **Body→CCI** quaternion; the autopilot points body **+X** along it. ⚠ KSA ≥ 2026.7.8.4980: the flight computer's roll mode defaults to **decoupled** ("ANY"), so on a fresh vessel the quaternion's **roll component is not held** — pointing converges, roll floats free unless the player sets a roll mode in-game (loaded saves keep their saved mode). |
 | `ctl/burn` | **St** | `ut dvx dvy dvz` | `vessel.burn` | **Solver** | Schedule an impulsive burn at `ut` with a CCI Δv vector. |
 | `ctl/focus` | T | `1` | `camera.focus` | Frame | Move the camera to this vessel (view-only; no control change). |
 
-> **Solver phase matters.** `attitude_mode`/`attitude_frame`/`attitude_target`/`burn` write
+> **Solver phase matters.** `attitude_mode`/`attitude_frame`/`attitude_target`/`burn`/`rcs_mode` write
 > `FlightComputer` fields that KSA's async solver snapshots-and-restores each step. The mod drains
 > them inside the solver prefix so they stick; a naive frame-phase write would flash on then revert.
 > All transports get the right phase automatically (derived from the action key). As an author you
@@ -518,6 +520,17 @@ its live pose).
 `Ahead`, `Behind`, `Outward`, `Inward`, `PositiveDv`, `NegativeDv`, `Custom`, `None`.
 
 `ctl/attitude_frame` (case-insensitive): `EclBody`, `EnuBody`, `Lvlh`, `VlfBody`, `BurnBody`, `Dock`.
+
+`ctl/rcs_mode` (case-insensitive): `Enabled`, `Disabled`.
+
+> **⚠ `ctl/translate` / `ctl/rotate` no longer latch unconditionally (KSA ≥ 2026.8.5.5168).** Both
+> still latch until you rewrite them, but the **game** now also clears the latched flags on its own via
+> `Vehicle.ClearHeldPlayerInput()`: when the controlled vessel changes, when the **game window loses
+> focus**, on a camera-mode switch, and — re-applied *every update* — while the game is not accepting
+> vehicle input, while **ImGui has keyboard focus** (i.e. the player is typing into any in-game text
+> field), or while **time warp exceeds 30×**. A flight program that holds a translation across a warp
+> step or while the player types must **re-assert** it rather than assume the latch survived. This does
+> **not** affect `ctl/throttle` or `ctl/ignite`, which are held in different fields.
 
 ### 3.5 `/events`
 
@@ -965,12 +978,13 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `vessel.throttle` | — | value `0..1` | Frame | `ctl/throttle` | |
 | `vessel.lights` | — | value `0`/`1` | Frame | `ctl/lights` | |
 | `vessel.rcs` | — | value `0`/`1` | Frame | `ctl/rcs` | |
-| `vessel.translate` | — | values `[x,y,z]` | Frame | `ctl/translate` | body-axis signs, bang-bang; latches until rewritten (`0 0 0` stops) |
-| `vessel.rotate` | — | values `[x,y,z]` | Frame | `ctl/rotate` | body-axis torque signs (+x roll right, +y pitch up, +z yaw right), bang-bang; latches until rewritten (`0 0 0` stops); full authority needs `attitude_mode=manual` |
+| `vessel.translate` | — | values `[x,y,z]` | Frame | `ctl/translate` | body-axis signs, bang-bang; latches until rewritten (`0 0 0` stops) — **but the game also clears the latch** (§3.4.19); dead while `rcs_mode=Disabled` |
+| `vessel.rotate` | — | values `[x,y,z]` | Frame | `ctl/rotate` | body-axis torque signs (+x roll right, +y pitch up, +z yaw right), bang-bang; latches until rewritten (`0 0 0` stops) — **but the game also clears the latch** (§3.4.19); full authority needs `attitude_mode=manual`; dead while `rcs_mode=Disabled` |
 | `vessel.attitude_mode` | — | token | **Solver** | `ctl/attitude_mode` | §3.4.19 |
 | `vessel.attitude_frame` | — | token | **Solver** | `ctl/attitude_frame` | §3.4.19 |
 | `vessel.attitude_target` | — | values `[x,y,z,w]` | **Solver** | `ctl/attitude_target` | Body→CCI quaternion |
 | `vessel.burn` | — | values `[ut,dvx,dvy,dvz]` | **Solver** | `ctl/burn` | CCI Δv |
+| `vessel.rcs_mode` | — | token | **Solver** | `ctl/rcs_mode` | `Enabled`/`Disabled`; the flight computer's RCS master switch — `Disabled` kills `ctl/translate`+`ctl/rotate` outright |
 | `vessel.scale` | — | value > 0 | Frame | `vessels/by-id/<id>/scale` | positive-only (`EINVAL` if ≤ 0 / non-finite); one-shot; exempt from the active-vessel authority gate |
 | `vessel.always_render` | — | value `0`/`1` | Frame | `vessels/by-id/<id>/always_render` | render-distance override (bypass the sub-pixel cull); exempt from the active-vessel authority gate |
 | `engine.active` | engine n | value `0`/`1` | Frame | `engines/<n>/active` | |
@@ -982,7 +996,7 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `light.outer_angle` | light n | value number (deg) | Frame | `lights/<n>/outer_angle` | outer cone half-angle; clamped ~0..89.94°; also lowers inner to ≤ outer |
 | `light.inner_angle` | light n | value number (deg) | Frame | `lights/<n>/inner_angle` | inner cone half-angle; clamped `[0, outer]` |
 | `animation.goal` | anim n | value `0..1` | Frame | `animations/<n>/goal`, `solar/<n>/goal`, `lights/<n>/goal` | one ordinal, three views |
-| `decoupler.fire` | decoupler n | value `1` | Frame | `decouplers/<n>/fire` | one-shot |
+| `decoupler.fire` | decoupler n | value `1` | Frame | `decouplers/<n>/fire` | one-shot; `EBUSY` if already fired, `EOPNOTSUPP` if the module is disabled (`decouplers/<n>/enabled` = `0`) |
 | `docking.undock` | docking n | value `1` | Frame | `docking/<n>/undock` | one-shot |
 | `camera.focus` | — | token = id | Frame | `ctl/focus`, `bodies/<id>/focus`, `debug/focus` | view-only; no authority gate |
 | `debug.control_vessel` | — | token = id | Frame | `debug/control_vessel` | grants control |

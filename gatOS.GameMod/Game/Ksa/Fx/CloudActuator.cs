@@ -287,10 +287,10 @@ internal static class CloudActuator
     [KsaAnchor("CloudLayerReference.OnDataLoad(Mod.Empty); CloudRenderer._planetToCloudRenderData (public); "
             + "CloudLayerRenderData.UpdateStaticData(Renderer, AtmosphericBody, CloudLayerReference, "
             + "float, float, float); CloudShadowsRenderer.PopulatePlanets(Dictionary<KeyHash, "
-            + "CloudLayerRenderData[]>, RenderTarget)",
+            + "CloudLayerRenderData[]>, RenderImage)",
         SourceFile = "KSA.Atmosphere.Rendering/CloudRenderer.cs:1570-1595 / CloudLayerRenderData.cs:347 / "
-            + "CloudShadowsRenderer.cs:76",
-        Verified = "2026-08-01", GameVersion = "2026.7.10.5056", Risk = ChurnRisk.High,
+            + "CloudShadowsRenderer.cs:74",
+        Verified = "2026-08-05", GameVersion = "2026.8.5.5168", Risk = ChurnRisk.High,
         Notes = "Keyed on the public Astronomical.Hash, per-layer index into the render-data array, then "
             + "one shadow-atlas repopulate — the editor's exact sequence. NoiseScale (the only field that "
             + "would additionally need RecreateLayerPipelines) is not exposed, so this never rebuilds a "

@@ -85,12 +85,13 @@ target in 4750 (verify live). Full record: [`../plans/FIX_CURRENT_GAPS_PLAN.md`]
 | `ctl/throttle` | `vessel.throttle` | Frame | `ThrottleActuator.Set` | **reflection** `Vehicle._manualControlInputs.EngineThrottle` (no public setter; `GetManualThrottle()` reads it) | `KSA/Vehicle.cs` (`:232,824`) | **High** | ✅² |
 | `ctl/stage` | `vessel.stage` | Frame | `StagingActuator.Stage` | `Vehicle.Parts.SequenceList.ActivateNextSequence(vehicle)` + `Vehicle.UpdateAfterPartTreeModification()` | `KSA/SequenceList.cs`, `KSA/Vehicle.cs` | Medium | ✅³ |
 | `ctl/rcs` | `vessel.rcs` | Frame | `RcsActuator.SetMaster` | `ThrusterController.SetIsActive(vehicle,bool)` over all | `KSA/ThrusterController.cs` | Medium | ✅ |
-| `ctl/translate` | `vessel.translate` | Frame | `TranslateActuator.SetTranslation` | **reflection** `Vehicle._manualControlInputs.ThrusterCommandFlags` (same struct as throttle; translate bits replaced, rotation bits preserved) + `ThrusterMapFlags`; read-back `Vehicle.GetThrusterFlags()`. `FlightComputer.ComputeRcsControl` consumes the flags each solver step (`ManualThrustMode.Direct` → `SelectJetsToFire`; Auto attitude strips only rotation bits, so translation composes with tracking). Sign→flag mapping (+x=`TranslateForward`, +y=`Right`, +z=`Down`) verified against the `KittenBackPackSubPart` nozzle geometry in `Content/Core/PartGameData.xml` | `KSA/Vehicle.cs`, `KSA/ThrusterMapFlags.cs`, `KSA/FlightComputer.cs` (`:454-519,1029`) | **High** | ✅⁴ |
-| `ctl/rotate` | `vessel.rotate` | Frame | `RotateActuator.SetRotation` | **reflection** `Vehicle._manualControlInputs.ThrusterCommandFlags` (same struct as throttle/translate; rotation bits replaced, translation bits preserved) + `ThrusterMapFlags`; read-back `Vehicle.GetThrusterFlags()`. `FlightComputer.ComputeRcsControl` consumes the flags each solver step (`ManualThrustMode.Direct` → `SelectJetsToFire`; `ComputeTvcControl` decodes the same bits for gimbals). **Auto attitude strips the rotation bits** (`WithNoRotation()`) — full authority needs `attitude_mode=manual`, the inverse of translate's compose note. Sign→flag mapping is KSA's own torque decode (`ComputeTvcControl:559-585`): +x=`RollRight`, +y=`PitchUp`, +z=`YawRight` | `KSA/Vehicle.cs`, `KSA/ThrusterMapFlags.cs`, `KSA/FlightComputer.cs` (`:457-524,559-585,1020`) | **High** | ✅ (added at 4939) |
+| `ctl/translate` | `vessel.translate` | Frame | `TranslateActuator.SetTranslation` | **reflection** `Vehicle._manualControlInputs.ThrusterCommandFlags` (same struct as throttle; translate bits replaced, rotation bits preserved) + `ThrusterMapFlags`; read-back `Vehicle.GetThrusterFlags()`. `FlightComputer.ComputeRcsControl` consumes the flags each solver step (`ManualThrustMode.Direct` → `SelectJetsToFire`; Auto attitude strips only rotation bits, so translation composes with tracking). Sign→flag mapping (+x=`TranslateForward`, +y=`Right`, +z=`Down`) verified against the `KittenBackPackSubPart` nozzle geometry in `Content/Core/PartGameData.xml` | `KSA/Vehicle.cs`, `KSA/ThrusterMapFlags.cs`, `KSA/FlightComputer.cs` (`:454-519,1029`) | **High** | ⚠️ **gated + cleared at 5168** ⁷⁸ |
+| `ctl/rotate` | `vessel.rotate` | Frame | `RotateActuator.SetRotation` | **reflection** `Vehicle._manualControlInputs.ThrusterCommandFlags` (same struct as throttle/translate; rotation bits replaced, translation bits preserved) + `ThrusterMapFlags`; read-back `Vehicle.GetThrusterFlags()`. `FlightComputer.ComputeRcsControl` consumes the flags each solver step (`ManualThrustMode.Direct` → `SelectJetsToFire`; `ComputeTvcControl` decodes the same bits for gimbals). **Auto attitude strips the rotation bits** (`WithNoRotation()`) — full authority needs `attitude_mode=manual`, the inverse of translate's compose note. Sign→flag mapping is KSA's own torque decode (`ComputeTvcControl:559-585`): +x=`RollRight`, +y=`PitchUp`, +z=`YawRight` | `KSA/Vehicle.cs`, `KSA/ThrusterMapFlags.cs`, `KSA/FlightComputer.cs` (`:457-524,559-585,1020`) | **High** | ⚠️ **gated + cleared at 5168** ⁷⁸ |
 | `ctl/attitude_mode` | `vessel.attitude_mode` | **Solver** | `FlightComputerActuator.SetAttitudeMode` | `FlightComputer.{AttitudeMode,AttitudeTrackTarget}`; `FlightComputerAttitudeMode`/`...TrackTarget` | `KSA/FlightComputer.cs` | Medium | ✅²⁶ |
 | `ctl/attitude_frame` | `vessel.attitude_frame` | **Solver** | `…SetAttitudeFrame` | `FlightComputer.AttitudeFrame` (`VehicleReferenceFrame`) | `KSA/FlightComputer.cs` | Medium | ✅² |
 | `ctl/attitude_target` | `vessel.attitude_target` | **Solver** | `…SetAttitudeTarget` | `FlightComputer.{CustomAttitudeTarget,AttitudeFrame,AttitudeTrackTarget=Custom}`; `VehicleReferenceFrameEx.{GetEclBody2Cci,QuaternionToEulerAngles}` | `KSA/FlightComputer.cs` | Medium | ✅²⁶ |
 | `ctl/burn` | `vessel.burn` | **Solver** | `…SetBurn` | `FlightComputer.Burn = BurnTarget{ImpulsiveInstant,DeltaVTargetCci}` | `KSA/BurnTarget.cs` | Medium | ✅² |
+| `ctl/rcs_mode` | `vessel.rcs_mode` | **Solver** | `FlightComputerActuator.{SetRcsMode,ReadRcsMode}` | `FlightComputer.RCSMode` (`FlightComputerRCSMode.{Enabled,Disabled}`) — the file twin of the in-game **R** keybind. `Disabled` is a hard master cut-off: `ComputeRcsControl` zeroes the manual `ThrusterCommandFlags` (`:471`) so `ctl/translate`+`ctl/rotate` go dead, and `UpdateRcsParams` zeroes the RCS torque authority (`:884`) so auto attitude holds lose RCS. Solver-phase because `CopyFrom` copies it (`:131`) | `KSA/FlightComputer.cs` (`:41,131,471,884`) | Medium | ➕ added at 5168 (rev 5143) ⁷ |
 
 ² Compiles; **`IsControllable`-gated** at runtime (Solver-phase FC setpoints are the most affected). ³
 `SequenceList.ActivateNextSequence` is *Sequences* (activation), distinct from "Resource Groups" (the
@@ -122,12 +123,61 @@ the new R keybind, persisted via `FlightComputerData.RCSMode`, and copied by `Fl
 so the Solver-phase discipline is unaffected). With it `Disabled`, `UpdateActiveControlSystems` skips
 the whole per-thruster RCS torque-authority scan, so an **auto** attitude hold on a vessel whose only
 attitude authority is RCS **silently stops actuating** (only gimballed TVC survives, and only during an
-engine burn) — a new silent-ignore path alongside the `IsControllable` gate². `ctl/rotate`/`ctl/translate`
+engine burn) — a new silent-ignore path alongside the `IsControllable` gate². ~~`ctl/rotate`/`ctl/translate`
 (manual `ThrusterCommandFlags`) are *not* gated by it. gatOS neither reads nor sets `RCSMode`
-(candidate additive control). **(b) rev 4978**: `FlightComputer.RollMode` default flipped
+(candidate additive control).~~ **SUPERSEDED at 5168 — see ⁷ below: rev 5143 made `RCSMode` gate the
+manual flags too, and gatOS now reads *and* sets it as `ctl/rcs_mode`.** **(b) rev 4978**: `FlightComputer.RollMode` default flipped
 `Up` → `Decoupled` ("ANY") — a fresh FC no longer actuates roll, so `ctl/attitude_target`'s quaternion
 converges in +X pointing but rolls free unless RollMode is set (gatOS does not set it; loaded saves
 keep their serialized RollMode). Both flagged for live confirm in `docs/VALIDATION.md`.
+
+⁷ **5168 semantic break (rev 5143) — `RCSMode` is now a HARD master cut-off for MANUAL RCS too.**
+This **falsifies** the 4980 note above (⁶a), which stated that manual `ThrusterCommandFlags` were not
+gated by `RCSMode`. `FlightComputer.ComputeRcsControl` gained an unconditional zeroing step
+(`KSA/FlightComputer.cs:471`):
+
+```csharp
+ThrusterMapFlags thrusterMapFlags = inputs.ThrusterCommandFlags.WithCanceledOpposingCommands();
+if (RCSMode != FlightComputerRCSMode.Enabled) { thrusterMapFlags = ThrusterMapFlags.None; }
+```
+
+and `UpdateRcsParams` now zeroes the thruster authority outright (`:884`) rather than computing it
+from `outputs.Thrusters.GlobalState.Authority`. So with RCS toggled off (the in-game **R** key)
+**`ctl/translate` and `ctl/rotate` do nothing at all** — and gatOS's read-back
+(`Vehicle.GetThrusterFlags()`) still reports the *commanded* flags, so the divergence is invisible
+from the command side. **Closed in the same work item:** `FlightComputer.RCSMode` is now a first-class
+read + control at **`vessels/by-id/<id>/ctl/rcs_mode`** (`Enabled`/`Disabled`,
+`FlightComputerActuator.SetRcsMode`/`ReadRcsMode`, action key `vessel.rcs_mode`). It is a
+**Solver-phase** action like every other FC setpoint, because `FlightComputer.CopyFrom` copies
+`RCSMode` (`:131`) — a Frame-phase write would be reverted by the in-flight solve.
+
+⁸ **5168 semantic break (rev 5128) — the game now CLEARS the latched manual thruster flags.** gatOS's
+`ctl/translate`/`ctl/rotate` contract is "latches until rewritten"; that no longer holds unilaterally.
+The new `Vehicle.ClearHeldPlayerInput()` (`KSA/Vehicle.cs:5578`) zeroes `ThrusterCommandFlags` (plus
+the new `Sprint` field and `_engineFlags`) and is called from **four** sites:
+
+| Trigger | Call site |
+|---|---|
+| the controlled vehicle changes (vessel switch) | `KSA/Program.cs:459` |
+| the game window **loses focus** | `KSA/Program.cs:1558` |
+| camera-mode switch | `KSA/Viewport.cs:343` |
+| **every update**, while `!IsControlledVehicleActive` **or `ImGui.GetIO().WantCaptureKeyboard`** **or `Universe.GetSimulationSpeed() > 30.0`** | `KSA/Vehicle.cs:2215` (`PrepareWorker`) |
+
+The last row is the sharp edge: it re-clears *continuously*, so a gatOS flight program holding a
+translation during **time warp above 30×**, or while the player is **typing into any ImGui text
+field**, gets silently zeroed every tick. `_engineFlags` is the keyboard throttle-ramp state, **not**
+gatOS's ignition path — `ctl/throttle` (`EngineThrottle`) and `ctl/ignite` (`EngineOn`) are untouched
+by this and keep working. A second, kitten-only clear lives in
+`VehicleUpdateTask.FlightComputerInputsFor` (`:1149`): a kitten not in `LocomotionMode.Mmu` has its
+thruster flags zeroed. Live confirms queued in `docs/VALIDATION.md`.
+
+⁹ **5168 semantic break (rev 5132) — a decoupler can be DISABLED and then cannot fire.** `Decoupler`
+gained `IEnable` + `IsEnabled`/`SetIsEnabled` + save data (players may disable a part's decoupler
+module, e.g. turning an adapter into a static fairing), and `Decoupler.SetIsActive` is now gated on it
+(`KSA/Decoupler.cs:97`). `DecouplerActuator.Fire` previously checked only `IsActive`, so firing a
+disabled decoupler was a **silent no-op reported as success**. Fixed: `Fire` now rejects a disabled
+decoupler with **EOPNOTSUPP**, and the state is readable at
+**`vessels/by-id/<id>/decouplers/<n>/enabled`**.
 
 > **Why Solver phase?** KSA's async vehicle solver snapshots the whole `FlightComputer` at prepare and
 > restores it at apply (`FlightComputer.CopyFrom`). A frame-phase write to a FC setpoint lands *outside*
@@ -147,7 +197,7 @@ keep their serialized RollMode). Both flagged for live confirm in `docs/VALIDATI
 | `lights/<n>/color` | `light.color` | `LightActuator.SetColor` | `LightModule.Template.ColorRgb.{R,G,B}` + `OnDataLoad` (clone) | `KSA/LightModule.cs`, `KSA/ColorRgbReference.cs` | **High** | ✅ |
 | `lights/<n>/outer_angle` | `light.outer_angle` | `LightActuator.SetOuterAngle` | `LightModule.Template.OuterAngle.Value` (deg→rad, clamp `[1e-5, 1.5697963]`) | `KSA/LightModule.cs`, `KSA/Light.cs` (`CreateSpotLight`) | **High** | ✅ |
 | `lights/<n>/inner_angle` | `light.inner_angle` | `LightActuator.SetInnerAngle` | `LightModule.Template.InnerAngle.Value` (clamp `[0, OuterAngle]`) | `KSA/LightModule.cs` | **High** | ✅ |
-| `decouplers/<n>/fire` | `decoupler.fire` | `DecouplerActuator.Fire` | `Decoupler.{IsActive,SetIsActive}` (re-fire → `EBUSY`) | `KSA/Decoupler.cs` | Medium | ✅⁴ |
+| `decouplers/<n>/fire` | `decoupler.fire` | `DecouplerActuator.Fire` | `Decoupler.{IsActive,IsEnabled,SetIsActive}` (re-fire → `EBUSY`; **disabled → `EOPNOTSUPP`**, since rev 5132 gated `SetIsActive` on `IsEnabled`) | `KSA/Decoupler.cs` (`:33,35,95`) | Medium | ✅⁴ ⁹ |
 | `docking/<n>/undock` | `docking.undock` | `DockingActuator.Undock` | `InputEvents.VehicleDockingInputBuffer.Add(VehicleDockingInputData{Undock=true})` → `DockingPort.Undock` → `Vehicle.Split(Connector, PushoffImpulse)` | `KSA/DockingPort.cs`, `KSA/InputEvents.cs` | Medium | ✅⁵ |
 
 ⁴ `Decoupler.SetIsActive` unchanged; rev 4715 ("decoupler releasing the wrong connector") is a runtime
@@ -556,6 +606,46 @@ anchors (the two here + `VesselReader.SampleDocking`) were re-verified to `Verif
   see the docking section above).
 - **Lights / animations / decouplers / RCS / engines / flight computer / teleport / refills** — all
   members compiled clean and none appear in the changelog with an API-affecting change.
+
+---
+
+## ⚠️ 5168 write-surface findings (playbook pass 2026-08-05) {#5168-findings}
+
+Full playbook pass 2026-08-05, `2026.8.3.5117` → `2026.8.5.5168` (revs 5118–5168, 49 commits).
+**Three silent semantic breaks on the write surface — every one of them a case where a gatOS command
+still "succeeded" while the game ignored it.** Two are now enforced with a real errno / exposed as a
+control; the third is inherent to the game and is documented as a contract change. Build + suite green
+(0 warnings, 772 passed).
+
+1. **`RCSMode` now gates manual RCS (rev 5143)** — footnote ⁷ above. `ctl/translate`/`ctl/rotate`
+   silently do nothing while RCS is off. **Closed** by adding `ctl/rcs_mode` (`vessel.rcs_mode`,
+   **Solver** phase). This also **falsifies** the 4980 note (⁶a) that manual flags were ungated —
+   corrected in place.
+2. **The game clears latched thruster flags (rev 5128)** — footnote ⁸ above. `Vehicle.ClearHeldPlayerInput()`
+   fires on vessel switch, window focus loss, camera-mode switch, and *every update* while ImGui holds
+   keyboard focus or warp > 30×. **No code change** (this is the game's prerogative), but gatOS's
+   documented "latches until rewritten" contract for `ctl/translate`/`ctl/rotate` is now conditional
+   and both SPEC §3.9 and the tutorials say so.
+3. **Disabled decouplers (rev 5132)** — footnote ⁹ above. **Closed**: `decoupler.fire` returns
+   **EOPNOTSUPP** for a disabled decoupler instead of a false `Ok`, and `decouplers/<n>/enabled` is
+   readable.
+
+**Render write path (rev 5154) — migrated, not broken.** `Program.OffScreenPass` was deleted along with
+the whole `RenderPassState`/`OffscreenTarget`/`RenderTarget`/`Framebuffer` set when offscreen rendering
+moved to Vulkan dynamic rendering. `ThugLifeQuadRenderer.BuildPipeline` now calls
+`Program.OffscreenTarget.SetupGraphicsPipeline(ref info)` — the same call KSA's own
+`GenericMeshRenderer`/`PartModelRenderer`/`PartModelGlass` make — which supplies the attachment formats,
+nulls the render pass and sets the sample count from the target, so the quad follows the engine's MSAA
+(and the new CMAA2 option, rev 5156) automatically. `SuperMeshRenderSystem.RenderMainPass` is unchanged
+and is still invoked inside the offscreen target's `BeginRendering`/`EndRendering` scope, so the postfix
+still draws into the scene. **Still requires a live in-game pass** — a mis-drawn quad is exactly what
+static review cannot catch.
+
+**Verified clean:** all 13 reflection accessors and all 7 Harmony targets resolve;
+`Vehicle._manualControlInputs` and the `ThrusterCommandFlags`/`EngineThrottle` fields are unchanged
+(`ManualControlInputs` gained only `Sprint`, which the box-mutate-write-back pattern preserves);
+`ClearHeldPlayerInput` touches `_engineFlags` (the keyboard throttle-ramp state) but **not**
+`EngineOn`/`EngineThrottle`, so `ctl/ignite` and `ctl/throttle` are unaffected.
 
 ---
 

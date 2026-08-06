@@ -51,7 +51,7 @@ public sealed record SimCommand(
     ///     <list type="bullet">
     ///         <item>the debug refills mutate resource state the solver reads that same tick; and</item>
     ///         <item>the flight-computer setpoints (<c>attitude_mode</c>/<c>attitude_frame</c>/
-    ///         <c>attitude_target</c>/<c>burn</c>) write fields that KSA's async vehicle solver
+    ///         <c>attitude_target</c>/<c>burn</c>/<c>rcs_mode</c>) write fields that KSA's async vehicle solver
     ///         <i>snapshots and restores</i> every frame (<c>FlightComputer.CopyFrom</c> at prepare
     ///         and apply). A frame-phase write lands outside that capture and is overwritten by the
     ///         in-flight solve — the value flashes on, then reverts to manual. Draining in the solver
@@ -65,6 +65,9 @@ public sealed record SimCommand(
         {
             "debug.refill_fuel", "debug.refill_battery",
             "vessel.attitude_mode", "vessel.attitude_frame", "vessel.attitude_target", "vessel.burn",
+            // FlightComputer.RCSMode is copied by CopyFrom alongside the other setpoints, so a
+            // frame-phase write would be reverted by the in-flight solve exactly the same way.
+            "vessel.rcs_mode",
         };
 
     /// <summary>The game-thread phase an action must execute in (KSA_GAME_INTEGRATION_PLAN §3.1).</summary>
