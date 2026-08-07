@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Brutal.ImGuiApi;
 using gatOS.GameMod.Game;
 using gatOS.GameMod.Game.Ksa;
@@ -11,6 +12,7 @@ using gatOS.Logging;
 using gatOS.SimFs;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Display;
+using gatOS.SimFs.Snapshots;
 using gatOS.Vm;
 using HarmonyLib;
 using KSA;
@@ -103,6 +105,18 @@ public sealed partial class Mod
     // objects (null when [audio] enabled=false), ticked per frame by DriveAudio, torn down at unload.
     private AudioActuator? _audioActuator;
     private bool _audioDead;
+
+    // Game-thread-only driver state for the timed-command scheduler (CAMERA_CONTROLS_PLAN §3.2).
+    // The due list is reused across ticks (Clear()ed, never reallocated) so a steady-state tick
+    // allocates nothing; the stopwatch IS the `wall` clock base (KSA's dtPlayer is the `render` one
+    // and cannot substitute for it), and the two _scheduleUt fields carry the `ut` base's previous
+    // reading so the tick can hand the registry a sim-time delta.
+    private readonly List<DueCommand> _scheduleDue = [];
+    private readonly Stopwatch _scheduleWallClock = new();
+    private readonly PerfStat _scheduleStats = new();
+    private double _scheduleLastUt;
+    private bool _scheduleUtSeeded;
+    private bool _schedulesDead;
 
     // The Harmony patch draining solver-phase commands (G4). Installed in OnFullyLoaded, removed at
     // Unload; null when the solver hook could not be installed (solver commands then never drain).
@@ -200,7 +214,7 @@ public sealed partial class Mod
             EnsureControlObjects();
             _telemetry ??= new TelemetrySampler(store, _telemetrySettings, _health!, _sampleStats,
                 _sampleAllocStats, _weldManager!, _thugLife!, _ivaPhysics!, _ivaStats, _audioStore,
-                Config.DebugNamespace);
+                _scheduleStore, Config.DebugNamespace);
             // Sample only while something can actually read /sim: the VM is up, or a host-side
             // transport client is connected (9p / HTTP / MQTT). Otherwise the sampler idles for free.
             var state = CurrentVmStatus.State;
@@ -260,7 +274,7 @@ public sealed partial class Mod
         if (_audioActuator is null && _audioStore is { } audioStore)
             _audioActuator = new AudioActuator(audioStore, Config.AudioMaxChannels);
         _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels, _weldManager, _thugLife,
-            _ivaPhysics, _audioActuator);
+            _ivaPhysics, _audioActuator, _scheduleStore);
     }
 
     /// <summary>Snapshots the <c>[iva]</c> config section into the cabin simulation's tuning record.</summary>
@@ -278,6 +292,154 @@ public sealed partial class Mod
             ImpactSpeed = Config.IvaImpactSpeed,
             DoubleSidedInterior = Config.IvaDoubleSidedInterior,
         };
+
+    /// <summary>
+    ///     Plays out the host-side timed schedules on the game thread, immediately <i>before</i> the
+    ///     command drain (CAMERA_CONTROLS_PLAN §3.2): activate what transport threads committed,
+    ///     advance every live clock, and <see cref="CommandQueue.Post"/> whatever came due — so a
+    ///     scheduled command executes on the same frame it fell due, through the ordinary executor,
+    ///     health latches and per-frame command budget. Self-gates to one branch while nothing is
+    ///     live; a failure disables scheduling for the session (one error log).
+    /// </summary>
+    /// <remarks>
+    ///     <para><b>The three clock bases are sourced here, and only here.</b> <c>render</c> is
+    ///     <paramref name="dt"/> — KSA's <c>dtPlayer</c>, which the engine clamps to
+    ///     <c>1/MinTargetFrameRate</c>, so it lags true elapsed time after a hitch and never catches
+    ///     up (correct for cinematics, and exactly why the other two exist). <c>wall</c> is our own
+    ///     <see cref="Stopwatch"/>, which is stopped while the registry is empty so an idle gap is
+    ///     never banked into the first tick of the next schedule. <c>ut</c> is the sim-time delta;
+    ///     it is unavoidably discontinuous (a scene load rewinds it, warp leaps it forward), so a
+    ///     backwards step is clamped to zero rather than rewinding a player's timeline.</para>
+    /// </remarks>
+    /// <param name="dt">The frame's player-clock delta, in seconds (the <c>render</c> clock base).</param>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void TickSchedules(double dt)
+    {
+        if (_schedulesDead || _scheduleStore is not { } schedules || _commandQueue is not { } queue)
+            return;
+
+        try
+        {
+            // Free (a static field read behind AggressiveInlining), and needed before Activate so a
+            // schedule's `started` event carries the sim time it actually started at.
+            var ut = SafeUt();
+            schedules.Activate(ut);
+            if (schedules.Count == 0)
+            {
+                // Nothing live. Park the wall clock (stopped, at zero) so the next schedule's first
+                // tick advances by one frame rather than by however long the registry sat empty, and
+                // forget the UT reading for the same reason.
+                _scheduleWallClock.Reset();
+                _scheduleUtSeeded = false;
+                return;
+            }
+
+            using (_scheduleStats.Measure()) // alloc-free; the status window's schedule readout
+            {
+                double wallMs;
+                if (_scheduleWallClock.IsRunning)
+                {
+                    wallMs = _scheduleWallClock.Elapsed.TotalMilliseconds;
+                    _scheduleWallClock.Restart();
+                }
+                else
+                {
+                    wallMs = 0; // first tick of a run: there is no previous instant to measure from
+                    _scheduleWallClock.Start();
+                }
+
+                var utMs = _scheduleUtSeeded ? Math.Max(0, (ut - _scheduleLastUt) * 1000.0) : 0;
+                _scheduleLastUt = ut;
+                _scheduleUtSeeded = true;
+
+                schedules.AdvanceAll(dt * 1000.0, wallMs, utMs);
+
+                _scheduleDue.Clear(); // reused every tick — never reallocated (GP3 discipline)
+                schedules.Tick(_scheduleDue, ut);
+                for (var i = 0; i < _scheduleDue.Count; i++)
+                {
+                    var due = _scheduleDue[i];
+                    // Fire-and-forget: the schedule outlives any write that could have waited on it,
+                    // so outcomes come back through the observer into schedules/<id>/last_error.
+                    queue.Post(due.Command, due.Observer, due.Token);
+                }
+
+                EvictCompletedSchedules(schedules, ut);
+            }
+        }
+        catch (Exception ex)
+        {
+            _schedulesDead = true;
+            ModLog.Log.Error($"gatOS schedules disabled after a tick error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    ///     Keeps the registry from wedging on its own history. Completed players deliberately persist
+    ///     so a script that starts a take can come back and read the outcome — but they still occupy a
+    ///     <c>schedule_max_live</c> slot, so a long session of one-shot schedules would eventually
+    ///     reject every new commit with EINVAL. Under cap pressure <i>only</i>, this drops finished
+    ///     players oldest-first: the reading a script is most likely to still want (the one it just
+    ///     started) is the last to go, and every eviction is announced on <c>/sim/events</c>.
+    /// </summary>
+    /// <param name="schedules">The registry to relieve.</param>
+    /// <param name="ut">Sim time to stamp the eviction events with.</param>
+    private static void EvictCompletedSchedules(ScheduleStore schedules, double ut)
+    {
+        var limit = schedules.Limits.MaxLive;
+        if (schedules.Count < limit)
+            return;
+
+        // Activation order, so index 0 is the oldest. The array is immutable; removals republish a
+        // new one, which is what schedules.Count below reads.
+        var players = schedules.Players;
+        for (var i = 0; i < players.Count && schedules.Count >= limit; i++)
+        {
+            var player = players[i];
+            if (!IsFinished(player))
+                continue;
+
+            schedules.Execute(new SimCommand("", "schedule.remove", SimCommand.NoOrdinal, 1)
+            {
+                Token = player.Id,
+            });
+            schedules.EmitEvent(new SimEvent(ut, "schedule.evicted", null,
+                $"{player.Id} kind={player.Kind} reason=max_live"));
+            ModLog.Log.Debug($"gatOS schedules: evicted completed player '{player.Id}' "
+                             + $"to free a slot ({limit} live max).");
+        }
+    }
+
+    /// <summary>
+    ///     Whether a player can never fire another command. <c>done</c> is conclusive (a stopped or
+    ///     exhausted player never ticks again), but <c>failed</c> is <b>not</b>: a schedule keeps
+    ///     running past its first failure, so a failed player only qualifies once it is also out of
+    ///     entries, not looping, and past its own duration — the runner's own completion test.
+    /// </summary>
+    private static bool IsFinished(IPlaybackPlayer player) => player.State switch
+    {
+        PlaybackState.Done => true,
+        PlaybackState.Failed => !player.Clock.Loop && player.PendingCount == 0
+                                && player.Clock.PositionMs >= player.DurationMs,
+        _ => false,
+    };
+
+    /// <summary>
+    ///     The current sim time, or 0 if the universe is not up yet. <c>GetElapsedSimTime</c> is a
+    ///     static field read, so this is safe to call every frame — but it throws before the first
+    ///     sim step, and a scheduler tick must not die on that.
+    /// </summary>
+    private static double SafeUt()
+    {
+        try
+        {
+            return Universe.GetElapsedSimTime().Seconds();
+        }
+        catch
+        {
+            return 0;
+        }
+    }
 
     /// <summary>
     ///     Ticks the audio actuator on the game thread, right after the command drain (threading
@@ -408,6 +570,17 @@ public sealed partial class Mod
         catch (Exception ex)
         {
             ModLog.Log.Debug($"gatOS audio teardown error: {ex.Message}");
+        }
+
+        try
+        {
+            // Stops and drops every live player, plus anything committed but not yet activated: a
+            // schedule must never survive into a world its entries were never written against.
+            _scheduleStore?.Clear();
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS schedule teardown error: {ex.Message}");
         }
 
         try
@@ -924,6 +1097,19 @@ public sealed partial class Mod
                                  + "writes actuating KSA.");
         }
 
+        // Like the IVA row: only once something has actually been scheduled — an always-present
+        // "0 live" line would be noise for the many sessions that never commit a schedule.
+        if (_scheduleStore is { } schedules && _scheduleStats.Count > 0)
+        {
+            var sch = _scheduleStats;
+            ImGui.Text($"Schedules: {schedules.Count} live — tick avg {sch.AvgMicros / 1000:F3} ms, "
+                       + $"max {sch.MaxMicros / 1000:F3} ms");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Live players in /sim/ctl/schedules and the game-thread cost of one "
+                                 + "scheduler tick (advance the clocks, post the due commands). Zero "
+                                 + "while nothing is scheduled.");
+        }
+
         if (_mqttBroker is { } mqtt && mqtt.PublishStats.Count > 0)
         {
             var p = mqtt.PublishStats;
@@ -981,6 +1167,7 @@ public sealed partial class Mod
             _ivaStats.Reset();
             _sampleAllocStats.Reset();
             _drainStats.Reset();
+            _scheduleStats.Reset();
             _mqttBroker?.PublishStats.Reset();
             _displaySurface?.CaptureStat.Reset();
             _displaySurface?.EncodeStat.Reset();

@@ -82,6 +82,13 @@ public sealed partial class Mod
     // [audio] enabled=false — the /sim/audio surface then does not exist on any transport.
     private AudioStore? _audioStore;
 
+    // The timed-command scheduler's live-player registry (plans/CAMERA_CONTROLS_PLAN.md §3): the
+    // schedules committed through /sim/ctl/timed_batch, listed and steered under /sim/ctl/schedules.
+    // Game-free (from gatOS.SimFs); shared between the transport threads that commit/inspect them and
+    // the game-thread tick that plays them (TickSchedules). Null when [schedule] schedule_enabled=false
+    // — /sim/ctl/timed_batch and /sim/ctl/schedules then do not exist on any transport.
+    private ScheduleStore? _scheduleStore;
+
     // Timing of one telemetry sample (game thread, written by the sampler; read by the status
     // window). Allocation-free; owned here so the status window can read it before the sampler
     // is lazily constructed and survive its disposal.
@@ -214,8 +221,12 @@ public sealed partial class Mod
             if (_config.AudioEnabled)
                 _audioStore = new AudioStore(_config.AudioMaxClipBytes, _config.AudioMaxTotalBytes,
                     _config.AudioMaxClips, _config.AudioMaxChannels);
+            if (_config.ScheduleEnabled)
+                _scheduleStore = new ScheduleStore(new ScheduleLimits(
+                    _config.ScheduleMaxLive, _config.ScheduleMaxEntries, _config.ScheduleMaxBytes,
+                    ParseClockBase(_config.ScheduleDefaultClock)));
             _simRoot = SimFsTree.Build(_simStore, _commandQueue, SimTransportsStatus, _displaySurface,
-                _audioStore);
+                _audioStore, schedules: _scheduleStore);
             StartSimServer(port: 0);
             StartHttpServer();
             StartMqttBroker();
@@ -379,12 +390,17 @@ public sealed partial class Mod
     }
 
     /// <summary>
-    ///     The per-frame game-thread work of <see cref="OnBeforeUi"/>: sample, drain, actuate. Run
-    ///     from the GUI hook normally, or — with the UI hidden (F2) — from <see cref="OnAfterFrame"/>.
+    ///     The per-frame game-thread work of <see cref="OnBeforeUi"/>: sample, play out schedules,
+    ///     drain, actuate. Run from the GUI hook normally, or — with the UI hidden (F2) — from
+    ///     <see cref="OnAfterFrame"/>.
     /// </summary>
     private void DrivePerFrame(double dt)
     {
         SampleTelemetry(dt);
+        // Immediately before the drain (CAMERA_CONTROLS_PLAN §3.2): a scheduled command that comes
+        // due on this frame is posted into the queue the very frame it executes, so a schedule's
+        // timing is the frame grid and not the frame grid plus one.
+        TickSchedules(dt);
         DrainCommands();
         DriveAudio(); // right after the drain: prune finished channels, enforce end=, publish status
         UpdateThugLife(); // validate/re-resolve thug-life anchors on the game thread, before the scene renders
@@ -740,6 +756,19 @@ public sealed partial class Mod
             _ = Task.Run(() => connector.DisposeAsync().AsTask());
     }
 
+    /// <summary>
+    ///     Maps <c>[schedule] schedule_default_clock</c> onto the clock base a schedule gets when it
+    ///     declares no <c>@clock</c>. <see cref="GatOsConfig"/> already validates the token (warning
+    ///     and falling back to <c>render</c>), so the default arm here is only reached if that
+    ///     validation is ever bypassed — it must still pick the documented default rather than throw.
+    /// </summary>
+    private static ClockBase ParseClockBase(string clock) => clock switch
+    {
+        "wall" => ClockBase.Wall,
+        "ut" => ClockBase.Ut,
+        _ => ClockBase.Render,
+    };
+
     private static SerialMode ParseSerialMode(string mode) => mode switch
     {
         "nmea" => SerialMode.Nmea,
@@ -914,6 +943,7 @@ public sealed partial class Mod
     partial void DrawGameUi();
     partial void SampleTelemetry(double dt);
     partial void DrainCommands();
+    partial void TickSchedules(double dt);
     partial void DriveAudio();
     partial void InstallDisplayHook();
     partial void DisposeDisplayCapture();

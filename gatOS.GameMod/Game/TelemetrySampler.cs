@@ -9,6 +9,7 @@ using gatOS.GameMod.Game.Ksa.Welds;
 using gatOS.Logging;
 using gatOS.SimFs;
 using gatOS.SimFs.Audio;
+using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
 using gatOS.SimFs.Telemetry;
 using KSA;
@@ -42,6 +43,7 @@ internal sealed class TelemetrySampler
     private readonly IvaPhysicsManager _iva;
     private readonly PerfStat _ivaStats;
     private readonly AudioStore? _audio;
+    private readonly ScheduleStore? _schedules;
     private readonly bool _debugNamespace;
     private int _appliedRateHz;
     private IReadOnlyList<double> _warpSpeeds = [];
@@ -81,6 +83,11 @@ internal sealed class TelemetrySampler
     ///     <see cref="SimSnapshot.NewEvents"/> (so they reach <c>/sim/events</c> and every event
     ///     transport). Null when audio is disabled.
     /// </param>
+    /// <param name="schedules">
+    ///     The timed-command scheduler's registry — its pending <c>schedule.started</c>/
+    ///     <c>finished</c>/<c>failed</c>/<c>dropped</c>/<c>evicted</c> events fold into each snapshot
+    ///     the same way audio's and IVA's do. Null when scheduling is disabled.
+    /// </param>
     /// <param name="debugNamespace">
     ///     <c>[control] debug_namespace</c>: gates the FX-editor sample (<c>/sim/debug/{engineplume,
     ///     plumetrail,clouds,terrain}</c>). Off ⇒ the families are never read and
@@ -88,7 +95,8 @@ internal sealed class TelemetrySampler
     /// </param>
     internal TelemetrySampler(SnapshotStore store, TelemetrySettings settings, KsaHealth health,
         PerfStat sampleStats, ValueStat allocStats, WeldManager welds, ThugLifeManager thugLife,
-        IvaPhysicsManager iva, PerfStat ivaStats, AudioStore? audio = null, bool debugNamespace = false)
+        IvaPhysicsManager iva, PerfStat ivaStats, AudioStore? audio = null,
+        ScheduleStore? schedules = null, bool debugNamespace = false)
     {
         _debugNamespace = debugNamespace;
         _store = store;
@@ -103,6 +111,7 @@ internal sealed class TelemetrySampler
         _iva = iva;
         _ivaStats = ivaStats;
         _audio = audio;
+        _schedules = schedules;
     }
 
     /// <summary>
@@ -200,6 +209,10 @@ internal sealed class TelemetrySampler
         // Same for the IVA cabin-physics events (iva.impact / iva.escape / iva.release).
         if (_iva.DrainEvents() is { Count: > 0 } ivaEvents && _settings.Events)
             events = events.Count == 0 ? ivaEvents : [.. events, .. ivaEvents];
+        // Same for the scheduler's player-lifecycle events (schedule.started / finished / failed /
+        // dropped / evicted) — the only way a fire-and-forget schedule reports itself.
+        if (_schedules?.DrainEvents() is { Count: > 0 } scheduleEvents && _settings.Events)
+            events = events.Count == 0 ? scheduleEvents : [.. events, .. scheduleEvents];
         var snapshot = new SimSnapshot(++_sequence, ut, warp, activeId, vessels, events,
             GameVersion(), _appliedRateHz, _health.Snapshot())
         {

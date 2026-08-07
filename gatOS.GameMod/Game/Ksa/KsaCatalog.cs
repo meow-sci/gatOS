@@ -20,7 +20,7 @@ namespace gatOS.GameMod.Game.Ksa;
 ///     the game thread by <see cref="CommandQueue.Drain"/>; never throws (faults are returned).
 /// </summary>
 internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager welds, ThugLifeManager thugLife,
-    IvaPhysicsManager iva, AudioActuator? audio = null)
+    IvaPhysicsManager iva, AudioActuator? audio = null, ScheduleStore? schedules = null)
     : ICommandExecutor
 {
     /// <inheritdoc />
@@ -76,6 +76,17 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
                 return Finish(accessor, audio is { } audioActuator
                     ? audioActuator.Execute(command)
                     : new CommandResult(CommandOutcome.Unsupported, "audio is disabled in gatos.toml"));
+
+            // Host-side timed schedules (plans/CAMERA_CONTROLS_PLAN.md §3): the target is a live
+            // player in the /sim/ctl/schedules registry, never a vehicle, so — like audio — this
+            // bypasses vehicle resolution and the authority gate. Nothing about pausing or scrubbing a
+            // host-side player touches KSA, so the whole family routes straight to the game-free store
+            // rather than being re-implemented here (that would be a second definition of the grammar).
+            // Unsupported (EOPNOTSUPP) when [schedule] schedule_enabled=false left the store unwired.
+            if (command.Action.StartsWith("schedule.", StringComparison.Ordinal))
+                return Finish(accessor, schedules is { } scheduleStore
+                    ? scheduleStore.Execute(command)
+                    : new CommandResult(CommandOutcome.Unsupported, "scheduling is disabled in gatos.toml"));
 
             // camera.focus targets ANY astronomical (vessel or celestial) named by id and only moves
             // the view — no vessel mutation, so it bypasses the vehicle-only resolution and the
