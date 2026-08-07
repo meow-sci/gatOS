@@ -117,7 +117,8 @@ TCS. Honours `ControlEnabled` (reports `Denied` to the observer, does not enqueu
 | `string ReserveId(string?)` | transport | EINVAL on bad id / duplicate / `MaxLive`; `null` ⇒ auto `#N` |
 | `void ReleaseId(string)` | transport | |
 | `string Submit(Schedule)` | transport | non-blocking; visible at the next `Activate` |
-| `void Activate(double utSeconds = 0)` | **game** | drains pending → live players, starts their clocks |
+| `void Activate(double utSeconds = 0)` | **game** | evicts finished players **under cap pressure only** (§6), then drains pending → live players and starts their clocks |
+| `static bool IsFinished(IPlaybackPlayer)` *(internal)* | | the one "can never fire again" test — `done`, or `failed` **and** exhausted/not-looping/past duration (§6) |
 | `void AdvanceAll(double render, double wall, double ut)` | **game** | advances **each distinct clock once** |
 | `void Tick(List<DueCommand> due, double utSeconds = 0)` | **game** | fills the due list |
 | `CommandResult Execute(SimCommand)` | **game** | the game-free `schedule.*` executor |
@@ -204,6 +205,7 @@ and `POST /v1/command` / `gatos/command` reach every `schedule.*` action by cons
 | `schedule.finished` | `<id> kind=schedule dropped=<n>` |
 | `schedule.failed` | `<id> entry=<n> <ERRNO>` |
 | `schedule.dropped` | `<id> dropped=<n> total=<n>` — **throttled to ≤1 per player per second** |
+| `schedule.evicted` | `<id> kind=schedule reason=max_live` — one per reclaimed slot (see §6) |
 
 `VesselId` is always `null` (a player has no vessel).
 
@@ -269,10 +271,29 @@ commit
   **max** over members. A joiner starts at the group's *current* position, so its already-past
   entries fire on its first tick — joining a take in progress.
   The group clock is dropped when its last member is removed.
-- **Completed players persist.** A `done`/`failed` player stays listed with its final
-  `state`/`dropped`/`last_error` until `remove` or `clear`. Rationale: a script that starts a take
-  and comes back to read the outcome must be able to find it; auto-pruning would race that read.
-  **Consequence to document:** completed players count against `schedule_max_live`.
+- **Completed players persist — until the cap is reached.** A `done`/`failed` player stays listed
+  with its final `state`/`dropped`/`last_error` until `remove` or `clear`. Rationale: a script that
+  starts a take and comes back to read the outcome must be able to find it; auto-pruning would race
+  that read. They therefore count against `schedule_max_live`, which on its own would let a long
+  session of one-shot schedules wedge the registry on its own history. So **`ScheduleStore.Activate`
+  evicts under cap pressure only**: while the registry is at `schedule_max_live`, it reclaims
+  *finished* players **oldest first** (activation order — the take a script just started is the last
+  to go), stopping the instant the count is back under the cap. Each reclaimed slot emits a
+  `schedule.evicted` event; nothing is ever dropped silently. **Below the cap nothing is ever
+  reclaimed**, so the persist-for-reading property is intact in the normal case.
+  - **"Finished" is `ScheduleStore.IsFinished`, and `failed` is not terminal.** `done` is latched and
+    conclusive. `failed` is set on the *first* failing entry while the schedule deliberately keeps
+    running, so a failed player qualifies only when it is also `!Clock.Loop && PendingCount == 0 &&
+    Clock.PositionMs >= DurationMs` (the runner's own completion test). Evicting on `state == failed`
+    alone would truncate a live take. **A looping player is never finished.**
+  - **Why eviction is eager, on the game thread.** `ReserveId` runs on a transport thread and cannot
+    touch the runner list, the group table or `Players`, nor block waiting for a game tick. Reclaiming
+    lazily at the moment a commit trips the cap therefore *cannot* work: the cap counts **reserved**
+    ids (claimed the instant a commit validates) while an eviction pass can only see **activated**
+    runners, so the first commit into a full registry would still fail EINVAL and only a retry a frame
+    later would succeed. Evicting eagerly, before the pending drain, removes the race instead of
+    papering over it. Both guards (`_runners.Count == 0`, `_ids.Count < MaxLive`) are integer compares,
+    so the idle tick stays branch-only and allocation-free.
 - **A failed entry does not stop the schedule.** The remaining entries still run; only the **first**
   failure is recorded (the cause, not the last symptom), and `state` becomes `failed` and stays
   there.
@@ -317,9 +338,11 @@ Task **C0.2** owns the `GatOsConfig.cs` property + `Sections` row + clamp-and-wa
    signatures are preserved (`Tick(due)` compiles), but `SimEvent` requires a UT stamp and the store
    has no other way to obtain one. The driver should pass the sampler's UT.
 
-4. **`ScheduleStore.Prune()` was not implemented.** Per the brief's own resolution, completed players
-   persist until `remove`/`clear`; `schedule.remove`/`schedule.clear` cover cleanup, so an unused
-   public method would be dead surface.
+4. **`ScheduleStore.Prune()` was not implemented** as public surface. Per the brief's own resolution,
+   completed players persist until `remove`/`clear`; `schedule.remove`/`schedule.clear` cover
+   cleanup, so an unused public method would be dead surface. What *did* land later is the private,
+   cap-pressure-only eviction inside `Activate` (§6) — it is not a general prune, it never runs below
+   the cap, and it is not callable from a transport.
 
 5. **`PlaybackClock.Rate` clamps to `[0, 100]`, not `[0.01, 100]`** — rate `0` is a legal "frozen"
    state, per the brief's own amendment.

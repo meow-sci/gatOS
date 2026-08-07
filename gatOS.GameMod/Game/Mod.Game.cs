@@ -363,8 +363,6 @@ public sealed partial class Mod
                     // so outcomes come back through the observer into schedules/<id>/last_error.
                     queue.Post(due.Command, due.Observer, due.Token);
                 }
-
-                EvictCompletedSchedules(schedules, ut);
             }
         }
         catch (Exception ex)
@@ -373,56 +371,6 @@ public sealed partial class Mod
             ModLog.Log.Error($"gatOS schedules disabled after a tick error: {ex.Message}");
         }
     }
-
-    /// <summary>
-    ///     Keeps the registry from wedging on its own history. Completed players deliberately persist
-    ///     so a script that starts a take can come back and read the outcome — but they still occupy a
-    ///     <c>schedule_max_live</c> slot, so a long session of one-shot schedules would eventually
-    ///     reject every new commit with EINVAL. Under cap pressure <i>only</i>, this drops finished
-    ///     players oldest-first: the reading a script is most likely to still want (the one it just
-    ///     started) is the last to go, and every eviction is announced on <c>/sim/events</c>.
-    /// </summary>
-    /// <param name="schedules">The registry to relieve.</param>
-    /// <param name="ut">Sim time to stamp the eviction events with.</param>
-    private static void EvictCompletedSchedules(ScheduleStore schedules, double ut)
-    {
-        var limit = schedules.Limits.MaxLive;
-        if (schedules.Count < limit)
-            return;
-
-        // Activation order, so index 0 is the oldest. The array is immutable; removals republish a
-        // new one, which is what schedules.Count below reads.
-        var players = schedules.Players;
-        for (var i = 0; i < players.Count && schedules.Count >= limit; i++)
-        {
-            var player = players[i];
-            if (!IsFinished(player))
-                continue;
-
-            schedules.Execute(new SimCommand("", "schedule.remove", SimCommand.NoOrdinal, 1)
-            {
-                Token = player.Id,
-            });
-            schedules.EmitEvent(new SimEvent(ut, "schedule.evicted", null,
-                $"{player.Id} kind={player.Kind} reason=max_live"));
-            ModLog.Log.Debug($"gatOS schedules: evicted completed player '{player.Id}' "
-                             + $"to free a slot ({limit} live max).");
-        }
-    }
-
-    /// <summary>
-    ///     Whether a player can never fire another command. <c>done</c> is conclusive (a stopped or
-    ///     exhausted player never ticks again), but <c>failed</c> is <b>not</b>: a schedule keeps
-    ///     running past its first failure, so a failed player only qualifies once it is also out of
-    ///     entries, not looping, and past its own duration — the runner's own completion test.
-    /// </summary>
-    private static bool IsFinished(IPlaybackPlayer player) => player.State switch
-    {
-        PlaybackState.Done => true,
-        PlaybackState.Failed => !player.Clock.Loop && player.PendingCount == 0
-                                && player.Clock.PositionMs >= player.DurationMs,
-        _ => false,
-    };
 
     /// <summary>
     ///     The current sim time, or 0 if the universe is not up yet. <c>GetElapsedSimTime</c> is a

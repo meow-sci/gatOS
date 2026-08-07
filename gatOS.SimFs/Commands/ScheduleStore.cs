@@ -87,7 +87,20 @@ public interface IPlaybackPlayer
 ///     its final <c>state</c>/<c>dropped</c>/<c>last_error</c> until something explicitly removes it
 ///     (<c>schedules/&lt;id&gt;/remove</c> or <c>schedules/clear</c>). A script that starts a take and
 ///     comes back to read the outcome must be able to find it; auto-pruning would race that read.
-///     The cost is that completed players count against <see cref="ScheduleLimits.MaxLive"/>.</para>
+///     They therefore count against <see cref="ScheduleLimits.MaxLive"/> — which is why
+///     <see cref="Activate"/> evicts them <i>under cap pressure only</i> (see
+///     <see cref="IsFinished"/>). Below the cap nothing is ever reclaimed, so the read a script came
+///     back for is still there; at the cap the oldest finished player yields its slot rather than
+///     wedging the registry on its own history.</para>
+///     <para><b>Why eviction lives on the game thread, eagerly.</b> The obvious place to reclaim a
+///     slot is <see cref="ReserveId"/>, where the cap is tested — but that runs on a transport thread
+///     and the runner list, the group table and <see cref="Players"/> are game-thread-only, and a
+///     commit may not block waiting for a game tick. So the direction is inverted: the game thread
+///     relieves the pressure <i>before</i> a commit ever arrives, on every tick, and
+///     <see cref="ReserveId"/> stays a single unguarded cap test. That removes the race rather than
+///     retrying around it — a lazy scheme would still fail the first commit into a full registry,
+///     because the reserved-id set counts commits that have not activated yet and that no eviction
+///     pass can see.</para>
 /// </remarks>
 public sealed class ScheduleStore
 {
@@ -214,13 +227,21 @@ public sealed class ScheduleStore
     // ---- game thread -------------------------------------------------------------------------
 
     /// <summary>
-    ///     Game thread: turns every committed-but-not-yet-started schedule into a live player, wiring
-    ///     it to its own clock or to its group's shared one, and starting it.
+    ///     Game thread: relieves cap pressure (see the type's remarks), then turns every
+    ///     committed-but-not-yet-started schedule into a live player, wiring it to its own clock or to
+    ///     its group's shared one, and starting it.
     /// </summary>
+    /// <remarks>
+    ///     Eviction runs <b>before</b> the drain and <b>unconditionally</b> — not only when something
+    ///     is pending — because its whole job is to have already made room by the time a transport
+    ///     thread calls <see cref="ReserveId"/>. Both of its guards are one integer comparison, so the
+    ///     overwhelmingly common tick (idle registry, nothing pending) is still branch-only.
+    /// </remarks>
     /// <param name="utSeconds">Current sim time, stamped onto emitted events.</param>
     public void Activate(double utSeconds = 0)
     {
         _utSeconds = utSeconds;
+        EvictCompletedLocked(utSeconds);
         if (_pending.IsEmpty)
             return;
 
@@ -401,13 +422,99 @@ public sealed class ScheduleStore
     {
         runner.Stop();
         _runners.Remove(runner);
+        ReleaseSlot(runner);
+        Publish();
+    }
+
+    /// <summary>
+    ///     Drops a runner already removed from <see cref="_runners"/> out of the reserved-id set and,
+    ///     if it was the last of its group, out of the group table. Releasing the <i>id</i> is the
+    ///     load-bearing half: <see cref="ReserveId"/>'s cap counts ids, not runners.
+    /// </summary>
+    private void ReleaseSlot(ScheduleRunner runner)
+    {
         _ids.TryRemove(runner.Id, out _);
         // A group clock outlives its members only as long as one is left; otherwise it would keep
         // advancing forever and a re-created group would inherit a stale position.
-        if (runner.Group.Length > 0 && !_runners.Any(r => r.Group == runner.Group))
-            _groups.Remove(runner.Group);
-        Publish();
+        if (runner.Group.Length == 0 || GroupInUse(runner.Group))
+            return;
+        _groups.Remove(runner.Group);
     }
+
+    private bool GroupInUse(string group)
+    {
+        for (var i = 0; i < _runners.Count; i++)
+            if (string.Equals(_runners[i].Group, group, StringComparison.Ordinal))
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    ///     Game thread, from <see cref="Activate"/>: under cap pressure <i>only</i>, reclaims slots
+    ///     held by players that can never fire again — oldest first, stopping the instant the registry
+    ///     is back under <see cref="ScheduleLimits.MaxLive"/>.
+    /// </summary>
+    /// <remarks>
+    ///     Oldest-first is the whole policy: <see cref="_runners"/> is in activation order, so the
+    ///     reading a script is most likely to still want (the take it just started) is the last to go,
+    ///     and a just-activated player is never the victim. Nothing is dropped silently — each
+    ///     eviction emits a <c>schedule.evicted</c> event naming the id and the reason.
+    /// </remarks>
+    /// <param name="utSeconds">Sim time to stamp the eviction events with.</param>
+    private void EvictCompletedLocked(double utSeconds)
+    {
+        // Two integer compares on the idle path. The cap counts *ids* (reserved ones included), which
+        // is exactly the quantity ReserveId tests, so freeing runners against any other count would
+        // leave the cap still tripped.
+        if (_runners.Count == 0 || _ids.Count < Limits.MaxLive)
+            return;
+
+        var evicted = false;
+        for (var i = 0; i < _runners.Count && _ids.Count >= Limits.MaxLive; i++)
+        {
+            var runner = _runners[i];
+            if (!IsFinished(runner))
+                continue;
+
+            _runners.RemoveAt(i);
+            i--;
+            ReleaseSlot(runner);
+            evicted = true;
+            EmitEvent(new SimEvent(utSeconds, "schedule.evicted", null,
+                $"{runner.Id} kind={runner.Kind} reason=max_live"));
+            ModLog.Log.Debug($"schedule '{runner.Id}': evicted to free a slot "
+                             + $"({Limits.MaxLive.ToString(CultureInfo.InvariantCulture)} live max)");
+        }
+
+        if (evicted)
+            Publish();
+    }
+
+    /// <summary>
+    ///     Whether a player can never fire another command — the <b>one</b> definition of "finished",
+    ///     so eviction and any status reporting can never disagree about it.
+    /// </summary>
+    /// <remarks>
+    ///     <para><b><c>failed</c> is not a terminal state</b>, and that is the subtle part. A
+    ///     <see cref="ScheduleRunner"/> reports <see cref="PlaybackState.Failed"/> the instant its
+    ///     <i>first</i> entry fails and then deliberately keeps running — the remaining entries are
+    ///     still authored intent (see the runner's remarks). Treating <c>failed</c> as terminal would
+    ///     evict a live take mid-flight and silently truncate it, which is precisely the failure mode
+    ///     the runner was written to avoid. So a failed player qualifies only once it is <i>also</i>
+    ///     out of entries, not looping, and past its own duration — the same test
+    ///     <see cref="Scheduler.IsComplete"/> applies, restated over the public
+    ///     <see cref="IPlaybackPlayer"/> surface because that is all eviction can see.</para>
+    ///     <para><c>done</c>, by contrast, <i>is</i> conclusive: it is latched (a stopped or exhausted
+    ///     runner early-returns from <c>Tick</c> forever after), so it needs no further test.</para>
+    /// </remarks>
+    /// <param name="player">The player to test.</param>
+    internal static bool IsFinished(IPlaybackPlayer player) => player.State switch
+    {
+        PlaybackState.Done => true,
+        PlaybackState.Failed => !player.Clock.Loop && player.PendingCount == 0
+                                && player.Clock.PositionMs >= player.DurationMs,
+        _ => false,
+    };
 
     private PlaybackClock ResolveClock(Schedule schedule)
     {
