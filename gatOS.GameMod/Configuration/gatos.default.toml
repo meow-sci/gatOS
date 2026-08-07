@@ -158,6 +158,59 @@ audio_max_clips = 64
 # Maximum concurrent playback channels (play past it fails EBUSY).
 audio_max_channels = 16
 
+# ===== CAMERA — programmable cinematic camera (/sim/camera) =====
+
+# Serve /sim/camera: take the camera, fly it, follow and frame things, then
+# hand it back. false removes the surface entirely.
+camera_enabled = true
+
+# Maximum uploaded camera tracks (ENOSPC past it).
+camera_max_tracks = 32
+
+# Per-track JSON size cap in bytes (an upload past it fails EFBIG).
+camera_max_track_bytes = 1048576
+
+# Store-wide byte cap across all tracks (uploads past it fail ENOSPC).
+camera_max_total_bytes = 8388608
+
+# Maximum keyframes per animated channel (EINVAL past it).
+camera_max_keys = 4096
+
+# Lower field-of-view bound in degrees — deliberately wider than the game's own
+# 15, since the engine's SetFieldOfView is unclamped.
+camera_fov_min = 1.0
+
+# Upper field-of-view bound in degrees — deliberately wider than the game's own
+# 120, so telephoto shots are available.
+camera_fov_max = 179.0
+
+# Default eased hand-back in seconds when the director releases the camera
+# (the game's own CameraJumpTime default is 0.6).
+camera_release_blend_s = 0.6
+
+# Allow camera tracks to drive simulation speed; additionally requires
+# debug_namespace.
+camera_allow_time_channel = true
+
+# ===== SCHEDULE — host-side timed command sequences (/sim/ctl/timed_batch) =====
+
+# Serve /sim/ctl/timed_batch + /sim/ctl/schedules: any control leaf, any time
+# offset, replayed host-side. false removes both entirely.
+schedule_enabled = true
+
+# Maximum concurrent live schedules (EINVAL past it).
+schedule_max_live = 16
+
+# Maximum timed entries per schedule (EINVAL past it).
+schedule_max_entries = 8192
+
+# Per-schedule buffered payload cap in bytes (EINVAL past it).
+schedule_max_bytes = 1048576
+
+# Clock base for a schedule that does not declare @clock: render (frames) |
+# wall (host time) | ut (simulation time, so warp scales it).
+schedule_default_clock = "render"
+
 # ===== IVA — free-floating cabin objects (/sim/debug/iva; all tunable live over /sim) =====
 
 # Boot seed for /sim/debug/iva/enabled — the master switch for the whole cabin-physics

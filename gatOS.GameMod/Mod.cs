@@ -53,6 +53,12 @@ public sealed partial class Mod
     private int _resetInFlight;
     private bool _uiDead;
 
+    // Set by OnBeforeUi, consumed by OnAfterFrame: the two GUI hooks live inside Program.OnFrame's
+    // `if (DrawUI)` block, so pressing F2 stops them dead. OnAfterFrame is a postfix on
+    // Program.OnFrame itself and always fires — it re-runs the same per-frame work, but only on the
+    // frames the GUI hooks were skipped, so behaviour with the UI visible is unchanged.
+    private bool _uiHooksRanThisFrame;
+
     // The /sim stack (T9.3): store + tree are immutable after init; the server reference is
     // volatile because Restart SimFs swaps it from a background task while the render thread
     // reads it (threading rule 5) and the sampler/VM boot consult it on their own threads.
@@ -270,13 +276,17 @@ public sealed partial class Mod
     ///     Per-frame game-thread hook: the telemetry sampler ticks and queued control commands
     ///     drain here (T9.1 + G1, threading rule 1 — both touch game state only on this thread).
     /// </summary>
+    /// <remarks>
+    ///     StarMap implements this as a Harmony prefix on <c>Program.OnDrawUiFrame</c>, whose only
+    ///     call site sits inside <c>Program.OnFrame</c>'s <c>if (DrawUI)</c> block — so this hook
+    ///     does not fire while the player has the UI hidden (F2). <see cref="OnAfterFrame"/> covers
+    ///     exactly those frames; the latch set here is what tells it to stand down on the others.
+    /// </remarks>
     [StarMapBeforeGui]
     public void OnBeforeUi(double dt)
     {
-        SampleTelemetry(dt);
-        DrainCommands();
-        DriveAudio(); // right after the drain: prune finished channels, enforce end=, publish status
-        UpdateThugLife(); // validate/re-resolve thug-life anchors on the game thread, before the scene renders
+        _uiHooksRanThisFrame = true;
+        DrivePerFrame(dt);
     }
 
     /// <summary>
@@ -302,14 +312,19 @@ public sealed partial class Mod
     ///     nothing when its registry is empty. This hook (rather than <c>OnBeforeUi</c>) is where the
     ///     vehicle-solver workers have finished, so the kinematics both drivers read are settled.
     /// </summary>
+    /// <remarks>
+    ///     Like <see cref="OnBeforeUi"/> this is F2-gated — StarMap postfixes
+    ///     <c>Program.OnDrawUiViewports</c>, whose only call site is inside <c>Program.OnFrame</c>'s
+    ///     <c>if (DrawUI)</c> block. <see cref="OnAfterFrame"/> re-runs the two drivers (never the
+    ///     UI, which has no ImGui frame to draw into with the UI hidden) on the skipped frames.
+    /// </remarks>
     [StarMapAfterGui]
     public void OnAfterUi(double dt)
     {
         if (!ReferenceEquals(_instance, this))
             return;
 
-        DriveWelds(dt); // partial; self-gates to a no-op when no welds are active
-        DriveIvaPhysics(dt); // partial; self-gates to a no-op while IVA physics is off or empty
+        DrivePostSolver(dt);
 
         if (_uiDead)
             return;
@@ -325,6 +340,65 @@ public sealed partial class Mod
             _uiDead = true;
             ModLog.Log.Error($"gatOS diagnostics UI disabled after a draw error: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    ///     The F2-proof per-frame hook (CAMERA_CONTROLS_PLAN §5.1, C0.1): StarMap postfixes
+    ///     <c>Program.OnFrame</c> itself here, unconditionally and exactly once per rendered frame.
+    ///     It re-runs the work of <see cref="OnBeforeUi"/> and <see cref="OnAfterUi"/> — but only on
+    ///     the frames those two were skipped, i.e. while the player has the UI hidden.
+    /// </summary>
+    /// <remarks>
+    ///     Both GUI hooks sit inside <c>Program.OnFrame</c>'s <c>if (DrawUI)</c> block, and F2
+    ///     toggles <c>DrawUI</c> — so without this hook hiding the UI would silently stop the
+    ///     telemetry sampler, the command drain, the audio tick, the thug-life updater, the welds
+    ///     driver and the IVA physics driver. The latch (rather than a frame-number comparison)
+    ///     keeps this half of the partial class game-free: it must still compile with no KSA
+    ///     assemblies present, so <c>Program.FrameNumber</c> is not referenceable here — and it is
+    ///     incremented *before* this postfix fires anyway, so an equality latch would not suppress
+    ///     the duplicate run. With the UI visible this method does nothing but clear the latch, so
+    ///     the normal path is unchanged.
+    /// </remarks>
+    /// <param name="currentPlayerTime">Player-clock timestamp of the frame (unused).</param>
+    /// <param name="dtPlayer">Player-clock delta for the frame, in seconds.</param>
+    [StarMapAfterOnFrame]
+    public void OnAfterFrame(double currentPlayerTime, double dtPlayer)
+    {
+        if (!ReferenceEquals(_instance, this))
+            return;
+
+        var ranInGui = _uiHooksRanThisFrame;
+        _uiHooksRanThisFrame = false;
+        if (ranInGui)
+            return;
+
+        // UI hidden: stand in for both GUI hooks, in their original order. Deliberately *not*
+        // DrawGameUi() — with DrawUI false there is no ImGui frame to draw into.
+        DrivePerFrame(dtPlayer);
+        DrivePostSolver(dtPlayer);
+    }
+
+    /// <summary>
+    ///     The per-frame game-thread work of <see cref="OnBeforeUi"/>: sample, drain, actuate. Run
+    ///     from the GUI hook normally, or — with the UI hidden (F2) — from <see cref="OnAfterFrame"/>.
+    /// </summary>
+    private void DrivePerFrame(double dt)
+    {
+        SampleTelemetry(dt);
+        DrainCommands();
+        DriveAudio(); // right after the drain: prune finished channels, enforce end=, publish status
+        UpdateThugLife(); // validate/re-resolve thug-life anchors on the game thread, before the scene renders
+    }
+
+    /// <summary>
+    ///     The post-solver game-thread drivers of <see cref="OnAfterUi"/> (each waits out the
+    ///     vehicle solvers itself, so the kinematics they read are settled). Run from the GUI hook
+    ///     normally, or — with the UI hidden (F2) — from <see cref="OnAfterFrame"/>.
+    /// </summary>
+    private void DrivePostSolver(double dt)
+    {
+        DriveWelds(dt); // partial; self-gates to a no-op when no welds are active
+        DriveIvaPhysics(dt); // partial; self-gates to a no-op while IVA physics is off or empty
     }
 
     /// <summary>

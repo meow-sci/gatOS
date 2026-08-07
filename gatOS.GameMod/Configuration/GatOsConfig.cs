@@ -118,6 +118,33 @@ public sealed class GatOsConfig
             ("audio_max_clips", "Maximum number of uploaded clips (ENOSPC past it)."),
             ("audio_max_channels", "Maximum concurrent playback channels (play past it fails EBUSY)."),
         }),
+        ("CAMERA — programmable cinematic camera (/sim/camera)", new[]
+        {
+            ("camera_enabled", "Serve /sim/camera: take the camera, fly it, follow and frame things, then\n"
+                + "hand it back. false removes the surface entirely."),
+            ("camera_max_tracks", "Maximum uploaded camera tracks (ENOSPC past it)."),
+            ("camera_max_track_bytes", "Per-track JSON size cap in bytes (an upload past it fails EFBIG)."),
+            ("camera_max_total_bytes", "Store-wide byte cap across all tracks (uploads past it fail ENOSPC)."),
+            ("camera_max_keys", "Maximum keyframes per animated channel (EINVAL past it)."),
+            ("camera_fov_min", "Lower field-of-view bound in degrees — deliberately wider than the game's own\n"
+                + "15, since the engine's SetFieldOfView is unclamped."),
+            ("camera_fov_max", "Upper field-of-view bound in degrees — deliberately wider than the game's own\n"
+                + "120, so telephoto shots are available."),
+            ("camera_release_blend_s", "Default eased hand-back in seconds when the director releases the camera\n"
+                + "(the game's own CameraJumpTime default is 0.6)."),
+            ("camera_allow_time_channel", "Allow camera tracks to drive simulation speed; additionally requires\n"
+                + "debug_namespace."),
+        }),
+        ("SCHEDULE — host-side timed command sequences (/sim/ctl/timed_batch)", new[]
+        {
+            ("schedule_enabled", "Serve /sim/ctl/timed_batch + /sim/ctl/schedules: any control leaf, any time\n"
+                + "offset, replayed host-side. false removes both entirely."),
+            ("schedule_max_live", "Maximum concurrent live schedules (EINVAL past it)."),
+            ("schedule_max_entries", "Maximum timed entries per schedule (EINVAL past it)."),
+            ("schedule_max_bytes", "Per-schedule buffered payload cap in bytes (EINVAL past it)."),
+            ("schedule_default_clock", "Clock base for a schedule that does not declare @clock: render (frames) |\n"
+                + "wall (host time) | ut (simulation time, so warp scales it)."),
+        }),
         ("IVA — free-floating cabin objects (/sim/debug/iva; all tunable live over /sim)", new[]
         {
             ("iva_physics_enabled",
@@ -320,6 +347,70 @@ public sealed class GatOsConfig
 
     /// <summary>Maximum concurrent playback channels (EBUSY past it; clamped 1..64).</summary>
     public int AudioMaxChannels { get; set; } = 16;
+
+    // ---- CAMERA: the programmable cinematic camera (/sim/camera; plans/CAMERA_CONTROLS_PLAN.md). ----
+
+    /// <summary>Serve the <c>/sim/camera</c> surface; <c>false</c> removes it from every transport.</summary>
+    public bool CameraEnabled { get; set; } = true;
+
+    /// <summary>Maximum uploaded camera tracks (ENOSPC past it; clamped 1..512).</summary>
+    public int CameraMaxTracks { get; set; } = 32;
+
+    /// <summary>Per-track JSON byte cap (EFBIG past it; clamped 1 KiB..64 MiB).</summary>
+    public int CameraMaxTrackBytes { get; set; } = 1024 * 1024;
+
+    /// <summary>Store-wide byte cap across all tracks (ENOSPC past it; never below the per-track cap).</summary>
+    public int CameraMaxTotalBytes { get; set; } = 8 * 1024 * 1024;
+
+    /// <summary>Maximum keyframes per animated channel (EINVAL past it; clamped 2..65536).</summary>
+    public int CameraMaxKeys { get; set; } = 4096;
+
+    /// <summary>
+    ///     Lower field-of-view bound in degrees (clamped 0.1..179) — deliberately wider than the
+    ///     game's own 15°, because <c>SetFieldOfView</c> is unclamped and a fisheye is a shot.
+    /// </summary>
+    public double CameraFovMin { get; set; } = 1;
+
+    /// <summary>
+    ///     Upper field-of-view bound in degrees (clamped up to 179 and never below
+    ///     <see cref="CameraFovMin"/>) — deliberately wider than the game's own 120°.
+    /// </summary>
+    public double CameraFovMax { get; set; } = 179;
+
+    /// <summary>
+    ///     Default eased hand-back in seconds when the director releases the camera (clamped 0..10;
+    ///     the game's own <c>CameraJumpTime</c> default is 0.6 s).
+    /// </summary>
+    public double CameraReleaseBlendS { get; set; } = 0.6;
+
+    /// <summary>
+    ///     Allow camera tracks to drive simulation speed; additionally requires
+    ///     <see cref="DebugNamespace"/>.
+    /// </summary>
+    public bool CameraAllowTimeChannel { get; set; } = true;
+
+    // ---- SCHEDULE: host-side timed command sequences (/sim/ctl/timed_batch; CAMERA_CONTROLS_PLAN §3). ----
+
+    /// <summary>
+    ///     Serve <c>/sim/ctl/timed_batch</c> + <c>/sim/ctl/schedules</c>; <c>false</c> removes both
+    ///     from every transport.
+    /// </summary>
+    public bool ScheduleEnabled { get; set; } = true;
+
+    /// <summary>Maximum concurrent live schedules (EINVAL past it; clamped 1..256).</summary>
+    public int ScheduleMaxLive { get; set; } = 16;
+
+    /// <summary>Maximum timed entries per schedule (EINVAL past it; clamped 1..262144).</summary>
+    public int ScheduleMaxEntries { get; set; } = 8192;
+
+    /// <summary>Per-schedule buffered payload byte cap (EINVAL past it; clamped 1 KiB..16 MiB).</summary>
+    public int ScheduleMaxBytes { get; set; } = 1024 * 1024;
+
+    /// <summary>
+    ///     Default clock base for a schedule that does not declare <c>@clock</c>: <c>render</c> |
+    ///     <c>wall</c> | <c>ut</c> (anything else falls back to <c>render</c> with a warning).
+    /// </summary>
+    public string ScheduleDefaultClock { get; set; } = "render";
 
     // ---- IVA: free-floating cabin objects (/sim/debug/iva; plans/IVA_MOVEMENTS.md). ----
 
@@ -580,6 +671,17 @@ public sealed class GatOsConfig
             AudioMaxClipBytes, 1024 * 1024 * 1024);
         AudioMaxClips = Clamp(nameof(AudioMaxClips), AudioMaxClips, 1, 1024);
         AudioMaxChannels = Clamp(nameof(AudioMaxChannels), AudioMaxChannels, 1, 64);
+        CameraMaxTracks = Clamp(nameof(CameraMaxTracks), CameraMaxTracks, 1, 512);
+        CameraMaxTrackBytes = Clamp(nameof(CameraMaxTrackBytes), CameraMaxTrackBytes, 1024, 64 * 1024 * 1024);
+        CameraMaxTotalBytes = Clamp(nameof(CameraMaxTotalBytes), CameraMaxTotalBytes,
+            CameraMaxTrackBytes, 256 * 1024 * 1024);
+        CameraMaxKeys = Clamp(nameof(CameraMaxKeys), CameraMaxKeys, 2, 65536);
+        CameraFovMin = Clamp(nameof(CameraFovMin), CameraFovMin, 0.1, 179);
+        CameraFovMax = Clamp(nameof(CameraFovMax), CameraFovMax, CameraFovMin, 179);
+        CameraReleaseBlendS = Clamp(nameof(CameraReleaseBlendS), CameraReleaseBlendS, 0, 10);
+        ScheduleMaxLive = Clamp(nameof(ScheduleMaxLive), ScheduleMaxLive, 1, 256);
+        ScheduleMaxEntries = Clamp(nameof(ScheduleMaxEntries), ScheduleMaxEntries, 1, 262144);
+        ScheduleMaxBytes = Clamp(nameof(ScheduleMaxBytes), ScheduleMaxBytes, 1024, 16 * 1024 * 1024);
         IvaSubstepHz = Clamp(nameof(IvaSubstepHz), IvaSubstepHz, 30, 480);
         IvaMaxSubstepsPerFrame = Clamp(nameof(IvaMaxSubstepsPerFrame), IvaMaxSubstepsPerFrame, 1, 32);
         IvaMaxObjects = Clamp(nameof(IvaMaxObjects), IvaMaxObjects, 1, 64);
@@ -598,6 +700,15 @@ public sealed class GatOsConfig
         }
 
         DisplayEncoding = displayEncoding;
+
+        var scheduleClock = ScheduleDefaultClock.Trim().ToLowerInvariant();
+        if (scheduleClock is not ("render" or "wall" or "ut"))
+        {
+            ModLog.Log.Warn($"Config: schedule_default_clock '{ScheduleDefaultClock}' is not render/wall/ut; using render.");
+            scheduleClock = "render";
+        }
+
+        ScheduleDefaultClock = scheduleClock;
 
         var serialMode = SerialMode.Trim().ToLowerInvariant();
         if (serialMode is not ("ndjson" or "nmea" or "ccsds"))
