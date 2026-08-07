@@ -3,6 +3,7 @@ using System.Globalization;
 using gatOS.NineP.Protocol;
 using gatOS.NineP.Vfs;
 using gatOS.SimFs.Audio;
+using gatOS.SimFs.Camera;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Display;
 using gatOS.SimFs.Fx;
@@ -94,9 +95,17 @@ public static class SimFsTree
     ///     <c>schedules/</c> registry. Null (schedules disabled in config) removes both entirely so
     ///     the SPEC stays truthful.
     /// </param>
+    /// <param name="camera">
+    ///     Optional camera track store + live-state exchange (plans/CAMERA_CONTROLS_PLAN.md §4): when
+    ///     supplied the tree gains the <c>/sim/camera/</c> surface — the writable <c>track/</c>
+    ///     directory, the <c>status</c>/<c>info</c>/<c>playback</c> reads, and (with a command sink) the
+    ///     whole ownership + pose + playback control surface. Null (camera disabled in config) removes
+    ///     it entirely so the SPEC stays truthful.
+    /// </param>
     public static VfsDirectory Build(SnapshotStore store, ICommandSink? commands, Func<string>? transports,
-        DisplaySurface? display = null, AudioStore? audio = null, ScheduleStore? schedules = null)
-        => new Builder(store, commands, transports, display, audio, schedules).BuildRoot();
+        DisplaySurface? display = null, AudioStore? audio = null, ScheduleStore? schedules = null,
+        CameraStore? camera = null)
+        => new Builder(store, commands, transports, display, audio, schedules, camera).BuildRoot();
 
     private sealed class Builder
     {
@@ -106,6 +115,7 @@ public static class SimFsTree
         private readonly DisplaySurface? _display;
         private readonly AudioStore? _audio;
         private readonly ScheduleStore? _schedules;
+        private readonly CameraStore? _camera;
         private readonly ConcurrentDictionary<string, ulong> _qids = new();
         private long _nextQid;
 
@@ -148,7 +158,7 @@ public static class SimFsTree
         }
 
         internal Builder(SnapshotStore store, ICommandSink? commands, Func<string>? transports,
-            DisplaySurface? display, AudioStore? audio, ScheduleStore? schedules)
+            DisplaySurface? display, AudioStore? audio, ScheduleStore? schedules, CameraStore? camera)
         {
             _store = store;
             _commands = commands;
@@ -156,6 +166,7 @@ public static class SimFsTree
             _display = display;
             _audio = audio;
             _schedules = schedules;
+            _camera = camera;
         }
 
         internal VfsDirectory BuildRoot()
@@ -203,6 +214,11 @@ public static class SimFsTree
             // Userland audio playback (GATOS_CUSTOM_AUDIO_PLAN): present whenever a store is wired.
             if (_audio is not null)
                 children.Add(AudioDir());
+
+            // The programmable camera (plans/CAMERA_CONTROLS_PLAN.md §4): present whenever a store is
+            // wired ([camera] camera_enabled).
+            if (_camera is not null)
+                children.Add(CameraDir());
 
             var fixedChildren = children.ToArray();
             _root = new DelegateDirectory("/", Qid("/"), () => fixedChildren);
@@ -467,6 +483,130 @@ public static class SimFsTree
                    + $"bytes_max={store.MaxTotalBytes.ToString(CultureInfo.InvariantCulture)} "
                    + $"clip_bytes_max={store.MaxClipBytes.ToString(CultureInfo.InvariantCulture)} "
                    + $"channels={store.Channels.Count} channels_max={store.MaxChannels}";
+        }
+
+        // ---- camera (the programmable cinematic camera — plans/CAMERA_CONTROLS_PLAN.md §4) ----
+
+        /// <summary>
+        ///     The <c>/sim/camera</c> surface: ownership (<c>enabled</c>/<c>release</c>), the follow
+        ///     controls, the fully-decomposed <c>pose/</c> channels (one leaf per knob, so every channel
+        ///     the JSON track can animate is reachable from <c>ctl/batch</c>, <c>ctl/timed_batch</c>,
+        ///     HTTP and MQTT too), the writable <c>track/</c> upload directory, and the three-verb
+        ///     playback grammar mirroring <c>/sim/audio</c>.
+        /// </summary>
+        /// <remarks>
+        ///     Every read here is <b>live</b> (never snapshot-memoized): the camera moves every rendered
+        ///     frame, far faster than the telemetry publish cadence, and a stale pose read would make a
+        ///     scrub-based preview loop unusable. Every read-back is the <i>composed effective</i> value
+        ///     off the director-published <c>CameraStatus</c>, not the last thing written, so a client
+        ///     that reconnects can resync (AGENTS.md §7).
+        /// </remarks>
+        private VfsDirectory CameraDir()
+        {
+            var store = _camera!;
+            CameraStatus Status() => store.Status;
+
+            var children = new List<VfsNode>
+            {
+                new StaticTextFile("status", Qid("camera/status"), () => CameraFormat.Status(Status())),
+                LiveLine("camera/info", "info", () => CameraFormat.Info(store)),
+                LiveLine("camera/target", "target", () => CameraFormat.FollowId(Status())),
+                LiveLine("camera/playback", "playback", () => CameraFormat.Playback(Status())),
+                new CameraDirectory("track", Qid("camera/track"), store, Qid),
+                FlagControl("camera/enabled", "enabled", "", CameraCommands.EnabledAction,
+                    SimCommand.NoOrdinal, () => Formats.Flag(Status().Owned)),
+                EnumControl("camera/mode", "mode", "", CameraCommands.ModeAction,
+                    CameraRules.ModeTokens, () => CameraFormat.Mode(Status().Mode)),
+                TokenControl("camera/follow", "follow", "", CameraCommands.FollowAction,
+                    () => Status().Follow.ToString()),
+                FlagControl("camera/tidal", "tidal", "", CameraCommands.TidalAction,
+                    SimCommand.NoOrdinal, () => Formats.Flag(Status().Tidal)),
+                CameraPoseDir(store),
+                LineControl("camera/play", "play", () => CameraFormat.Play(Status()),
+                    CameraCommands.ParsePlay),
+                LineControl("camera/set", "set", () => CameraFormat.Set(Status()),
+                    CameraCommands.ParseSet),
+            };
+
+            // Triggers exist only with a sink: unlike a state control they have no value to read, so a
+            // read-only twin would be a file that does nothing and says nothing.
+            if (_commands is { } sink)
+            {
+                children.Add(new TriggerFile("release", Qid("camera/release"), sink,
+                    new SimCommand("", CameraCommands.ReleaseAction, SimCommand.NoOrdinal, 1)));
+                children.Add(new TriggerFile("stop", Qid("camera/stop"), sink,
+                    new SimCommand("", CameraCommands.StopAction, SimCommand.NoOrdinal, 1)));
+            }
+
+            return DelegateDirectory.Fixed("camera", Qid("camera"), children.ToArray());
+        }
+
+        /// <summary>
+        ///     <c>/sim/camera/pose</c>: one writable leaf per animatable channel, plus the two composite
+        ///     conveniences (<c>aim</c>, <c>geo</c>) that set several at once. The granular leaves are the
+        ///     point — they are what make the camera scriptable at frame rates and mirrored per-field
+        ///     over HTTP/MQTT for free (AGENTS.md §7).
+        /// </summary>
+        private VfsDirectory CameraPoseDir(CameraStore store)
+        {
+            CameraPose Pose() => store.Status.Pose;
+            var limits = store.Limits;
+
+            var children = new List<VfsNode>
+            {
+                LineControl("camera/pose/position", "position", () => CameraFormat.Position(Pose()),
+                    CameraCommands.ParsePosition),
+                EnumControl("camera/pose/frame", "frame", "", CameraCommands.FrameAction,
+                    CameraRules.FrameTokens, () => CameraFormat.Frame(Pose().Frame)),
+                TokenControl("camera/pose/anchor", "anchor", "", CameraCommands.AnchorAction,
+                    () => Pose().Anchor.ToString()),
+                LineControl("camera/pose/geo", "geo", () => CameraFormat.Geo(Pose()),
+                    CameraCommands.ParseGeo),
+                DelegateDirectory.Fixed("orbit", Qid("camera/pose/orbit"),
+                    RangedControl("camera/pose/orbit/radius", "radius", "",
+                        CameraCommands.OrbitRadiusAction, 0, double.MaxValue,
+                        () => Formats.Scalar(Pose().OrbitRadius)),
+                    NumberControl("camera/pose/orbit/azimuth", "azimuth", "",
+                        CameraCommands.OrbitAzimuthAction, SimCommand.NoOrdinal,
+                        () => Formats.Scalar(Pose().OrbitAzimuth)),
+                    RangedControl("camera/pose/orbit/elevation", "elevation", "",
+                        CameraCommands.OrbitElevationAction, -90, 90,
+                        () => Formats.Scalar(Pose().OrbitElevation))),
+                // Wire-identical to a 4-arity vector control; its own parser exists so a degenerate
+                // (zero-norm) quaternion fails the write instead of silently becoming identity.
+                LineControl("camera/pose/rotation", "rotation",
+                    () => Formats.Quat(Pose().Rotation.ToSnapshot()), CameraCommands.ParseRotation),
+                LineControl("camera/pose/aim", "aim", () => CameraFormat.Aim(Pose()),
+                    CameraCommands.ParseAim),
+                TokenControl("camera/pose/aim_target", "aim_target", "", CameraCommands.AimTargetAction,
+                    () => Pose().AimTarget.ToString()),
+                VectorControl("camera/pose/aim_offset", "aim_offset", "", CameraCommands.AimOffsetAction,
+                    SimCommand.NoOrdinal, 3, () => Formats.Vector(Pose().AimOffset.ToSnapshot())),
+                EnumControl("camera/pose/aim_frame", "aim_frame", "", CameraCommands.AimFrameAction,
+                    CameraRules.FrameTokens, () => CameraFormat.Frame(Pose().AimFrame)),
+                EnumControl("camera/pose/aim_up", "aim_up", "", CameraCommands.AimUpAction,
+                    CameraRules.AimUpTokens, () => CameraFormat.Up(Pose().AimUp)),
+                NumberControl("camera/pose/roll", "roll", "", CameraCommands.RollAction,
+                    SimCommand.NoOrdinal, () => Formats.Scalar(Pose().Roll)),
+                // The FOV bounds come from [camera] and are deliberately wider than the game's own
+                // 15–120: SetFieldOfView does not clamp, so fisheye and telephoto really are available.
+                RangedControl("camera/pose/fov", "fov", "", CameraCommands.FovAction,
+                    limits.FovMin, limits.FovMax, () => Formats.Scalar(Pose().Fov)),
+                FlagControl("camera/pose/ortho", "ortho", "", CameraCommands.OrthoAction,
+                    SimCommand.NoOrdinal, () => Formats.Flag(Pose().Ortho)),
+                // Strictly positive: a zero-height orthographic frustum has no volume at all.
+                RangedControl("camera/pose/ortho_height", "ortho_height", "",
+                    CameraCommands.OrthoHeightAction, double.Epsilon, double.MaxValue,
+                    () => Formats.Scalar(Pose().OrthoHeight)),
+                RangedControl("camera/pose/smoothing", "smoothing", "", CameraCommands.SmoothingAction,
+                    0, CameraRules.MaxSmoothingSeconds, () => Formats.Scalar(Pose().Smoothing)),
+            };
+
+            if (_commands is { } sink)
+                children.Add(new TriggerFile("reset", Qid("camera/pose/reset"), sink,
+                    new SimCommand("", CameraCommands.PoseResetAction, SimCommand.NoOrdinal, 1)));
+
+            return DelegateDirectory.Fixed("pose", Qid("camera/pose"), children.ToArray());
         }
 
         /// <summary>Applies a <c>0</c>/<c>1</c> (or true/false/on/off) token; false = EINVAL.</summary>
@@ -1016,6 +1156,32 @@ public static class SimFsTree
             => _commands is { } sink
                 ? VectorControlFile.Create(name, Qid(qidPath), sink, read, arity,
                     v => new SimCommand(vesselId, action, ordinal, 0) { Values = v })
+                : new StaticTextFile(name, Qid(qidPath), () => read() + "\n");
+
+        /// <summary>
+        ///     A numeric STATE control constrained to an inclusive range, or its read-only twin when
+        ///     control is unwired.
+        /// </summary>
+        private VfsFile RangedControl(string qidPath, string name, string vesselId, string action,
+            double min, double max, Func<string> read)
+            => _commands is { } sink
+                ? ControlFile.Ranged(name, Qid(qidPath), sink, read, min, max,
+                    v => new SimCommand(vesselId, action, SimCommand.NoOrdinal, v))
+                : new StaticTextFile(name, Qid(qidPath), () => read() + "\n");
+
+        /// <summary>A free-form token STATE control, or its read-only twin when control is unwired.</summary>
+        private VfsFile TokenControl(string qidPath, string name, string vesselId, string action,
+            Func<string> read)
+            => _commands is { } sink
+                ? TokenControlFile.Create(name, Qid(qidPath), sink, read,
+                    t => new SimCommand(vesselId, action, SimCommand.NoOrdinal, 0) { Token = t })
+                : new StaticTextFile(name, Qid(qidPath), () => read() + "\n");
+
+        /// <summary>A hand-parsed line STATE control, or its read-only twin when control is unwired.</summary>
+        private VfsFile LineControl(string qidPath, string name, Func<string> read,
+            Func<string, SimCommand?> parse)
+            => _commands is { } sink
+                ? LineControlFile.Create(name, Qid(qidPath), sink, read, parse)
                 : new StaticTextFile(name, Qid(qidPath), () => read() + "\n");
 
         /// <summary>A symbolic-token STATE control, or its read-only twin when control is unwired.</summary>

@@ -4,6 +4,7 @@ using System.Text.Json;
 using gatOS.NineP.Protocol;
 using gatOS.NineP.Server;
 using gatOS.NineP.Tests.TestClient;
+using gatOS.SimFs.Camera;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
 
@@ -151,8 +152,10 @@ public sealed class SimFsTreeTests
         var store = new SnapshotStore();
         var sink = new Commands.FakeCommandSink { DebugEnabled = true };
         var schedules = new ScheduleStore();
+        var camera = new CameraStore();
+        camera.HttpUpload("crawl.json", 0, "{}"u8, complete: true);
         await using var server = new NinePServer(
-            SimFsTree.Build(store, sink, () => "9p 1", schedules: schedules));
+            SimFsTree.Build(store, sink, () => "9p 1", schedules: schedules, camera: camera));
         await server.StartAsync();
         await using var client = await NinePTestClient.ConnectAsync(server.Port);
         await client.VersionAsync();
@@ -251,6 +254,17 @@ public sealed class SimFsTreeTests
             "ctl/schedules/crawl/dropped", "ctl/schedules/crawl/clock", "ctl/schedules/crawl/last_error",
             "ctl/schedules/crawl/pause", "ctl/schedules/crawl/scrub", "ctl/schedules/crawl/rate",
             "ctl/schedules/crawl/loop", "ctl/schedules/crawl/stop", "ctl/schedules/crawl/remove",
+            // the programmable camera: ownership, the granular pose channels, the track dir, playback
+            "camera/status", "camera/info", "camera/target", "camera/playback",
+            "camera/enabled", "camera/release", "camera/mode", "camera/follow", "camera/tidal",
+            "camera/track/crawl.json",
+            "camera/pose/position", "camera/pose/frame", "camera/pose/anchor", "camera/pose/geo",
+            "camera/pose/orbit/radius", "camera/pose/orbit/azimuth", "camera/pose/orbit/elevation",
+            "camera/pose/rotation", "camera/pose/aim", "camera/pose/aim_target",
+            "camera/pose/aim_offset", "camera/pose/aim_frame", "camera/pose/aim_up",
+            "camera/pose/roll", "camera/pose/fov", "camera/pose/ortho", "camera/pose/ortho_height",
+            "camera/pose/smoothing", "camera/pose/reset",
+            "camera/play", "camera/set", "camera/stop",
         ];
 
         Assert.That(files.Keys, Is.SupersetOf(expectedPresent));
