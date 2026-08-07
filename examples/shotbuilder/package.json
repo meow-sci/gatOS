@@ -1,0 +1,11 @@
+{
+  "name": "shotbuilder",
+  "version": "0.1.0",
+  "description": "Compile one declarative camera-shot description into both of the forms gatOS accepts — a /sim/ctl/timed_batch script of plain leaf writes, and a JSON camera track.",
+  "type": "module",
+  "module": "index.ts",
+  "bin": { "shotbuilder": "index.ts" },
+  "scripts": {
+    "build": "bun run index.ts shots/flyby.json --out out"
+  }
+}

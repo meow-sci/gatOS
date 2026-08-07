@@ -1,0 +1,392 @@
+---
+title: Direct a Shot — Take the Camera and Fly It
+description: >-
+  Borrow the game camera, park it beside a vessel, aim it at a point on the hull, fly a short move
+  along a timeline, and hand it back cleanly — first as plain file writes, then as a JSON track.
+sidebar:
+  label: Direct a Shot
+  order: 9
+  badge: { text: New, variant: tip }
+---
+
+import { Steps, Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
+
+This is the one where you get to be the cinematographer.
+
+Everything so far has been about making a ship *do* something. This time we're going to make the
+**camera** do something: take it away from the game, put it 40 metres off the nose of a vessel, aim
+it at a point on the hull, glide it in over six seconds, and then give it politely back.
+
+And — this is the good bit — there is no camera API to learn. The camera is a folder of files under
+`/sim/camera`. `echo` a number into one and the view changes. Everything below is `cat` and `echo`.
+
+## Before you start
+
+<Steps>
+
+1. **[Reference Frames](/gatOS/guides/reference-frames/)** — the camera is placed *relative to
+   something, in some frame*, so the vocabulary matters. You don't need any math from that page,
+   just the idea.
+
+2. **A vessel to point at.** [Teleport a Fleet into Orbit](/gatOS/guides/teleport-into-orbit/)
+   gets you one in a clean orbit in a single command if you don't already have a good subject.
+
+</Steps>
+
+If `/sim/camera` doesn't exist, the `[camera] camera_enabled` config gate is off — it's on by
+default. `cat /sim/camera/info` prints the caps and the exact token vocabularies your build accepts.
+
+## The idea in one picture: anchor, frame, offset
+
+A camera position is only meaningful once you say **what it's measured about** and **which way the
+axes point**. gatOS splits that into three files, and that split is the whole mental model:
+
+```
+  anchor   what the pose is measured about        vessel:apollo11
+  frame    which way the axes point               bodyfixed
+  position where in that frame                    -40 0 -6      ← 40 m aft, 6 m up
+```
+
+Change the anchor and the same numbers follow a different ship. Change the frame and the same
+numbers mean a different direction. The camera is re-resolved **every rendered frame**, so if the
+anchor is a moving vessel, the camera moves with it for free.
+
+The six frame tokens are `ecl`, `cce`, `bodyfixed`, `enu`, `lvlh` and `chase`. We'll use
+**`bodyfixed`** — the ship's own axes, laid out aircraft-style exactly like the RCS controls:
+
+```
+        +X  nose
+         ↑
+         │
+  −Y ←───┼───→ +Y        left  ←  •  →  right
+         │
+         ↓
+        −X  tail
+
+   third axis, through the belly:   +Z = down ,  −Z = up
+```
+
+So `-40 0 -6` is *40 metres behind the nose and 6 metres above the hull* — and, as ever, "up" is
+negative Z.
+
+### Aim is a target, not a rotation
+
+You could write a quaternion into `camera/pose/rotation`, but you almost never want to. Instead you
+name a **target and an offset**, and gatOS re-resolves it every frame:
+
+> `camera/pose/aim` ← `<target> [off <x> <y> <z>] [frame <frame>] [up <up>] [roll <deg>]`
+
+The offset is measured *on the subject*, in the subject's own frame — which is what makes
+`off 0 0 -1.2` stay glued 1.2 m above a moving ship's origin instead of drifting off into space.
+
+### Borrowing, not owning
+
+One more idea and we can fly. `camera/enabled 1` **takes** the camera: gatOS snapshots where the
+game had it, unfollows it, and becomes the only writer. `camera/enabled 0` gives it back, eased,
+exactly where it was. Everything you write in between is an *override* layered on that snapshot —
+so an override you never set simply falls through to how the game had it.
+
+<Aside type="caution" title="While gatOS holds the camera, your camera keys do nothing">
+Ownership parks the game's own camera controller. That's the point — two writers fighting over one
+transform looks terrible — but it means the player's camera hotkeys are inert until you release.
+For the same reason `camera/mode`, `camera/follow` and `camera/tidal` are **refused while owned**
+(`EOPNOTSUPP`): use `camera/pose/anchor` and `camera/pose/aim_target`, which do everything a follow
+does and more. Always have a way to run `echo 1 > /sim/camera/release`.
+</Aside>
+
+## Step 1 — take it, place it, aim it
+
+Six writes. Pick a transport and the rest of the page follows your choice.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    echo 1 > /sim/camera/enabled                       # take the camera
+    echo "vessel:apollo11" > /sim/camera/pose/anchor   # measure everything about this ship
+    echo "bodyfixed"       > /sim/camera/pose/frame    # in the ship's own axes
+    echo "-40 0 -6"        > /sim/camera/pose/position # 40 m aft, 6 m above
+    echo 42                > /sim/camera/pose/fov      # degrees
+    echo "vessel:apollo11 off 0 0 -1.2 up world" > /sim/camera/pose/aim
+    ```
+
+    Read it back — every leaf reports the **composed effective value**, not the last thing you
+    wrote, so a read-then-write-it-straight-back is a no-op:
+
+    ```sh
+    cat /sim/camera/status      # one "key value…" line per channel
+    cat /sim/camera/target      # the follow target's bare id, or "-"
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    Every `/sim` leaf is mirrored field-by-field at `/v1/fs/<path>` — the path after `/v1/fs/` is
+    exactly the `/sim`-relative path, and a `POST` body is exactly the text you'd have `echo`ed:
+
+    ```sh
+    H=http://127.0.0.1:4242/v1/fs
+    curl -X POST --data '1'                  $H/camera/enabled
+    curl -X POST --data 'vessel:apollo11'    $H/camera/pose/anchor
+    curl -X POST --data 'bodyfixed'          $H/camera/pose/frame
+    curl -X POST --data '-40 0 -6'           $H/camera/pose/position
+    curl -X POST --data '42'                 $H/camera/pose/fov
+    curl -X POST --data 'vessel:apollo11 off 0 0 -1.2 up world' $H/camera/pose/aim
+    ```
+
+    Read it back with a plain `GET` — same paths, raw text out:
+
+    ```sh
+    curl -s $H/camera/status
+    curl -s $H/camera/target
+    ```
+
+  </TabItem>
+</Tabs>
+
+<Aside type="tip" title="Orbit around it instead">
+Rather than naming a point, you can hang the camera on a sphere about the anchor with
+`camera/pose/orbit/{radius,azimuth,elevation}` (metres and degrees; azimuth sweeps the frame's XY
+plane from +X toward +Y, elevation rises toward +Z — so in `bodyfixed`, where +Z is *down*, a
+negative elevation puts the camera overhead). Placement precedence is **orbit → geodetic →
+cartesian**, so a non-zero radius wins over `pose/position`; write `0` to the radius to hand
+placement back.
+</Aside>
+
+## Step 2 — fly it, route A: a timed batch
+
+A static shot is a screenshot. To make it a *move*, we drive those same leaves along a timeline.
+`/sim/ctl/timed_batch` takes a little script of `<offsetMs> <path> <payload>` lines — offsets are
+absolute milliseconds from the schedule's start — followed by `commit`:
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh title="push-in.tb"
+    cat > /tmp/push-in.tb <<'EOF'
+    @id      push-in
+    @clock   render
+
+    0     camera/pose/position -40 0 -6 bodyfixed
+    0     camera/pose/fov      42
+    1500  camera/pose/position -33 0 -5.2 bodyfixed
+    1500  camera/pose/fov      38
+    3000  camera/pose/position -25 0 -4.4 bodyfixed
+    3000  camera/pose/fov      32
+    4500  camera/pose/position -18 0 -3.6 bodyfixed
+    4500  camera/pose/fov      27
+    6000  camera/pose/position -12 0 -3 bodyfixed
+    6000  camera/pose/fov      24
+    commit
+    EOF
+
+    cat /tmp/push-in.tb > /sim/ctl/timed_batch     # validates, then starts
+    cat /sim/ctl/schedules/push-in/state           # pending | running | paused | done | failed
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    The batch file is an ordinary writable leaf, so the whole script goes in one `POST` body:
+
+    ```sh
+    curl -X POST --data-binary @push-in.tb \
+      http://127.0.0.1:4242/v1/fs/ctl/timed_batch
+
+    curl -s http://127.0.0.1:4242/v1/fs/ctl/schedules/push-in/state
+    ```
+
+  </TabItem>
+</Tabs>
+
+Five keyframes at 1.5-second intervals is coarse — it will step rather than glide. Two things fix
+that, and neither costs you anything:
+
+- **Write more lines.** The scheduler coalesces to the *last* write per leaf per tick, so a 20 Hz
+  script costs one write per leaf per frame no matter how finely you sample it. Generating those
+  lines is exactly what [`examples/shotbuilder`](https://github.com/meow-sci/gatOS/tree/main/examples/shotbuilder)
+  does.
+- **Ask for smoothing.** `echo 0.35 > /sim/camera/pose/smoothing` (seconds, 0–10) puts a critically
+  damped filter on the pose, which turns coarse steps into a glide.
+
+## Step 3 — fly it, route B: a JSON track
+
+The same move can be handed over as a **track**: a small JSON document of shots and keys that gatOS
+interpolates itself, at render rate, with real easing and splines. Upload it as a file under
+`/sim/camera/track/` and play it by name.
+
+```json title="push-in.json"
+{
+  "shots": [
+    {
+      "name": "push-in",
+      "t": 0,
+      "duration": 6,
+      "anchor": "vessel:apollo11",
+      "position": {
+        "mode": "cartesian",
+        "curve": "linear",
+        "frame": "bodyfixed",
+        "keys": [
+          { "t": 0, "v": [-40, 0, -6], "ease": "out", "ease_power": 3 },
+          { "t": 6, "v": [-12, 0, -3] }
+        ]
+      },
+      "aim": { "target": "vessel:apollo11", "offset": [0, 0, -1.2], "up": "world" },
+      "fov": { "keys": [{ "t": 0, "v": 42, "ease": "out" }, { "t": 6, "v": 24 }] }
+    }
+  ]
+}
+```
+
+Two keys and an ease replace the whole ladder of batch lines — and notice that every channel name in
+there (`position`, `frame`, `aim`, `fov`) is the same channel you wrote by hand in step 1. It really
+is one surface.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    A host folder shows up in the guest at `/mnt/<name>`, so you can author on your own machine and
+    copy the file straight in. The upload is parsed and validated on close:
+
+    ```sh
+    cp /mnt/shots/push-in.json /sim/camera/track/push-in
+    echo "push-in" > /sim/camera/play          # optionally: "push-in at 2 rate 0.5 loop 1"
+    ```
+
+    While it plays, it appears in the schedule registry as `/sim/ctl/schedules/camera/`, and you can
+    scrub, re-rate, pause or stop it live:
+
+    ```sh
+    cat  /sim/camera/playback                  # <state> <t_ms> <duration_ms> <shot> <index> <rate> <loop>
+    echo "t 4 rate 0.25" > /sim/camera/set     # scrub to 4 s and go quarter-speed
+    echo 1 > /sim/camera/stop
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    The track file is a leaf like any other, so a `POST` uploads it:
+
+    ```sh
+    H=http://127.0.0.1:4242/v1/fs
+    curl -X POST --data-binary @push-in.json $H/camera/track/push-in
+    curl -X POST --data 'push-in'            $H/camera/play
+
+    curl -s $H/camera/playback
+    curl -X POST --data 't 4 rate 0.25'      $H/camera/set
+    curl -X POST --data '1'                  $H/camera/stop
+    ```
+
+  </TabItem>
+</Tabs>
+
+<Aside type="caution" title="A track is a schedule">
+A playing track is a player in the same registry a timed batch joins — which is why it shows up at
+`/sim/ctl/schedules/camera/` and answers the same `pause`/`scrub`/`rate`/`loop`/`stop` leaves. It
+also means `camera/play` needs `[schedule] schedule_enabled` (on by default); with scheduling off it
+answers `EOPNOTSUPP` and points you back at route A. A malformed track is rejected the moment the
+file is closed, so a bad key never reaches playback.
+</Aside>
+
+<Aside type="note" title="Your writes and a track coexist">
+The camera composites three layers per channel: **the track, then your leaf writes, then the
+snapshot taken at ownership**. A track only claims the channels its shot actually declares, so a
+track animating `position` and `fov` leaves `aim` free — you can pull focus by hand, mid-shot, with
+one `echo` into `camera/pose/aim_target`, and it sticks.
+</Aside>
+
+## Step 4 — hand it back
+
+Two verbs, and the difference is the *approach*, not the result:
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    echo 0 > /sim/camera/enabled     # eased blend back to where the game had it (~0.6 s)
+    echo 1 > /sim/camera/release     # hard cut — the "give it back NOW" button
+    ```
+
+    And if you just want to undo *your own* writes without giving up the camera:
+
+    ```sh
+    echo 1 > /sim/camera/pose/reset  # clears your overrides; an active track keeps playing
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    ```sh
+    H=http://127.0.0.1:4242/v1/fs
+    curl -X POST --data '0' $H/camera/enabled     # eased blend back
+    curl -X POST --data '1' $H/camera/release     # hard cut
+    curl -X POST --data '1' $H/camera/pose/reset  # clear your overrides only
+    ```
+
+  </TabItem>
+</Tabs>
+
+Either way the camera lands back on its original mode, follow target, position, rotation and field
+of view — and the blend recomputes its destination every frame, so handing back onto a *moving*
+follow target lands on the target, not on where it used to be.
+
+## Run it
+
+```sh
+# take it and park it
+echo 1 > /sim/camera/enabled
+echo "vessel:apollo11" > /sim/camera/pose/anchor
+echo "bodyfixed" > /sim/camera/pose/frame
+echo "-40 0 -6" > /sim/camera/pose/position
+echo "vessel:apollo11 off 0 0 -1.2 up world" > /sim/camera/pose/aim
+echo 0.35 > /sim/camera/pose/smoothing
+
+# poke it by hand and watch the view move
+echo 24 > /sim/camera/pose/fov
+echo 120 > /sim/camera/pose/orbit/radius
+echo 90  > /sim/camera/pose/orbit/azimuth
+
+# give it back
+echo 0 > /sim/camera/enabled
+```
+
+You should see the view snap to a quarter-behind, slightly-high shot of the ship, hold its aim as
+the ship rotates, tighten to a 24° telephoto, then swing around to the side as you write the orbit
+channels — and finally glide back to whatever the game was showing before you started.
+
+<Aside type="tip" title="One description, both routes">
+Writing 400 batch lines by hand is nobody's idea of fun.
+[`examples/shotbuilder`](https://github.com/meow-sci/gatOS/tree/main/examples/shotbuilder) is a tiny
+Bun/TypeScript generator that takes one declarative shot description and emits **both** a
+`timed_batch` script and a JSON track for it — which is also the clearest way to see that the two
+routes really are the same surface.
+</Aside>
+
+<Aside type="note" title="Two things you can't put back">
+`camera/pose/ortho_height` is the one camera change gatOS cannot undo — the game exposes a setter
+but no getter, so there's nothing to capture at ownership and nothing to restore at release. And
+taking the camera *out of map view* prints one three-second "Fixed Camera" alert on screen, because
+leaving map mode has to go through the game's own mode switch to avoid stranding you with an
+uncontrollable vessel. Every other entry mode is silent.
+</Aside>
+
+## What's next
+
+You now have the third kind of thing gatOS lets you drive: not the ship, not the world, but the
+**view**. The natural follow-ons:
+
+- **Cut between subjects.** `camera/pose/anchor` and `camera/pose/aim_target` both take
+  `vessel:<id>`, `body:<id>` *and* `part:<vessel-id>/<instance-id>` — so you can aim at a specific
+  engine bell, or at an EVA kitten's head, and the offset stays glued to it as it moves.
+- **Cue a shot off a maneuver.** A timed batch is just a schedule; start one at the same moment you
+  fire an [impulse](/gatOS/guides/punch-it/) or a burn and you have a cut, on the beat.
+- **Chase something you flew there yourself.** Point the camera at the target of the
+  [Searchlight tracker](/gatOS/guides/searchlight-track-a-vessel/) and watch the tracker work from
+  the outside.
+
+<LinkCard
+  title="Searchlight — Track a Vessel"
+  href="/gatOS/guides/searchlight-track-a-vessel/"
+  description="The control loop that keeps one ship pointed at another — a good subject for your first shot."
+/>

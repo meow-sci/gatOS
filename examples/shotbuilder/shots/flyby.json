@@ -1,0 +1,28 @@
+{
+  "name": "flyby",
+  "anchor": "vessel:apollo11",
+  "frame": "bodyfixed",
+  "sampleHz": 20,
+  "aim": {
+    "target": "vessel:apollo11",
+    "offset": [0, 0, -1.2],
+    "frame": "bodyfixed",
+    "up": "world"
+  },
+  "moves": [
+    {
+      "name": "sweep",
+      "duration": 8,
+      "ease": "in-out",
+      "orbit": { "radius": 120, "azimuth": [0, 180], "elevation": -20 },
+      "fov": 42
+    },
+    {
+      "name": "push-in",
+      "duration": 6,
+      "ease": "out",
+      "position": [[-40, 0, -6], [-12, 0, -3]],
+      "fov": [42, 24]
+    }
+  ]
+}

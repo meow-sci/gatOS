@@ -7,24 +7,28 @@ KSA has two camera controller types that can be patched via Harmony to intercept
 - `OrbitController` — orbit/follow camera mode
 - `FlyController` — free-fly camera mode
 
-Both expose an `OnFrame(double inDeltaTime)` method that drives the camera each frame.
+Both override `Controller.OnFrame(Viewport inViewport, double inDeltaTime)` — **two** parameters — which drives the camera each frame.
 
 ## Harmony Patch Pattern
 
 ```csharp
 [HarmonyPatch(typeof(OrbitController), "OnFrame")]
 [HarmonyPrefix]
-private static bool OrbitController_OnFrame_Prefix(OrbitController __instance, double inDeltaTime, Transform3D ___Transform)
-    => HandleOnFramePrefix(__instance, inDeltaTime, ___Transform);
+private static bool OrbitController_OnFrame_Prefix(OrbitController __instance, double inDeltaTime)
+    => HandleOnFramePrefix(__instance, inDeltaTime);
 
 [HarmonyPatch(typeof(FlyController), "OnFrame")]
 [HarmonyPrefix]
-private static bool FlyController_OnFrame_Prefix(FlyController __instance, double inDeltaTime, Transform3D ___Transform)
-    => HandleOnFramePrefix(__instance, inDeltaTime, ___Transform);
+private static bool FlyController_OnFrame_Prefix(FlyController __instance, double inDeltaTime)
+    => HandleOnFramePrefix(__instance, inDeltaTime);
 
 // Return false to suppress default camera logic; return true to run it normally.
-private static bool HandleOnFramePrefix(Controller controller, double deltaTime, Transform3D transform)
+private static bool HandleOnFramePrefix(Controller controller, double deltaTime)
 {
+    // The camera transform IS the controller's public `Camera` field (KSA.Camera : Transform3D),
+    // so writing to it mutates the live view by reference.
+    Camera transform = controller.Camera;
+
     if (shouldOverride)
     {
         // ... manipulate transform ...
@@ -35,7 +39,19 @@ private static bool HandleOnFramePrefix(Controller controller, double deltaTime,
 ```
 
 - Both types derive from `Controller` — use `Controller` as the parameter type in shared handlers
-- `___Transform` (triple-underscore) accesses the private `Transform3D` field by name via Harmony injection
+- The camera transform is the **public mutable field** `public Camera Camera;` on `KSA.Controller`
+  (`decomp/KSA/Controller.cs:12`), where `KSA.Camera : Transform3D`. Reach it as `__instance.Camera`
+- Declaring only `(Controller __instance, double inDeltaTime)` and omitting `inViewport` is legal —
+  Harmony binds original arguments **by name**, so a subset is fine
+
+> **⚠️ There is no `___Transform` — do not reintroduce it.** `Controller`, `OrbitController` and
+> `FlyController` have **no private `Transform3D` field**; a `Transform3D ___Transform` field injector
+> therefore binds to nothing. Harmony validates injected field names at **patch time**, so `Patch()`
+> *throws* — and in a shared-Harmony host that also silently aborts every feature patched after it in
+> the chain. An earlier revision of this document documented exactly that injector and it misled a real
+> implementation; the working fix lives in
+> `unscience/camera-controller-override.lib/CameraControllerOverridePatches.cs:42-64`, whose in-source
+> comment records the history.
 
 ## Coordinate Frame: ECL (Ecliptic)
 
@@ -91,8 +107,28 @@ transform.PositionEcl = currentTargetPos + rotated;
 
 ## Orbit Axis Calculation
 
+The axis is the camera's own up vector projected perpendicular to the offset — with a fallback at each
+step, because both cross products degenerate when the camera looks straight down its own orbit axis.
+Verbatim from `unscience/camera-controller-override.lib/Animation/AnimationHelpers.cs:75-88`:
+
 ```csharp
-double3 startUp    = double3.UnitY.Transform(startRotation);
-double3 right      = double3.Cross(startUp, startOffset).Normalized();
-double3 orbitAxis  = double3.Cross(startOffset.Normalized(), right).Normalized();
+public static double3 CalculateOrbitAxis(double3 startOffset, doubleQuat startRotation)
+{
+    double3 startUp = double3.UnitY.Transform(startRotation);
+    if (startUp.LengthSquared() < 0.00000001) startUp = double3.UnitY;   // degenerate rotation
+
+    double3 right = double3.Cross(startUp, startOffset);
+    if (right.LengthSquared() < 0.0001)                                   // up ∥ offset
+    {
+        double3 offsetDir = double3.Normalize(startOffset);
+        double3 fallback = Math.Abs(double3.Dot(offsetDir, double3.UnitY)) < 0.99
+            ? double3.UnitY
+            : double3.UnitX;
+        right = double3.Cross(fallback, startOffset);
+    }
+    return double3.Normalize(double3.Cross(startOffset, right));
+}
 ```
+
+- Skipping the fallbacks yields a zero-length axis (then NaN out of `Normalize`) for exactly the shots
+  people write first — a top-down orbit, or a camera whose up already lies along the offset

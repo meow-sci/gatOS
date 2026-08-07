@@ -196,7 +196,7 @@ This is the textbook "conditionally skip original and substitute the return valu
 | `ref __result` | `ref bool __result` (HotkeyGuard), `ref float4x4? __result` (i-feel-seen) — write it then `return false` to override |
 | named original args | `Camera camera`, `Viewport viewport`, `int inFrameIndex`, `CommandBuffer commandBuffer` — match the game method's real parameter names |
 | `ref <param>` | `ref PartModel.PerInstanceData instanceData` — mutate a struct argument in place (paint, deform, emissive) |
-| `___PrivateField` | `Transform3D ___Transform` on `Controller.OnFrame` — triple-underscore reads a private game field directly into the patch |
+| `___PrivateField` | triple-underscore reads a private game field directly into the patch. **No gatOS or unscience patch currently uses it** — every field these patches need is public (e.g. the camera transform is the public `Controller.Camera`). Harmony validates the name at *patch* time, so a misspelled or non-existent field throws from `Patch()` and, in a shared-Harmony host, aborts the rest of the chain — cite a real field or don't reach for this |
 | positional | `PartModel.PerInstanceData __0`, `Viewport __1` (IvaForceRender) — by-index when you don't want to name them |
 
 ## Holding patch state: static `*PatchState` / manager singletons
