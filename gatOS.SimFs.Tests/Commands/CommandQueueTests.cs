@@ -236,4 +236,102 @@ public sealed class CommandQueueTests
         Assert.That(queue.Drain(CommandPhase.Frame, executor, 64), Is.EqualTo(0));
         Assert.That(executor.Count, Is.EqualTo(0));
     }
+
+    // ---- Post: the fire-and-forget lane the host-side scheduler uses -------------------------
+
+    /// <summary>Records every callback, so tests can assert the token/result pairing.</summary>
+    private sealed class RecordingObserver : IPostObserver
+    {
+        public List<(int Token, CommandResult Result)> Results { get; } = [];
+
+        public void OnCommandResult(int token, CommandResult result) => Results.Add((token, result));
+    }
+
+    [Test]
+    public void Post_DrainsWithoutAWaiter_AndReportsToTheObserver()
+    {
+        var queue = new CommandQueue(controlEnabled: true, debugEnabled: false, TimeSpan.FromSeconds(5));
+        var executor = new FakeCommandExecutor { Result = new CommandResult(CommandOutcome.Busy, "already fired") };
+        var observer = new RecordingObserver();
+
+        queue.Post(Cmd(), observer, token: 42);
+        Assert.That(observer.Results, Is.Empty, "nothing happens until the game thread drains");
+
+        Assert.That(queue.Drain(CommandPhase.Frame, executor, 64), Is.EqualTo(1));
+        Assert.Multiple(() =>
+        {
+            Assert.That(observer.Results, Has.Count.EqualTo(1));
+            Assert.That(observer.Results[0].Token, Is.EqualTo(42));
+            Assert.That(observer.Results[0].Result.Outcome, Is.EqualTo(CommandOutcome.Busy));
+        });
+    }
+
+    [Test]
+    public void Post_WithNoObserver_StillExecutes()
+    {
+        var queue = new CommandQueue(controlEnabled: true, debugEnabled: false, TimeSpan.FromSeconds(5));
+        var executor = new FakeCommandExecutor();
+
+        queue.Post(Cmd());
+        Assert.Multiple(() =>
+        {
+            Assert.That(queue.Drain(CommandPhase.Frame, executor, 64), Is.EqualTo(1));
+            Assert.That(executor.Count, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public void Post_RoutesByPhase_AndMixedPostsBothLand()
+    {
+        // Unlike SubmitBatchAsync, Post has no same-tick contract, so each post routes itself and
+        // mixing Frame and Solver across posts is free — exactly what a schedule needs.
+        var queue = new CommandQueue(controlEnabled: true, debugEnabled: false, TimeSpan.FromSeconds(5));
+        var executor = new FakeCommandExecutor();
+        var observer = new RecordingObserver();
+
+        queue.Post(Cmd(), observer, token: 1);
+        queue.Post(Cmd(CommandPhase.Solver), observer, token: 2);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(queue.Drain(CommandPhase.Frame, executor, 64), Is.EqualTo(1));
+            Assert.That(queue.Drain(CommandPhase.Solver, executor, 64), Is.EqualTo(1));
+            Assert.That(observer.Results.Select(r => r.Token), Is.EqualTo(new[] { 1, 2 }));
+        });
+    }
+
+    [Test]
+    public void Post_ControlDisabled_DeniesImmediatelyWithoutQueuing()
+    {
+        var queue = new CommandQueue(controlEnabled: false, debugEnabled: false, TimeSpan.FromSeconds(5));
+        var executor = new FakeCommandExecutor();
+        var observer = new RecordingObserver();
+
+        queue.Post(Cmd(), observer, token: 7);
+        Assert.Multiple(() =>
+        {
+            Assert.That(observer.Results, Has.Count.EqualTo(1), "reported, not silently swallowed");
+            Assert.That(observer.Results[0].Token, Is.EqualTo(7));
+            Assert.That(observer.Results[0].Result.Outcome, Is.EqualTo(CommandOutcome.Denied));
+            Assert.That(queue.Drain(CommandPhase.Frame, executor, 64), Is.EqualTo(0));
+        });
+    }
+
+    [Test]
+    public async Task Post_AndSubmit_ShareTheSameLane_InOrder()
+    {
+        var queue = new CommandQueue(controlEnabled: true, debugEnabled: false, TimeSpan.FromSeconds(5));
+        var executor = new FakeCommandExecutor();
+
+        queue.Post(new SimCommand("posted", "engine.active", 0, 1));
+        var submit = queue.SubmitAsync(new SimCommand("awaited", "engine.active", 0, 1), CancellationToken.None);
+
+        Assert.That(queue.Drain(CommandPhase.Frame, executor, 64), Is.EqualTo(2));
+        var result = await submit;
+        Assert.Multiple(() =>
+        {
+            Assert.That(executor.All.Select(c => c.VesselId), Is.EqualTo(new[] { "posted", "awaited" }));
+            Assert.That(result.IsSuccess, Is.True, "the awaiting path is unchanged by the refactor");
+        });
+    }
 }

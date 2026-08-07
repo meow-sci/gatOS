@@ -88,9 +88,15 @@ public static class SimFsTree
     ///     <c>status</c>/<c>info</c> reads. Null (audio disabled in config) removes the surface
     ///     entirely so the SPEC stays truthful.
     /// </param>
+    /// <param name="schedules">
+    ///     Optional live-player registry (plans/CAMERA_CONTROLS_PLAN.md §3): when supplied — and a
+    ///     command sink is wired — <c>/sim/ctl</c> gains <c>timed_batch</c> and the
+    ///     <c>schedules/</c> registry. Null (schedules disabled in config) removes both entirely so
+    ///     the SPEC stays truthful.
+    /// </param>
     public static VfsDirectory Build(SnapshotStore store, ICommandSink? commands, Func<string>? transports,
-        DisplaySurface? display = null, AudioStore? audio = null)
-        => new Builder(store, commands, transports, display, audio).BuildRoot();
+        DisplaySurface? display = null, AudioStore? audio = null, ScheduleStore? schedules = null)
+        => new Builder(store, commands, transports, display, audio, schedules).BuildRoot();
 
     private sealed class Builder
     {
@@ -99,6 +105,7 @@ public static class SimFsTree
         private readonly Func<string>? _transports;
         private readonly DisplaySurface? _display;
         private readonly AudioStore? _audio;
+        private readonly ScheduleStore? _schedules;
         private readonly ConcurrentDictionary<string, ulong> _qids = new();
         private long _nextQid;
 
@@ -141,13 +148,14 @@ public static class SimFsTree
         }
 
         internal Builder(SnapshotStore store, ICommandSink? commands, Func<string>? transports,
-            DisplaySurface? display, AudioStore? audio)
+            DisplaySurface? display, AudioStore? audio, ScheduleStore? schedules)
         {
             _store = store;
             _commands = commands;
             _transports = transports;
             _display = display;
             _audio = audio;
+            _schedules = schedules;
         }
 
         internal VfsDirectory BuildRoot()
@@ -177,12 +185,12 @@ public static class SimFsTree
             if (_commands is not null)
                 children.Add(StatusDir());
 
-            // The global control surface (/sim/ctl): controls that are not per-vessel — today the
-            // atomic batch. Its lines resolve against this very root, so it reaches exactly the
-            // control files (incl. debug/, when enabled) a direct write would.
+            // The global control surface (/sim/ctl): controls that are not per-vessel — the atomic
+            // batch, and (when a schedule store is wired) the timed batch + its player registry.
+            // Their lines resolve against this very root, so they reach exactly the control files
+            // (incl. debug/, when enabled) a direct write would.
             if (_commands is { } sink)
-                children.Add(DelegateDirectory.Fixed("ctl", Qid("ctl"),
-                    new BatchFile("batch", Qid("ctl/batch"), sink, () => _root!)));
+                children.Add(GlobalCtlDir(sink));
 
             // The /sim/debug cheat namespace (G-D2): only when a sink is wired and debug is enabled.
             if (_commands is { DebugEnabled: true })
@@ -199,6 +207,19 @@ public static class SimFsTree
             var fixedChildren = children.ToArray();
             _root = new DelegateDirectory("/", Qid("/"), () => fixedChildren);
             return _root;
+        }
+
+        /// <summary>
+        ///     <c>/sim/ctl</c>: the global (not per-vessel) control surface. <c>batch</c> is always
+        ///     present; <c>timed_batch</c> + <c>schedules/</c> only when a schedule store is wired,
+        ///     so a disabled scheduler leaves no trace of itself in the tree.
+        /// </summary>
+        private VfsDirectory GlobalCtlDir(ICommandSink sink)
+        {
+            var children = new List<VfsNode> { new BatchFile("batch", Qid("ctl/batch"), sink, () => _root!) };
+            if (_schedules is { } schedules)
+                children.AddRange(ScheduleTree.Nodes(sink, schedules, () => _root!, Qid));
+            return DelegateDirectory.Fixed("ctl", Qid("ctl"), children.ToArray());
         }
 
         // ---- time (KSA_GAME_INTEGRATION_PLAN §4.2) ----------------------------------------

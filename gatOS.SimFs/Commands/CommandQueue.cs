@@ -4,6 +4,21 @@ using gatOS.Logging;
 namespace gatOS.SimFs.Commands;
 
 /// <summary>
+///     Receives the outcome of a fire-and-forget <see cref="CommandQueue.Post"/>. Implemented by
+///     host-side players (the schedule runners) that submit without a waiter and still need to know
+///     that an entry failed. The callback runs <b>inline on the game thread</b> inside
+///     <see cref="CommandQueue.Drain"/>, so an implementation must be trivial (record a field, bump a
+///     counter) and must never block or throw.
+/// </summary>
+public interface IPostObserver
+{
+    /// <summary>Reports one posted command's result.</summary>
+    /// <param name="token">The caller-supplied correlation token (the schedule entry index).</param>
+    /// <param name="result">The outcome, exactly as an awaiting submit would have received it.</param>
+    void OnCommandResult(int token, CommandResult result);
+}
+
+/// <summary>
 ///     The one-way write pipe between transport threads and the game thread
 ///     (KSA_GAME_INTEGRATION_PLAN §3.1). Transport threads call <see cref="SubmitAsync"/>, which
 ///     enqueues a command and awaits its result with a timeout; the game thread calls
@@ -60,6 +75,37 @@ public sealed class CommandQueue : ICommandSink
         return EnqueueAsync(group, phase, ct);
     }
 
+    /// <summary>
+    ///     <b>Fire-and-forget submit</b>: enqueues <paramref name="command"/> for the game thread
+    ///     without creating a waiter, and hands the outcome to <paramref name="observer"/> when it
+    ///     drains. This is what host-side players (the timed-command scheduler) use — a schedule
+    ///     spans many ticks, so there is no write to block and no errno to carry; failures surface
+    ///     through the player's <c>last_error</c> leaf and <c>/sim/events</c> instead.
+    /// </summary>
+    /// <remarks>
+    ///     Each post routes itself by <see cref="SimCommand.Phase"/>, so <b>phase mixing across posts
+    ///     is free</b> — unlike <see cref="SubmitBatchAsync"/>, which rejects it because "same tick"
+    ///     is meaningless across phases. <paramref name="observer"/> is invoked inline on the game
+    ///     thread inside <see cref="Drain"/>.
+    /// </remarks>
+    /// <param name="command">The command to enqueue.</param>
+    /// <param name="observer">Optional outcome sink; null discards the result.</param>
+    /// <param name="token">Correlation token echoed back to <paramref name="observer"/>.</param>
+    public void Post(SimCommand command, IPostObserver? observer = null, int token = 0)
+    {
+        if (!ControlEnabled)
+        {
+            // Report rather than silently swallow: a player whose commands are all denied must be
+            // able to say so, exactly as an awaiting submit would have.
+            observer?.OnCommandResult(token, new CommandResult(CommandOutcome.Denied,
+                "control is disabled in gatos.toml"));
+            return;
+        }
+
+        var pending = new Pending([command], observer, token);
+        (command.Phase == CommandPhase.Solver ? _solver : _frame).Enqueue(pending);
+    }
+
     private async Task<CommandResult> EnqueueAsync(SimCommand[] group, CommandPhase phase, CancellationToken ct)
     {
         if (!ControlEnabled)
@@ -70,7 +116,7 @@ public sealed class CommandQueue : ICommandSink
 
         try
         {
-            return await pending.Completion.Task.WaitAsync(_timeout, ct).ConfigureAwait(false);
+            return await pending.Completion!.Task.WaitAsync(_timeout, ct).ConfigureAwait(false);
         }
         catch (TimeoutException)
         {
@@ -124,20 +170,43 @@ public sealed class CommandQueue : ICommandSink
                             $"command {i + 1}/{commands.Length} ({commands[i].Action}): {result.Message ?? "no detail"}");
             }
 
-            pending.Completion.TrySetResult(failure ?? (commands.Length == 1 ? result : CommandResult.Ok));
+            var final = failure ?? (commands.Length == 1 ? result : CommandResult.Ok);
+            pending.Completion?.TrySetResult(final);
+            // Fire-and-forget posts have no waiter; their observer is called INLINE here, on the
+            // game thread, so it must stay trivial (the IPostObserver contract).
+            pending.Observer?.OnCommandResult(pending.Token, final);
         }
 
         return executed;
     }
 
-    private sealed class Pending(SimCommand[] commands)
+    private sealed class Pending
     {
-        // RunContinuationsAsynchronously: the awaiting transport thread must never resume inline
-        // on the game thread inside Drain (threading rule 5 — nothing blocks the game thread).
-        internal TaskCompletionSource<CommandResult> Completion { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        /// <summary>The awaiting path (<see cref="SubmitAsync"/>/<see cref="SubmitBatchAsync"/>).</summary>
+        internal Pending(SimCommand[] commands)
+        {
+            Commands = commands;
+            // RunContinuationsAsynchronously: the awaiting transport thread must never resume inline
+            // on the game thread inside Drain (threading rule 5 — nothing blocks the game thread).
+            Completion = new TaskCompletionSource<CommandResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
 
-        internal SimCommand[] Commands { get; } = commands;
+        /// <summary>The fire-and-forget path (<see cref="Post"/>): no TCS is created at all.</summary>
+        internal Pending(SimCommand[] commands, IPostObserver? observer, int token)
+        {
+            Commands = commands;
+            Observer = observer;
+            Token = token;
+        }
+
+        internal TaskCompletionSource<CommandResult>? Completion { get; }
+
+        internal IPostObserver? Observer { get; }
+
+        internal int Token { get; }
+
+        internal SimCommand[] Commands { get; }
+
         internal volatile bool Abandoned;
     }
 }

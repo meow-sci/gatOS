@@ -4,6 +4,7 @@ using System.Text.Json;
 using gatOS.NineP.Protocol;
 using gatOS.NineP.Server;
 using gatOS.NineP.Tests.TestClient;
+using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
 
 namespace gatOS.SimFs.Tests;
@@ -149,13 +150,23 @@ public sealed class SimFsTreeTests
         // is walkable+readable — a guard against a subtree silently vanishing.
         var store = new SnapshotStore();
         var sink = new Commands.FakeCommandSink { DebugEnabled = true };
-        await using var server = new NinePServer(SimFsTree.Build(store, sink, () => "9p 1"));
+        var schedules = new ScheduleStore();
+        await using var server = new NinePServer(
+            SimFsTree.Build(store, sink, () => "9p 1", schedules: schedules));
         await server.StartAsync();
         await using var client = await NinePTestClient.ConnectAsync(server.Port);
         await client.VersionAsync();
         await client.AttachAsync(0);
 
         store.Publish(TestData.Snapshot(1, TestData.FullVessel()).WithCelestials().WithFxEditors());
+
+        // One live player, so the registry's per-entry subtree is crawled too.
+        schedules.Submit(new Schedule(schedules.ReserveId("crawl"), "take", ClockBase.Render, 1, loop: false,
+        [
+            new ScheduleEntry(0, "vessels/by-id/test-1/ctl/ignite",
+                new SimCommand("test-1", "vessel.ignite", SimCommand.NoOrdinal, 1), IsTrigger: true),
+        ]));
+        schedules.Activate();
 
         var files = new Dictionary<string, string>();
         await CrawlWithAsync(client, 0, "", files);
@@ -232,6 +243,14 @@ public sealed class SimFsTreeTests
             "debug/terrain/bodies/Kerth/biomes/blend_strength",
             "debug/terrain/bodies/Kerth/tessellation/factor",
             "debug/terrain/bodies/Kerth/json", "debug/terrain/bodies/Kerth/reset",
+            // global control surface: the atomic batch, the timed batch, and the player registry
+            "ctl/batch", "ctl/timed_batch",
+            "ctl/schedules/help", "ctl/schedules/clear", "ctl/schedules/count",
+            "ctl/schedules/crawl/kind", "ctl/schedules/crawl/group", "ctl/schedules/crawl/state",
+            "ctl/schedules/crawl/t", "ctl/schedules/crawl/duration", "ctl/schedules/crawl/pending",
+            "ctl/schedules/crawl/dropped", "ctl/schedules/crawl/clock", "ctl/schedules/crawl/last_error",
+            "ctl/schedules/crawl/pause", "ctl/schedules/crawl/scrub", "ctl/schedules/crawl/rate",
+            "ctl/schedules/crawl/loop", "ctl/schedules/crawl/stop", "ctl/schedules/crawl/remove",
         ];
 
         Assert.That(files.Keys, Is.SupersetOf(expectedPresent));
