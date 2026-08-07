@@ -194,8 +194,10 @@ snapshot-memoized): `t` advances every rendered frame, far faster than the telem
 Qid strings are `ctl/timed_batch`, `ctl/schedules`, `ctl/schedules/count`, `ctl/schedules/<id>/<leaf>`.
 
 **Transport parity is structural:** these are ordinary VFS leaves, so `VfsScan` mirrors them to
-`GET/PUT /v1/fs/sim/ctl/schedules/<id>/rate` and `gatos/sim/ctl/schedules/<id>/rate` with no new code,
-and `POST /v1/command` / `gatos/command` reach every `schedule.*` action by construction.
+`GET/POST /v1/fs/ctl/schedules/<id>/rate` and `gatos/sim/ctl/schedules/<id>/rate` with no new code,
+and `POST /v1/command` / `gatos/command` reach every `schedule.*` action by construction — passing
+`"vessel_id": ""`, which the JSON command parser **requires as a present string** even for a globally
+addressed action (`SimHttpServer.ParseCommand`; the field may be empty but never omitted or null).
 
 ### Events (host-side, via `ScheduleStore.EmitEvent` → the sampler's `DrainEvents`)
 
@@ -327,7 +329,7 @@ Task **C0.2** owns the `GatOsConfig.cs` property + `Sections` row + clamp-and-wa
    belong on the game-thread command seam; and `SubmitScheduleAsync` would have forced every one of
    the ten `ICommandSink` implementors (incl. test doubles) to carry a member they cannot implement.
    **Transport parity still holds by construction:** `/sim/ctl/timed_batch` is an ordinary writable
-   VFS leaf, so `VfsScan` mirrors it to HTTP `/v1/fs/sim/ctl/timed_batch` and MQTT
+   VFS leaf, so `VfsScan` mirrors it to HTTP `/v1/fs/ctl/timed_batch` and MQTT
    `gatos/sim/ctl/timed_batch/set` with no new code.
 
 2. **`Scheduler.Tick` takes `List<DueCommand>` + an `IPostObserver`, not `List<SimCommand>`.**

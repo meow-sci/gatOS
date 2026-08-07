@@ -117,6 +117,13 @@ ctl/engine    = 1|0   // ignition master as a readable toggle (read = live state
 **Maneuver node:** `ctl/burn = "ut dvx dvy dvz"` (CCI Δv) lets the onboard computer execute an
 impulsive burn at a sim time — useful for transfer/circularization without hand-flying.
 
+**Pre-planned sequences:** when the *times* are known in advance (a launch script, a light show, a
+camera move), do not run a wall-clock loop — commit the writes to `/sim/ctl/timed_batch` as
+`<offsetMs> <path> <value>` lines and let the **host** clock them (SPEC §3.10,
+[`recipes.md` §12](recipes.md)). It survives your program exiting, mixes Frame and Solver phases
+freely, and coalesces state writes on catch-up so a densely generated script stays cheap. Keep the
+closed loop for what actually needs feedback.
+
 Every write returns an errno on failure (see [SPEC §2.4](../../../SPEC_9P_FILESYSTEM.md)): `EACCES`
 (control disabled, or not the active vessel when `control_all_vessels=false`), `EINVAL` (bad value),
 `EBUSY` (one-shot already fired), `ETIMEDOUT` (game paused/loading past `command_timeout_ms`).
@@ -175,7 +182,12 @@ writing your own guidance law.
   `vessels/active/…` or `debug/control_vessel` to take control. (Default: all vessels allowed.)
 - `debug_namespace=false` → `/sim/debug/**` is absent and `debug.*` actions `EACCES`. Teleport /
   refuel / warp-set / vessel-switch live here. (Default on.)
-- `camera.focus` is view-only and exempt from the authority gate.
+- `camera.focus` is view-only and exempt from the authority gate — as is the whole `camera.*` family
+  and `schedule.*` (they address no vehicle at all), though `control_enabled` still governs them.
+- `schedule_enabled=false` → `/sim/ctl/timed_batch` + `/sim/ctl/schedules` are absent and
+  `schedule.*` is `EOPNOTSUPP` — **and so are `camera/play`/`set`/`stop`**, because a camera track is
+  a registry player. `camera_enabled=false` → `/sim/camera` is absent and `camera.*` is
+  `EOPNOTSUPP` (except `camera.focus`). Both default on.
 
 ---
 
@@ -193,6 +205,8 @@ writing your own guidance law.
 | read everything consistently | one read of `vessels/<id>/telemetry` |
 | place a vessel exactly | `debug/vessels/<id>/teleport` (CCI state) — see [recipes.md](recipes.md) |
 | kick a vessel without burning | `debug/vessels/<id>/impulse` = `x y z [cci\|body] [ns\|dv]` (one-shot Δv cheat; no propellant, no pointing) |
+| run a pre-planned sequence at known times | `<offsetMs> <path> <value>` lines + `commit` → `/sim/ctl/timed_batch`; drive it at `ctl/schedules/<id>/{pause,scrub,rate,loop,stop}` |
+| move the view / shoot footage | take `/sim/camera/enabled`, write `pose/{anchor,frame,position,aim,fov}`, release with `enabled 0` — see [recipes.md §13](recipes.md) |
 | run a closed loop safely | bracket it at 1× warp; gate on pause/warp/stale; abort path ready |
 
 Concrete end-to-end programs (including the teleport task): [`recipes.md`](recipes.md).

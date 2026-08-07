@@ -318,6 +318,49 @@ are rounded on apply (documented in [SPEC §3.7](../SPEC_9P_FILESYSTEM.md)). Ver
 
 ---
 
+## Camera state — `CameraReader` (gated by `[camera] camera_enabled`; per rendered frame) {#camera}
+
+`gatOS.GameMod/Game/Ksa/Camera/CameraReader.cs` (plans/CAMERA_ASBUILT.md). **This read does not go
+through `SimSnapshot`.** The camera moves every rendered frame — far faster than the telemetry publish
+cadence — so the director samples the live camera at the end of `OnAfterFrame` and publishes a
+game-free `CameraStatus` into `CameraStore` with **one volatile swap**; every `/sim/camera` leaf is a
+`LiveLine`/`StaticTextFile` that formats from that snapshot per access, never snapshot-memoized. Nothing
+here is gated by `telemetry_*`, and nothing here is sampled by `TelemetrySampler` (only the
+`camera.shot`/`camera.finished` **events** ride the sampler, gated by `telemetry_events`).
+
+| read | gatOS site | KSA member | Decomp file | Unit/format | Risk | 5168 |
+|---|---|---|---|---|---|---|
+| `camera/mode`, `camera/status`' `mode` | `CameraReader.Sample` → `ModeOf` | `Viewport.Mode` (public field — **not** `Program.GetCameraMode()`, which reads the *frame* viewport); the `CameraMode` enum `{Orbit,Free,Map,IVA,Fixed}` mapped out member-by-member rather than cast | `KSA/Viewport.cs`, `KSA/CameraMode.cs` | token | Low–Medium | ➕ new 2026-08-06 |
+| `camera/target`, `camera/status`' `follow` | `CameraReader.Sample` → `CameraTargets.Describe` | `Camera.Following` → `IFollowable`; `Astronomical.Id`. A `WreckageMarker` or `VehicleEditingSpace` is not addressable ⇒ both report `none` | `KSA/Camera.cs` | `vessel:<id>` \| `body:<id>` \| `none` | Low | ➕ new 2026-08-06 |
+| `camera/tidal` | `CameraReader.Sample` | `Camera.TidalLocking` (get-only) | `KSA/Camera.cs` | flag | Medium | ➕ new 2026-08-06 |
+| `camera/pose/fov` | `CameraReader.Sample` | `Camera.GetFieldOfView()` — ⚠️ returns **radians** while `SetFieldOfView(float)` takes **degrees**; converted here, once, at the boundary, so nothing downstream carries a radian | `KSA/Camera.cs` | degrees | Medium | ➕ new 2026-08-06 |
+| `camera/pose/ortho` | `CameraReader.Sample` | `Camera.Orthographic` | `KSA/Camera.cs` | flag | Medium | ➕ new 2026-08-06 |
+| `camera/map/scope`, `camera/status`' `map_scope` | `CameraReader.Sample` (+ `CameraDirector.SetMapScope`'s own publish) | `Viewport.MapController` (public field); `MapController.Scope` (public `double`, `:33`) — the controller clamps it **up** to the followed object's `MeanRadius` every map frame, so a smaller written value reads back clamped | `KSA/Viewport.cs`, `KSA/MapController.cs` | metres | Medium | ➕ new 2026-08-06 |
+| `camera/pose/geo` (from a Cartesian placement) | `CameraReader.WithBothSpellings` → `CameraFrames.TryEclToGeo` | `Celestial.{GetPositionCceFromEcl,GetCcf2Cce,GetTerrainHeightFromDirCce,MeanRadius}` — the exact inverse of `GetDirCcfFromLatLon` (`lat = asin(ccf.Z)`, `lon = atan2(ccf.Y, ccf.X)`), the pair KSA's own `GetLatitudeFromCce`/`GetLongitudeFromCcf` use | `KSA/Celestial.cs` | deg / deg / m **above terrain** | Medium | ➕ new 2026-08-06 |
+| `camera/pose/position` (from a geodetic placement) | `CameraReader.WithBothSpellings` → `CameraFrames.TryFrame2Ecl` + `CameraTargets.PositionEcl` | back-projection into the Cartesian channel's own frame (same members as the write side — [`ksa-write-surface.md#camera-director`](ksa-write-surface.md#camera-director)) | `KSA/Vehicle.cs`, `KSA/Celestial.cs` | metres, in `pose/frame` | Medium | ➕ new 2026-08-06 |
+
+**Two properties keep this section short.** Every *composed* value (`pose/roll`, `smoothing`,
+`orbit/*`, the aim family, `rotation`, `ortho_height`, `time_scale`, and the playback fields) is read
+back from gatOS's **own** compositor + track player, not from the game — there is no KSA member to
+list, and that is exactly the resync-after-restart property AGENTS.md §7 requires: a client that
+reconnects mid-shot reads the *effective* value, not the last thing anyone wrote. And **both position
+spellings are always published** — whichever one the author used, the reader fills in the other from
+the point the placement actually resolved to, which is what the two back-projection rows above are.
+Failure is silent and total: a Cartesian placement about a *vessel* anchor simply has no geodetic form
+(latitude on a vessel is meaningless, and zeros would read as a real placement).
+
+**One documented behaviour to keep in mind when reading these leaves:** `camera/target`, `camera/mode`,
+`camera/tidal` and `camera/status` report **idle values while gatOS does not own the camera**. That is
+the `AudioActuator._publishedEmpty` edge-latch discipline — an idle director publishes once and then
+does nothing, which is what keeps the feature genuinely free when off — but it means those four leaves
+do not mirror the *player's* camera. `camera/map/scope` is the deliberate exception: `SetMapScope`
+publishes its own read-back, because map is precisely the mode gatOS does not own and the leaf would
+otherwise report `0` for a value the guest had just written. Verified `2026-08-06` against
+`2026.8.5.5168` (new feature; the column above ticks the feature's own verification date while the rest
+of this page ticks the playbook passes). Live pass pending — `docs/VALIDATION.md`.
+
+---
+
 ## ✅ 4750 read-surface findings (detail)
 
 ### ✅ Docking pushoff — `docking/<n>/pushoff_impulse` (G1 FIXED, 2026-06-27) {#docking}

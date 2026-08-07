@@ -65,6 +65,11 @@ teaching; you now have both approaches.
 | **Teleport (set CCI state)** | `echo "$px $py $pz $vx $vy $vz" > /sim/debug/vessels/Hunter/teleport` | `POST /v1/command` `{"vessel_id":"Hunter","action":"debug.teleport","values":[…6…]}` |
 | **One-shot impulse kick** | `echo "$x $y $z [cci\|body] [ns\|dv]" > /sim/debug/vessels/Hunter/impulse` | `POST /v1/command` `{"vessel_id":"Hunter","action":"debug.impulse","values":[x,y,z],"token":"body","aux":"dv"}` |
 | **Many writes in one tick** | write `<path> <value>` lines + a `commit` line to `/sim/ctl/batch` | `POST /v1/fs/ctl/batch` body = the same multi-line text |
+| **Many writes over a timeline** | write `<offsetMs> <path> <value>` lines + `commit` to `/sim/ctl/timed_batch` | `POST /v1/fs/ctl/timed_batch` body = the same multi-line text |
+| **Inspect / drive a schedule** | `cat /sim/ctl/schedules/<id>/state`; `echo 0.5 > …/<id>/rate` | `GET /v1/fs/ctl/schedules/<id>/state`; `POST /v1/fs/ctl/schedules/<id>/rate` body `0.5` |
+| **Take / release the camera** | `echo 1 > /sim/camera/enabled` … `echo 0 > /sim/camera/enabled` | `POST /v1/fs/camera/enabled` body `1` / `0` |
+| **Place & aim the camera** | `echo "-40 0 -6" > /sim/camera/pose/position`; `echo "vessel:X off 0 0 -1.2" > /sim/camera/pose/aim` | `POST /v1/fs/camera/pose/position` / `…/pose/aim` with the same text |
+| **Upload & play a camera track** | `cp shot.json /sim/camera/track/shot`; `echo shot > /sim/camera/play` | `POST /v1/fs/camera/track/shot` body = the JSON; `POST /v1/fs/camera/play` body `shot` |
 
 Notes that keep a tutorial honest:
 
@@ -290,8 +295,9 @@ Detail: [`gatos/flight-programs.md §4–§5`](../.claude/skills/gatos/flight-pr
 
 - **Discrete events** — one JSON line per event (`situation-change`, `engine-state`, `flameout`,
   `docked`/`undocked`, `decoupled`, `animation-complete`, battery events, vessel appeared/vanished,
-  `audio.finished`). In-guest `tail -f /sim/events`; host `GET /v1/events` (SSE). Great for
-  "wait until X happens" without polling — e.g. `grep -m1` a completion.
+  `audio.finished`, the five `schedule.*` types, and `camera.shot`/`camera.finished`). In-guest
+  `tail -f /sim/events`; host `GET /v1/events` (SSE). Great for "wait until X happens" without
+  polling — e.g. `grep -m1` a completion, or cutting a camera shot on a `schedule.finished`.
 - **Per-vessel telemetry log** — a growing NDJSON of `{seq,ut,sit,alt,vel,att,mass}` per sample:
   `tail -f /sim/vessels/active/stream` / `GET /v1/vessels/active/stream`.
 - **One field on change** — `GET /v1/fs/<path>?stream=1` (SSE, one `data:` per change).
@@ -300,7 +306,93 @@ See [SPEC §3.5 / §7](../SPEC_9P_FILESYSTEM.md).
 
 ---
 
-## 9. Setting up scenarios (debug/cheats a tutorial uses)
+## 9. Directing the camera & timed sequences
+
+Two surfaces that are **not** cheats and **not** per-vessel: the host-side scheduler
+(`/sim/ctl/timed_batch` + `/sim/ctl/schedules/`, gated by `[schedule] schedule_enabled`, default on)
+and the programmable camera (`/sim/camera/**`, gated by `[camera] camera_enabled`, default on).
+Together they are the "make it look like something" half of gatOS, and they are what the
+`direct-a-camera-shot` guide teaches.
+
+### 9.1 The scheduler: the control surface, on a clock
+
+`ctl/batch` collapses N writes into one *instant*; `ctl/timed_batch` spreads them over *time*. Same
+paths, same values — each line just gains a leading **absolute offset in milliseconds**:
+
+```sh
+cat > /sim/ctl/timed_batch <<'EOF'
+@id      launch-seq        # optional; auto "#N" otherwise
+@clock   render            # render | wall | ut       (default render)
+0        vessels/active/ctl/throttle  1
+1200     vessels/active/ctl/ignite    1
+3400     debug/time/warp              1
+commit
+EOF
+cat /sim/ctl/schedules/launch-seq/state     # pending|running|paused|done|failed
+```
+
+Facts a tutorial must state correctly:
+
+- **The host owns the clock**, so timing survives the guest going away and replays identically.
+- **Offsets are absolute, never deltas** (fractional allowed) — re-timing one line never shifts the
+  rest, and rounding cannot accumulate.
+- **Three clock bases and they really differ:** `render` accumulates the game's clamped per-frame
+  delta, so it lags after a hitch and never catches up (right for footage, wrong for syncing to a
+  host recorder); `wall` is true elapsed time and may need a catch-up burst; `ut` is sim time and
+  diverges wildly under warp (right for mission events).
+- **Phase mixing is allowed here** (unlike `ctl/batch`) — a schedule spans many ticks, so "same
+  tick" never has to hold.
+- **Catch-up coalesces state writes, never triggers:** if many entries come due at once, every
+  trigger fires in order but state controls collapse to the last write per path (counted at
+  `<id>/dropped`). That is why a 20 Hz generated script is cheap.
+- **Commit is non-blocking and all-or-nothing.** Bad path ⇒ `ENOENT`, bad value/directive/cap ⇒
+  `EINVAL`, and nothing is left half-committed. The player then lives at `ctl/schedules/<id>/`, with
+  `pause`/`scrub`/`rate`/`loop`/`stop`/`remove` and `schedule.*` events on `/sim/events`.
+
+### 9.2 The camera: anchor, frame, position, aim
+
+`camera/enabled 1` **takes** the camera (the game's controller is parked, so the player's camera
+keys and `camera/mode`/`follow`/`tidal` are inert until you release — always leave a way to run
+`echo 1 > /sim/camera/release`). Everything you then write is an *override* over the snapshot taken
+at ownership; `camera/enabled 0` blends back, `camera/release` cuts back.
+
+| Concept | File | Values |
+|---|---|---|
+| what the pose is measured **about** | `camera/pose/anchor` | `vessel:<id>` \| `body:<id>` \| `part:<vessel-id>/<instance-id>` \| `none` |
+| which way the axes **point** | `camera/pose/frame` | `ecl` \| `cce` \| `bodyfixed` \| `enu` \| `lvlh` \| `chase` |
+| where, in that frame | `camera/pose/position` | `x y z [frame]`, metres |
+| …or on a sphere about the anchor | `camera/pose/orbit/{radius,azimuth,elevation}` | m, deg, deg — **a non-zero radius wins** over `position` |
+| …or by latitude/longitude | `camera/pose/geo` | `lat lon alt [body:<id>]` — altitude is **above terrain** |
+| what to look at | `camera/pose/aim` | `<target> [off x y z] [frame <f>] [up world\|target\|velocity\|free] [roll <deg>]` |
+| lens | `camera/pose/{fov,ortho,ortho_height,roll}` | degrees / flag / metres / degrees |
+| take the edge off coarse keyframes | `camera/pose/smoothing` | seconds, `0..10` |
+
+- **`bodyfixed` is the aircraft triad tutorials already teach** — `+X` nose, `+Y` right, **`−Z` up**
+  — the exact convention `ctl/translate` uses (§4/§5), so `-40 0 -6` reads as "40 m aft, 6 m up".
+- **Aim is a target, not a rotation.** The offset is measured *on the subject* (the aim frame
+  defaults to `bodyfixed`, not the pose frame) and re-resolved **every rendered frame**, which is
+  what keeps `off 0 0 -1.2` glued to a moving hull instead of drifting.
+- **The two routes are the same channels.** A `timed_batch` driving `camera/pose/position` and a
+  JSON track's `"position"` block reach the same compositor; a track claims **only** the channels
+  its active shot declares, so you can pull focus by hand mid-shot and it sticks.
+- **A track is a schedule.** `echo shot > /sim/camera/play` registers a player at
+  `/sim/ctl/schedules/camera/`, so `camera/play` needs `schedule_enabled` too (`EOPNOTSUPP`
+  otherwise, with route A still fully available). A malformed upload is rejected on **close**, which
+  carries no errno — read `/sim/camera/last_error`.
+- **Three things a tutorial must warn about:** `pose/ortho_height` is the one camera change gatOS
+  **cannot undo** (KSA has a setter but no getter); the camera is floored at surface + 0.5 m, so a
+  lower `geo` altitude is silently corrected; and while gatOS owns the camera, **an EVA kittenaut
+  walks relative to the shot** (KSA feeds the main camera's basis into EVA locomotion).
+- **`iva` and `map` are not gatOS ownership contexts** — only `fixed` is, because it is the only
+  controller that writes nothing when unfollowed. `camera/mode` still takes all five tokens; it
+  drives the *game's* mode while gatOS is idle. `camera/map/scope` (the map's zoom) does ship and is
+  not ownership-gated.
+
+Full catalog, errnos and the track JSON schema: [SPEC §3.10 / §3.11](../SPEC_9P_FILESYSTEM.md).
+
+---
+
+## 10. Setting up scenarios (debug/cheats a tutorial uses)
 
 Tutorials often need to *place* a vessel before demonstrating control. `debug/**` (gated by
 `debug_namespace=true`, default on; exempt from the authority gate) is how:
@@ -341,7 +433,7 @@ Ranges, units and the per-family caveats are in [SPEC §3.7](../SPEC_9P_FILESYST
 
 ---
 
-## 10. Units & the gotchas that silently ruin a tutorial program
+## 11. Units & the gotchas that silently ruin a tutorial program
 
 | Trap | The rule |
 |---|---|
@@ -354,13 +446,15 @@ Ranges, units and the per-family caveats are in [SPEC §3.7](../SPEC_9P_FILESYST
 | a vessel's id | its **name** (`Hunter`, `Polaris` are literal ids); path ids are sanitized. |
 | non-finite reads | a closed gate/absent module yields `0`/empty — guard before using. |
 | `controllable == 0` | KSA silently ignores commands; pre-check it. |
+| schedule/playback time | **milliseconds** (`timed_batch` offsets, `schedules/<id>/t`, `camera/playback`) — but a *track's* `t`/`duration` and `camera/play at` are **seconds**. |
+| camera "up" | `bodyfixed` is `−Z` up (the aircraft triad), so an "above the hull" offset is negative. |
 
 Full units table: [SPEC §8](../SPEC_9P_FILESYSTEM.md). Full gotcha list:
 [`coordinate-frames.md §7`](../.claude/skills/gatos/coordinate-frames.md).
 
 ---
 
-## 11. Reference index — for a tutorial about X, read these
+## 12. Reference index — for a tutorial about X, read these
 
 | Writing a tutorial about… | Primary sources |
 |---|---|
@@ -372,7 +466,9 @@ Full units table: [SPEC §8](../SPEC_9P_FILESYSTEM.md). Full gotcha list:
 | reference frames | [`coordinate-frames.md`](../.claude/skills/gatos/coordinate-frames.md); [`KSA_CELESTIAL_COORDINATE_FRAMES.md`](KSA_CELESTIAL_COORDINATE_FRAMES.md) |
 | control loops / gating / pacing | this §7; [`flight-programs.md`](../.claude/skills/gatos/flight-programs.md) |
 | events & waiting | this §8; [SPEC §3.5 / §7](../SPEC_9P_FILESYSTEM.md) |
-| teleport / scenario setup | this §9; [SPEC §6](../SPEC_9P_FILESYSTEM.md); [`recipes.md §1`](../.claude/skills/gatos/recipes.md) |
+| teleport / scenario setup | this §10; [SPEC §6](../SPEC_9P_FILESYSTEM.md); [`recipes.md §1`](../.claude/skills/gatos/recipes.md) |
+| timed sequences / schedules | this §9.1; [SPEC §3.10](../SPEC_9P_FILESYSTEM.md); [`recipes.md §12`](../.claude/skills/gatos/recipes.md) |
+| camera shots / cinematics | this §9.2; [SPEC §3.11](../SPEC_9P_FILESYSTEM.md); [`recipes.md §13`](../.claude/skills/gatos/recipes.md); [`coordinate-frames.md §8`](../.claude/skills/gatos/coordinate-frames.md); guide `direct-a-camera-shot.mdx` |
 | the HTTP API in general | [SPEC §7](../SPEC_9P_FILESYSTEM.md); `examples/sdk-ts` |
 | a closed-loop autopilot (advanced) | [`flight-programs.md §8`](../.claude/skills/gatos/flight-programs.md); `examples/land-o-matic` |
 

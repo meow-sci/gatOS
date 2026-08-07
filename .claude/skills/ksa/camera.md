@@ -44,6 +44,24 @@ private static bool HandleOnFramePrefix(Controller controller, double deltaTime)
 - Declaring only `(Controller __instance, double inDeltaTime)` and omitting `inViewport` is legal —
   Harmony binds original arguments **by name**, so a subset is fine
 
+> **⚠️ A prefix on `Controller.OnFrame` fires up to 4× per frame — bind the main viewport explicitly.**
+> `Program.ViewportCount = 4` (`decomp/KSA/Program.cs:238`) and `Program.OnFrameViewports` calls
+> `viewport.OnFrame(...)` for **every** viewport in `Viewports`, with the `if (!viewport.Visible)
+> continue;` check coming *after* that call (`Program.cs:2267-2288`) — and `Viewport.OnFrame` is
+> literally `GetActiveController().OnFrame(this, dt); GetCamera().OnFrame(dt);`
+> (`decomp/KSA/Viewport.cs:139-144`). So the offscreen thumbnail viewport and every hidden extra camera
+> run their controllers too, each with its **own** `Controller` and `Camera` instances. A patch that
+> assumes "one call per frame" will animate the wrong camera, or the same animation four times.
+> **Resolve the target viewport by identity — `Program.MainViewport` — never by index**, and never
+> assume `Program.GetCamera()`/`GetCameraMode()` mean the main one (they read the *frame* viewport).
+>
+> Do **not** port unscience's "first controller wins" guard
+> (`camera-controller-override.lib/Animation/KeyframeSequencePlayer.cs:437-444`): it locks onto the
+> first `Controller` instance to call `Update` and then, for every other instance, returns `true` —
+> which the prefix inverts into `return false`, **skipping the original `OnFrame`**. The result is that
+> the other three viewports' controllers are suppressed but never driven, i.e. **frozen** for the whole
+> playback. It is a bug, not a pattern.
+
 > **⚠️ There is no `___Transform` — do not reintroduce it.** `Controller`, `OrbitController` and
 > `FlyController` have **no private `Transform3D` field**; a `Transform3D ___Transform` field injector
 > therefore binds to nothing. Harmony validates injected field names at **patch time**, so `Patch()`

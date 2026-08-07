@@ -421,3 +421,173 @@ Notes:
   `/sim/ctl/batch` exactly like the formation teleport (§8-batch).
 - Errnos: `EINVAL` (bad arity/keyword/non-finite), `EBUSY` (no parent body / mass unavailable),
   `ENOENT` (vessel gone), `EACCES` (debug namespace off).
+
+---
+
+## 12. Run a sequence on a clock (`ctl/timed_batch` + `ctl/schedules`)
+
+**Task:** *fire a series of control writes at chosen times, without a program staying awake.*
+`ctl/batch` collapses N writes into one **tick**; `ctl/timed_batch` spreads them over a **timeline**.
+Same paths, same values, each line prefixed with an **absolute offset in milliseconds** (fractional
+allowed, never deltas), with optional `@id`/`@clock`/`@rate`/`@loop`/`@group` directives first and a
+terminating `commit`. The host owns the clock, so the sequence survives the guest disconnecting and
+replays identically. Gated by `[schedule] schedule_enabled` (default on). Full grammar:
+[SPEC §3.10](../../../SPEC_9P_FILESYSTEM.md), or `cat /sim/ctl/schedules/help`.
+
+```sh
+# In-guest: a launch sequence, then drive it live.
+cat > /sim/ctl/timed_batch <<'EOF'
+@id      launch-seq
+@clock   render                     # render | wall | ut   (default render)
+@rate    1.0                        # 0..100; 0 freezes
+0        vessels/active/ctl/throttle  1
+1200     vessels/active/ctl/ignite    1
+9000     vessels/active/ctl/stage     1
+9000     audio/play                   stage.mp3 vol=0.7
+commit
+EOF
+
+cat  /sim/ctl/schedules/launch-seq/state      # pending|running|paused|done|failed
+cat  /sim/ctl/schedules/launch-seq/t          # current offset, ms
+echo 1    > /sim/ctl/schedules/launch-seq/pause
+echo 3000 > /sim/ctl/schedules/launch-seq/scrub   # seek; fires nothing
+echo 0.25 > /sim/ctl/schedules/launch-seq/rate    # quarter speed
+echo 1    > /sim/ctl/schedules/launch-seq/remove  # drop it
+```
+
+```ts
+// schedule.ts  —  run with:  bun schedule.ts
+const H = process.env.GATOS_HTTP ?? "http://127.0.0.1:4242/v1";
+const script = [
+  "@id      launch-seq",
+  "@clock   render",
+  "0        vessels/active/ctl/throttle 1",
+  "1200     vessels/active/ctl/ignite   1",
+  "commit",
+].join("\n") + "\n";
+
+await fetch(`${H}/fs/ctl/timed_batch`, { method: "POST", body: script });
+const state = await (await fetch(`${H}/fs/ctl/schedules/launch-seq/state`)).text();
+console.log(state.trim());
+
+// The seven schedule.* actions are also reachable structurally — note vessel_id: "".
+await fetch(`${H}/command`, {
+  method: "POST", headers: { "content-type": "application/json" },
+  body: JSON.stringify({ vessel_id: "", action: "schedule.rate", token: "launch-seq", value: 0.5 }),
+});
+```
+
+Notes:
+- **Clock bases genuinely differ.** `render` accumulates the game's clamped per-frame delta, so it
+  lags after a hitch and *never* catches up (right for footage, wrong for syncing to a host
+  recorder); `wall` is true elapsed time and may demand a catch-up burst; `ut` is sim time and
+  diverges wildly under warp (right for mission events).
+- **Phase mixing is allowed** here (unlike `ctl/batch`), so a schedule may mix Frame-phase throttle
+  writes with Solver-phase `attitude_mode`/`burn` writes freely.
+- **Catch-up is derived from the archetype:** when many entries come due at once every *trigger*
+  fires in order, while *state* controls coalesce to the last write per path (cross-path order
+  preserved) — so generating a 20 Hz script is cheap. Discards are counted at `<id>/dropped` and
+  reported as `schedule.dropped` on `/sim/events`.
+- **Commit is non-blocking and all-or-nothing:** `ENOENT` for an unresolvable path, `EINVAL` for a
+  bad value/directive/cap, `EACCES` when control is disabled — and nothing registers on failure.
+  The id is reserved *last*, so a rejected commit never burns the name.
+- `@group` members share **one clock**, so `pause`/`scrub`/`rate`/`loop` on any member moves them all
+  — that is how several schedules become one take.
+- A finished player **stays listed** with its final `state`/`dropped`/`last_error` so a script can
+  come back and read the outcome; it is only reclaimed under `schedule_max_live` pressure (oldest
+  finished first, announced as `schedule.evicted`).
+
+---
+
+## 13. Direct a camera shot (`/sim/camera`)
+
+**Task:** *take the game camera, park it beside a vessel, aim it at a point on the hull, move it, and
+hand it back.* Gated by `[camera] camera_enabled` (default on); not a debug cheat. Full catalog:
+[SPEC §3.11](../../../SPEC_9P_FILESYSTEM.md); frames in
+[`coordinate-frames.md` §8](coordinate-frames.md).
+
+```sh
+# --- L1: take it, place it, aim it -------------------------------------------------
+echo 1 > /sim/camera/enabled                        # gatOS becomes the only writer
+echo "vessel:apollo11" > /sim/camera/pose/anchor    # measure everything about this ship
+echo "bodyfixed"       > /sim/camera/pose/frame     # +X nose, +Y right, -Z UP
+echo "-40 0 -6"        > /sim/camera/pose/position  # 40 m aft, 6 m above  (note the -6)
+echo 42                > /sim/camera/pose/fov
+echo 0.35              > /sim/camera/pose/smoothing # turns coarse steps into a glide
+
+# Aim-with-offset: the offset is measured ON THE SUBJECT and re-resolved every frame,
+# so +1.2 m on a kittenaut's own axis stays its head as it walks.
+echo "part:apollo11/77 off 0 0 -1.2 frame bodyfixed up velocity roll -6" \
+  > /sim/camera/pose/aim
+
+cat /sim/camera/status        # one "key value…" line per channel (the composed values)
+cat /sim/camera/last_error    # why the last track upload / play was rejected, or "-"
+
+# --- L2: move it on a timeline (the same leaves, through the scheduler) --------------
+cat > /sim/ctl/timed_batch <<'EOF'
+@id    push-in
+@clock render
+0      camera/pose/position -40 0 -6 bodyfixed
+0      camera/pose/fov      42
+3000   camera/pose/position -25 0 -4.4 bodyfixed
+3000   camera/pose/fov      32
+6000   camera/pose/position -12 0 -3 bodyfixed
+6000   camera/pose/fov      24
+commit
+EOF
+
+# --- L3: or hand over a JSON track and let gatOS interpolate it ----------------------
+cp /mnt/shots/push-in.json /sim/camera/track/push-in     # validated on close
+echo "push-in at 0 rate 1 loop 0" > /sim/camera/play     # appears at ctl/schedules/camera/
+cat  /sim/camera/playback                                # state t_ms dur_ms shot idx rate loop
+echo "t 4 rate 0.25" > /sim/camera/set                   # scrub + slow-mo, live
+echo 1 > /sim/camera/stop
+
+# --- hand it back --------------------------------------------------------------------
+echo 1 > /sim/camera/pose/reset   # clear YOUR overrides; an active track keeps playing
+echo 0 > /sim/camera/enabled      # eased blend back (camera_release_blend_s, default 0.6 s)
+echo 1 > /sim/camera/release      # …or a hard cut, the "give it back NOW" button
+```
+
+A minimal track (`push-in.json`) — every channel name in it is a `pose/` leaf you can also write by
+hand, which is the whole point:
+
+```jsonc
+{
+  "shots": [{
+    "name": "push-in", "t": 0, "duration": 6,        // SECONDS here (leaves are ms)
+    "anchor": "vessel:apollo11",
+    "position": { "mode": "cartesian", "curve": "catmull-rom", "frame": "bodyfixed",
+                  "keys": [ { "t": 0, "v": [-40, 0, -6], "ease": "out", "ease_power": 3 },
+                            { "t": 6, "v": [-12, 0, -3] } ] },
+    "aim":      { "target": "vessel:apollo11", "offset": [0, 0, -1.2], "up": "world" },
+    "fov":      { "keys": [ { "t": 0, "v": 42, "ease": "out" }, { "t": 6, "v": 24 } ] }
+  }]
+}
+```
+
+Notes:
+- **Three layers composite per channel: track ?? your override ?? the ownership baseline.** A shot
+  claims **only** the channels it declares, so a track animating `position` + `fov` leaves `aim`
+  free — you can pull focus by hand mid-shot and it sticks. Writing a channel a shot *is* driving is
+  accepted and superseded next frame (no error), and reappears when the shot stops declaring it.
+- **`bodyfixed` is `−Z` up.** "Above the hull" is a *negative* Z. This is the most common mistake.
+- **While you own the camera**, `mode`/`follow`/`tidal` and the player's camera keys are inert
+  (`EOPNOTSUPP`) — use `pose/anchor` + `pose/aim_target`, which do everything a follow does. Always
+  keep an escape: `echo 1 > /sim/camera/release`.
+- **A track is a schedule:** `camera/play`/`set`/`stop` additionally need `schedule_enabled`
+  (`EOPNOTSUPP` otherwise), and the player is `/sim/ctl/schedules/camera/` — the same
+  `pause`/`scrub`/`rate`/`loop`/`stop` leaves drive it, on the same clock as `camera/playback`.
+- **A malformed track fails on `close`, which cannot carry an errno** — the `cp` looks like it
+  worked. Read `/sim/camera/last_error`, or upload over HTTP where the `POST` carries the EINVAL.
+- Units are mixed on purpose: `timed_batch` offsets are **ms**; a track's `t`/`duration` and
+  `camera/play at` are **seconds**.
+- Over HTTP everything is the plain field mirror — `POST /v1/fs/camera/pose/fov` (body `24`),
+  `POST /v1/fs/camera/track/push-in` (body = the JSON, ≤ 1 MiB), `GET /v1/fs/camera/status`. There
+  is **no** `/v1/camera` binary route (unlike `/v1/audio`), and none is needed.
+- Structural writes take `vessel_id: ""` — e.g.
+  `{"vessel_id":"","action":"camera.fov","value":24}`.
+- Three things to warn a reader about: `pose/ortho_height` is the one camera change gatOS **cannot
+  undo**; the camera is floored at surface + 0.5 m; and while gatOS holds the camera an **EVA
+  kittenaut walks relative to the shot**.
+

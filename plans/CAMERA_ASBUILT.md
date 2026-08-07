@@ -360,9 +360,11 @@ last thing written — AGENTS.md §7's resync-after-restart property. The compos
 (asserted), so "read a leaf, write it straight back" is a no-op.
 
 **Transport parity is structural:** these are ordinary VFS leaves, so `VfsScan` mirrors them to
-`GET/PUT /v1/fs/sim/camera/pose/fov` and `gatos/sim/camera/pose/fov` with no new code, and
-`POST /v1/command` / `gatos/command` reach every `camera.*` action by construction. `ctl/batch` and
-`ctl/timed_batch` reach every camera leaf too (asserted end to end).
+`GET/POST /v1/fs/camera/pose/fov` and `gatos/sim/camera/pose/fov` with no new code, and
+`POST /v1/command` / `gatos/command` reach every `camera.*` action by construction — passing
+`"vessel_id": ""`, which the JSON command parser **requires as a present string** even for a globally
+addressed action (`SimHttpServer.ParseCommand`; the field may be empty but never omitted or null).
+`ctl/batch` and `ctl/timed_batch` reach every camera leaf too (asserted end to end).
 
 ### `camera/status` layout
 
@@ -467,7 +469,7 @@ built the queue, not the emitters.
    lines of string building. It is additive: no other file's responsibilities moved.
 
 2. **`CameraTrackFile` does not override `IsStreaming`** (deliberate, per the brief) — so camera tracks
-   **do** appear in `VfsScan.Leaves` and therefore at `GET/PUT /v1/fs/sim/camera/track/<name>` and
+   **do** appear in `VfsScan.Leaves` and therefore at `GET/POST /v1/fs/camera/track/<name>` and
    `gatos/sim/camera/track/<name>`. `AudioClipFile` opts out because a clip is multi-MiB binary; a
    track is small JSON text and is genuinely useful over every transport. `camera_max_track_bytes`
    (1 MiB default) is what keeps that honest. `CameraTreeTests` asserts the **inverse** of

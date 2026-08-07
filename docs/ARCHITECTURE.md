@@ -17,7 +17,9 @@ KSA game process                                          QEMU subprocess
 │   SshShellSession ──SSH.NET──────────────────┼─127.0.0.1:<pSsh>──► hostfwd → :22       │
 │   NinePServer (listens 127.0.0.1:<p9>) ◄─────┼── guest connects out via 10.0.2.2       │
 │   SimFsTree ◄ SnapshotStore ◄ TelemetrySampler (game thread, OnBeforeGui)              │
+│   ScheduleStore → CommandQueue.Post (game thread, before the drain)                    │
 │   IvaPhysicsManager → CabinSim (own Bepu world, assembly frame; OnAfterUi, off by dflt)│
+│   CameraDirector → Camera.PositionEcl/LocalRotation (game thread, OnAfterFrame)        │
 │   VmHost (state machine) → QemuProcess, DiskManager, QgaClient, PortAllocator          │
 └──────────────────────────────────────────────┘         └──────────────────────────────┘
 ```
@@ -25,6 +27,50 @@ KSA game process                                          QEMU subprocess
 All host↔guest traffic is plain TCP over QEMU user-mode (slirp) networking — deliberately no
 virtio-9p / virtiofs / vsock (none exist on Windows QEMU hosts). One transport, identical on
 every host.
+
+### The per-frame pipeline (three StarMap hooks)
+
+gatOS hangs off **three** StarMap hooks, and which one a piece of work uses is load-bearing:
+
+```
+Program.OnFrame
+├─ OnFrameViewports  →  controller.OnFrame  →  Camera.OnFrame (builds the view matrix)
+├─ if (DrawUI) {
+│     OnDrawUiFrame       ── [StarMapBeforeGui] Mod.OnBeforeUi ──► DrivePerFrame(dt)
+│                                                                  ├ SampleTelemetry
+│                                                                  ├ TickSchedules   (7th work site)
+│                                                                  ├ DrainCommands   (Frame phase)
+│                                                                  ├ DriveAudio      (5th)
+│                                                                  └ UpdateThugLife  (4th)
+│     …
+│     OnDrawUiViewports   ── [StarMapAfterGui]  Mod.OnAfterUi  ──► DrivePostSolver(dt)
+│                                                                  ├ DriveWelds      (3rd)
+│                                                                  └ DriveIvaPhysics (6th)
+│                                                                  then DrawGameUi()
+│  }
+├─ Render
+└─ ── [StarMapAfterOnFrame] Mod.OnAfterFrame ──► if (!ranInGui) { DrivePerFrame; DrivePostSolver }
+                                                 DriveCamera(dt)  (8th — ALWAYS)
+```
+
+**Why the third hook exists (C0.1).** StarMap implements the two GUI hooks as patches on
+`Program.OnDrawUiFrame`/`OnDrawUiViewports`, whose only call sites are inside the `if (DrawUI)` block —
+and **F2 toggles `DrawUI`**. Hiding the UI therefore used to stop the sampler, the drain and every
+driver dead. `[StarMapAfterOnFrame]` is a postfix on `Program.OnFrame` itself, so it always runs; it
+stands in for both GUI hooks **only on the frames they were skipped** (a boolean latch, not a
+frame-number compare — this half of the partial class must compile with no KSA assemblies present, and
+`FrameNumber` is bumped before the postfix anyway). `DrawGameUi()` is never re-run: with `DrawUI` false
+there is no ImGui frame to draw into.
+
+**`DriveCamera` is the one exception — it runs unconditionally**, because the camera pose must be
+written *after* the render so the next frame's `OnFrameViewports` rebuilds every matrix from it (which
+is what lets gatOS own the camera with **no Harmony patch**), and because a camera that froze the
+instant the player hid the UI would be useless. The **Solver phase** is separate from all of this: a
+`Priority.First` Harmony prefix on `Universe.ExecuteNextVehicleSolvers` (`Mod.DrainSolverCommands`).
+
+**`TickSchedules` sits immediately before the drain** on purpose: a scheduled command that falls due on
+this frame is posted into the queue the very frame it executes, so a schedule's timing is the frame grid
+and not the frame grid plus one.
 
 ### Port allocation
 
@@ -291,6 +337,64 @@ whole surface.
 
 ---
 
+## Timed command scheduler (`/sim/ctl/timed_batch`)
+
+A guest writes a script of `<offsetMs> <path> <payload>` lines (plus `@id`/`@clock`/`@rate`/`@loop`/
+`@group` directives) and `commit`s it; the host plays it back against a timeline. The whole feature is
+**game-free** (`gatOS.SimFs/Commands/`) — it schedules gatOS's own `SimCommand`s and never learns what
+one *does*, so it adds **no KSA binding**. Commit is non-blocking and runs on a transport thread
+(reserve an id → validate all-or-nothing → queue); everything else is game-thread only:
+`Mod.TickSchedules` (**the seventh game-thread work site**, in `DrivePerFrame` immediately before the
+drain) activates pending commits, advances **each distinct clock once**, and `CommandQueue.Post`s
+whatever came due, so a scheduled command routes to its own phase by action key exactly as if a
+transport had submitted it — and can therefore be starved by `max_commands_per_frame` like any other.
+
+Three clock bases, sourced only in that tick: **`render`** (the frame's `dtPlayer`, which KSA clamps —
+so it lags a hitch and never catches up, which is what cinematics want), **`wall`** (a host `Stopwatch`,
+parked while the registry is empty so an idle gap is never banked), **`ut`** (the sim-time delta,
+clamped at 0 on a rewind). Catch-up is **coalescing**: every trigger due in one tick fires, but only the
+last non-trigger *per path*, so a hitch's burst is bounded by distinct leaves rather than entries, with
+the remainder counted at `<id>/dropped` and reported as a throttled `schedule.dropped` event. Completed
+players persist so a script can read the outcome, and are reclaimed **oldest-finished-first only under
+cap pressure** (`schedule.evicted`); a *running* take — including a camera track, which never reports
+`failed` — is structurally un-evictable. Self-gates to two integer compares while nothing is live; a
+tick fault disables scheduling for the session; teardown rides `Mod.TeardownGameCheats`.
+
+---
+
+## Programmable camera (`/sim/camera`)
+
+gatOS becomes the sole writer of the main viewport's camera. The game-free half
+(`gatOS.SimFs/Camera/`) holds the math, the validation rules, the **three-layer compositor**
+(`Track ?? Override ?? Baseline`, per channel, allocating nothing), the store + writable `track/` upload
+dir, the line grammars, and the JSON track parser/evaluator/player — which registers into the
+`/sim/ctl/schedules` registry as `kind = camera-track`, so the same `pause`/`scrub`/`rate`/`loop`
+controls drive a take. The game-side director (`Game/Ksa/Camera/`, 21 anchors + the rebound
+`CameraActuator.Focus`) resolves targets and frames and writes the pose.
+
+**`Mod.DriveCamera` is the eighth game-thread work site and the only driver that runs on *every*
+rendered frame** — at the end of `[StarMapAfterOnFrame]`, after the render, so the *next* frame's
+`Program.OnFrameViewports` rebuilds every view/projection matrix from `Camera.PositionEcl` /
+`LocalRotation` / the projection gatOS wrote. That ordering is the entire reason the feature needs **no
+Harmony patch**, and it works only because ownership parks `CameraMode.Fixed` (by direct field
+assignment, so no `TimedAlert` lands in the footage) and unfollows — making `FixedController.OnFrame`'s
+`if (following != null)` body a no-op. It does **not** generalise: `IVAController` and `MapController`
+both write the camera unconditionally at the top of their frame and both bail out of their mode when
+`Following == null`, so **IVA and Map ownership contexts are not implemented and are not implementable
+without a Harmony patch** (`scope/ksa-runtime-coupling.md#camera-mode-contexts`). The map's zoom ships
+instead, as `/sim/camera/map/scope`.
+
+The director self-gates to one branch while gatOS does not own the camera (the default), publishes its
+`CameraStatus` with a single volatile swap that every `/sim/camera` leaf renders from per access (the
+camera moves far faster than the telemetry cadence, so none of it is snapshot-memoized), holds the last
+good pose and logs once when a frame cannot be resolved, and hands the camera back before latching off
+on a driver fault. Two things it deliberately cannot undo: **`ortho_height`** (no public getter in KSA
+5168 to capture) and the fact that **while gatOS holds the camera, EVA locomotion's "forward" is
+wherever the shot is facing** (`KittenEva.PrepareWorker` reads the main camera). Teardown rides
+`Mod.TeardownGameCheats`.
+
+---
+
 ## Config sections reference
 
 | Section | Key knobs |
@@ -303,6 +407,9 @@ whole surface.
 | `[serial]` | `serial_telemetry_port`, `serial_command_port`, `serial_mode`, `serial_interval_ms` |
 | `[display]` | `display_enabled` (off), `display_fps`, `display_width`, `display_height`, `display_encoding` (boot seeds for `/sim/display`) |
 | `[audio]` | `audio_enabled` (on), `audio_max_clip_bytes` (16 MiB), `audio_max_total_bytes` (64 MiB), `audio_max_clips` (64), `audio_max_channels` (16) |
+| `[iva]` | `iva_physics_enabled` (off — the boot seed for `/sim/debug/iva/enabled`), `iva_run_outside_iva`, the `CabinTuning` knobs (`iva_substep_hz`, `iva_friction`, `iva_restitution`, `iva_max_speed`, `iva_density_kg_m3`, `iva_max_objects`, `iva_max_object_size`, `iva_impact_speed`, `iva_double_sided_interior`, `iva_max_substeps_per_frame`) |
+| `[camera]` | `camera_enabled` (on), `camera_max_tracks` (32), `camera_max_track_bytes` (1 MiB), `camera_max_total_bytes` (8 MiB), `camera_max_keys` (4096), `camera_fov_min`/`camera_fov_max` (1 / 179), `camera_release_blend_s` (0.6), `camera_allow_time_channel` (on — the `time` channel *also* needs `[control] debug_namespace`) |
+| `[schedule]` | `schedule_enabled` (on), `schedule_max_live` (16), `schedule_max_entries` (8192), `schedule_max_bytes` (1 MiB), `schedule_default_clock` (`"render"`) |
 | `[[mounts]]` | `name`, `path`, `read_only` (array, off by default) |
 
 Config is read from `<GatOsPaths.DataDir>/gatos.toml` (seeded on first run from

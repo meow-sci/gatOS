@@ -966,6 +966,169 @@ Catalog: `SPEC_9P_FILESYSTEM.md` §3.7 + §5.1; `docs/KSA_INTEGRATION_MATRIX.md`
 **Pending: the in-game pass** (18-item checklist in `docs/VALIDATION.md`) — the reflected handles, the
 apply paths and the terrain UBO write cannot be exercised headlessly.
 
+## Timed command scheduler: `/sim/ctl/timed_batch` + `ctl/schedules/` (plans/SCHEDULER_ASBUILT.md): Code DONE; in-game pass pending
+
+The generic host-side timed-command scheduler — "run this script of `/sim` writes against a timeline" —
+landed 2026-08 in two commits (`e96edda` the game-free S.0–S.4, `3be1dd9` the S.5 game-thread wiring,
+plus `fca17ce` the cap-pressure eviction fix). It is **100 % game-free and contributes zero
+`[KsaAnchor]`s**: it schedules gatOS's own `SimCommand`s and never learns what one *does*, so
+`KsaCatalog` routes the whole `schedule.*` family straight to `ScheduleStore.Execute` rather than
+re-validating anything game-side. Gated by the new `[schedule]` config section (`schedule_enabled`,
+`schedule_max_live` 16, `schedule_max_entries` 8192, `schedule_max_bytes` 1 MiB,
+`schedule_default_clock` `"render"`).
+
+**The one timeline primitive** is `PlaybackClock` (`ClockBase` = `Render`\|`Wall`\|`Ut`): position,
+never-shrinking duration, rate clamped `[0,100]` (**`0` is a legal frozen state**), loop, pause,
+`Scrub`, plus `LoopCount`/`ScrubGeneration` edge counters consumers diff. Its doubles are published as
+bit-cast `long`s through `Volatile`, so transport threads read them torn-free without a lock — which is
+what lets `/sim/ctl/schedules/<id>/t` be a live line that advances every rendered frame rather than at
+the telemetry cadence. `Schedule`/`ScheduleEntry` are the immutable committed script (entries **stably**
+sorted, so authored order survives inside one deadline — a group of `0`-offset lines therefore behaves
+exactly like a `ctl/batch`), `Scheduler` is one live player's cursor, and `ScheduleStore` is the
+registry + the game-free `schedule.*` executor + the bounded event queue (the `AudioStore` shape).
+`CommandQueue` gained `IPostObserver` + `Post(command, observer, token)` — fire-and-forget, no TCS,
+honouring `ControlEnabled` and routing by `command.Phase`, so **phase mixing across posts is free**
+(the deliberate relaxation of `BatchFile`'s one-phase rule).
+
+**Three semantics that are derived, not declared, and are the reason the feature is safe under load.**
+*Coalescing catch-up:* among the entries due in one tick every trigger fires in order, but only the
+**last per path** of the non-triggers does, cross-path order preserved — bounding a hitch's burst by
+*distinct leaves* instead of entries (a test drives 3 600 authored entries down to 3 emitted commands),
+with everything dropped counted at `<id>/dropped` and reported as a `schedule.dropped` event throttled
+to ≤ 1/player/second. *Scrub fires nothing* — a seek re-seats the cursor by binary search; it is
+navigation, and scrubbing backwards replays. *Loop drains the tail first* and keeps the remainder, so a
+loop boundary is indistinguishable from any other busy tick and the timeline does not drift.
+Shared-clock `@group`s hold the *same* `PlaybackClock` instance, so `pause`/`scrub`/`rate`/`loop` on any
+member moves them all, and a late joiner starts at the group's current position.
+
+**Completed players persist — until the cap is reached.** A `done`/`failed` player stays listed with its
+final `state`/`dropped`/`last_error` so a script can start a take and come back to read the outcome; but
+that would let a long session of one-shots wedge the registry on its own history, so `Activate` evicts
+**finished** players **oldest-first, under cap pressure only**, emitting `schedule.evicted` per reclaimed
+slot. `IsFinished` is the one "can never fire again" test — `done`, or `failed` **and** exhausted **and**
+not looping **and** past duration — because `failed` is *not* terminal (the first failing entry records
+the cause and the schedule deliberately keeps running). Eviction is eager and on the game thread on
+purpose: `ReserveId` runs on a transport thread and the cap counts *reserved* ids while an eviction pass
+can only see *activated* runners, so reclaiming lazily at commit time could not work — the first commit
+into a full registry would still EINVAL and only a retry a frame later would succeed.
+
+**S.5 — the game-thread wiring** (`Mod.TickSchedules`, `Game/Mod.Game.cs`): activate → advance every
+distinct clock once → tick → `Post` each due command, run in `DrivePerFrame` **immediately before** the
+command drain so a command that falls due on this frame executes on this frame. The three clock bases
+are sourced here and only here: `render` = the frame's `dtPlayer` (which KSA clamps, so it lags a hitch
+and never catches up), `wall` = a host `Stopwatch` **parked while the registry is empty** so an idle gap
+is never banked, `ut` = the sim-time delta with a backwards step clamped to 0. Self-gates to two integer
+compares while nothing is live; `Scheduler.Tick` allocates nothing on a 0-or-1-entry tick; a tick throw
+sets `_schedulesDead` for the session. Events drain through the sampler beside audio's and IVA's;
+teardown rides `Mod.TeardownGameCheats` (`ScheduleStore.Clear()`).
+
+**Deviations from the brief** (the code won): `ICommandSink.SubmitScheduleAsync` was **not** added — a
+schedule is host-side state, not a game mutation, and it would have forced ten `ICommandSink`
+implementors to carry a member they cannot implement, so `TimedBatchFile` holds the store directly (the
+`AudioStore` precedent) and re-asserts `[control] enabled` itself (EACCES) because it does not go
+through `SubmitAsync`. `ScheduleStore.Prune()` was not implemented as public surface; what landed is the
+private cap-pressure eviction above. `ReserveId` is a separate public step from `Submit`, so a rejected
+commit never burns the name. Tests: **107** across `PlaybackClockTests`, `SchedulerTests`,
+`TimedBatchFileTests`, `ScheduleTreeTests` and `ScheduleEvictionTests`, plus 5 `CommandQueue.Post` tests
+and the tree-crawl guard extended with every new path. Catalog: `SPEC_9P_FILESYSTEM.md`;
+`scope/non-ksa-surface.md#scheduler` + `scope/ksa-runtime-coupling.md#schedule-tick`.
+**Pending: the in-game pass** (16-item checklist in `docs/VALIDATION.md`) — real frame pacing, real
+hitches and real warp are the only things that can distinguish the three clock bases.
+
+---
+
+## Programmable camera: `/sim/camera` (plans/CAMERA_ASBUILT.md, CAMERA_CONTROLS_PLAN C0–C5): Code DONE; in-game pass pending
+
+gatOS as the sole writer of the main viewport's camera — ownership take/release, six reference frames,
+aim-with-offset, geodetic placement, JSON shot tracks, an interpolated `time` channel and the map's own
+zoom — landed 2026-08-06 in five commits (`0acf836` the F2-proof hook + `[camera]`/`[schedule]` config,
+`d9f4468` the math primitives, `5fe0ef0` the `/sim` surface, `c860f7d` the C1/C2 director, `80dcf77`
+the C3 track evaluator, `1467864` the wiring + the `time` channel + `map/scope`). **Zero Harmony
+patches.** Gated by `[camera] camera_enabled` (+ `camera_max_tracks` 32, `camera_max_track_bytes` 1 MiB,
+`camera_max_total_bytes` 8 MiB, `camera_max_keys` 4096, `camera_fov_min`/`max` 1/179,
+`camera_release_blend_s` 0.6, `camera_allow_time_channel`).
+
+**Game-free half** (`gatOS.SimFs/Camera/`, 16 files): the math primitives (`CameraMath`, `Easing`,
+`Splines`, `PoseSmoother`); `CameraRules` — every validation predicate, reading **no config** (FOV
+bounds are parameters); the addressing vocabulary (`FrameKind`, `AimUpKind`, `CameraModeKind`,
+`TargetRef` with exact round-tripping); the **three-layer compositor** `CameraState` — 17 channels,
+`Track ?? Override ?? Baseline` per channel, `Compose` **allocating nothing** (asserted < 64 B over
+10 000 calls) because it runs every rendered frame; `CameraStore` + the writable `track/` upload dir;
+`CameraCommands`' 28 action keys and six order-independent line grammars; `CameraFormat` — where every
+composite read-back is built and asserted to **re-parse through its own grammar**, so "read a leaf,
+write it straight back" is a no-op; and the track stack (`TrackParser` with its whole named-error
+matrix, `TrackEvaluator`, `CameraPlayback`/`CameraPlaybackController`). Tracks are **absolute-from-start,
+never incremental**: a full turn is the key pair `0 → 360`, and `CameraPlacement.Spherical` folds `360`
+to exactly `0`, so an orbit closes **bit-identically** (asserted twice). Rotation channels default to
+**squad** (catmull-rom) rather than slerp, because slerp's C0 flick at each waypoint is the defect a
+rotation track exists to avoid.
+
+**Game-side director** (`gatOS.GameMod/Game/Ksa/Camera/`, **21 `[KsaAnchor]`s** + the rebound
+`CameraActuator.Focus` = 22, all verified `2026-08-06` against `2026.8.5.5168`): `CameraTargets`
+(`vessel:`/`body:`/`part:` → live object, position, velocity, body-fixed frame, up axis — `part:`
+reusing the welds anchor resolver, `WeldManager.FindPart` promoted to `internal`), `CameraFrames` (the
+six frames × anchor → ECL rotation, the orbit→geodetic→Cartesian placement precedence, and a `geo`
+implementation that **calls** `Celestial.GetDirCcfFromLatLon` rather than restating its trigonometry so
+a convention change is inherited, not diverged from), `CameraDirector` (take/eased release/hard restore,
+the per-frame apply, `mode`/`follow`/`tidal`/`map_scope`, despawn prune, event drain), and
+`CameraReader` (the live camera → `CameraStatus`, **publishing both position spellings** so a Cartesian
+placement reads back a real latitude).
+
+**Why it needs no Harmony patch, and exactly how narrow that is.** `Program.OnFrame`'s order is
+`OnFrameViewports` → `Render` → `[StarMapAfterOnFrame]`, and `Viewport.OnFrame` is
+`GetActiveController().OnFrame(...)` *then* `GetCamera().OnFrame(...)`. A gatOS write at the end of
+frame *N* survives only because the active controller writes **nothing** at the top of frame *N+1* —
+true of exactly one controller: `FixedController.OnFrame` wraps its entire body in
+`if (following != null)`. So `Take()` parks `Viewport.Mode = Fixed` **by direct field assignment** (so
+`OnSwitchOn`'s `TimedAlert("Fixed Camera")` never draws in the footage) and calls
+`Unfollow(changeControl:false)`, and the driver re-asserts both every frame. **`IVAController` and
+`MapController` fail that test outright** — with `Following == null` the first cycles out of IVA and the
+second switches to Free, and both assign `PositionEcl`/`LocalRotation` unconditionally — so **IVA and
+Map ownership contexts are not implemented and are not implementable without a Harmony patch**. That is
+a finding, recorded in `scope/ksa-runtime-coupling.md#camera-mode-contexts` and in `CameraDirector`'s own
+type remarks. What C5.2 *does* ship is `/sim/camera/map/scope`.
+
+**C0.1 — the F2 fix, which the camera forced and everything else benefits from.** Both StarMap GUI
+hooks sit inside `Program.OnFrame`'s `if (DrawUI)` block, so F2 used to stop the sampler, the command
+drain, the audio tick, the thug-life updater, the welds driver and the IVA physics driver dead. The two
+hook bodies were split into `Mod.DrivePerFrame`/`DrivePostSolver`, and the new `[StarMapAfterOnFrame]
+Mod.OnAfterFrame` (a postfix on `Program.OnFrame` itself) re-runs both **only on the frames the GUI
+hooks were skipped**, decided by a boolean latch. `DriveCamera` then runs **unconditionally** at the
+end — the pose must be written after the render, and a camera that froze when the player hid the UI
+would be useless.
+
+**C4 — the interpolated `time` channel:** `Universe.SetSimulationSpeed(value, alert:false)` (`alert`
+matters — the default alert would be *in the footage*), with the speed captured **lazily** the first
+frame the channel is driven and restored only if captured, gated on **both** `[control] debug_namespace`
+and `[camera] camera_allow_time_channel` (a closed gate is ignored with **one** warning per ownership
+session, not an error). No new leaf: `debug/time/warp` already covers the discrete case. Neither public
+`SetSimulationSpeed` overload checks `IsAutoWarpActive`, so a driven `time` channel *fights* an active
+auto-warp — documented, deliberately unguarded, because the game itself picks no winner.
+
+**Two things worth knowing before writing shots.** `ortho_height` is the one camera change gatOS
+**cannot undo** — `Camera` exposes `SetOrthoHalfHeight` but has no public getter in 5168, so it is
+written only when explicitly claimed and never restored. And `KittenEva.PrepareWorker` feeds the main
+camera's forward/right/up into EVA locomotion, so **while gatOS holds the camera, "forward" for a
+kittenaut on EVA is wherever the shot is facing** — documented rather than worked around.
+
+**Collateral:** the mandated folder `Game/Ksa/Camera/` implies a namespace that **shadows the simple
+name `Camera` for every file under `Game/Ksa/`**, beating `using KSA;`. New files use
+`using KsaCamera = KSA.Camera;`; the only pre-existing casualty was `VesselForceRender.cs`, fixed the
+same way. `CameraActuator.Focus` was **rebound** (C1.4): it now sets follow on **both** the viewport's
+`BaseCamera` and `MapCamera` with `alert:false`, as the game's own follow action does — the old
+single-camera path left the map view on the previous target. Tests: **twelve** `gatOS.SimFs.Tests/Camera/`
+fixtures — the four math ones (`CameraMathTests`, `EasingTests`, `SplinesTests`, `PoseSmootherTests`)
+plus **379** tests across the surface fixtures (`CameraRulesTests`, `CameraCommandsTests`,
+`CameraTreeTests`, `CameraStoreTests`, `CameraStateTests`) and the track fixtures (`TrackParserTests`,
+`TrackEvaluatorTests`, `CameraPlaybackTests`). `gatOS.GameMod` has no test project — it is game-coupled,
+and every piece of logic that *could* be game-free already is. Catalog: `SPEC_9P_FILESYSTEM.md`;
+`docs/KSA_INTEGRATION_MATRIX.md` (programmable camera); `scope/ksa-write-surface.md#camera-director`,
+`scope/ksa-read-surface.md#camera`, `scope/ksa-runtime-coupling.md#camera-driver`,
+`scope/non-ksa-surface.md#camera-game-free`. **Pending: the in-game pass** (26-item checklist in
+`docs/VALIDATION.md`) — including two questions this pass must *answer*, not just check: the
+bubble-relative ego behaviour of plan §5.2/C5.3, and whether `pose/roll`'s **defined-not-derived** sign
+reads correctly.
+
 ---
 
 ## Suite totals and pending work
@@ -978,8 +1141,9 @@ apply paths and the terrain UBO write cannot be exercised headlessly.
 
 **Still pending: the in-game passes** — T6.6/T9.3/G1–G4 and the welds/IVA/parts, thug_life,
 per-vessel `scale`/`always_render`, `debug/vessels/<id>/impulse`, `ctl/translate`, `/sim/audio`,
-IVA-cabin-physics, and the **FX editors** checklists in `docs/VALIDATION.md` are runnable now that the
-purrTTY tip release is cut, but need a live KSA flight to complete.
+IVA-cabin-physics, FX-editor, **timed-scheduler** and **programmable-camera** checklists in
+`docs/VALIDATION.md` are runnable now that the purrTTY tip release is cut, but need a live KSA flight to
+complete.
 
 **Next**: M10 (persistence & savegame shape). Everything past M9 is not yet implemented, with
 the single exception of T11.1 (QEMU win-x64 bundle) which was pulled forward and is done.

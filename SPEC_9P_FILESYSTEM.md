@@ -14,7 +14,8 @@
 >
 > **Source of truth in code:**
 > `gatOS.SimFs/SimFsTree.cs` (the tree), `gatOS.SimFs/Formats.cs` (value formats),
-> `gatOS.SimFs/Snapshots/SimSnapshot.cs` (fields + units), `gatOS.SimFs/Commands/**` (write parsing),
+> `gatOS.SimFs/Snapshots/SimSnapshot.cs` (fields + units), `gatOS.SimFs/Commands/**` (write parsing
+> + the timed scheduler), `gatOS.SimFs/Camera/**` (camera grammars, compositor, track schema),
 > `gatOS.GameMod/Game/Ksa/KsaCatalog.cs` (action routing), `gatOS.GameMod/Game/Ksa/Actuators/**`
 > (write semantics), `gatOS.Http/SimHttpServer.cs` (HTTP routes), `gatOS.GameMod/Configuration/gatos.default.toml`
 > (config gates).
@@ -98,15 +99,15 @@ listing order; empty/`.`/`..` become `_`/`_.`/`_..`. In KSA a vessel's **name *i
 | `ETIMEDOUT` | 504 | game thread didn't drain the command within `command_timeout_ms` (paused/loading) |
 | `EOPNOTSUPP` | 501 | accessor latched degraded after a prior fault |
 
-The **audio clip store** (§3.9) adds four VFS-level errnos on its upload surface (thrown by the
-write itself, mid-stream — not by a command):
+The **audio clip store** (§3.9) and the **camera track store** (§3.11) add four VFS-level errnos on
+their upload surfaces (thrown by the write itself, mid-stream — not by a command):
 
 | errno | HTTP | Meaning |
 |---|---|---|
-| `EFBIG` | 413 | a clip write past the `audio_max_clip_bytes` per-clip cap |
-| `ENOSPC` | 507 | the `audio_max_total_bytes` store cap or `audio_max_clips` count cap is full |
-| `EEXIST` | 409 | 9P `Tlcreate` of a clip name that is already taken |
-| `EPERM` | 403 | `mkdir`/`rename` inside `audio/file/` (flat clip files only) |
+| `EFBIG` | 413 | a clip write past `audio_max_clip_bytes`, or a track write past `camera_max_track_bytes` |
+| `ENOSPC` | 507 | the store byte cap (`audio_max_total_bytes` / `camera_max_total_bytes`) or the count cap (`audio_max_clips` / `camera_max_tracks`) is full |
+| `EEXIST` | 409 | 9P `Tlcreate` of a clip/track name that is already taken |
+| `EPERM` | 403 | `mkdir`/`rename` inside `audio/file/` or `camera/track/` (flat files only) |
 
 ### 2.5 Config gates (`gatos.default.toml` → live `gatos.toml`)
 
@@ -145,6 +146,19 @@ write itself, mid-stream — not by a command):
 | `iva_substep_hz` / `iva_max_substeps_per_frame` | `120` / `8` | fixed integration rate and the post-hitch catch-up bound |
 | `iva_double_sided_interior` | `true` | emit interior triangles in both windings so art winding cannot let objects fall through walls |
 | `iva_impact_speed` | `0.4` | speed change (m/s) in one substep that fires an `iva.impact` event |
+| `schedule_enabled` | `true` | serve `/sim/ctl/timed_batch` + the `/sim/ctl/schedules/` registry (§3.10); `false` removes both nodes and answers every `schedule.*` action `EOPNOTSUPP` — **and `camera/play`\|`set`\|`stop` too**, because a camera track is a registry entry (§3.11) |
+| `schedule_max_live` | `16` | concurrent live players — schedules **and** the camera track (`EINVAL` on the commit past it; a finished player is evicted oldest-first to make room, emitting `schedule.evicted`); clamped 1..256 |
+| `schedule_max_entries` | `8192` | timed entries per schedule (`EINVAL` past it; clamped 1..262144) |
+| `schedule_max_bytes` | `1048576` | buffered bytes per open `timed_batch` handle (`EINVAL` past it; clamped 1 KiB..16 MiB) |
+| `schedule_default_clock` | `"render"` | clock base for a schedule with no `@clock`: `render` \| `wall` \| `ut` (§3.10); anything else warns and falls back to `render` |
+| `camera_enabled` | `true` | serve `/sim/camera` (§3.11) — the programmable cinematic camera; `false` removes the whole subtree and answers every `camera.*` action `EOPNOTSUPP` **except `camera.focus`**, which predates it and keeps working |
+| `camera_max_tracks` | `32` | uploaded track count cap (`ENOSPC` past it; clamped 1..512) |
+| `camera_max_track_bytes` | `1048576` | per-track JSON byte cap (`EFBIG` past it; clamped 4 KiB..64 MiB) |
+| `camera_max_total_bytes` | `8388608` | store-wide byte cap across all tracks (`ENOSPC`; clamped ≥ the per-track cap..256 MiB) |
+| `camera_max_keys` | `4096` | keyframes per animated track channel (`EINVAL` past it, at parse time; clamped 2..65536) |
+| `camera_fov_min` / `camera_fov_max` | `1` / `179` | the `camera/pose/fov` range in degrees (`EINVAL` outside it) — deliberately wider than the game's own 15–120, since `SetFieldOfView` does not clamp; clamped 0.1..179, and `fov_max` is additionally floored at `fov_min` |
+| `camera_release_blend_s` | `0.6` | eased hand-back duration in seconds when `camera/enabled 0` releases the camera (`0` = an immediate cut); clamped 0..10. **The TOML key is snake_case; the C# property is `CameraReleaseBlendS`** |
+| `camera_allow_time_channel` | `true` | let a camera track's `time` channel drive simulation speed (§3.11); **additionally requires `debug_namespace`** — with either gate off the channel is ignored with a one-shot host warning and the shot plays at 1× (a warning, never an error) |
 
 ---
 
@@ -544,6 +558,22 @@ reason ∈ `ended` (played out or hit `end=`) | `stopped` (explicit `stop`) | `r
 was reused)) — so a program can `grep -m1` for completion instead of polling `audio/status` (§3.9).
 Audio events ride the next telemetry sample, so they honor the `telemetry_events` gate.
 
+The **schedule registry** (§3.10) emits five global types, all with `vessel` omitted:
+
+| Type | `detail` |
+|---|---|
+| `schedule.started` | `<id> kind=schedule entries=<n> duration_ms=<ms.0>` — a committed schedule became live |
+| `schedule.finished` | `<id> kind=schedule dropped=<n>` — it ran off its end |
+| `schedule.failed` | `<id> entry=<n> <ERRNO>` — the **first** failing entry (the schedule keeps running) |
+| `schedule.dropped` | `<id> dropped=<n> total=<n>` — catch-up coalescing discarded entries; **throttled to ≤ 1 per player per second** |
+| `schedule.evicted` | `<id> kind=<schedule\|camera-track> reason=max_live` — a *finished* player was reclaimed to free a slot at `schedule_max_live` |
+
+The **camera** (§3.11) emits two global types: **`camera.shot`** (`detail` =
+`<id> track=<track> shot=<index> name=<shot-name>`, one per shot boundary, re-armed on every loop
+wrap) and **`camera.finished`** (`detail` = `<id> track=<track> kind=camera-track
+reason=complete|stopped|replaced`, where `complete` fires exactly once). `<id>` is the player's
+registry id — normally the literal `camera`.
+
 The IVA cabin physics (§3.7) emits three per-vessel types: **`iva.impact`** (an object's speed changed
 by more than `iva_impact_speed` in one substep — the "clunk" signal to wire to `/sim/audio`; `detail` =
 `object <id> (<name>) hit at <speed> m/s`), **`iva.escape`** (an object left the interior bounding box and
@@ -863,13 +893,40 @@ clip version (≈ file size; ≤ 1 MiB clips decode to PCM) — bounded by the c
 
 ### 3.10 `/ctl` *(present whenever the command sink is wired)*
 
-The global (non-per-vessel) control surface. One file today:
+The global (non-per-vessel) control surface: the two batch writers, and the live-player registry the
+timed one feeds. Everything from `ctl/timed_batch` down additionally needs
+`[schedule] schedule_enabled=true` — with it off those nodes do not exist and `ctl/batch` is
+unaffected.
 
 | Path | A | Write | Meaning |
 |---|---|---|---|
 | `ctl/batch` | **B** | command lines + `commit` | Execute up to **64** control writes **atomically in one game tick**. Read = a one-line usage hint. |
+| `ctl/timed_batch` | **B** | `@`-directives + `<offsetMs> <path> <value>` lines + `commit` | Register a **schedule**: the same control surface, on a clock. Non-blocking — the write validates and returns an id; the schedule then plays host-side for as long as it takes. Read = a one-line usage hint. |
+| `ctl/schedules/` | D | — | The live-player registry (schedules **and** the camera track). |
+| `ctl/schedules/count` | S | — | Integer: how many players are live. |
+| `ctl/schedules/help` | S | — | The whole grammar + semantics as a multi-line console reference. |
+| `ctl/schedules/clear` | T | `1` | Stop and remove **every** player, including committed-but-not-yet-activated ones (`schedule.clear`). |
+| `ctl/schedules/<id>/` | D | — | One directory per live player. |
+| `…/<id>/kind` | S | — | `schedule`, or **`camera-track`** for a playing camera track (§3.11). |
+| `…/<id>/group` | S | — | The `@group` name, or `-` when ungrouped. |
+| `…/<id>/state` | S | — | `pending` \| `running` \| `paused` \| `done` \| `failed` (lower-case). |
+| `…/<id>/t` | S | — | Current timeline offset, **ms** with one decimal (`250.0`). |
+| `…/<id>/duration` | S | — | Total length, ms with one decimal. |
+| `…/<id>/pending` | S | — | Integer: entries not yet fired (always `0` for a camera track). |
+| `…/<id>/dropped` | S | — | Integer: entries discarded by catch-up coalescing so far. |
+| `…/<id>/clock` | S | — | `render` \| `wall` \| `ut` — the clock base, fixed for the player's life. |
+| `…/<id>/last_error` | S | — | `entry <n>: <ERRNO> (<message>)` for the **first** failing entry, or `-`. |
+| `…/<id>/pause` | **St** | `0`/`1` | Freeze/resume the clock (`schedule.pause`). |
+| `…/<id>/scrub` | **St** | ms ≥ 0 | Seek. Read-back is the current position (`schedule.scrub`). |
+| `…/<id>/rate` | **St** | `0..100` | Playback multiplier; `0` is a legal frozen state (`schedule.rate`). |
+| `…/<id>/loop` | **St** | `0`/`1` | Wrap at the end instead of stopping (`schedule.loop`). |
+| `…/<id>/stop` | T | `1` | Stop playback; the player **stays listed** with its final state (`schedule.stop`). |
+| `…/<id>/remove` | T | `1` | Drop the player from the registry (`schedule.remove`). |
 
-**Why it exists:** every ordinary control write blocks until the game thread has executed it, so
+Every status leaf is **live** (formatted per access, never snapshot-memoized): `t` advances every
+rendered frame, far faster than the telemetry publish cadence.
+
+**Why `ctl/batch` exists:** every ordinary control write blocks until the game thread has executed it, so
 back-to-back writes necessarily land in *consecutive* frames — one command per frame, no matter how
 fast the writer. At orbital speed that smears a multi-vessel setup (e.g. formation teleports) by
 ~50–150 m per frame gap. A batch is one write → one command group → one drain: zero sim time passes
@@ -914,6 +971,337 @@ EOF
 **Transports:** `POST /v1/fs/ctl/batch` with the same multi-line text (including the `commit`
 line) as the body, or MQTT publish to `gatos/sim/ctl/batch/set` — the field mirror delivers the
 whole body as one write, so the batch fires exactly like the 9p file.
+
+**`ctl/timed_batch` + `ctl/schedules/` — the same surface, on a clock.**
+
+**Why it exists:** `ctl/batch` collapses N writes into one *instant*; a schedule spreads them over
+*time* without a guest program having to stay awake. The host owns the clock, so the timing does not
+depend on the SSH session surviving, does not drift with the guest's own scheduling, and replays
+identically every run. And because path resolution is `ctl/batch`'s — any `/sim`-relative path to a
+control file — a timed batch inherits the **entire** control surface for free: staging sequences,
+light shows, FX sweeps, audio cues, warp changes, camera moves.
+
+**Grammar** — optional `@`-directives (all of which must precede every entry), then one
+`<offsetMs> <path> <value…>` line per command, then a line that is exactly `commit`. Blank lines and
+`#` comment lines are ignored; whitespace between the three fields is collapsed, so column-aligned
+scripts parse. Path spellings are `ctl/batch`'s (bare, `/`-rooted, `/sim/`-rooted).
+
+```sh
+cat > /sim/ctl/timed_batch <<'EOF'
+@id      launch-seq     # optional; auto "#N" otherwise. [A-Za-z0-9_.-]{1,64}
+@clock   render         # render | wall | ut   (case-insensitive; default schedule_default_clock)
+@rate    1.0            # 0..100; 0 freezes the timeline
+@loop    0              # 0 | 1
+@group   take-3         # optional; joins a shared-clock group, same charset as @id
+
+0        vessels/by-id/Hunter/ctl/throttle  1
+1200     vessels/by-id/Hunter/ctl/ignite    1
+3400     debug/time/warp                    1
+commit
+EOF
+
+cat /sim/ctl/schedules/launch-seq/state     # pending|running|paused|done|failed
+echo 0.25 > /sim/ctl/schedules/launch-seq/rate
+```
+
+**Semantics:**
+
+- **Offsets are absolute milliseconds from the schedule's start, never deltas.** Fractional values
+  are legal (`16.67`), must be finite and ≥ 0. Absolute is the deliberate choice: a delta encoding
+  accumulates rounding over a long sequence, and re-timing one line would shift every line after it.
+- **Three clock bases, and they are genuinely different.** `render` accumulates the game's *clamped*
+  per-frame `dtPlayer`, so after a hitch it lags true wall time and **never catches up** — which is
+  exactly right for footage (a shot stays smooth) and exactly wrong for syncing to a host-side
+  recorder. `wall` is true elapsed time, so a stall is followed by a catch-up burst. `ut` is sim
+  time, which diverges wildly from both under warp and is the right choice for mission events.
+- **Phase mixing IS allowed here** — a deliberate relaxation of `ctl/batch`'s one-phase rule (§5.1),
+  not an oversight. A batch forbids it because "the same tick" is unsatisfiable across the Frame and
+  Solver drain points; a schedule spans many ticks, so each entry simply routes to its own phase
+  queue when it comes due.
+- **Catch-up policy is derived from the archetype, not declared.** When many entries come due in one
+  tick (a hitch, a scrub, a high `@rate`), every **TRIGGER** entry fires in order, while **STATE**
+  entries coalesce to the **last write per path** — an intermediate setpoint nobody could observe is
+  dropped. **Cross-path order is preserved.** Discards are counted at `<id>/dropped` and reported as
+  `schedule.dropped`, never silently. This bounds a burst by *distinct leaves* rather than entries.
+- **All-or-nothing validation, non-blocking commit.** Everything is resolved and parsed before
+  anything registers: unresolvable path ⇒ `ENOENT`; non-control target, unparseable value, bad or
+  duplicated directive, zero entries, or a cap breach ⇒ `EINVAL`; `control_enabled=false` ⇒
+  `EACCES`. The id is reserved **last**, so a rejected commit never burns the name. `commit` then
+  validates, registers and returns — the schedule outlives the `write(2)` that created it, and its
+  runtime outcomes surface at `ctl/schedules/<id>/` and in `/sim/events`.
+- **A committed schedule appears at the next game tick.** `count` and `ls` reflect *activated*
+  players; the id is reserved immediately, so a duplicate-id commit in the gap is still rejected.
+- **Scrub fires nothing.** A seek re-seats the cursor by binary search — it is navigation, not
+  playback. Scrubbing backwards makes the passed entries replay on the following ticks.
+- **Loop drains the tail first.** On a wrap the finished cycle's remaining entries fire, in order,
+  before the new cycle's already-due head, and the clock keeps the remainder — so a loop boundary is
+  indistinguishable from any other busy tick and a long loop does not drift.
+- **A failed entry does not stop the schedule.** The rest still runs; only the **first** failure is
+  recorded (the cause, not the last symptom) at `<id>/last_error`, and `state` latches `failed`.
+- **`@group` members share ONE clock instance**, so `pause`/`scrub`/`rate`/`loop` on *any* member
+  moves them all — that is what makes several schedules one take. The group clock's base, rate and
+  loop come from the **first** member to create it; a later joiner's `@clock`/`@rate`/`@loop` are
+  ignored for the shared clock, and it starts at the group's *current* position (so its already-past
+  entries fire on its first tick — it joins a take in progress). Its duration is the max over
+  members; the clock is dropped with its last member.
+- **Finished players persist so a script can come back and read the outcome** — until the registry
+  hits `schedule_max_live`, at which point activation reclaims *finished* players **oldest first**,
+  one `schedule.evicted` event per slot, stopping the moment the count is back under the cap. Below
+  the cap nothing is ever reclaimed. "Finished" means `done`, or `failed` **and** out of entries,
+  not looping, and past its duration — a looping or still-running player is never evicted.
+- **Limits:** `schedule_max_entries` entries, `schedule_max_bytes` buffered bytes per open handle,
+  `schedule_max_live` live players, a duplicate `@id` — all `EINVAL` (§2.5).
+- **Abort for free.** Closing the handle without a `commit` line discards the schedule silently. An
+  *unterminated* trailing `commit` fires best-effort on clunk and can carry **no** errno — prefer a
+  newline-terminated `commit`.
+
+**Transports:** every leaf above is an ordinary VFS node, so the field mirror carries it with no new
+code: `POST /v1/fs/ctl/timed_batch` with the whole script as the body (or MQTT
+`gatos/sim/ctl/timed_batch/set`), `GET /v1/fs/ctl/schedules/<id>/state`,
+`POST /v1/fs/ctl/schedules/<id>/rate`, and `POST /v1/command` / `gatos/command` for the seven
+`schedule.*` actions (§5.1).
+
+### 3.11 `/camera` *(programmable cinematic camera — CAMERA_CONTROLS_PLAN; present when `camera_enabled=true`)*
+
+Borrow the game's main camera and fly it from a shell. There is no camera API to learn: the camera is
+a directory of control files, and `echo`ing a number into one moves the view on the next rendered
+frame. The surface is deliberately **three layers over one channel set** — write a leaf directly
+(L1), drive those same leaves along a timeline through `/sim/ctl/timed_batch` (L2), or upload a JSON
+**track** and let gatOS interpolate it with easing and splines at render rate (L3). **Every track
+channel has a corresponding `pose/` leaf**, so the JSON is an *option* and never the only route to
+anything; the two are the same surface, which is what lets a hand-written `echo` pull focus in the
+middle of a running shot. Ownership is a **mode park**, not a hook: `camera/enabled 1` captures the
+live camera's state, switches the viewport to `Fixed` and unfollows, which makes the game's own
+camera controller write nothing — so gatOS is the sole writer and **needs no Harmony patch**.
+Everything you write is an *override* layered on the captured baseline, so a channel you never touch
+falls through to how the game had it, and release puts it all back. The pose is composed after the
+render and read by the *next* frame's matrix build, giving a **constant one-frame latency** —
+invisible in motion, and the reason the whole feature costs a single branch while idle.
+
+```sh
+echo 1 > /sim/camera/enabled                        # take it (parks the game's camera controller)
+echo "vessel:apollo11" > /sim/camera/pose/anchor    # measure everything about this ship
+echo "bodyfixed"       > /sim/camera/pose/frame     # in the ship's own axes (+X nose, +Y right, -Z up)
+echo "-40 0 -6"        > /sim/camera/pose/position  # 40 m aft, 6 m above
+echo "vessel:apollo11 off 0 0 -1.2 up world" > /sim/camera/pose/aim
+echo 24   > /sim/camera/pose/fov                    # degrees
+echo 0.35 > /sim/camera/pose/smoothing              # critically-damped filter, seconds
+cat /sim/camera/status                              # one "key value…" line per channel
+cp /mnt/shots/flyby.json /sim/camera/track/flyby    # upload a track (parsed + validated on close)
+echo "flyby at 2 rate 0.5" > /sim/camera/play       # play it; it appears at ctl/schedules/camera/
+echo 0 > /sim/camera/enabled                        # eased hand-back (camera_release_blend_s)
+```
+
+| Path | A | Format / Write | Meaning |
+|---|---|---|---|
+| `camera/status` | S | multi-line `key value…` | The whole camera state in one read: `owned mode follow tidal map_scope anchor frame position geo rotation aim fov ortho smoothing orbit time_scale`. `geo`'s fourth field is `1` when the geodetic spelling is the live one; `ortho` is `<enabled> <half-height m>`; `orbit` is `radius azimuth elevation`. |
+| `camera/info` | S | one line `k=v …` | `enabled owned tracks tracks_max bytes bytes_max track_bytes_max keys_max fov_min fov_max`, plus the `frames=`/`modes=`/`up=` token vocabularies this build accepts. |
+| `camera/target` | S | string | The follow target's **bare id**, or `-`. |
+| `camera/playback` | S | `<state> <t_ms> <duration_ms> <shot> <index> <rate> <loop>` | The live track player. Times are ms with one decimal, matching `ctl/schedules/<id>/t`; `state` is the §3.10 vocabulary; `<shot>` is `-` before the first shot edge and `<index>` is `-1`. |
+| `camera/last_error` | S | `<track>: <message>`, or `-` | Why the last track upload or `play` was rejected. Exists because a 9p **clunk** (which is what commits an upload) cannot carry an errno — this is that diagnosis, readable from inside the guest. Cleared only by a `play` that actually started, or at teardown. |
+| `camera/enabled` | **St** | `0`/`1` → `camera.enabled` | Take (`1`) or **eased-release** (`0`) the camera. Read = whether gatOS owns it. `EINVAL` if not 0/1. |
+| `camera/release` | **T** | `1` → `camera.release` | **Hard cut** back to game control — the "give it back *now*" verb, no blend. `EINVAL` on any other token. |
+| `camera/mode` | **St** | `orbit`\|`free`\|`map`\|`iva`\|`fixed` → `camera.mode` | Switch the **game's** camera mode. `EINVAL` on an unknown token; `EOPNOTSUPP` while gatOS owns the camera (ownership *is* a park in `fixed`). **This is not a gatOS park target** — see the ownership notes below. |
+| `camera/follow` | **St** | target ref → `camera.follow` | Point the game's camera at a `vessel:<id>` / `body:<id>`, or `none` to unfollow — set on **both** the viewport's base and map cameras. Read = the canonical target ref (`camera/target` is the same thing as a bare id). `EINVAL` if unparseable; `ENOENT` if the target is not live; `EOPNOTSUPP` for a `part:` ref (the game can only follow a whole object — aim at a part instead) or while gatOS owns the camera. |
+| `camera/tidal` | **St** | `0`/`1` → `camera.tidal` | Tidal-lock the existing follow. `EINVAL` if not 0/1; `ENOENT` if nothing is being followed; `EOPNOTSUPP` while owned. |
+| `camera/map/scope` | **St** | metres ≥ 0 → `camera.map_scope` | The map view's zoom: the radius the map camera orbits its focus at. **Not** ownership-gated — it configures the game's map controller, not the composed pose. `EINVAL` non-finite or `< 0`. Three inherited behaviours: the game clamps it **up** to the focus's mean radius every map frame; a focus change re-derives it wholesale on the next map entry; and it has no visible effect outside `map` mode. |
+| `camera/track/` | dir (writable) | — | The track store: `Tlcreate` + chunked writes accumulate an upload that becomes playable **on close (clunk)**. `mkdir`/`mv` inside ⇒ `EPERM`. |
+| `camera/track/<name>` | — | JSON text | One uploaded track. Name: single component, ≤ 64 chars, `[A-Za-z0-9._-]` (`EINVAL` otherwise). Reads return the stored bytes; `rm` evicts. Caps enforced **mid-write** so the failing `write(2)` carries the errno: `EFBIG` per-track, `ENOSPC` store bytes / track count. A malformed track fails the **close**, which cannot carry an errno — read `camera/last_error`. Unlike audio clips, tracks **are** in the field mirror (small JSON, useful over every transport). |
+| `camera/play` | **St** | `<track> [at <sec>] [rate <x>] [loop 0\|1] [group <token>]` → `camera.play` | Start a take. Read = the loaded track name, or `-`. Defaults: `at 0`, `rate 1`, `loop` from the track's own `"loop"`. Replaces any running take (emitting `camera.finished reason=replaced`). `ENOENT` unknown track, `EBUSY` still uploading, `EINVAL` bad name / parse failure (the parse message is returned) / `schedule_max_live` full, `EOPNOTSUPP` when `schedule_enabled=false`. |
+| `camera/set` | **St** | `[t <sec>] [rate <x>] [loop 0\|1] [paused 0\|1]` → `camera.set` | Live-adjust the running take — the *same* `PlaybackClock` the `ctl/schedules/<id>/` leaves drive. At least one adjustment required. `ENOENT` nothing playing, `EINVAL` bad pair or range, `EOPNOTSUPP` when `schedule_enabled=false`. |
+| `camera/stop` | **T** | `1` → `camera.stop` | Stop the take and hand its channels back to the overrides and the baseline. **Idempotent** (Ok with nothing playing). `EOPNOTSUPP` when `schedule_enabled=false`. |
+| `camera/pose/position` | **St** | `<x> <y> <z> [<frame>]` → `camera.position` | Cartesian placement in the pose frame, metres. The optional tail also sets `pose/frame`; omitting it means "keep the current frame". Read = `x y z <frame>`. `EINVAL` on non-finite components or an unknown frame token. |
+| `camera/pose/frame` | **St** | frame token → `camera.frame` | Which way the placement axes point: `ecl`\|`cce`\|`bodyfixed`\|`enu`\|`lvlh`\|`chase`. `EINVAL` otherwise. |
+| `camera/pose/anchor` | **St** | target ref → `camera.anchor` | What the placement is measured **about**: `vessel:<id>` \| `body:<id>` \| `part:<vessel-id>/<instance-id>` \| `none`. `EINVAL` unparseable, `ENOENT` not live. |
+| `camera/pose/geo` | **St** | `<lat> <lon> <alt> [body:<id>]` → `camera.geo` | Geodetic placement: degrees and **metres above terrain** (degrading to above the mean sphere on a body with no heightmap). Longitude accepts both conventions (`-80.649` and `279.351`) and normalizes to `[-180, 180)`. The optional tail also sets the anchor; without it the current anchor must **already** be a body (`EOPNOTSUPP` otherwise). `EINVAL` out of range, `ENOENT` no such body. |
+| `camera/pose/orbit/radius` | **St** | metres ≥ 0 → `camera.orbit_radius` | Hang the camera on a sphere about the anchor. **Non-zero wins over `position`/`geo`**; write `0` to hand placement back. `EINVAL` non-finite or `< 0`. |
+| `camera/pose/orbit/azimuth` | **St** | degrees → `camera.orbit_azimuth` | Sweep in the frame's XY plane, from +X toward +Y. Any finite value (a track animating `0 → 360` closes exactly). `EINVAL` non-finite. |
+| `camera/pose/orbit/elevation` | **St** | degrees `[-90, 90]` → `camera.orbit_elevation` | Rise above that plane toward +Z. `EINVAL` outside the range. |
+| `camera/pose/rotation` | **St** | `<x> <y> <z> <w>` → `camera.rotation` | An explicit orientation quaternion — a vector(4) control with **one extra constraint**: the norm must be in `[0.5, 2]`, so an all-zero quaternion (which names no rotation) is `EINVAL` rather than being silently normalized to identity. Superseded by `aim` whenever an aim target is set. |
+| `camera/pose/aim` | **St** | `<target> [off <x> <y> <z>] [frame <frame>] [up <up>] [roll <deg>]` → `camera.aim` | Four channels at once. Defaults for omitted keywords: offset `0 0 0`, frame `bodyfixed`, up `world`. **Roll is the exception** — a line without `roll` leaves the roll channel alone, because roll is animatable on its own. Keywords are order-independent and may appear at most once. `EINVAL` bad grammar/values, `ENOENT` target not live. |
+| `camera/pose/aim_target` | **St** | target ref → `camera.aim_target` | What to look at — same vocabulary as `anchor`, including `part:`. Re-resolved **every frame**, which is what makes an offset stay glued to a moving subject. `EINVAL`/`ENOENT`. |
+| `camera/pose/aim_offset` | **St** | vector(3) → `camera.aim_offset` | Offset from the aim target, metres, measured in the **aim frame** (i.e. on the subject). `EINVAL` non-finite. |
+| `camera/pose/aim_frame` | **St** | frame token → `camera.aim_frame` | The frame the aim offset is measured in. Defaults to `bodyfixed`, deliberately *not* the pose frame. |
+| `camera/pose/aim_up` | **St** | `world`\|`target`\|`velocity`\|`free` → `camera.aim_up` | Which way is up while aiming (below). `EINVAL` otherwise. |
+| `camera/pose/roll` | **St** | degrees → `camera.roll` | Roll about the view axis, applied **after** aim (an explicit `rotation` already names a complete orientation). `EINVAL` non-finite. |
+| `camera/pose/fov` | **St** | degrees `[camera_fov_min, camera_fov_max]` → `camera.fov` | Vertical field of view. The default `1..179` is far wider than the game's own 15–120 — `SetFieldOfView` does not clamp, so fisheye and extreme telephoto really are available. `EINVAL` outside the configured range. |
+| `camera/pose/ortho` | **St** | `0`/`1` → `camera.ortho` | Orthographic projection instead of perspective. `EINVAL` if not 0/1. |
+| `camera/pose/ortho_height` | **St** | metres `> 0` → `camera.ortho_height` | Orthographic half-height. `EINVAL` on `≤ 0` or non-finite. ⚠ **The one camera change gatOS cannot undo** — KSA exposes a setter but no getter for it (5168), so there is nothing to capture at ownership and nothing to restore at release. It is therefore written only while the channel is explicitly claimed by an override or a track. |
+| `camera/pose/smoothing` | **St** | seconds `[0, 10]` → `camera.smoothing` | Critically-damped filter on the composed pose — the cheapest way to turn a coarse `timed_batch` ladder into a glide. `0` is raw. `EINVAL` outside the range. |
+| `camera/pose/reset` | **T** | `1` → `camera.pose_reset` | Drop **your overrides only**. An active track keeps driving; a reset is about your writes, not about stopping playback. Use `camera/release` to clear everything including the baseline. |
+
+**The six frames.** A camera position is meaningless until you say what it is measured *about* (the
+anchor) and which way the axes point (the frame). `pose/frame` and `pose/aim_frame` take the same six
+tokens, resolved against the anchor every frame:
+
+| Token | Vessel / part anchor | Body anchor | Unresolvable when |
+|---|---|---|---|
+| `ecl` | identity rotation, origin **(0,0,0)** — the vector *is* the absolute ecliptic point; no anchor needed | same | never |
+| `cce` | identity rotation (CCE shares the ecliptic's axes), origin = the anchor's position | same | no anchor resolves |
+| `bodyfixed` | the vessel's own body axes (**+X nose, +Y right, −Z up**); a `part:` anchor composes the part's assembly rotation onto them | the body's CCF (Z = north pole, X = prime meridian ∩ equator) | no anchor |
+| `enu` | the vessel's East-North-Up | built at the pose's **own** geodetic lat/lon about that body | the vessel is not orbiting a body, is at its parent's centre, or the lat/lon is on the rotation axis |
+| `lvlh` | the vessel's Local-Vertical-Local-Horizontal | the body's own, about its parent | position and velocity are near-zero or collinear (no orbital motion to derive it from) |
+| `chase` | the vessel body frame (KSA's vehicle body frame *is* the chase convention; part-aware) | — | there is no vessel or part anchor |
+
+**Nothing ever silently falls back to a different frame.** At *write* time an unresolvable frame is
+`EOPNOTSUPP` on the failing `write(2)`. **Per frame**, the director instead **holds the last good
+pose** and logs the reason once — a despawned anchor cannot write 60 log lines a second — and a
+non-finite result is treated as unresolvable, so no NaN can reach the view matrix. Placement
+precedence is **orbit → geodetic → cartesian**.
+
+**Aim** resolves the same way, every frame: `aim point = target position + offset` rotated into the
+aim frame. `pose/aim_up` picks the up reference: `world` = ecliptic +Z; `target` = the aim target's
+own up (a celestial's rotation axis, or a vessel/part's body **−Z**); `velocity` = the **anchor's**
+velocity, falling back to the aim target's when there is no anchor; `free` = the camera's current up
+carried forward (parallel transport, so tracking never snaps the horizon back to level). A degenerate
+up falls back to world +Z and then to ecliptic +X — a wrong roll is recoverable, a NaN view matrix is
+not. A camera sitting exactly on its subject holds the previous rotation rather than producing one.
+
+**Compositing precedence — `Track ?? Override ?? Baseline`, per channel.** *Baseline* is captured
+from the live game camera at ownership take and never changes while owned, so an owned-but-unwritten
+camera sits exactly where the game left it. *Override* is every leaf write above. *Track* is only the
+channels the **active shot actually declares** — an undeclared channel falls through, which is what
+lets a `timed_batch` (or a bare `echo`) pull focus while a track interpolates position. **Writing a
+channel a shot is driving is accepted and superseded on the next frame** — no error, no lock: the
+override is recorded and reappears the moment the shot stops declaring that channel. `pose/reset`
+clears the overrides and leaves both the track and the baseline; `camera/release` clears everything,
+baseline included, and hands the camera back.
+
+**Ownership notes (read before shooting).**
+
+- **While gatOS owns the camera the player's camera keys do nothing**, and `mode`/`follow`/`tidal`
+  answer `EOPNOTSUPP`. That is the point — two writers fighting over one transform looks terrible.
+  `pose/anchor` + `pose/aim_target` do everything a follow does and more. Always keep a way to run
+  `echo 1 > /sim/camera/release`.
+- **Only `fixed` is an ownership context, and that is a property of the game, not a choice.**
+  gatOS's per-frame write survives because the parked controller writes nothing at the top of the
+  next frame — true of `FixedController` alone. `IVAController` re-pins the seat position
+  unconditionally (and, unfollowed, immediately cycles the mode away), and `MapController` assigns
+  both position and rotation from its own solution (and, unfollowed, switches to `Free`). So
+  **`camera/mode` is not a park target**: it accepts all five tokens `orbit|free|map|iva|fixed`
+  because it drives the *game's* mode while gatOS is idle, and gatOS cannot own the camera in IVA or
+  Map at all without a Harmony patch it deliberately does not install. `camera/map/scope` is the part
+  of the map surface that *does* ship, and it is not ownership-gated.
+- **`mode`, `follow`, `tidal`, `target` and `status` report idle values while gatOS does not own the
+  camera.** An idle director publishes once and then does nothing, which is what keeps the feature
+  genuinely free when off; the cost is that those leaves do not mirror the *player's* camera.
+  `camera/map/scope` is the exception — a write to it publishes its own read-back.
+- **Taking the camera out of `map` mode prints one three-second "Fixed Camera" alert.** Leaving Map
+  must go through the game's own mode switch, because `MapController.OnSwitchOff` is the only thing
+  that restores the player's controlled vessel — bypassing it would strand them with an
+  uncontrollable ship. That transition also drops any latched `ctl/translate`/`ctl/rotate` flags
+  (§3.4.19). Every other entry mode is a silent direct assignment.
+- ⚠ **Owning the main camera changes which way an EVA kittenaut walks.** KSA feeds the main camera's
+  basis into EVA locomotion, so while gatOS holds the camera, "forward" for a kitten on EVA is
+  wherever the *shot* is facing. Documented rather than worked around: silently taking EVA control
+  away would be the more surprising side effect.
+- **The camera cannot go below surface + 0.5 m.** `Camera.ClampCamera()` runs at the top of every
+  camera frame and pushes the camera up to that floor. It is the ocean-skimming feature, not a bug —
+  but a `pose/geo` altitude below 0.5 m is silently corrected, and the altitude it tests is the
+  frame viewport's, not necessarily the camera being written.
+- **Releasing stops the take.** Once the director is idle nothing samples the player, so `Restore()`
+  ends with the `camera/stop` verb (emitting `camera.finished reason=stopped`). The eased blend
+  recomputes its destination **every frame of the blend**, so handing back onto a *moving* follow
+  target lands on the target rather than on where it used to be.
+
+**The track JSON schema** (`camera/track/<name>`; comments and trailing commas are accepted — a shot
+list is exactly the kind of file people annotate). **Any unknown key at any level is `EINVAL`**, which
+is also what makes adding a channel later non-breaking:
+
+```jsonc
+{
+  "loop": false,                    // bool, default false — the authored loop default
+  "defaults": {                     // object, optional
+    "frame":  "cce",                // frame token — default for a shot's position block
+    "anchor": "vessel:apollo11",    // target ref — default shot anchor
+    "ease":   "in-out",             // ease token OR a 4-element bezier [x1,y1,x2,y2]
+    "ease_power": 3                 // number [0.01,16]; requires "ease"
+  },
+  "shots": [                        // REQUIRED, non-empty, <= 256, ordered by t, non-overlapping
+    {
+      "name":     "pad-rise",       // string,  default "shot-<index>"
+      "t":        0.0,              // seconds >= 0, default 0 — absolute on the track timeline
+      "duration": 8.0,              // seconds > 0, REQUIRED
+      "anchor":   "body:earth",     // target ref, default defaults.anchor, else none
+      "blend_in": 0.5,              // seconds >= 0, default 0 — cross-fade from the previous shot
+
+      // position — pick ONE mode; the mode is inferred from what you author, and an explicit
+      // "mode" that disagrees with it is EINVAL.
+      "position": { "mode": "cartesian", "curve": "catmull-rom", "frame": "bodyfixed",
+                    "keys": [ { "t": 0, "v": [x,y,z], "ease": "out", "ease_power": 3,
+                                "handle_out": [x,y,z], "handle_in": [x,y,z] } ] },
+      // "position": { "mode": "orbit", "frame": "bodyfixed",
+      //               "radius":    { "keys": [ {"t":0,"v":120} ] },        // metres >= 0
+      //               "azimuth":   { "keys": [ {"t":0,"v":0}, {"t":8,"v":360} ] },  // degrees
+      //               "elevation": { "keys": [ {"t":0,"v":15} ] } },       // degrees [-90,90]
+      // "position": { "mode": "attach", "frame": "chase", "offset": [0, 3, -12] },
+
+      "aim":      { "target": "vessel:apollo11",   // REQUIRED here, and must not be "none"
+                    "offset": [0, 1.2, 0],         // default [0,0,0] — CONSTANT for the shot
+                    "frame":  "bodyfixed",         // default bodyfixed, NOT defaults.frame
+                    "up":     "world",             // default world
+                    "roll":   { "keys": [ … ] } }, // optional animated roll, degrees
+      "rotation": { "curve": "catmull-rom", "keys": [ {"t":0,"v":[x,y,z,w]} ] },
+      "roll":     { "keys": [ … ] },  // degrees   (mutually exclusive with aim.roll)
+      "fov":      { "keys": [ … ] },  // degrees, each key inside [camera_fov_min, camera_fov_max]
+      "time":     { "keys": [ … ] }   // simulation-speed factor >= 0 (0 = paused) — see below
+    }
+  ]
+}
+```
+
+- **Channel shape.** Every channel is `{ "curve": …, "keys": [ … ] }`, or the bare-array shorthand
+  `"fov": [ … ]`. `position` is the one exception: its `curve` sits beside `keys` on the block.
+  `curve` ∈ `step | linear | catmull-rom | bezier`, default **`linear`** — except a **rotation**
+  channel, whose default is **`catmull-rom`** (squad with ≥ 3 keys, slerp otherwise); `bezier` on a
+  rotation channel is `EINVAL`.
+- **Keys.** Non-empty, at most `camera_max_keys`, times **strictly increasing** and inside
+  `[0, duration]`; one key is legal (a constant). A key is `t` (required), `v` (required — number,
+  `[x,y,z]`, or `[x,y,z,w]`), plus optional `ease`, `ease_power`, `handle_in`, `handle_out`. A
+  quaternion key's norm must be in `[0.5, 2]`. `bezier` needs **both** handles on every segment;
+  a handle on a non-bezier curve is `EINVAL`, as is `ease_power` without `ease` or alongside handles.
+- **The ease-resolution rule:** a segment's ease comes from its **start** key; failing that, from the
+  **end** key; failing that, `defaults.ease`; failing that, linear. Both spellings appear in real
+  shot files, and either single rule would silently make half of one inert. It is folded into every
+  key at parse time, so the evaluator never looks sideways.
+- **Absolute, never incremental.** A full turn is the key pair `0 → 360`; there is no `+= ω·dt`
+  anywhere, so the same `t` always yields a bit-identical sample (asserted), and an eased full orbit
+  closes bit-exactly on its start point.
+- **A shot declares only the channels it authors**, and only those are taken from the track — a
+  `fov`-only shot in a track with `defaults.anchor` set claims `fov` alone. Rejected: a shot with no
+  channels at all, out-of-order or overlapping shots, `roll` declared both at shot level and inside
+  `aim`. **Warned, not rejected:** a shot declaring both `aim` and `rotation` — `aim` wins and the
+  rotation channel is dropped.
+- **Outside a shot the evaluator holds, it does not release:** before the first shot, in a gap
+  between shots, and past the last shot it returns the nearest shot's terminal sample. A non-looping
+  track that runs off its end reports `done` and **keeps returning its final sample**, so the shot
+  does not snap away the instant it lands; `camera/stop` is what releases the channels. Ending
+  playback is the player's decision, never the evaluator's.
+- **Leaves with no track channel** (deliberate): `geo`, `ortho`, `ortho_height`, `smoothing`, and
+  `frame`/`anchor`/`aim_*` as standalone channels. They stay L1/L2-only.
+- **The `time` channel has no leaf at all.** `debug/time/warp` already covers the discrete case and
+  is already schedulable, so C4 added only the *interpolated* form. It is **double-gated** on
+  `debug_namespace` **and** `camera_allow_time_channel`, and a closed gate is a **warning, not an
+  error** — the shot plays at 1×, with one host log line per ownership session. `0` pauses, `0.15` is
+  slow-mo, `> 1` warps. The simulation speed is captured **lazily**, the first frame the channel is
+  actually driven, and restored on release only if it was captured — a director that never touches
+  time leaves the player's warp exactly as found. It **fights the game's auto-warp** rather than
+  yielding to it (KSA itself picks no winner); stop an auto-warp before rolling a shot that drives
+  time.
+
+**Engine notes.** The director runs at the end of the per-frame hook, after the render, on **every**
+rendered frame, and self-gates to one branch while gatOS does not own the camera — the default. It
+writes only `PositionEcl`, `LocalRotation` and the projection, so the next frame's viewport rebuild
+derives every matrix from them; gatOS never touches a matrix and installs **no Harmony patch**. A
+playing track is a real entry in the `/sim/ctl/schedules` registry with `kind = camera-track` and the
+predictable id **`camera`**, so `pause`/`scrub`/`rate`/`loop`/`stop` work on it through *either*
+surface and `camera/playback` and `ctl/schedules/camera/t` can never disagree — it is the same
+`PlaybackClock`. A committed track's bytes are **immutable**: a re-upload installs a fresh array under
+a bumped version, so a shot that started on v1 keeps playing v1. Both the leaf `pose/orbit/*` path and
+a track's `"mode":"orbit"` resolve through the *same* spherical placement, so `echo 90 >
+pose/orbit/azimuth` and a track's azimuth curve put the camera in the same place. The whole authoring
+loop is `cp /mnt/shots/flyby.json /sim/camera/track/flyby` — host-side editing already works through
+the existing `/mnt` passthrough; there is no watcher and no persistence layer.
 
 ---
 
@@ -998,7 +1386,7 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `animation.goal` | anim n | value `0..1` | Frame | `animations/<n>/goal`, `solar/<n>/goal`, `lights/<n>/goal` | one ordinal, three views |
 | `decoupler.fire` | decoupler n | value `1` | Frame | `decouplers/<n>/fire` | one-shot; `EBUSY` if already fired, `EOPNOTSUPP` if the module is disabled (`decouplers/<n>/enabled` = `0`) |
 | `docking.undock` | docking n | value `1` | Frame | `docking/<n>/undock` | one-shot |
-| `camera.focus` | — | token = id | Frame | `ctl/focus`, `bodies/<id>/focus`, `debug/focus` | view-only; no authority gate |
+| `camera.focus` | — | token = id | Frame | `ctl/focus`, `bodies/<id>/focus`, `debug/focus` | view-only; no authority gate; sets the follow target on **both** the viewport's base and map cameras (so the map view can no longer lag the base view), `alert:false`; works even with `camera_enabled=false` |
 | `debug.control_vessel` | — | token = id | Frame | `debug/control_vessel` | grants control |
 | `debug.teleport` | — | values `[px,py,pz,vx,vy,vz]` | Frame | `debug/vessels/<id>/teleport` | CCI about current parent |
 | `debug.impulse` | — | values `[x,y,z]`; token = frame (`cci`\|`body`, omit ⇒ `cci`); aux = unit (`ns`\|`dv`, omit ⇒ `ns`) | Frame | `debug/vessels/<id>/impulse` | one-shot kick; N·s ⇒ Δv = J ÷ live mass; `dv` ⇒ Δv m/s as-is |
@@ -1038,6 +1426,41 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `audio.play` | — | token = clip name; aux = channel id (optional); values `[start_ms, end_ms, vol, loop, pan, pitch, group]` (defaults `[0,0,1,0,0,1,0]`; `end_ms` 0 = whole clip; group `0`=sfx `1`=music `2`=ui) | Frame | `audio/play` | vessel-agnostic; not a `debug.*` action but gated by `audio_enabled` (`EOPNOTSUPP` when off) |
 | `audio.set` | — | token = channel id or clip name; values = flat `[key, value, …]` pairs (keys: `0`=vol `1`=pan `2`=pitch `3`=paused(0/1) `4`=seek_ms) | Frame | `audio/set` | vessel-agnostic |
 | `audio.stop` | — | token = `all` \| channel id \| clip name | Frame | `audio/stop` | vessel-agnostic |
+| `schedule.pause` | — | value `0`/`1`; token = player id | Frame | `ctl/schedules/<id>/pause` | vessel-agnostic; gated by `schedule_enabled` (`EOPNOTSUPP` when off). `EINVAL` if not 0/1 or the id token is missing, `ENOENT` no such player |
+| `schedule.scrub` | — | value = ms ≥ 0 finite; token = player id | Frame | `ctl/schedules/<id>/scrub` | vessel-agnostic; seek only — fires no entries |
+| `schedule.rate` | — | value `0..100`; token = player id | Frame | `ctl/schedules/<id>/rate` | vessel-agnostic; `0` is a legal frozen state |
+| `schedule.loop` | — | value `0`/`1`; token = player id | Frame | `ctl/schedules/<id>/loop` | vessel-agnostic |
+| `schedule.stop` | — | value `1`; token = player id | Frame | `ctl/schedules/<id>/stop` | vessel-agnostic; the player stays listed |
+| `schedule.remove` | — | value `1`; token = player id | Frame | `ctl/schedules/<id>/remove` | vessel-agnostic; drops it from the registry |
+| `schedule.clear` | — | value `1`; **no** token | Frame | `ctl/schedules/clear` | vessel-agnostic; always Ok; also discards committed-but-unactivated schedules |
+| `camera.enabled` | — | value `0`/`1` | Frame | `camera/enabled` | vessel-agnostic; `1` takes the camera, `0` releases it over `camera_release_blend_s`. Every `camera.*` below is gated by `camera_enabled` (`EOPNOTSUPP` when off) and bypasses the authority gate |
+| `camera.release` | — | value `1` | Frame | `camera/release` | vessel-agnostic; hard cut back to game control |
+| `camera.mode` | — | token ∈ `orbit`\|`free`\|`map`\|`iva`\|`fixed` | Frame | `camera/mode` | vessel-agnostic; drives the **game's** mode; `EOPNOTSUPP` while gatOS owns the camera |
+| `camera.follow` | — | token = target ref (`vessel:`/`body:`/`none`) | Frame | `camera/follow` | vessel-agnostic; both viewport cameras; `EOPNOTSUPP` for `part:` or while owned, `ENOENT` if gone |
+| `camera.tidal` | — | value `0`/`1` | Frame | `camera/tidal` | vessel-agnostic; `ENOENT` when nothing is followed, `EOPNOTSUPP` while owned |
+| `camera.map_scope` | — | value = metres ≥ 0 | Frame | `camera/map/scope` | vessel-agnostic; **not** ownership-gated; the game re-clamps it (§3.11) |
+| `camera.position` | — | values `[x,y,z]`; token = frame token or `""` (keep the current frame) | Frame | `camera/pose/position` | vessel-agnostic |
+| `camera.frame` | — | token = frame token | Frame | `camera/pose/frame` | vessel-agnostic |
+| `camera.anchor` | — | token = target ref (incl. `part:<vessel>/<iid>`) | Frame | `camera/pose/anchor` | vessel-agnostic; `ENOENT` if not live |
+| `camera.geo` | — | values `[lat,lon,alt]` (lon normalized to `[-180,180)`); token = `body:<id>` or `""` | Frame | `camera/pose/geo` | vessel-agnostic; `EOPNOTSUPP` when the token is empty and the current anchor is not a body |
+| `camera.orbit_radius` | — | value = metres ≥ 0 finite | Frame | `camera/pose/orbit/radius` | vessel-agnostic; non-zero wins over `position`/`geo` |
+| `camera.orbit_azimuth` | — | value = degrees (any finite) | Frame | `camera/pose/orbit/azimuth` | vessel-agnostic |
+| `camera.orbit_elevation` | — | value = degrees `[-90,90]` | Frame | `camera/pose/orbit/elevation` | vessel-agnostic |
+| `camera.rotation` | — | values `[x,y,z,w]`, norm ∈ `[0.5,2]` | Frame | `camera/pose/rotation` | vessel-agnostic; a zero quaternion is `EINVAL`, never normalized to identity |
+| `camera.aim` | — | token = target ref; values = the **7 slots** `[offX, offY, offZ, aimFrameOrdinal, aimUpOrdinal, roll, rollPresent]`, defaults `[0,0,0,2,0,0,0]` | Frame | `camera/pose/aim` | vessel-agnostic; frame ordinals `0`=ecl `1`=cce `2`=bodyfixed `3`=enu `4`=lvlh `5`=chase; up ordinals `0`=world `1`=target `2`=velocity `3`=free; **slot 6 = 0 leaves the roll channel alone** |
+| `camera.aim_target` | — | token = target ref | Frame | `camera/pose/aim_target` | vessel-agnostic; `ENOENT` if not live |
+| `camera.aim_offset` | — | values `[x,y,z]` (metres, in the aim frame) | Frame | `camera/pose/aim_offset` | vessel-agnostic |
+| `camera.aim_frame` | — | token = frame token | Frame | `camera/pose/aim_frame` | vessel-agnostic |
+| `camera.aim_up` | — | token ∈ `world`\|`target`\|`velocity`\|`free` | Frame | `camera/pose/aim_up` | vessel-agnostic |
+| `camera.roll` | — | value = degrees (finite) | Frame | `camera/pose/roll` | vessel-agnostic; applied after aim |
+| `camera.fov` | — | value = degrees `[camera_fov_min, camera_fov_max]` | Frame | `camera/pose/fov` | vessel-agnostic |
+| `camera.ortho` | — | value `0`/`1` | Frame | `camera/pose/ortho` | vessel-agnostic |
+| `camera.ortho_height` | — | value = metres `> 0` finite | Frame | `camera/pose/ortho_height` | vessel-agnostic; **not restorable** (§3.11) |
+| `camera.smoothing` | — | value = seconds `[0,10]` | Frame | `camera/pose/smoothing` | vessel-agnostic |
+| `camera.pose_reset` | — | value `1` | Frame | `camera/pose/reset` | vessel-agnostic; clears overrides only |
+| `camera.play` | — | token = track name; aux = `@group` name (optional); values = the **6 slots** `[atSeconds, rate, loop, atPresent, ratePresent, loopPresent]`, defaults `[0,1,0,0,0,0]` | Frame | `camera/play` | vessel-agnostic; **also needs `schedule_enabled`** (`EOPNOTSUPP` otherwise) — a track is a `ctl/schedules` player. A grouped player ignores `at`/`rate`/`loop` |
+| `camera.set` | — | values = flat `[key, value, …]` pairs (keys: `0`=t seconds `1`=rate `2`=loop `3`=paused); **no** token | Frame | `camera/set` | vessel-agnostic; needs `schedule_enabled`; `ENOENT` when nothing is playing |
+| `camera.stop` | — | value `1` | Frame | `camera/stop` | vessel-agnostic; needs `schedule_enabled`; idempotent |
 
 ### 5.2 Writing over each transport
 
@@ -1056,11 +1479,34 @@ printf '%s\n' \
   commit > /sim/ctl/batch
 ```
 
+**Timed multi-write** — to spread writes over a *timeline* instead, commit them to
+`/sim/ctl/timed_batch` (§3.10); the same paths, each with an absolute-ms offset:
+```sh
+printf '%s\n' \
+  "0    vessels/by-id/Hunter/ctl/throttle 1" \
+  "1200 vessels/by-id/Hunter/ctl/ignite   1" \
+  commit > /sim/ctl/timed_batch
+```
+
 **HTTP `POST /v1/command`** — JSON body (the canonical generic write):
 ```json
 { "vessel_id": "Hunter", "action": "debug.teleport", "values": [6578100,0,0,0,7784,0] }
 ```
 Response `200 {"outcome":"ok"}`, or `{ "errno": "...", "message": "..." }` with the mapped status.
+
+> **`vessel_id` is mandatory — including for globally addressed actions.** The JSON parser (shared by
+> `POST /v1/command` and MQTT `gatos/command`) requires `vessel_id` (or its alias `vessel`) to be
+> present **and to be a JSON string**; omitting it, or sending `null`, is `400 EINVAL`
+> `missing 'vessel_id'`. Actions that do not address a vehicle at all — the whole `camera.*`,
+> `schedule.*` and `audio.*` families, plus `debug.warp`, `debug.weld_clear`, `debug.thug_life_*`,
+> `debug.iva_*` and the `debug.*` FX-editor actions — take the **empty string**, which is what the
+> `/sim` control files themselves author and what `examples/sdk-ts` sends:
+> ```json
+> { "vessel_id": "", "action": "camera.fov", "value": 24 }
+> { "vessel_id": "", "action": "schedule.rate", "token": "launch-seq", "value": 0.5 }
+> ```
+> Any other string is simply ignored by those actions (they route before vehicle resolution), but
+> `""` is the canonical spelling — it says "this command names no vessel".
 
 **HTTP `POST /v1/fs/<path>`** — raw value body (the file twin), e.g.
 `POST /v1/fs/vessels/active/ctl/throttle` body `0.5` → `200 {"outcome":"ok"}`.
@@ -1164,6 +1610,28 @@ curl -T alarm.mp3 "http://127.0.0.1:4242/v1/audio/file/alarm.mp3"       # upload
 curl -X POST --data 'alarm.mp3 vol=0.8' "http://127.0.0.1:4242/v1/fs/audio/play"
 ```
 
+The **schedule** (§3.10) and **camera** (§3.11) surfaces add **no dedicated routes at all** — every
+one of their leaves is an ordinary VFS node, so the `/v1/fs/<path>` mirror and `POST /v1/command`
+already reach all of it. Note the path spelling: the segment after `/v1/fs/` is the `/sim`-relative
+path with **no `sim/` prefix** (`/v1/fs/camera/pose/fov`, not `/v1/fs/sim/camera/...`); only the MQTT
+topics carry a `sim/` component (`gatos/sim/camera/pose/fov`). Camera **tracks are deliberately in
+the field mirror** (unlike audio clips, which opt out): a track is small JSON text, so
+`POST /v1/fs/camera/track/<name>` with the document as the body is the whole upload — there is **no**
+`/v1/camera` binary route, and none is needed while `camera_max_track_bytes` (1 MiB default) sits at
+the server's 1 MiB request cap. A malformed track fails that `POST` directly with its parse `EINVAL`
+(the HTTP path can carry the errno the 9p clunk cannot). Examples:
+
+```sh
+H=http://127.0.0.1:4242/v1
+curl -X POST --data-binary @flyby.json "$H/fs/camera/track/flyby"       # upload a track
+curl -X POST --data 'flyby at 2 rate 0.5' "$H/fs/camera/play"           # play it
+curl -s "$H/fs/camera/status"                                           # the whole camera state
+curl -X POST --data-binary @launch.tb "$H/fs/ctl/timed_batch"           # commit a schedule
+curl -s "$H/fs/ctl/schedules/launch-seq/state"                          # …and watch it
+curl -X POST -H 'content-type: application/json' \
+     -d '{"vessel_id":"","action":"camera.fov","value":24}' "$H/command"
+```
+
 ---
 
 ## 8. Units quick reference
@@ -1182,6 +1650,13 @@ curl -X POST --data 'alarm.mp3 vol=0.8' "http://127.0.0.1:4242/v1/fs/audio/play"
 | power | W; energy/capacity J |
 | pressure | Pa; density kg/m³ |
 | attitude quaternion | unit `x y z w`, Body→CCI |
+| schedule / playback timeline offsets (`ctl/timed_batch` offsets, `ctl/schedules/<id>/{t,duration,scrub}`, `camera/playback` times) | **milliseconds** — the one place in `/sim` that is not seconds |
+| track-authoring times (a shot's `t`/`duration`/`blend_in`, a key's `t`, `camera/play at`, `camera/set t`) | **seconds** |
+| playback rate (`ctl/schedules/<id>/rate`, `camera/set rate`) | dimensionless multiplier, `0..100` (`0` = frozen) |
+| camera angles (`pose/{roll,fov}`, `pose/orbit/{azimuth,elevation}`, `pose/geo` lat/lon, a track's `roll`/`fov`) | **degrees** |
+| camera lengths (`pose/position`, `pose/aim_offset`, `pose/geo` altitude, `pose/orbit/radius`, `pose/ortho_height`, `camera/map/scope`) | **meters** (altitude is above **terrain**, degrading to above the mean sphere) |
+| camera durations (`pose/smoothing`, `camera_release_blend_s`) | **seconds** |
+| camera `time` channel / `time_scale` | dimensionless simulation-speed factor (`0` = paused, `1` = realtime) |
 | `/sim/debug` FX-editor fields (§3.7) | **per field** — the unit is in the leaf's name or its §3.7 row (`…_km` km, `…_deg` degrees, `…_px` pixels, `…_m`/raymarch/height meters, `s`, `m/s`, `r g b`/`r g b a` each `0..1`); these do **not** follow the "everything is meters" rule |
 
 ---

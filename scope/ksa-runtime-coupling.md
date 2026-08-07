@@ -18,13 +18,46 @@ contract, not KSA game state):
 |---|---|---|---|
 | `[StarMapImmediateLoad]` | `OnImmediateLoad` | nothing (renderer not live) | none |
 | `[StarMapAllModsLoaded]` | `OnFullyLoaded` | asset validation, config, build `/sim` stack + transports, `VmHost`/broker (no boot), register `"gatos"` shell, **install Harmony hooks** | install-time only |
-| `[StarMapBeforeGui]` | `OnBeforeUi(dt)` | `SampleTelemetry(dt)` then `DrainCommands()` (**Frame phase**) | reads + Frame writes |
-| `[StarMapAfterGui]` | `OnAfterUi(dt)` | `DriveWelds(dt)` (the welds per-frame `Teleport` — a **game-thread mutation**, runs first and independently of the UI, self-gated to a no-op when no welds exist) then `DrawGameUi()` (ImGui status window) | weld `Teleport` + ImGui |
-| `[StarMapUnload]` | `Unload` | `TeardownGameCheats` (clear welds + restore/unpatch IVA), remove hooks, stop serial, dispose broker/servers (bounded) | weld/IVA teardown + uninstall |
+| `[StarMapBeforeGui]` | `OnBeforeUi(dt)` | sets the "ran this frame" latch, then `DrivePerFrame(dt)` = `SampleTelemetry` → `TickSchedules` → `DrainCommands` (**Frame phase**) → `DriveAudio` → `UpdateThugLife` | reads + Frame writes |
+| `[StarMapAfterGui]` | `OnAfterUi(dt)` | `DrivePostSolver(dt)` = `DriveWelds(dt)` → `DriveIvaPhysics(dt)` (both **game-thread mutations**, run first and independently of the UI, each self-gated to a no-op when its registry is empty) then `DrawGameUi()` (ImGui status window) | weld `Teleport` + IVA SubPart poses + ImGui |
+| `[StarMapAfterOnFrame]` | `OnAfterFrame(t, dtPlayer)` | **the F2-proof hook (C0.1)** — a postfix on `Program.OnFrame` itself, so it always runs, exactly once per rendered frame: re-runs `DrivePerFrame`+`DrivePostSolver` **only on the frames the two GUI hooks were skipped**, then `DriveCamera(dtPlayer)` **unconditionally** | camera pose write; otherwise whatever the two drives would have done |
+| `[StarMapUnload]` | `Unload` | `TeardownGameCheats` (clear welds, restore/unpatch IVA + thug_life + always_render, FX pristine restore, audio shutdown, `ScheduleStore.Clear()`, `CameraDirector.Shutdown()`), remove hooks, stop serial, dispose broker/servers (bounded) | cheat/camera/schedule teardown + uninstall |
 
 The game-coupled hook bodies live in the partial `Game/Mod.Game.cs` and are `[MethodImpl(NoInlining)]`
 partial methods, so a missing KSA assembly fails at the *call site* (caught) rather than JIT of the
 caller — the whole solution still builds without the game DLLs (CLAUDE.md dependency rule).
+
+### The `DrawUI` / F2 hook change (C0.1) — the third StarMap hook {#f2-hook}
+
+**Both GUI hooks are F2-gated, and that used to stop gatOS dead.** StarMap implements
+`[StarMapBeforeGui]` as a prefix on `Program.OnDrawUiFrame` and `[StarMapAfterGui]` as a postfix on
+`Program.OnDrawUiViewports`; the **only** call site of each sits inside `Program.OnFrame`'s
+`if (DrawUI)` block, and **F2 toggles `DrawUI`**. So with the UI hidden the telemetry sampler, the
+command drain, the audio tick, the thug-life anchor updater, the welds driver and the IVA physics
+driver all simply stopped running — silently, for as long as the player kept the UI off. That is
+unacceptable for a mod whose whole point is a camera and a scriptable sim.
+
+**The fix adds a third StarMap hook and splits the two bodies.** `[StarMapAfterOnFrame]
+Mod.OnAfterFrame` is a postfix on `Program.OnFrame` itself — outside the `if (DrawUI)` block, so it
+runs unconditionally, exactly once per rendered frame. The GUI hooks' work was factored into
+`Mod.DrivePerFrame` (sample → schedules → drain → audio → thug_life) and `Mod.DrivePostSolver`
+(welds → IVA physics), and `OnAfterFrame` re-runs **both, in their original order, only when the GUI
+hooks did not** — decided by a plain boolean latch that `OnBeforeUi` sets and `OnAfterFrame` clears.
+`DrawGameUi()` is deliberately **not** re-run: with `DrawUI` false there is no ImGui frame to draw
+into. `DriveCamera` then runs unconditionally, after both (see [#camera-driver](#camera-driver)).
+
+Two implementation notes a future reader will otherwise re-derive: the latch is used **instead of a
+frame-number comparison** because this half of the partial class must still compile with no KSA
+assemblies present (`Program.FrameNumber` is unreferenceable there) *and* because `FrameNumber` is
+incremented before the postfix fires, so an equality test would not suppress the duplicate run anyway.
+And with the UI visible `OnAfterFrame` does nothing but clear the latch and drive the camera — the
+normal path is unchanged, which is why this carries no measurable cost.
+
+**Break impact.** `[StarMapAfterOnFrame]` is a **StarMap loader ABI**, not KSA game state — a KSA
+update cannot move it; a StarMap update that dropped the attribute would fail the build. The hazard is
+the *semantic* one: if StarMap ever moved `[StarMapBeforeGui]`/`[StarMapAfterGui]` out of the
+`if (DrawUI)` block, the latch would keep everything correct (the drives simply never stand in), so the
+change is safe in both directions.
 
 ---
 
@@ -327,6 +360,129 @@ nearest-neighbour convert. **KSA members touched:** `Program.GetRenderer/MainVie
 degrades to no-injection; a capture-time managed fault latches the feature off for the session
 (`DisplayRenderPatch._faulted`, one error log).
 
+### Camera director per-frame driver (no patch) {#camera-driver}
+
+The **programmable camera** (`Game/Ksa/Camera/`, plans/CAMERA_ASBUILT.md) needs **no** Harmony patch
+either, and unlike the welds and IVA drivers that is not merely convenient — it is the whole design.
+`CameraDirector.Update(dt)` runs from `Mod.DriveCamera` at the **end of `[StarMapAfterOnFrame]
+Mod.OnAfterFrame`**, i.e. after the render, on **every** rendered frame — the **eighth game-thread work
+site**, and the only one that is not standing in for an F2-skipped GUI hook. It composes
+`Track ?? Override ?? Baseline`, resolves the frame/placement/aim, and writes `Camera.PositionEcl`,
+`Camera.LocalRotation` and the projection; the **next** frame's `Program.OnFrameViewports` then rebuilds
+every view/projection matrix from those fields. gatOS therefore never touches a matrix, never patches a
+renderer, and never runs on the render thread.
+
+**Why writing "last" is enough — and exactly how narrow that is.** `Program.OnFrame`'s order is
+`OnFrameViewports` → `Render` → `[StarMapAfterOnFrame]`, and `Viewport.OnFrame` (`KSA/Viewport.cs:139`)
+is literally `GetActiveController().OnFrame(this, dt); GetCamera().OnFrame(dt);`. So a gatOS write at
+the end of frame *N* survives **only because the active controller writes nothing at the top of frame
+*N+1***, before any matrix is rebuilt. That is true of exactly one controller:
+`FixedController.OnFrame` (`KSA/FixedController.cs:18-35`) wraps its **entire body** in
+`if (following != null)`, and ownership unfollows. Hence `CameraDirector.Take()` parks
+`Viewport.Mode = CameraMode.Fixed` (**by direct field assignment**, so `FixedController.OnSwitchOn`'s
+`TimedAlert("Fixed Camera")` never draws in the footage) and calls
+`Unfollow(changeControl: false)` — the default `true` would null `Program.ControlledVehicle` and drop
+the player's vessel. Every frame the driver **re-asserts** both (`Viewport.Mode != Fixed` or
+`Following != null` is undone), because a camera hotkey or another mod could otherwise wake
+`FixedController.OnFrame` and leave two writers fighting over one transform. The visible consequence:
+**while gatOS owns the camera, the player's camera keys do nothing.**
+
+The driver **self-gates to a single branch** (`CameraDirector.IsIdle`) while gatOS does not own the
+camera — the default — and in that state no camera is read, no pose composed and nothing published.
+`CameraState` and the director's own fields are **game-thread only, with no locks by design** (adding
+one would only hide a rule-1 violation); transport threads enqueue `SimCommand`s and read the volatile
+`CameraStore.Status` the director publishes with one swap. Despawn pruning (`CameraDirector.Prune`)
+rides the sampler's vehicle enumeration beside `VesselForceRender.Prune`. **Failure mode:** a driver
+throw calls `Restore()` first — the player never keeps a camera gatOS stopped driving — and only then
+latches `_cameraDead` for the session with one error log; an *unresolvable frame* is not a failure at
+all (the director holds the last good pose and logs the reason once, de-duplicated by message, so a
+despawned anchor cannot write 60 lines a second), and a non-finite result is treated as unresolvable so
+no NaN can reach the view matrix. Teardown rides `Mod.TeardownGameCheats` (`Shutdown()` = `Restore()` +
+`CameraStore.Clear()` + the track player's `Clear()`).
+
+⚠️ **Two side effects worth knowing.** `KittenEva.PrepareWorker` feeds
+`Program.GetMainCamera().GetForwardEcl()`/`GetRightEcl()`/`GetUpEcl()` into EVA locomotion, so **while
+gatOS holds the camera, "forward" for a kittenaut on EVA is wherever the shot is facing** — documented
+rather than worked around, because silently taking EVA control away would be the more surprising side
+effect. And leaving `CameraMode.Map` is the one transition that goes through `SetCameraMode` (accepting
+its three-second alert), because `MapController.OnSwitchOn` also clears
+`Program.IsControlledVehicleActive` and stashes `PreviouslyControlledVehicle`, and only `OnSwitchOff`
+restores them — bypassing it would strand the player with an **uncontrollable vessel**.
+
+The camera's KSA members are all `[KsaAnchor]`-documented in `Game/Ksa/Camera/` (21 anchors, Risk
+Low–Medium, verified `2026-08-06` / `2026.8.5.5168`); the writes are
+[`ksa-write-surface.md#camera-director`](ksa-write-surface.md#camera-director), the reads
+[`ksa-read-surface.md#camera`](ksa-read-surface.md#camera).
+
+### IVA and Map as ownership contexts — NOT implementable without a Harmony patch {#camera-mode-contexts}
+
+A **finding**, recorded here because it is a design constraint discovered by implementation, not a
+backlog item. Plan §7 C5.1/C5.2 assumed "gatOS writes last, so the IVA seat-pin and the map's own
+solution are bypassed". The decomp says otherwise, and the reason is the frame order above: gatOS's
+write only survives because the *next* frame's controller writes nothing. Neither of these does:
+
+- **`IVAController.OnFrame`** (`KSA/IVAController.cs:27-118`) — lines 29-38 read
+  `if (!(Camera.Following is Vehicle vehicle)) { Program.HoveredViewport.NextCameraMode(); return; }`
+  (and the same for a changed vehicle). gatOS's ownership *requires* `Following == null`, so this fires
+  **immediately** and cycles the mode straight back out of IVA — on the **hovered** viewport, which need
+  not even be the one gatOS bound. Line 41 then assigns `Camera.PositionEcl` from the seat
+  **unconditionally**, and line 112 assigns `Camera.LocalRotation` on every frame but the switch frame,
+  after the cone clamp (lines 82-108). The seat pin is not something a later writer can win; it is the
+  *first* thing written each frame.
+- **`MapController.OnFrame`** (`KSA/MapController.cs:124-289`) — lines 126-130:
+  `if (Camera.Following == null) { Program.SetCameraMode(CameraMode.Free); return; }`; and lines 281-282
+  assign **both** `Camera.PositionEcl` and `Camera.LocalRotation` from its own scope/orbit-view
+  solution, unconditionally, at the end of every frame.
+
+So making either an ownership context requires a Harmony patch that suppresses a controller's
+`OnFrame` — precisely what this feature's design exists to avoid (and what the `unscience` cautionary
+tale warns about: a patch there froze the other viewports outright). **Neither is offered**, and the
+reasoning is written into `CameraDirector`'s own type remarks so the next reader does not re-derive it.
+What C5.2 *does* ship is `MapController.Scope` as a first-class leaf (`/sim/camera/map/scope`) — the
+part with standalone value.
+
+One consequence worth recording: **hazard 10 (`Camera.NoRotation` changing what `PositionCce` and
+`LocalPosition` mean) is moot for the owned camera.** `Take` sets `NoRotation = false` on the base
+camera and unfollows, and with `_following == null` *and* `Parent == null` both `Camera.PositionEcl`
+(`KSA/Camera.cs:106-127`) and `WorldRotation` (`:130-146`) bypass the flag entirely. It still matters on
+the **restore** path, where it is already handled (`NoRotation` is written before `LocalPosition`, and
+`CameraDirector.RestorePositionEcl` reproduces the `PositionCce` composition).
+
+### Schedule tick (no patch, no KSA binding) {#schedule-tick}
+
+The **timed command scheduler** (`gatOS.SimFs/Commands/`, plans/SCHEDULER_ASBUILT.md) is listed here
+only because it adds a game-thread work site — it adds **no** Harmony patch and **no** `[KsaAnchor]`,
+because it holds no KSA type at all. `Mod.TickSchedules(dt)` runs inside `DrivePerFrame`
+**immediately before** the command drain — the **seventh game-thread work site** — so a command that
+falls due on this frame is posted into the queue the very frame it executes, and a schedule's timing is
+the frame grid rather than the frame grid plus one. Each tick: `ScheduleStore.Activate(ut)` (drain
+transport-thread commits into live players, evicting *finished* players oldest-first **only under cap
+pressure**), `AdvanceAll(renderMs, wallMs, utMs)` (each distinct clock advanced exactly once — shared
+`@group` clocks included), `Tick(due, ut)`, then `CommandQueue.Post` per due entry.
+
+**The three clock bases are sourced here and only here**, which is the one place a game update could
+change *behaviour* without changing a binding: `render` is the frame's `dtPlayer`, which KSA clamps to
+`1/MinTargetFrameRate` — so it lags true elapsed time after a hitch and never catches up (correct for
+cinematics, and exactly why the other two exist); `wall` is gatOS's own `Stopwatch`, **stopped while
+the registry is empty** so an idle gap is never banked into the first tick of the next schedule; `ut`
+is the sim-time delta off `Universe.GetElapsedSimTime()` (through the sampler's already-anchored time
+read, wrapped so a pre-first-step throw degrades to `0`), unavoidably discontinuous — a scene load
+rewinds it, warp leaps it forward — so a backwards step is **clamped to zero** rather than rewinding a
+player's timeline.
+
+It **self-gates to two integer compares** while nothing is live (`_runners.Count == 0`,
+`_ids.Count < MaxLive`), and `Scheduler.Tick` allocates nothing on a tick with 0 or 1 entries due.
+Transport threads only ever touch a `ConcurrentDictionary`, a `ConcurrentQueue` and one volatile
+immutable array (`ReserveId`/`Submit`/`Find`/`Players`/`IsIdLive`/`Count`); `Activate`/`AdvanceAll`/
+`Tick`/`Execute`/`Clear` are game-thread only, and `IPostObserver.OnCommandResult` fires **inline on
+the game thread** inside `CommandQueue.Drain`. **Failure mode:** a tick throw sets `_schedulesDead` for
+the session with one error log — scheduling stops, nothing else does. Teardown rides
+`Mod.TeardownGameCheats` (`ScheduleStore.Clear()`). Because scheduled commands go through the ordinary
+executor, they inherit every action's own phase, errno, health latch and per-frame command budget
+(`max_commands_per_frame`) unchanged — a schedule can therefore be starved by that budget under a
+catch-up burst, which is what the coalescing policy and the `<id>/dropped` counter exist to bound.
+Full inventory: [`non-ksa-surface.md#scheduler`](non-ksa-surface.md#scheduler).
+
 ### Threading phases (binding)
 - **Frame phase** — `OnBeforeUi` → `CommandQueue.Drain(CommandPhase.Frame, …)`. Most actions (incl. the
   weld create/remove/enable/clear and `always_render_iva` toggle).
@@ -350,6 +506,16 @@ degrades to no-injection; a capture-time managed fault latches the feature off f
   (`Vehicle.GetWorldMatrix`/`UpdateRenderData`) consulting a volatile immutable id set — they mutate no
   game state beyond what the stock methods do ([`#always-render-patches`](#always-render-patches) above);
   the `vessel.always_render` registry write itself is an ordinary Frame-phase command.
+- **Schedule tick** — *not* a `CommandQueue` phase, but the thing that *feeds* it: it runs in
+  `DrivePerFrame` **immediately before** the Frame drain and `Post`s due commands into the same queue,
+  so each one routes to its own phase by action key exactly as if a transport had submitted it (the
+  seventh game-thread work site, [`#schedule-tick`](#schedule-tick) above). The seven `schedule.*`
+  actions themselves are ordinary Frame-phase commands answered game-free.
+- **Camera driver** — *not* a `CommandQueue` phase: a per-frame `Camera.PositionEcl`/`LocalRotation`/
+  projection write at the end of `OnAfterFrame`, on **every** rendered frame (the eighth game-thread
+  work site, [`#camera-driver`](#camera-driver) above). It self-gates to one branch while unowned; the
+  28 `camera.*` writes themselves are ordinary Frame-phase commands, and **no camera action is in
+  `SolverActions`** — nothing about the camera is visible to the vehicle solver.
 
 Threading rules 1–5 (CLAUDE.md): game state read+mutated **only** on the game thread; 9p/HTTP/MQTT
 threads only enqueue `SimCommand` and read the last published snapshot; `VmHost` is one-semaphore async;

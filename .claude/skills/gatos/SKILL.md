@@ -5,7 +5,8 @@ description: >-
   simulation state as a 9P filesystem at /sim (also over HTTP /v1 and MQTT). Use this when asked to
   read game/celestial/vehicle telemetry, control vehicles (throttle, ignite, staging, attitude,
   burns, RCS, lights, docking), use game/debug controls (teleport, impulse kick, refuel, time-warp,
-  switch vessel), or write flight-computer / autopilot programs. Covers the full /sim catalog, the
+  switch vessel), direct the in-game camera / author cinematic shots and tracks, schedule timed
+  command sequences, or write flight-computer / autopilot programs. Covers the full /sim catalog, the
   command model, KSA coordinate frames, and worked Bun/TypeScript + Rust examples.
 ---
 
@@ -27,9 +28,9 @@ directly) or on the host (HTTP). No custom RPC — the files *are* the API.
 | File | When |
 |---|---|
 | [`SPEC_9P_FILESYSTEM.md`](../../../SPEC_9P_FILESYSTEM.md) | the full path/format/units/command catalog — your primary reference |
-| [`coordinate-frames.md`](coordinate-frames.md) | KSA reference frames (ECL/CCE/CCF/**CCI**/ENU), surface velocity, the Body→CCI attitude quaternion, orbital math — needed for any flight/orbit work |
+| [`coordinate-frames.md`](coordinate-frames.md) | KSA reference frames (ECL/CCE/CCF/**CCI**/ENU), surface velocity, the Body→CCI attitude quaternion, orbital math — needed for any flight/orbit work; §8 is the camera's six placement frames |
 | [`flight-programs.md`](flight-programs.md) | how to structure a control loop; gating (pause/warp/stale); the `gogogo-rs` and `land-o-matic` case studies |
-| [`recipes.md`](recipes.md) | complete runnable Bun/TS programs — connecting, the **teleport** task, throttle/ignite, burns, events |
+| [`recipes.md`](recipes.md) | complete runnable Bun/TS programs — connecting, the **teleport** task, throttle/ignite, burns, events, **timed sequences** (§12), **camera shots** (§13) |
 
 In-repo working references: `examples/gogogo-rs` (minimal Rust control panel — throttle + ignite),
 `examples/land-o-matic` (full Rust G-FOLD+UPFG landing autopilot), `examples/sdk-ts` (typed
@@ -52,7 +53,10 @@ TypeScript/Bun SDK over both transports).
   therefore *never* land in the same tick (a formation teleport smears ~100 m per frame gap at orbital
   speed). To make N writes execute in the **same tick**, write them as one group to `/sim/ctl/batch`:
   one `<path> <value>` line per command, then a `commit` line (SPEC §3.10). Atomic, in order, one
-  phase per batch, ≤64 commands.
+  phase per batch, ≤64 commands. To spread writes over **time** instead of collapsing them into one
+  tick, commit the same lines — each prefixed with an **absolute ms offset** — to
+  `/sim/ctl/timed_batch`; they become a host-owned player under `/sim/ctl/schedules/<id>/` you can
+  pause/scrub/re-rate/loop/stop (SPEC §3.10). Phase mixing *is* allowed there.
 - **Two attitude paths:** write a named mode to `ctl/attitude_mode` (`Prograde`, `Retrograde`, …) and
   the onboard autopilot steers (warp-correct, no math) — *or* compute a **Body→CCI quaternion** and
   write `ctl/attitude_target` for a custom direction. Attitude/burn writes are **solver-phase** (take
@@ -118,6 +122,15 @@ vessels/active/…  (alias of the controlled vessel)   vessels/by-id/<id>/
 events
 status/{game_version,sampler,accessors,transports}
 ctl/batch                               (atomic same-tick command groups — SPEC §3.10)
+ctl/timed_batch                         (the same control surface on a clock; schedule_enabled=true)
+ctl/schedules/{count,clear,help,
+               <id>/{kind,group,state,t,duration,pending,dropped,clock,last_error,
+                     pause,scrub,rate,loop,stop,remove}}      (the live-player registry)
+camera/{status,info,target,playback,last_error,enabled,release,mode,follow,tidal,
+        map/scope, track/<name>, play,set,stop,
+        pose/{position,frame,anchor,geo,orbit/{radius,azimuth,elevation},rotation,
+              aim,aim_target,aim_offset,aim_frame,aim_up,roll,fov,ortho,ortho_height,
+              smoothing,reset}}         (programmable cinematic camera; camera_enabled=true)
 audio/{file/<name>,play,set,stop,status,info}         (userland audio; audio_enabled=true)
 debug/                                  (only when debug_namespace=true)
     vessels/<id>/{teleport,impulse,refill_fuel,refill_battery,docking/<n>/pushoff_impulse,
@@ -202,6 +215,70 @@ Keeps playing at any time-warp (deliberate — alarms must not mute). Host-side 
 `curl -T clip.mp3 http://127.0.0.1:4242/v1/audio/file/clip.mp3`. Full grammar, caps, errnos:
 [SPEC §3.9](../../../SPEC_9P_FILESYSTEM.md).
 
+**Timed sequences (`/sim/ctl/timed_batch` + `/sim/ctl/schedules`, gated by `schedule_enabled=true`):**
+`ctl/batch` makes N writes land in one tick; a **timed batch** spreads them over a timeline instead.
+Same paths, same values, each line prefixed with an **absolute offset in milliseconds** (fractional
+allowed — never deltas), optional `@id`/`@clock`/`@rate`/`@loop`/`@group` directives first, then
+`commit`:
+
+```sh
+cat > /sim/ctl/timed_batch <<'EOF'
+@id      launch-seq
+@clock   render                          # render | wall | ut
+0        vessels/active/ctl/throttle  1
+1200     vessels/active/ctl/ignite    1
+commit
+EOF
+cat /sim/ctl/schedules/launch-seq/state   # pending|running|paused|done|failed
+echo 0.25 > /sim/ctl/schedules/launch-seq/rate      # also pause/scrub/loop/stop/remove
+```
+
+The **host** owns the clock, so timing survives the guest going away and replays identically.
+`render` accumulates the game's clamped frame delta (lags after a hitch, never catches up — right for
+footage), `wall` is true elapsed time, `ut` is sim time (diverges under warp — right for mission
+events). **Phase mixing is allowed** (unlike `ctl/batch`). Commit is **non-blocking and
+all-or-nothing** (`ENOENT` bad path, `EINVAL` bad value/directive/cap). On catch-up every *trigger*
+fires in order while *state* controls coalesce to the last write per path (counted at
+`<id>/dropped`) — which is why a densely generated script is cheap. `schedule.*` events land on
+`/sim/events`. Full grammar + semantics: [SPEC §3.10](../../../SPEC_9P_FILESYSTEM.md), or
+`cat /sim/ctl/schedules/help` in-guest; worked example in [`recipes.md` §12](recipes.md).
+
+**Programmable camera (`/sim/camera`, gated by `camera_enabled=true` — NOT a debug cheat):** take the
+game's main camera and fly it from a shell. `echo 1 > /sim/camera/enabled` captures the live camera,
+parks the game's controller and makes gatOS the only writer; everything you then write is an
+*override* over that snapshot, and `echo 0 > enabled` (eased) or `echo 1 > camera/release` (hard cut)
+puts it all back. A pose is **anchor** (`pose/anchor`: `vessel:`/`body:`/`part:<vessel>/<iid>`/`none`)
++ **frame** (`pose/frame`: `ecl|cce|bodyfixed|enu|lvlh|chase`) + a placement — `pose/position`
+(cartesian), `pose/geo` (`lat lon alt [body:<id>]`, altitude above **terrain**), or
+`pose/orbit/{radius,azimuth,elevation}` (a non-zero radius wins). Orientation is normally
+`pose/aim <target> [off x y z] [frame <f>] [up world|target|velocity|free] [roll <deg>]` — the offset
+is measured **on the subject** and re-resolved every frame, which is what glues it to a moving hull.
+`pose/{fov,ortho,ortho_height,roll,smoothing}` are the lens.
+
+```sh
+echo 1 > /sim/camera/enabled
+echo "vessel:apollo11" > /sim/camera/pose/anchor
+echo "bodyfixed" > /sim/camera/pose/frame     # +X nose, +Y right, -Z up (so "up" is negative)
+echo "-40 0 -6"  > /sim/camera/pose/position
+echo "vessel:apollo11 off 0 0 -1.2 up world" > /sim/camera/pose/aim
+echo 0.35 > /sim/camera/pose/smoothing        # critically-damped filter, seconds
+cat /sim/camera/status                        # one "key value…" line per channel
+echo 0 > /sim/camera/enabled                  # eased hand-back
+```
+
+Three layers composite per channel — **track ?? your override ?? the ownership baseline** — so a
+`timed_batch` (or a bare `echo`) can pull focus while a JSON **track** interpolates position. A track
+(`cp shot.json /sim/camera/track/shot`; `echo shot > /sim/camera/play`) registers as a player at
+`/sim/ctl/schedules/camera/`, so it needs `schedule_enabled` too and answers the same
+`pause`/`scrub`/`rate`/`loop`/`stop`. **Every track channel has a `pose/` leaf**, so the JSON is never
+the only route. Gotchas: `mode`/`follow`/`tidal` and the player's camera keys are inert while gatOS
+owns the camera (use `pose/anchor` + `pose/aim_target`); `pose/ortho_height` is the one change gatOS
+cannot undo; the camera is floored at surface + 0.5 m; **an EVA kittenaut walks relative to the shot**
+while you hold the camera; and `iva`/`map` cannot be gatOS ownership contexts at all (only `fixed`
+is — `camera/map/scope` is the map knob that does ship). Full catalog, errnos and the track JSON
+schema: [SPEC §3.11](../../../SPEC_9P_FILESYSTEM.md); frames in
+[`coordinate-frames.md` §8](coordinate-frames.md); worked shot in [`recipes.md` §13](recipes.md).
+
 **First-class per-vessel nodes (NOT under `/sim/debug`; also ported from `unscience`):**
 `vessels/by-id/<id>/scale` — write any finite value `> 0` to uniformly rescale the whole vessel model
 one-shot (`echo 50000 > scale` = planet-sized; `echo 1 >` restores; `0`/negative → `EINVAL`; KSA
@@ -228,6 +305,16 @@ authority-exempt). SPEC §3.4.1 has the full semantics.
 - **`debug/…/impulse` defaults to newton-seconds** (Δv = J ÷ live mass), not m/s — append the `dv`
   keyword to apply the vector directly as Δv, and `body` to read it in the vessel frame (+X = nose):
   `echo "10 0 0 body dv" > impulse`. Same CCI-about-current-parent frame as teleport otherwise.
+- **`POST /v1/command` / `gatos/command` require `vessel_id` even for globally addressed actions** —
+  the whole `camera.*`, `schedule.*`, `audio.*` families and `debug.warp`/`debug.thug_life_*`/… name
+  no vessel, so send `"vessel_id": ""`. Omitting it (or sending `null`) is `400 EINVAL`.
+- **`camera/play`/`set`/`stop` need `[schedule] schedule_enabled` as well as `camera_enabled`** — a
+  camera track *is* a `/sim/ctl/schedules` player (`kind = camera-track`, id `camera`). With
+  scheduling off they answer `EOPNOTSUPP`; every camera *leaf* still works.
+- **A malformed camera track fails on `close`, which carries no errno** — the `cp` looks like it
+  worked. Read `/sim/camera/last_error` (or upload over HTTP, where the `POST` does carry the EINVAL).
+- **Timeline units are mixed on purpose:** `timed_batch` offsets and `ctl/schedules/<id>/t` are
+  **milliseconds**; a track's `t`/`duration` and `camera/play at` are **seconds**.
 - Mass is **kg**; gravity is **μ/r²** (never 9.8); ground-referenced velocity is `v_cci − ω×r`.
 - Don't substitute a generic quaternion library for the Body→CCI attitude math — use KSA's exact
   convention (`transform(+X, q) == thrust_direction`); see [`coordinate-frames.md`](coordinate-frames.md).

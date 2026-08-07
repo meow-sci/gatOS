@@ -38,11 +38,12 @@ and the decisions locked in (Part 1).
 
 **All milestones through M9, plus G1–G7 (HTTP/serial/TypeScript SDK), the embedded MQTT
 transport, host folder mounts (`/mnt/<name>`), the welds / `always_render_iva` / parts-listing
-cheats ported from `unscience`, the `/sim/audio` userland playback feature, and the `/sim/debug/iva`
-free-floating cabin-object physics, are code-complete.** The only pending work is a set of in-game
+cheats ported from `unscience`, the `/sim/audio` userland playback feature, the `/sim/debug/iva`
+free-floating cabin-object physics, the generic timed command scheduler (`/sim/ctl/timed_batch`)
+and the programmable camera (`/sim/camera`), are code-complete.** The only pending work is a set of in-game
 passes (T6.6/T9.3/G1–G4, plus the welds/IVA/parts, thug_life, per-vessel scale/always_render, debug
-impulse, `ctl/translate`, `/sim/audio` and IVA-cabin-physics checklists) that require a live KSA
-flight; checklists are in [`docs/VALIDATION.md`](docs/VALIDATION.md). The purrTTY tip release is now
+impulse, `ctl/translate`, `/sim/audio`, IVA-cabin-physics, FX-editor, **timed-scheduler and camera**
+checklists) that require a live KSA flight; checklists are in [`docs/VALIDATION.md`](docs/VALIDATION.md). The purrTTY tip release is now
 cut.
 
 > **Prior pass — `2026.7.9.5018`** (upgrade-ksa playbook pass 2026-07-24, from 4980; superseded as the
@@ -177,6 +178,8 @@ cut.
 | IVA cabin physics (`/sim/debug/iva` — free-floating cabin objects; plans/IVA_MOVEMENTS.md) | Code DONE; in-game pending | `gatOS.SimFs/Iva/CabinPhysics.cs` (the game-free forcing field, unit-tested), `SimFs` `debug/iva` registry, `Game/Ksa/Iva/` (`CabinSim`/`CabinCallbacks` = a **gatOS-owned BepuPhysics 2.5 `Simulation`** in the vessel assembly frame; `InteriorGeometry` = collision mesh from the IVA art; `FloatingObject` = the driven SubPart; `IvaPhysicsManager` = registry + `Mod.DriveIvaPhysics` driver) — **off by default behind the `/sim/debug/iva/enabled` master switch**; no Harmony patch; new `BepuPhysics`/`BepuUtilities` refs |
 | Custom audio (`/sim/audio` — userland playback through the game's FMOD; plans/GATOS_CUSTOM_AUDIO_PLAN.md P1–P3) | Code DONE; in-game pending | `gatOS.SimFs/Audio/` (store + writable `file/` dir + play/set/stop grammar), `Game/Ksa/Actuators/AudioActuator.cs` (FMOD Sound cache/channels/tick over `GameAudio.System`; new `Brutal.Fmod.dll` ref), HTTP `/v1/audio` binary upload routes, `audio.finished` events; gated by `[audio] audio_enabled` |
 | FX editors (`/sim/debug/{engineplume,plumetrail,clouds,terrain}` — the game's four built-in imgui render editors as filesystems; issue #2, `plans/FX_EDITORS_PLAN.md`) | Code DONE; in-game pending | `gatOS.SimFs/Fx/FxCatalog.cs` (the four declarative field tables + the nine action keys) driving the `SimFsTree` debug dirs; `Game/Ksa/Fx/` (`FxReflect` handles + per-capability health latches, Plume/Trail/Cloud/Terrain actuators, `FxEditorReader` sampler, `FxPristine` reset/teardown) — no Harmony patch, gated by `[control] debug_namespace` |
+| Timed command scheduler (`/sim/ctl/timed_batch` + `/sim/ctl/schedules/` — offset-scripted command playback on three clock bases, 7 `schedule.*` actions; `plans/SCHEDULER_ASBUILT.md`) | Code DONE; in-game pending | `gatOS.SimFs/Commands/{PlaybackClock,Schedule,Scheduler,ScheduleStore,ScheduleTree,TimedBatchFile}.cs` + `CommandQueue.Post`/`IPostObserver` — **100 % game-free, zero KSA bindings**; game side is only `Mod.TickSchedules` (the game-thread tick) and one `KsaCatalog` routing branch to `ScheduleStore.Execute`; gated by `[schedule] schedule_enabled` |
+| Programmable camera (`/sim/camera/**` — ownership take/release, six frames, aim-with-offset, geodetic placement, JSON tracks, the interpolated `time` channel, `map/scope`; `plans/CAMERA_ASBUILT.md`) | Code DONE; in-game pending | `gatOS.SimFs/Camera/**` (game-free: math, rules, the three-layer compositor, store, track parser/evaluator/playback) + `gatOS.SimFs/SimFsTree.cs`; `Game/Ksa/Camera/{CameraDirector,CameraFrames,CameraTargets,CameraReader}.cs` + the extended `Actuators/CameraActuator.cs` (**22 `[KsaAnchor]`s**, verified `2026-08-06` / `2026.8.5.5168`); driven by `Mod.DriveCamera` in `OnAfterFrame` — **no Harmony patch**; gated by `[camera] camera_enabled`. **IVA/Map ownership contexts are NOT implemented and not implementable without a Harmony patch** (`scope/ksa-runtime-coupling.md#camera-driver`) |
 | Screen stream (`/sim/display`) | Code DONE; misrender **root-caused + fixed** (purrTTY libghostty `o=z` corruption → default `rgba`, + purrTTY content-hash re-decode; STREAM_PLAN.md §11); **perf/stability P0–P7 of [`plans/PERF_IMPROVEMENT_PLAN.md`](plans/PERF_IMPROVEMENT_PLAN.md) landed 2026-07-02, confirmed working in-game (informal pass)** (SSH read-pump, a=t keyframes, GPU blit downscale, zero-alloc encoder, demand pacing, 9p pooling + msize 512 KiB/guest v15, purrtty consumption fixes, P6: the purrTTY native rebuilt from ghostty main + `purrtty/vt-video-fixes` — the zig-0.15.2 `o=z` flate corruption and the placement-pin leak are FIXED, so `display_encoding` defaults to `rgba-zlib` again, 3–10× less wire; and P7: the native APC bulk lane, 82→1185 MiB/s consumption throughput); formal S6/S9 + P8 soak checklists still open | `SimFs/Display/`, `Game/Ksa/FrameCapture.cs` + `DisplayRenderPatch.cs` (in-band render-hook capture), `STREAM_PLAN.md` |
 | `ctl/rotate` (W1, AGC_PLAN §7.4) | Code DONE; in-game pending | `Game/Ksa/Actuators/RotateActuator.cs`, `SimFs/Commands/RotateRules.cs` — manual RCS rotation signs, the translate sibling; full authority needs `attitude_mode=manual` (auto strips rotation bits) |
 | AGC (`examples/agc` — Luminary099/yaAGC in-guest, plans/AGC_PLAN.md A0–A7) | Code DONE (host+wire-verified); in-game mission cards pending | one Rust crate: `proto/` wire codec + SocketPort + embedded `agc_engine.c` FFI (`--features embedded`), virtual IMU/PIPA/LR, RCS duty→`ctl/batch` demodulation, THRUST clocking, padload generator (+KSA audit), P27 uplink, downlink recorder, ratatui `dsky`; `tools/agc` launcher; `apollo11-system/` July-1969 Earth/Moon system generator; `APOLLO_11_FLIGHT_GUIDE.md`; mission cards in `docs/VALIDATION.md` |
@@ -316,7 +319,21 @@ gatOS.SimFs    → NineP, Logging                       /sim tree, snapshots, st
                                                       Commands/ (SimCommand, CommandQueue, Control/Trigger/
                                                       Vector/Enum/Number/Token control files — G1+G4, built;
                                                       + BatchFile: /sim/ctl/batch atomic same-tick command
-                                                      groups, drained as ONE unit — SPEC §3.10);
+                                                      groups, drained as ONE unit — SPEC §3.10;
+                                                      + the generic timed scheduler: PlaybackClock (the one
+                                                      timeline primitive — render/wall/ut bases), Schedule,
+                                                      Scheduler (cursor + coalescing catch-up), ScheduleStore
+                                                      (the live-player registry + the game-free schedule.*
+                                                      executor), ScheduleTree, TimedBatchFile — backing
+                                                      /sim/ctl/{timed_batch,schedules/} with ZERO KSA binding);
+                                                      Camera/ (the game-free half of /sim/camera: CameraMath/
+                                                      Easing/Splines/PoseSmoother, CameraRules, the three-layer
+                                                      CameraState compositor, CameraStore + the writable track/
+                                                      dir, CameraCommands' action keys + six line grammars,
+                                                      CameraFormat, and the JSON track parser/evaluator/
+                                                      playback, which registers into the schedules registry as
+                                                      kind = camera-track — CAMERA_ASBUILT.md, built; the
+                                                      director lives in GameMod's Game/Ksa/Camera/);
                                                       Display/ (the /sim/display screen stream: DisplaySettings,
                                                       KittyEncoder, DisplaySurface, DisplayStreamFile +
                                                       control files — STREAM_PLAN.md, built; capture in GameMod);
@@ -356,8 +373,10 @@ client), plus `gatOS.Vm`/`gatOS.Ssh` for its in-VM integration fixture.
 > `GameMod` included — still builds when the assemblies are absent.
 >
 > **Stronger form for KSA integration (G2):** a KSA type name may appear **only under
-> `gatOS.GameMod/Game/Ksa/`** (`Readers/`, `Actuators/`, `Welds/`, `Render/`, `ThugLife/`, `KsaCatalog`,
-> annotated with `[KsaAnchor]`). Transports (9p/HTTP/serial), the `/sim` tree, formats and the command pipeline
+> `gatOS.GameMod/Game/Ksa/`** (`Readers/`, `Actuators/`, `Welds/`, `Render/`, `ThugLife/`, `Iva/`, `Fx/`,
+> `Camera/`, `KsaCatalog`, annotated with `[KsaAnchor]`). ⚠️ The `Game/Ksa/Camera/` folder's namespace
+> **shadows the simple name `Camera` for every file under `Game/Ksa/`** — any file there that names the
+> game's type must alias it (`using KsaCamera = KSA.Camera;`). Transports (9p/HTTP/serial), the `/sim` tree, formats and the command pipeline
 > never see one — they speak `SimSnapshot` (reads) and `SimCommand`/`ICommandExecutor` (writes).
 > When a decomp drop breaks the build, the diff is confined to that folder + `docs/KSA_INTEGRATION_MATRIX.md`,
 > and you MUST also update the matching [`scope/`](scope/FULL_SCOPE.md) page — the break-impact catalog
@@ -457,7 +476,41 @@ host.
    `UpdateRenderData` (the sub-pixel cull bypass) installed **only while ≥ 1 vessel is marked** and removed
    on the last unmark/despawn-prune/unload; its registry is mutated only on the game thread and read by the
    prefixes through one volatile immutable set (despawn pruning rides the sampler's vehicle enumeration).
-   All cheats are torn down by `Mod.TeardownGameCheats` at `Unload`.
+   A **seventh game-thread work site** is the **schedule tick** (`Mod.TickSchedules` →
+   `ScheduleStore.{Activate,AdvanceAll,Tick}`, run in `DrivePerFrame` *immediately before* the command
+   drain, so a command that falls due on this frame executes on this frame and not the next): it sources
+   all three clock bases (`render` = the frame's `dtPlayer`, `wall` = a host `Stopwatch` parked while the
+   registry is empty, `ut` = the sim-time delta, clamped at 0 on a rewind), posts what came due through
+   `CommandQueue.Post`, and self-gates to two integer compares while nothing is live. It touches **no KSA
+   type** — the whole scheduler is game-free (`gatOS.SimFs/Commands/`) and needs **no** Harmony patch. An
+   **eighth game-thread work site** is the **camera director** (`Mod.DriveCamera` →
+   `CameraDirector.Update`, run at the *end* of `[StarMapAfterOnFrame] Mod.OnAfterFrame` —
+   **unconditionally, on every rendered frame**, unlike every other driver, which stands in only on the
+   frames the GUI hooks were skipped). It must run there for two reasons: the pose has to be written
+   *after* the render so the **next** frame's `Program.OnFrameViewports` rebuilds the view/projection
+   matrices from it — which is precisely what lets gatOS own the camera with **no** Harmony patch — and a
+   camera that stopped moving the moment the player hid the UI would be useless for the job it exists to
+   do. It self-gates to a single branch (`CameraDirector.IsIdle`) while gatOS does not own the camera —
+   the default — and in that state no camera is read, no pose composed and nothing published;
+   `CameraState` and the director's fields are game-thread-only with no locks by design, transport threads
+   only enqueue `SimCommand`s (no camera action is in `SimCommand.SolverActions`) and read the volatile
+   `CameraStore.Status` the director publishes with one swap. Despawn pruning rides the sampler's vehicle
+   enumeration (`CameraDirector.Prune`, beside `VesselForceRender.Prune`). Camera teardown rides
+   `Mod.TeardownGameCheats`. All cheats are torn down by `Mod.TeardownGameCheats` at `Unload`.
+
+   **The F2 / `DrawUI` fix (C0.1) — why a third StarMap hook exists.** StarMap implements
+   `[StarMapBeforeGui]`/`[StarMapAfterGui]` as patches on `Program.OnDrawUiFrame`/`OnDrawUiViewports`,
+   whose only call sites sit inside `Program.OnFrame`'s `if (DrawUI)` block — and **F2 toggles `DrawUI`**.
+   So hiding the UI used to stop the telemetry sampler, the command drain, the audio tick, the thug-life
+   updater, the welds driver and the IVA physics driver *dead*. `[StarMapAfterOnFrame] Mod.OnAfterFrame`
+   is a postfix on `Program.OnFrame` itself: it always runs, exactly once per rendered frame. The bodies
+   of the two GUI hooks were split into `Mod.DrivePerFrame` (sample → `TickSchedules` → drain →
+   `DriveAudio` → `UpdateThugLife`) and `Mod.DrivePostSolver` (`DriveWelds` → `DriveIvaPhysics`), and
+   `OnAfterFrame` re-runs **both** — but only on the frames the GUI hooks were skipped, decided by a
+   boolean latch `OnBeforeUi` sets and `OnAfterFrame` clears (not a frame-number compare: `Program`
+   is unreferenceable from the game-free half of the partial class, and `FrameNumber` is bumped before
+   the postfix anyway). `DrawGameUi()` is deliberately **not** re-run — with `DrawUI` false there is no
+   ImGui frame to draw into. `DriveCamera` then runs unconditionally, after both.
 2. **9p server threads never touch game state** — they read the latest published snapshot, and for
    writes they only *enqueue* an immutable `SimCommand` and await its result (never executing it).
 3. SSH I/O runs on SSH.NET's threads; `OutputReceived` may fire on any thread (purrTTY tolerates

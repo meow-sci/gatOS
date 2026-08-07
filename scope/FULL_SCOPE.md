@@ -280,12 +280,14 @@ KSA game update have any chance of breaking it.
 | R | Time / warp / auto-warp / sim-step | **Yes** (sampler-direct) | [`ksa-read-surface.md`](ksa-read-surface.md#sampler-direct-reads) |
 | R | Events (snapshot-diff: engine/flameout/dock/undock/decouple/animation/battery) | Indirect (diff over reads) | [`ksa-read-surface.md`](ksa-read-surface.md#events) |
 | R | Vessel parts list (top-level parts + nested `subparts/<m>/`, plus the `parts/json` whole-tree JSON doc — a game-free projection; the welds anchor picker; gated by `telemetry_vessel_parts`) | **Yes** | [`ksa-read-surface.md`](ksa-read-surface.md#parts) |
+| R | Camera state read-back (`camera/status`, `target`, `mode`, `tidal`, `map/scope`, every composed `pose/**` value — published per rendered frame by the director, **not** through `SimSnapshot`) | **Yes** (Medium: `Viewport.{Mode,MapController}`, `MapController.Scope`, `Camera.{Following,TidalLocking,GetFieldOfView,Orthographic}`, the `CameraMode` enum, and the `Celestial` geodetic back-projection) | [`ksa-read-surface.md#camera`](ksa-read-surface.md#camera) |
 | **Writes (controls)** | | | |
 | W | Engine ignite/shutdown, per-engine active/min-throttle, manual throttle | **Yes** | [`ksa-write-surface.md`](ksa-write-surface.md) |
 | W | Staging, RCS (master + manual translation `ctl/translate` + manual rotation `ctl/rotate` — W1, AGC_PLAN §7.4), flight-computer attitude/frame/target/burn | **Yes** (Solver phase for FC setpoints; translation/rotation = reflection on `_manualControlInputs.ThrusterCommandFlags`) | [`ksa-write-surface.md`](ksa-write-surface.md) |
 | W | Lights (master/on/brightness/colour/cone angles), animations/solar/light deploy | **Yes** (High: template) | [`ksa-write-surface.md`](ksa-write-surface.md) |
 | W | Decouplers, docking undock + pushoff | **Yes** (4750: `PushoffImpulse`, N·s — G1 fixed) | [`ksa-write-surface.md`](ksa-write-surface.md#docking) |
-| W | Camera focus (vessel + body) | **Yes** | [`ksa-write-surface.md`](ksa-write-surface.md) |
+| W | Camera focus (vessel + body) | **Yes** (Medium: `Program.MainViewport.{BaseCamera,MapCamera}` + `Camera.SetFollow(…, changeControl:false, alert:false)` — **both** cameras since C1.4) | [`ksa-write-surface.md#camera-focus`](ksa-write-surface.md#camera-focus) |
+| W | Programmable camera `/sim/camera/**` (ownership take/release, `mode`/`follow`/`tidal`, six reference frames, aim-with-offset, geodetic placement, orbit placement, FOV/ortho/roll/smoothing, JSON tracks, the interpolated `time` channel, `map/scope`) — vessel-agnostic, authority-exempt, gated by `[camera] camera_enabled` | **Yes** (Medium, 22 anchors: `Program.MainViewport`, `Viewport.{Mode,GetCamera,SetCameraMode,BaseCamera,MapCamera,MapController}`, `Camera.{PositionEcl,LocalPosition,LocalRotation,NoRotation,Following,TidalLocking,SetFollow,Unfollow,GetFieldOfView,SetFieldOfView,Orthographic,SetOrthographic,SetOrthoHalfHeight,LookAtRotation}`, `MapController.Scope`, `Universe.{SetSimulationSpeed,GetSimulationSpeed,IsAutoWarpActive}`, the `Vehicle`/`Celestial` frame constructors and `Celestial.GetDirCcfFromLatLon` geodesy. **No Harmony patch** — it rides `[StarMapAfterOnFrame]`) | [`ksa-write-surface.md#camera-director`](ksa-write-surface.md#camera-director) |
 | W | `/sim/debug` cheats: teleport, one-shot impulse (N·s or Δv kick, CCI or body frame), refill fuel/battery, warp set, control-vessel, pushoff | **Yes** | [`ksa-write-surface.md`](ksa-write-surface.md#debug) |
 | W | `/sim/debug` welds (weld/weld_here/unweld/enable/clear) + `always_render_iva` render cheat (ported from `unscience`) | **Yes** (High: per-frame `Teleport`; dynamic `gatos.iva` Harmony) | [`ksa-write-surface.md`](ksa-write-surface.md#welds) |
 | W | `/sim/debug/thug_life` world-space quad cheat (add/clear/per-entry position/rotation/size/visible/remove; ported from `unscience`) — gatOS's **first custom GPU rendering** | **Yes** (⚠️ **highest-churn**: render-pipeline internals + Vulkan; dynamic `gatos.thug_life` Harmony postfix on `SuperMeshRenderSystem.RenderMainPass`) | [`ksa-write-surface.md`](ksa-write-surface.md#thug-life) |
@@ -304,6 +306,8 @@ KSA game update have any chance of breaking it.
 | G | 9P server + VFS, host folder mounts | No | [`non-ksa-surface.md`](non-ksa-surface.md) |
 | G | SimFs tree, snapshot/command model, telemetry gating | No | [`non-ksa-surface.md`](non-ksa-surface.md) |
 | G | `/sim/ctl/batch` atomic same-tick command groups (SPEC §3.10; reuses the existing drain + per-file parsers, no new KSA binding) | No | [`non-ksa-surface.md`](non-ksa-surface.md) |
+| G | Timed command scheduler — `/sim/ctl/timed_batch` + `/sim/ctl/schedules/**`, the 7 `schedule.*` actions, three clock bases (`render`/`wall`/`ut`), shared-clock groups, coalescing catch-up, cap-pressure eviction (gated by `[schedule] schedule_enabled`). Adds **zero** KSA bindings: `KsaCatalog` routes the family straight to the game-free `ScheduleStore.Execute`, and `Mod.TickSchedules` is a driver, not a binding | No | [`non-ksa-surface.md#scheduler`](non-ksa-surface.md#scheduler) |
+| G | The game-free half of the programmable camera — `gatOS.SimFs/Camera/**`: the math primitives, `CameraRules`, the three-layer `Track ?? Override ?? Baseline` compositor, `CameraStore` + the writable `track/` dir, the six line grammars, and the JSON track parser/evaluator/player (`kind = camera-track` in the schedules registry) | No | [`non-ksa-surface.md#camera-game-free`](non-ksa-surface.md#camera-game-free) |
 | G | HTTP `/v1`, MQTT, serial/bus transports, TypeScript SDK | No | [`non-ksa-surface.md`](non-ksa-surface.md) |
 
 ---
@@ -316,17 +320,19 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 
 | Location | KSA touch | Guarded by |
 |---|---|---|
-| `Game/Ksa/Readers/VesselReader.cs` | 21 `[KsaAnchor]` reads (the bulk of telemetry; +`ReadControllable`, G3) | per-accessor try/catch → `KsaHealth`; `BuildFull` whole-pass guard |
+| `Game/Ksa/Readers/VesselReader.cs` | 22 `[KsaAnchor]` reads (the bulk of telemetry; +`ReadControllable`, G3; +`SampleSrbs`, 5018) | per-accessor try/catch → `KsaHealth`; `BuildFull` whole-pass guard |
 | `Game/Ksa/Readers/AnimationLinks.cs` | 1 `[KsaAnchor]` read (structural animation↔module links, cached per vehicle — GP3) | rebuilt on module-count change / 10 s; consumed inside the `BuildFull`/`BuildCore` guards |
 | `Game/Ksa/Readers/BodyReader.cs` | 3 `[KsaAnchor]` reads (celestial catalog; statics cached per body — GP3) | sampler-level guard |
 | `Game/Ksa/Readers/PartsReader.cs` | 1 `[KsaAnchor]` read (parts + nested subparts; welds anchor picker) | per-call try/catch; `VesselParts` sampler gate |
-| `Game/Ksa/Actuators/*.cs` (13 anchored files; `IvaActuator.cs` delegates to `Render/IvaForceRender.cs`, no anchor) | 33 `[KsaAnchor]`s (all controls + debug; incl. `ScaleActuator`'s recursive `Part.Scale` write + best-effort read, and `AudioActuator`'s 3 FMOD anchors — `GameAudio.System` create/play + the per-frame channel tick) | `KsaCatalog` try/catch per command; `AudioActuator.Tick` under the `_audioDead` session latch |
+| `Game/Ksa/Actuators/*.cs` (15 anchored files; `IvaActuator.cs` delegates to `Render/IvaForceRender.cs`, no anchor) | 40 `[KsaAnchor]`s (all controls + debug; incl. `ScaleActuator`'s recursive `Part.Scale` write + best-effort read, `AudioActuator`'s 3 FMOD anchors — `GameAudio.System` create/play + the per-frame channel tick — and `CameraActuator.Focus`, **rebound** at C1.4 to set follow on **both** the base and map cameras) | `KsaCatalog` try/catch per command; `AudioActuator.Tick` under the `_audioDead` session latch |
 | `Game/Ksa/Render/IvaForceRender.cs` | 1 `[KsaAnchor]` (`always_render_iva` cheat; own dynamic `gatos.iva` Harmony) | per-postfix try/catch; restored + unpatched on disable/unload |
 | `Game/Ksa/Render/VesselForceRender.cs` | 3 `[KsaAnchor]` (per-vessel `always_render` override; own dynamic `gatos.always_render` Harmony prefixes on `Vehicle.GetWorldMatrix`/`UpdateRenderData`, installed only while ≥ 1 vessel is marked) | per-prefix try/catch → stock cull; install throw → `KsaCatalog` degrade latch; unpatched on last unmark/prune/unload |
 | `Game/Ksa/Welds/{WeldEngine,WeldManager}.cs` | 4 `[KsaAnchor]` (per-frame `Teleport` driver + registry/liveness) | per-weld try/catch in the driver; `_weldsDead` session latch |
-| `Game/Ksa/Iva/*.cs` (`InteriorGeometry`, `FloatingObject`×3, `IvaPhysicsManager`×5; `CabinSim`/`CabinCallbacks`/`CabinTuning` touch **Bepu only**, no KSA type) | 9 `[KsaAnchor]` (IVA cabin physics: the interior-mesh walk, the per-frame SubPart transform driver, adopt-time measurement/lookup, the forcing-term reads + park gates) | master switch off by default (nothing constructed); per-vessel try/catch in the driver → that cabin dropped; `_ivaDead` session latch releases everything and disables the feature |
-| `Game/Ksa/ThugLife/*.cs` (`ThugLifeTextureFactory`, `ThugLifeQuadRenderer`, `ThugLifeRenderPatches`, `ThugLifeManager`; `ThugLifeEntry`/`ThugLifeTexturePattern` have none) | `[KsaAnchor]` render-internals set (`thug_life` cheat: Vulkan GPU build, per-frame anchor math, dynamic `gatos.thug_life` Harmony postfix on `SuperMeshRenderSystem.RenderMainPass`) — **deepest / highest-churn coupling** | per-frame try/catch; self-disables (`Active=false`) on any GPU fault; unpatched + GPU freed on disable/unload |
-| `Game/Ksa/Fx/*.cs` (`FxReflect`, `PlumeActuator`, `TrailActuator`, `CloudActuator`, `TerrainActuator`, `FxEditorReader`; `FxPristine` has none — no KSA types) | 24 `[KsaAnchor]` (the four FX editors: 7 reflective handles in `FxReflect` incl. the terrain UBO rings, the per-family read/write/apply pairs, the plume propagation loop, the sampler's rosters) | per-command try/catch in `KsaCatalog`; per-capability `KsaHealth` latches (`fx.*` keys) → `EOPNOTSUPP`; sampler-level try/catch (logged once); pristine restore at unload |
+| `Game/Ksa/Iva/*.cs` (`InteriorGeometry`×1, `FloatingObject`×3, `IvaPhysicsManager`×6; `CabinSim`/`CabinCallbacks`/`CabinTuning` touch **Bepu only**, no KSA type) | 10 `[KsaAnchor]` (IVA cabin physics: the interior-mesh walk, the per-frame SubPart transform driver, adopt-time measurement/lookup, the forcing-term reads + park gates) | master switch off by default (nothing constructed); per-vessel try/catch in the driver → that cabin dropped; `_ivaDead` session latch releases everything and disables the feature |
+| `Game/Ksa/ThugLife/*.cs` (`ThugLifeTextureFactory`×1, `ThugLifeQuadRenderer`×2, `ThugLifeRenderPatches`×1, `ThugLifeManager`×3; `ThugLifeEntry`/`ThugLifeTexturePattern` have none) | 7 `[KsaAnchor]` render-internals (`thug_life` cheat: Vulkan GPU build, per-frame anchor math, dynamic `gatos.thug_life` Harmony postfix on `SuperMeshRenderSystem.RenderMainPass`) — **deepest / highest-churn coupling** | per-frame try/catch; self-disables (`Active=false`) on any GPU fault; unpatched + GPU freed on disable/unload |
+| `Game/Ksa/Fx/*.cs` (`FxReflect`×8, `PlumeActuator`×4, `TrailActuator`×2, `CloudActuator`×4, `TerrainActuator`×3, `FxEditorReader`×4; `FxPristine` has none — no KSA types) | 25 `[KsaAnchor]` (the four FX editors: the reflective handles in `FxReflect` incl. the terrain UBO rings, the per-family read/write/apply pairs, the plume propagation loop, the sampler's rosters) | per-command try/catch in `KsaCatalog`; per-capability `KsaHealth` latches (`fx.*` keys) → `EOPNOTSUPP`; sampler-level try/catch (logged once); pristine restore at unload |
+| `Game/Ksa/Camera/*.cs` (`CameraDirector`×9, `CameraTargets`×7, `CameraFrames`×3, `CameraReader`×2) | **21 `[KsaAnchor]`** (the programmable camera: ownership take/restore/apply, the C4 `time` channel, the release-blend position composition, `mode`/`follow`/`tidal`/`map_scope`, the six frame constructions + the geodetic pair, target resolution/position/velocity/orientation/up/describe/liveness, and the per-frame `CameraStatus` sample + the `CameraMode` mapping). **No Harmony patch** — it rides `[StarMapAfterOnFrame]`. The 22nd camera anchor is `Actuators/CameraActuator.Focus`, counted in the actuators row above | idle by default (the driver is one branch); per-command try/catch in `KsaCatalog`; a driver fault sets `_cameraDead` **after** `Restore()` hands the camera back; unresolvable frames hold the last good pose and log once (de-duplicated) |
+| `Game/Ksa/{DisplayRenderPatch,FrameCapture}.cs` | 2 `[KsaAnchor]` (the `/sim/display` capture: the `Program.RenderGame` transpiler + the in-band Vulkan blit/readback) | transpiler degrades to **no injection**; a capture-time fault latches the feature off for the session (`_faulted`) |
 | `Game/Ksa/KsaCatalog.cs` | 2 `[KsaAnchor]` (vehicle/astronomical resolution) | self |
 | `Game/Ksa/{KsaAnchor,KsaHealth}.cs` | churn machinery (no KSA types in KsaHealth) | — |
 | `Game/TelemetrySampler.cs` | 5 `[KsaAnchor]` reads (G4: `Universe.*` time/warp/system + `VersionInfo.Current`) | per-vehicle + per-call try/catch |
@@ -334,22 +340,32 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/BrutalModLogger.cs` | `Brutal.Logging` sink | try/catch at install |
 | `Mod.cs`, `ModAssets.cs` | StarMap.API attributes, purrTTY contract — **no KSA game types** | n/a (mod-ecosystem ABI, not KSA) |
 
-Detail and per-member break-impact: the four `ksa-*.md` pages. The `[KsaAnchor]` census grew with each
-ported cheat: the sampler's `Universe`/`VersionInfo` reads were anchored in the 4750 fix-pass (G4); the
-`unscience`-ported welds/IVA/parts feature added 6 (PartsReader, IvaForceRender, WeldEngine×2,
-WeldManager×2); and the `thug_life` render cheat added the new `Game/Ksa/ThugLife/` render-internals
-anchors (`ThugLifeTextureFactory.UploadPixels`, `ThugLifeQuadRenderer.{BuildPipeline,TryComputeModelEgo}`,
-`ThugLifeRenderPatches.Apply`, `ThugLifeManager.{Update,IsLive,EnsureGpu}`); the first-class per-vessel
-nodes added `ScaleActuator`×2 and `VesselForceRender`×3 (the `gatos.always_render` patch targets + the
-two reproduced method bodies); the IVA cabin-physics feature added the new `Game/Ksa/Iva/`
-anchors (`InteriorGeometry.Build`, `FloatingObject.{ApplyPose,ReadBodyPose,RestoreRestPose}`,
-`IvaPhysicsManager.{Adopt,Update,TryMeasure,IsInteriorProp,FindSubPart,IsLive}`); and the **FX
-editors** (2026-08-01) added the new `Game/Ksa/Fx/` set (24, the largest single addition — seven of
-them reflective handles, catalogued in
-[`ksa-runtime-coupling.md#fx-accessors`](ksa-runtime-coupling.md#fx-accessors)). So the only remaining
-un-anchored KSA touch-points are the two `Mod.Game.cs` Harmony hook targets (the
+Detail and per-member break-impact: the four `ksa-*.md` pages. **The census totals 147 `[KsaAnchor]`s**
+(the one further occurrence in `Game/Ksa/KsaAnchor.cs` is the attribute's own doc comment, not a
+binding). It grew with each ported cheat: the sampler's `Universe`/`VersionInfo` reads were anchored in
+the 4750 fix-pass (G4); the `unscience`-ported welds/IVA/parts feature added 6 (PartsReader,
+IvaForceRender, WeldEngine×2, WeldManager×2); the `thug_life` render cheat added the 7
+`Game/Ksa/ThugLife/` render-internals anchors (`ThugLifeTextureFactory.UploadPixels`,
+`ThugLifeQuadRenderer.{BuildPipeline,TryComputeModelEgo}`, `ThugLifeRenderPatches.Apply`,
+`ThugLifeManager.{Update,IsLive,EnsureGpu}`); the first-class per-vessel nodes added `ScaleActuator`×2
+and `VesselForceRender`×3 (the `gatos.always_render` patch targets + the two reproduced method bodies);
+the IVA cabin-physics feature added the 10 `Game/Ksa/Iva/` anchors (`InteriorGeometry.Build`,
+`FloatingObject.{ApplyPose,ReadBodyPose,RestoreRestPose}`, `IvaPhysicsManager.{Adopt,Update,TryMeasure,
+IsInteriorProp,FindSubPart,IsLive}`); the **FX editors** (2026-08-01) added the `Game/Ksa/Fx/` set (25,
+the largest single addition — the reflective handles are catalogued in
+[`ksa-runtime-coupling.md#fx-accessors`](ksa-runtime-coupling.md#fx-accessors)); and the **programmable
+camera** (2026-08-06) added the `Game/Ksa/Camera/` set (**21**, the second-largest —
+`CameraDirector.{Take,Restore,Apply,ApplyTimeScale,RestorePositionEcl,SetMode,SetFollow,SetTidal,
+SetMapScope}`, `CameraTargets.{TryResolve,PositionEcl,VelocityEcl,BodyFixed2Ecl,UpEcl,Describe,IsLive}`,
+`CameraFrames.{TryFrame2Ecl,GeoToEcl,TryEclToGeo}`, `CameraReader.{Sample,ModeOf}`) while **rebinding**
+one existing anchor (`CameraActuator.Focus`, C1.4) rather than adding it. The **generic timed
+scheduler** landed in the same window and added **no anchor at all** — it is game-free end to end
+([`non-ksa-surface.md#scheduler`](non-ksa-surface.md#scheduler)).
+
+So the only remaining un-anchored KSA touch-points are the two `Mod.Game.cs` Harmony hook targets (the
 `gatos.iva`/`gatos.thug_life`/`gatos.always_render` patch targets and the weld/IVA drivers'
-`VehicleSolvers.Wait()` are themselves anchored).
+`VehicleSolvers.Wait()` are themselves anchored; the camera and schedule drivers install **no** patch
+and their KSA members are anchored inside `Game/Ksa/Camera/`).
 
 ---
 

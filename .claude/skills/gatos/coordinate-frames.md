@@ -196,6 +196,48 @@ not radii); add `radius` to get the geocentric radius. Inclination/LAN/argpe/tru
 
 ---
 
+## 8. The camera's six placement frames (`/sim/camera`)
+
+The camera surface (SPEC §3.11) reuses the same frame model, but names it with its **own six
+tokens** — because a camera is placed *about something*, which orbital math never needs. A camera
+pose is always **anchor** (`pose/anchor`) + **frame** (`pose/frame`) + a placement, and it is
+re-resolved every rendered frame, so an anchored camera follows a moving subject for free.
+
+| Token | About a vessel / part anchor | About a body anchor | Relation to §1 |
+|---|---|---|---|
+| `ecl` | identity rotation, origin **(0,0,0)** — the vector is an absolute point; no anchor needed | same | **ECL** exactly |
+| `cce` | identity rotation, origin = the anchor's position | same | **CCE/STAR** — ecliptic axes, re-centred |
+| `bodyfixed` | the vessel's own body axes (**+X nose, +Y right, −Z up** — the §4 triad); a `part:` anchor composes the part's assembly rotation onto them | the body's **CCF** (Z = north pole, X = prime meridian ∩ equator) | body frame / **CCF** |
+| `enu` | the vessel's East-North-Up | built at the pose's **own** `geo` lat/lon about that body | the §3 ENU basis |
+| `lvlh` | the vessel's Local-Vertical-Local-Horizontal | the body's own, about its parent | the `Lvlh` of §5 |
+| `chase` | the vessel body frame again (KSA's vehicle body frame *is* the chase convention) | — | body frame |
+
+Notes that matter when writing a shot:
+
+- **`bodyfixed` is the frame you already know.** It is the same triad `ctl/translate` and
+  `ctl/rotate` use, so "6 m above the hull" is `z = −6`, not `+6`. This is the single most common
+  camera mistake.
+- **Nothing ever silently falls back.** An unresolvable frame (`enu` about a vessel that is not
+  orbiting; `lvlh` with no orbital motion; `cce`/`bodyfixed` with no anchor; `chase` about a body)
+  is `EOPNOTSUPP` on the failing `write(2)`. Per frame, the director instead **holds the last good
+  pose** and logs once — so a despawned anchor freezes the shot rather than flinging it.
+- **Placement precedence is orbit → geodetic → cartesian.** A non-zero `pose/orbit/radius` is an
+  explicit "put me on a sphere about the anchor" and wins; write `0` to hand placement back to
+  `pose/position`. Orbit azimuth sweeps the frame's XY plane from +X toward +Y, elevation rises
+  toward +Z — so in `bodyfixed`, where +Z is *down*, a **negative** elevation is overhead.
+- **`pose/geo` altitude is above terrain** (degrading to above the mean sphere on a body with no
+  heightmap), and longitude accepts both `[-180,180]` and `[0,360]` conventions, normalizing to
+  `[-180, 180)` on read-back.
+- **The aim frame is a separate axis.** `pose/aim_frame` defaults to `bodyfixed`, deliberately *not*
+  the pose frame: an aim offset is measured **on the subject**, which is what makes `off 0 0 -1.2`
+  stay a fixed point on a moving hull (or a kittenaut's head) instead of drifting.
+- **`pose/aim_up`** picks the roll reference: `world` = ecliptic +Z; `target` = the aim target's own
+  up (a celestial's rotation axis; a vessel/part's body **−Z**); `velocity` = the **anchor's**
+  velocity (falling back to the target's); `free` = the camera's current up carried forward
+  (parallel transport — tracking never snaps the horizon back to level).
+
+---
+
 Next: [`flight-programs.md`](flight-programs.md) for the control-loop structure, and
 [`recipes.md`](recipes.md) for complete worked programs (including teleport). Full path/format
 catalog: [`SPEC_9P_FILESYSTEM.md`](../../../SPEC_9P_FILESYSTEM.md).

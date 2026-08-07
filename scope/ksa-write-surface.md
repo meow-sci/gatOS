@@ -29,7 +29,15 @@ call site, so every transport routes identically.
 
 **Authority gate (G-D1):** with `control_all_vessels=false` (default), only `Program.ControlledVehicle`
 is commandable (`KsaCatalog.cs:53`); the `debug.*` namespace is exempt (its own opt-in via
-`debug_namespace`). `camera.focus` is exempt (view-only).
+`debug_namespace`). The whole `camera.*` family is exempt (view-only, routed before vehicle resolution).
+
+> **One write family on this page's surface has no KSA binding at all:** the seven `schedule.*` actions
+> behind `/sim/ctl/timed_batch` + `/sim/ctl/schedules/**`. `KsaCatalog` routes them straight to the
+> game-free `ScheduleStore.Execute` — there is nothing game-side to re-validate and re-implementing it
+> would create a second definition. They are catalogued in
+> [`non-ksa-surface.md#scheduler`](non-ksa-surface.md#scheduler), not here; a KSA update cannot break
+> them. What they *do* is post ordinary `SimCommand`s into the same queue, so every row on this page is
+> reachable from a schedule and inherits that row's phase, errno and health latch unchanged.
 
 ---
 
@@ -216,11 +224,20 @@ to stash it) — the **only compile break of the 4939 → 4980 pass**; `DockingA
 `DockingPort.Undock` → `Vehicle.Split(Connector, PushoffImpulse)` is byte-identical. Fixed + re-anchored
 2026-07-22.
 
-## Camera focus (Frame phase, authority-exempt)
+## Camera focus (Frame phase, authority-exempt) {#camera-focus}
 
-| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 5018 |
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 5168 |
 |---|---|---|---|---|---|---|
-| `ctl/focus`, `bodies/<id>/focus` | `camera.focus` | `CameraActuator.Focus` | `Program.GetMainCamera().SetFollow(Astronomical, tidalLocking:true, changeControl:false)` | `KSA/Program.cs`, `KSA/Camera.cs` | Medium | ✅ |
+| `ctl/focus`, `bodies/<id>/focus`, `debug/focus` | `camera.focus` | `CameraActuator.Focus` | `Program.MainViewport.MapCamera.SetFollow(Astronomical, tidalLocking:true, changeControl:false, alert:false)` **and** `…BaseCamera.SetFollow(…)` | `KSA/Program.cs`, `KSA/Viewport.cs`, `KSA/Camera.cs`, `KSA/InputEvents.cs` | Medium | ➕ **rebound 2026-08-06** (C1.4) |
+
+**Rebound at C1.4 — a latent map-desync bug, fixed.** A `Viewport` carries **two** cameras, `BaseCamera`
+and `MapCamera`, and `GetCamera()` returns whichever the current mode uses. The actuator used to reach
+the active one through `Program.GetMainCamera()`, so a focus issued while *not* in map mode left the
+**map view still pointing at the previous target** until the player happened to re-focus from inside map
+mode. The game's own follow action sets the target on **both** (`KSA/InputEvents.cs:759-760`); gatOS now
+does the same. `alert: false` was added at the same time — the `"Following X"` `TimedAlert` matters now
+that this camera surface is used to shoot footage. `changeControl: false` is unchanged and still
+load-bearing: the default would null `Program.ControlledVehicle` and drop the player's vessel.
 
 ---
 
@@ -252,7 +269,7 @@ debug_namespace`. Authority-exempt (own opt-in).
 |---|---|---|---|---|---|---|
 | `debug/time/warp` | `debug.warp` | Frame | `Universe.SetSimulationSpeed(double, alert:false)` | `KSA/Universe.cs` | Medium | ✅ |
 | `debug/control_vessel` | `debug.control_vessel` | Frame | `Program.GetMainCamera().SetFollow(…)`; `Program.ControlledVehicle = vehicle` | `KSA/Program.cs` | Medium | ✅⁶ |
-| `debug/focus` | `camera.focus` | Frame | (same as `ctl/focus`) | `KSA/Program.cs` | Medium | ✅ |
+| `debug/focus` | `camera.focus` | Frame | (same as `ctl/focus` — **both** viewport cameras since C1.4) | `KSA/Program.cs`, `KSA/Viewport.cs` | Medium | ✅ |
 | `debug/vessels/<id>/teleport` | `debug.teleport` | Frame | `Orbit.CreateFromStateCci` + `Vehicle.Teleport` + `Vehicle.UpdatePerFrameData` | `KSA/Orbit.cs`, `KSA/Vehicle.cs` | **High** | ✅ |
 | `debug/vessels/<id>/impulse` | `debug.impulse` | Frame | `Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,TotalMass,Parent}` + `Orbit.CreateFromStateCci` + `Vehicle.Teleport` + `Vehicle.UpdatePerFrameData` (velocity-bump variant of the teleport pattern; Δv = J/`TotalMass` mirrors `Vehicle.Split`) | `KSA/Vehicle.cs`, `KSA/Orbit.cs` | **High** | ✅⁷ |
 | `debug/vessels/<id>/refill_fuel` | `debug.refill_fuel` | **Solver** | `Vehicle.RefillConsumables()` | `KSA/Vehicle.cs` (`:2300`) | Medium | ✅ |
@@ -564,6 +581,83 @@ reads are still live, then `FxEditorReader.Reset()`. The feature installs **no H
 [`ksa-read-surface.md#fx-editors`](ksa-read-surface.md#fx-editors), the reflection lifecycle is
 [`ksa-runtime-coupling.md#fx-accessors`](ksa-runtime-coupling.md#fx-accessors). In-game pass pending
 (`docs/VALIDATION.md`).
+
+---
+
+## Camera director — `CameraDirector` (Frame phase, vessel-agnostic) {#camera-director}
+
+`Game/Ksa/Camera/{CameraDirector,CameraFrames,CameraTargets,CameraReader}.cs` over the game-free
+`gatOS.SimFs/Camera/**` (plans/CAMERA_ASBUILT.md; CAMERA_CONTROLS_PLAN tasks C0–C5). **Not** part of
+`debug.*`: gated by `[camera] camera_enabled` (off ⇒ the whole `/sim/camera` surface vanishes and
+`camera.*` answers `EOPNOTSUPP`), plus the `control_enabled` master like every write. Vessel-agnostic —
+`KsaCatalog` routes the whole `camera.*` family through one `Camera(SimCommand)` sub-dispatcher
+**before** vehicle resolution and **before** the authority gate (the addressed entity is a target
+reference or the camera itself, never the controlled vehicle), so it is authority-exempt exactly as
+`camera.focus` always was. All 28 action keys are **Frame** phase; none is in
+`SimCommand.SolverActions`. Two further gates apply to two sub-families: the interpolated `time`
+channel needs **both** `[control] debug_namespace` **and** `[camera] camera_allow_time_channel` (a
+closed gate is *ignored with a one-shot warning*, not an error — one warning per ownership session, so
+a 60 Hz driver cannot fill the log), and `camera.play`/`set`/`stop` need `[schedule] schedule_enabled`,
+because a camera track **is** a `/sim/ctl/schedules` entry (`kind = camera-track`) and without the
+registry there is nowhere to put a player — those three answer **`EOPNOTSUPP`** naming the flag, while
+every L1/L2 channel keeps working.
+
+**Ownership is what makes the whole feature patch-free.** `Take()` parks `Viewport.Mode =
+CameraMode.Fixed` **by direct field assignment** (so `FixedController.OnSwitchOn`'s
+`TimedAlert("Fixed Camera")` never draws) and calls `Unfollow(changeControl:false)`. With
+`Following == null`, `FixedController.OnFrame`'s entire body is skipped, so the game's camera solver
+writes nothing and gatOS — writing at the end of `OnAfterFrame` — is the sole writer of the transform
+the next frame's `Program.OnFrameViewports` rebuilds every matrix from. **Consequence to know: while
+gatOS owns the camera the player's camera keys do nothing** (a per-frame re-assert undoes any
+`Viewport.Mode`/`Following` change), and `camera/mode`, `camera/follow` and `camera/tidal` are refused
+(`EOPNOTSUPP`, with a message naming `pose/anchor` + `pose/aim_target` or `camera/enabled 0`).
+
+| `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 5168 |
+|---|---|---|---|---|---|---|
+| `camera/enabled` (`1`) | `camera.enabled` | `CameraDirector.Take` | `Program.MainViewport`; `Viewport.{Mode,GetCamera,SetCameraMode,BaseCamera}`; `Camera.{PositionEcl,LocalPosition,LocalRotation,NoRotation,Following,TidalLocking,GetFieldOfView,Orthographic,Unfollow}`. Capture comes off `GetCamera()` (which is `MapCamera` in Map mode), FOV converted radians→degrees once here | `KSA/Program.cs` (`:437`), `KSA/Viewport.cs`, `KSA/Camera.cs` | Medium | ➕ new 2026-08-06 |
+| `camera/enabled` (`0`), `camera/release` | `camera.enabled` / `camera.release` | `CameraDirector.{Release,Restore}` | `Camera.{SetFollow,Unfollow,LocalPosition,LocalRotation,NoRotation,SetFieldOfView,SetOrthographic}`; `Viewport.{Mode,SetCameraMode}`; `Universe.SetSimulationSpeed` (only if the time channel captured). `SetFollow(saved, tidal, changeControl:false, alert:false)` goes **first** because it teleports; mode **last**, direct assignment except restoring *into* Map | `KSA/Camera.cs`, `KSA/Viewport.cs`, `KSA/Universe.cs` | Medium | ➕ new 2026-08-06 |
+| (per-frame pose write) | — | `CameraDirector.Apply` | `Camera.{PositionEcl,LocalRotation,LookAtRotation,SetFieldOfView,SetOrthographic,SetOrthoHalfHeight}`. `LocalRotation` — **not** `WorldRotation` — is what `Camera.OnFrame` inverts into `Ego2View`. `SetFieldOfView` takes **degrees**, does **not** clamp (fisheye/telephoto beyond the game's own 15–120 are reachable) and rebuilds+inverts the projection every call, so it is written only on change | `KSA/Camera.cs` | Medium | ➕ new 2026-08-06 |
+| (track `time` channel, C4) | — | `CameraDirector.ApplyTimeScale` | `Universe.SetSimulationSpeed(double, alert:false)` (`:1998`), `Universe.GetSimulationSpeed()` (`:2021`), `Universe.IsAutoWarpActive` (`:96`). `alert:false` is load-bearing — the default draws a speed `TimedAlert`, i.e. *in the footage*. Speed is captured **lazily** (first frame the channel is actually driven) and restored only if captured | `KSA/Universe.cs` | Medium | ➕ new 2026-08-06 |
+| (release blend) | — | `CameraDirector.RestorePositionEcl` | the `Camera.PositionCce` composition (`LocalPosition` ⇄ `IFollowable.GetBodyFixed2Ecl()` unless `NoRotation`); `IPosition.GetPositionEcl()` — **reproduced**, because the camera being blended is already unfollowed and its own `PositionCce` would not use the captured target. Recomputed every blend frame, so blending back onto a moving follow target lands on the target | `KSA/Camera.cs` | Medium | ➕ new 2026-08-06 |
+| `camera/mode` | `camera.mode` | `CameraDirector.SetMode` | `Program.MainViewport`; `Viewport.SetCameraMode(CameraMode)` — which also calls `Program.ControlledVehicle?.ClearHeldPlayerInput()`, dropping latched `ctl/translate`+`ctl/rotate` flags (SPEC §3.4.19) | `KSA/Program.cs`, `KSA/Viewport.cs` | Medium | ➕ new 2026-08-06 |
+| `camera/follow` | `camera.follow` | `CameraDirector.SetFollow` | `Program.MainViewport.{BaseCamera,MapCamera}`; `Camera.{SetFollow,Unfollow}` — **both** cameras (the C1.4 rule). Keeps `SetFollow`'s `target + 2.5×MeanRadius×forward` teleport; preserves the current tidal flag; a `part:` reference is `EOPNOTSUPP` (the game follows a whole `IFollowable`) | `KSA/Viewport.cs`, `KSA/Camera.cs`, `KSA/InputEvents.cs` | Medium | ➕ new 2026-08-06 |
+| `camera/tidal` | `camera.tidal` | `CameraDirector.SetTidal` | `Camera.{Following,TidalLocking,SetFollow,PositionEcl}` — `TidalLocking` is get-only (`=> _tidalLocking`) and `SetFollow` is its only writer, so the flag change re-issues `SetFollow` and then **re-asserts the captured `PositionEcl`** to undo its unconditional teleport | `KSA/Camera.cs` | Medium | ➕ new 2026-08-06 |
+| `camera/map/scope` | `camera.map_scope` | `CameraDirector.SetMapScope` | `Program.MainViewport.MapController`; `MapController.Scope` (`:33`, a plain public `double`, no setter hook). **Not ownership-gated** — like `mode`/`follow`/`tidal` it configures the *game's* camera | `KSA/Viewport.cs`, `KSA/MapController.cs` | Medium | ➕ new 2026-08-06 |
+| `camera/pose/{position,frame,orbit/*,aim_frame}` | `camera.{position,frame,orbit_radius,orbit_azimuth,orbit_elevation,aim_frame}` | `CameraFrames.TryFrame2Ecl` | `Vehicle.{GetEnu2Cce,GetLvlh2Cce,Body2Cce,ComputeEnu2Cce,ComputeLvlh2Cce,GetPositionCce,GetVelocityCce}`; `Celestial.{GetCci2Cce,GetCcf2Cce,GetDirCcfFromLatLon,MeanRadius,GetPositionCce,GetVelocityCce}`. `GetEnu2Cce`/`GetLvlh2Cce` are **nullable** and `GetEnu2Cce` dereferences `Orbit.Parent` unguarded — both guarded | `KSA/Vehicle.cs`, `KSA/Celestial.cs` | Medium | ➕ new 2026-08-06 |
+| `camera/pose/geo` | `camera.geo` | `CameraFrames.GeoToEcl` | `Celestial.{GetDirCcfFromLatLon,GetCcf2Cce,GetTerrainHeightFromDirCce,MeanRadius,GetPositionEclFromCce}` — gatOS **calls** the game's own lat/lon trigonometry rather than restating it (CCF +Z = north pole, +X = prime meridian on the equator) | `KSA/Celestial.cs` (`:674`), `KSA/Camera.cs` (`SetLatLon` is the model) | Medium | ➕ new 2026-08-06 |
+
+**Runtime coupling beyond the writes:** the per-frame driver (`Mod.DriveCamera` →
+`CameraDirector.Update`, at the **end of `[StarMapAfterOnFrame] Mod.OnAfterFrame`** — the eighth
+game-thread work site, and the only one that runs on **every** rendered frame rather than standing in
+for the F2-skipped GUI hooks) composes `Track ?? Override ?? Baseline`, resolves the frame + placement +
+aim, and writes the pose; the *next* frame's `Program.OnFrameViewports` rebuilds every matrix from it,
+so gatOS never touches a matrix and needs **no Harmony patch** — lifecycle detail in
+[`ksa-runtime-coupling.md#camera-driver`](ksa-runtime-coupling.md#camera-driver). It self-gates to one
+branch (`CameraDirector.IsIdle`) while gatOS does not own the camera, which is the default. The read
+half (`CameraReader.Sample` → the volatile `CameraStore.Status` every leaf renders from) is
+[`ksa-read-surface.md#camera`](ksa-read-surface.md#camera); the store, the compositor, the grammars,
+the caps and the whole JSON track parser/evaluator/player are **game-free**
+([`non-ksa-surface.md#camera-game-free`](non-ksa-surface.md#camera-game-free)). Despawn pruning
+(`CameraDirector.Prune`) rides the sampler's vehicle enumeration beside `VesselForceRender.Prune`, and
+`camera.shot`/`camera.finished` events drain into the snapshot beside audio's, IVA's and the
+scheduler's. Errnos: `EINVAL` (grammar/range), `ENOENT` (a `vessel:`/`body:`/`part:` reference that is
+not live — validated **at write time**, so an anchor cannot be pre-armed for an unspawned vessel),
+`EOPNOTSUPP` (an unresolvable frame, a control refused while owned, a `part:` follow, a closed gate),
+`EIO` (KSA threw — latches the action). **Behaviours a live pass must confirm, all of them inherited
+from the game:** `Camera.ClampCamera()` still runs at the top of every `Camera.OnFrame` and pushes the
+camera to *surface + 0.5 m*, so a `pose/geo` altitude below 0.5 m is silently corrected; `MapController`
+clamps `Scope` **up** to `Camera.Following.MeanRadius` every map frame and `SetDefaults()` recomputes it
+wholesale after a focus change; `Universe.SetSimulationSpeed` does **not** check `IsAutoWarpActive`, so
+a driven `time` channel *fights* an active auto-warp (deliberately unguarded — stop the auto-warp before
+rolling the shot); and **`ortho_height` cannot be restored** — `Camera` exposes `SetOrthoHalfHeight` but
+has **no public getter in 5168**, so there is nothing to capture at take and nothing to put back at
+release. It is therefore written only when its channel is explicitly claimed. Anchors verified
+`2026-08-06` against `2026.8.5.5168`; in-game pass pending (`docs/VALIDATION.md`).
+
+**Not implemented, and not implementable without a Harmony patch: IVA and Map as ownership contexts**
+(tasks C5.1 / the parking half of C5.2). This is a **finding**, not a TODO — see the evidence in
+[`ksa-runtime-coupling.md#camera-mode-contexts`](ksa-runtime-coupling.md#camera-mode-contexts). What
+C5.2 *does* ship is the `map/scope` row above.
 
 ---
 

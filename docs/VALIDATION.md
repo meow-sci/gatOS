@@ -409,6 +409,90 @@ pending a live flight.**
 | 17 | **Teardown:** with several FX values changed across all four families, unload the mod (quit) — **every** value is restored and the log shows the restore count; reloading starts from pristine values | ☐ | `FxPristine.RestoreAll` in `TeardownGameCheats` |
 | 18 | `[control] debug_namespace = false` ⇒ the four family dirs are absent and the `debug.*` FX actions answer `EACCES`; with it on but the game in a menu/no flight scene, the rosters are simply empty (no errors, no log spam) | ☐ | config gate + empty-roster behavior |
 
+## Timed scheduler (`/sim/ctl/timed_batch` + `ctl/schedules/`) — validation pass — **NOT YET RUN**
+
+Prereq: the T6.6 pass. `[schedule] schedule_enabled = true` and `[control] control_enabled = true` (both
+default); the caps this pass leans on are `[schedule] schedule_max_live = 16`,
+`schedule_max_entries = 8192`, `schedule_max_bytes = 1048576` and `schedule_default_clock = "render"`,
+and item 4 needs `[control] max_commands_per_frame` at its default. Be in a **flight scene** with a
+controllable vessel (the schedule needs real control leaves to drive). The scheduler is **100 % game-free
+and adds no KSA binding at all** — the clock, the grammar, the caps, the coalescing policy, the eviction
+rule and the whole tree are covered by
+`gatOS.SimFs.Tests/Commands/{PlaybackClockTests,SchedulerTests,TimedBatchFileTests,ScheduleTreeTests,
+ScheduleEvictionTests}` and the extended `CommandQueueTests`, so the items below are only what a live
+game can show: real frame pacing, real hitches, real warp, and the interaction with the command drain.
+See `SPEC_9P_FILESYSTEM.md` (the `ctl/timed_batch` + `ctl/schedules` family),
+`docs/KSA_INTEGRATION_MATRIX.md` (which records that this feature contributes **no** anchor) and
+`scope/ksa-runtime-coupling.md#schedule-tick`. **All items pending a live flight.**
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | With a schedule running, press **F2** (hide UI) for ≥ 10 s: entries keep firing on time, `cat /sim/ctl/schedules/<id>/t` keeps advancing, `/sim/stream` keeps growing, and a command written from the guest still executes. Press F2 again — no double-tick, no time jump | ☐ | **the C0.1 regression**: both GUI hooks sit inside `Program.OnFrame`'s `if (DrawUI)` block; `OnAfterFrame` stands in |
+| 2 | A `@clock render` schedule and a `@clock wall` schedule with identical offsets, run through a deliberate hitch (alt-tab, or a big scene load): `render` **lags and never catches up**, `wall` demands a catch-up burst and lands back on wall time, and both report the same `dropped` accounting they earned | ☐ | the two clock bases are only distinguishable under a real hitch |
+| 3 | A `@clock ut` schedule under 100× warp advances ~100× faster than the same script on `render`; a scene reload does **not** rewind it (the backwards UT step is clamped to 0) | ☐ | the `ut` discontinuity guard |
+| 4 | A schedule authoring ~3 600 entries across a handful of leaves, run through a hitch: only a few commands actually execute that tick, `<id>/dropped` counts the rest, `tail -f /sim/events` shows `schedule.dropped` **at most once per second**, and no command times out | ☐ | coalescing bounds the burst by *distinct leaves*; the throttle keeps the event log usable |
+| 5 | A launch sequence (`0 ctl/throttle 1`, `2000 ctl/ignite 1`, `9000 ctl/stage 1`, …) fires **on time** while the frame rate is under load; the vessel does what the script says | ☐ | the end-to-end point of the feature |
+| 6 | One schedule mixes a **Frame**-phase write (`ctl/throttle`) and a **Solver**-phase one (`ctl/attitude_target`) at the same offset: both land, each in its own phase | ☐ | phase mixing is the deliberate relaxation of `ctl/batch`'s rule |
+| 7 | `echo 4000 > /sim/ctl/schedules/<id>/scrub` fires **nothing**; scrubbing *backwards* makes the passed entries replay on the next ticks | ☐ | a seek is navigation, not playback |
+| 8 | A looping schedule: on each wrap the finished cycle's tail fires **before** the new cycle's head, and after ten loops the timeline has **not drifted** (the remainder is kept) | ☐ | loop-boundary ordering + no drift |
+| 9 | Two `@group take-3` schedules: `pause`/`scrub`/`rate` on **either** moves both; a third joiner starts at the group's *current* position and its already-past entries fire on its first tick; removing the last member drops the group clock | ☐ | shared-clock groups |
+| 10 | Fill the registry to `schedule_max_live` with **completed** one-shots, then commit one more: the **oldest finished** player is reclaimed (not the take just started), `tail -f /sim/events` shows `schedule.evicted … reason=max_live`, and the commit succeeds **first try** (no EINVAL-then-retry) | ☐ | cap-pressure eviction is eager and on the game thread, precisely so the retry race does not exist |
+| 11 | A schedule whose **first** entry fails (bad ordinal) reports `state = failed` and `last_error = entry <n>: <ERRNO> …` **while its remaining entries still run to the end**, and is **never** evicted while still running | ☐ | `failed` is not terminal; `IsFinished` requires exhausted + not looping + past duration |
+| 12 | Completed schedules **persist** with their final `state`/`dropped`/`last_error` until `remove`/`clear` (below the cap nothing is ever reclaimed), so a script can start a take and come back to read the outcome | ☐ | the persist-for-reading property |
+| 13 | Errnos are shell-visible: `commit` with `[control] control_enabled=false` ⇒ **EACCES**; a duplicate `@id` ⇒ EINVAL naming the id; past `schedule_max_entries`/`schedule_max_bytes` ⇒ EINVAL; an unresolvable path ⇒ ENOENT; a non-`ctl` target ⇒ EINVAL "not a control file"; a rejected commit **does not burn the id** | ☐ | up-front all-or-nothing validation, id reserved last |
+| 14 | Kill the SSH session / disconnect the guest while a schedule runs — it **keeps running** to completion (commit is fire-and-forget, no waiter) | ☐ | the outcome path is the observer → `last_error`, not a blocked write |
+| 15 | From the host: `curl http://127.0.0.1:4242/v1/fs/sim/ctl/schedules/<id>/rate` reads it and `POST` sets it; the MQTT topic `gatos/sim/ctl/schedules/<id>/t` mirrors; `POST /v1/command` with `schedule.pause` works | ☐ | field-level parity is structural (ordinary VFS leaves) |
+| 16 | Mod unload (quit) with schedules running → clean unload, no errors in the log; `[schedule] schedule_enabled = false` ⇒ `/sim/ctl/timed_batch` and `/sim/ctl/schedules` are **absent** while `/sim/ctl/batch` still works, and `schedule.*` via `/v1/command` answers `EOPNOTSUPP` | ☐ | `TeardownGameCheats` + the config gate |
+
+## Programmable camera (`/sim/camera`) — validation pass — **NOT YET RUN**
+
+Prereq: the T6.6 pass. `[camera] camera_enabled = true` and `[control] control_enabled = true` (both
+default); tracks additionally need `[schedule] schedule_enabled = true`, and the interpolated `time`
+channel needs **both** `[control] debug_namespace = true` **and** `[camera]
+camera_allow_time_channel = true`. Items 8 and 20 lean on `[camera] camera_fov_min = 1.0` /
+`camera_fov_max = 179.0` and `camera_release_blend_s = 0.6`. Be in a **flight scene** near a rotating
+body with terrain, clouds and an ocean, with a vessel that can go EVA (item 7). The game-free half —
+the compositor, the rules, the grammars, the tree and gating, the whole JSON track parser/evaluator and
+the player's registry behaviour — is covered by `gatOS.SimFs.Tests/Camera/**` (12 fixtures), so the items
+below are only what a live game can show. See `SPEC_9P_FILESYSTEM.md` (the `/sim/camera` family),
+`docs/KSA_INTEGRATION_MATRIX.md` (programmable camera),
+`scope/ksa-write-surface.md#camera-director` and `plans/CAMERA_ASBUILT.md`. **All items pending a live
+flight.**
+
+> **Out of scope, deliberately:** IVA and Map as *ownership contexts* are **not implemented and are not
+> implementable without a Harmony patch** (`plans/CAMERA_ASBUILT.md` §W6,
+> `scope/ksa-runtime-coupling.md#camera-mode-contexts`). Do not write checks for them.
+> `/sim/camera/map/scope` **does** ship and is item 15.
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | Own the camera, start a move, then press **F2** (hide UI): the shot **keeps moving** smoothly, a `timed_batch` sequence keeps firing, `/sim/stream` keeps advancing and guest writes still actuate. F2 again — no jump, no double-step | ☐ | **the C0.1 regression**; the director is the one driver that runs on *every* frame, F2 or not |
+| 2 | `echo 1 > /sim/camera/enabled` then `echo 1 > /sim/camera/release` from **orbit** mode: the camera comes back to **exactly** where and how it was — position, rotation, follow target, tidal flag, FOV, ortho, and mode. Repeat entering **from** map mode and restoring **into** map mode | ☐ | the restore order (`SetFollow` first — it teleports — then `NoRotation`→pose→projection→mode last) |
+| 3 | Record ~30 s of footage across a take + release: **no `TimedAlert` text appears at all** except the one documented alert when taking the camera *from* map mode ("Fixed Camera") | ☐ | direct `Viewport.Mode` assignment + `alert:false` on every follow; the Map exception is `MapController.OnSwitchOn`'s control state, not cosmetics |
+| 4 | While owned, the player's camera keys/scroll do **nothing** (and a mode hotkey is undone within a frame); after release they work normally | ☐ | the per-frame re-assert; ownership means one writer |
+| 5 | A scripted flyby (a `timed_batch` walking `pose/position` + `pose/aim` at 60 Hz, or a JSON track) is **judder-free** at 60 fps — no stutter, no per-frame snap, no horizon flick at waypoints | ☐ | the smoother + catmull-rom/squad; a flick at waypoints means slerp, not squad |
+| 6 | `pose/frame bodyfixed` with a **body** anchor: the camera **rides the rotating planet** (a fixed lat/lon stays over the same ground) rather than staying inertial | ☐ | `Celestial.GetCcf2Cce()` is live, not captured |
+| 7 | `pose/aim_target part:<vessel>/<kittenaut-subpart>` with `off 0 0.9 0`: the framing **stays on the kittenaut's head while it walks**. Then check EVA locomotion itself — with gatOS holding the camera, "forward" for the kittenaut is wherever the **shot** faces | ☐ | aim is re-resolved every frame; the second half is the **`KittenEva.PrepareWorker`** side effect (documented, not worked around) |
+| 8 | `echo 5 > /sim/camera/pose/fov` and `echo 170 > …/fov` both take effect (the game's own UI only offers 15–120); `echo 1 > /sim/camera/pose/ortho` gives a real orthographic view; `ortho_height` changes the framing | ☐ | `SetFieldOfView` does not clamp — that is what puts fisheye/telephoto in reach |
+| 9 | After changing `ortho_height`, release the camera: the half-height is **not** restored (there is no public getter in 5168 to capture it from). Confirm this is acceptable in practice — i.e. it is only visible if the player was already in ortho | ☐ | the one camera change gatOS **cannot** undo; if unacceptable, the fix is a gatOS-side latch, not a restore |
+| 10 | `pose/geo` over an ocean, walking the altitude down: the view descends to the surface and then **stops at ~0.5 m** no matter how much lower you ask for | ☐ | `Camera.ClampCamera()` runs at the top of every `Camera.OnFrame` and is deliberately not worked around |
+| 11 | A `pose/geo` climb straight through a **cloud deck**: the clouds render correctly from inside and above, with no popping or z-fighting from the pose being written after the render | ☐ | the "write after render, matrices rebuilt next frame" contract, tested against volumetric passes |
+| 12 | `pose/roll 30` — confirm **subjectively** that the sign feels right (positive roll rolls the camera clockwise, so the horizon tilts counter-clockwise) | ☐ | the sign was **defined, not derived**; if it reads backwards, flip it once, in `Apply`, and say so in the SPEC |
+| 13 | A track with a `"time"` channel eases into slow-mo (`0.15`) and back: the sim visibly slows; on **release**, the player's original warp setting is **restored**. Then run a shot with **no** `time` channel and confirm the warp setting is **untouched** | ☐ | the capture is **lazy** — first frame the channel is driven — and the restore is conditional on it |
+| 14 | Start an **auto-warp** (a manoeuvre-node warp), then run a `time`-channel shot over it: note who wins frame by frame. Then run the same shot with the auto-warp stopped first | ☐ | neither public `SetSimulationSpeed` overload checks `IsAutoWarpActive`; gatOS deliberately adds no guard — **stop the auto-warp before rolling the shot** |
+| 15 | `echo 5000 > /sim/camera/map/scope` in **map** mode changes the map zoom and reads back; a value **below** the focus's mean radius reads back **clamped up**; changing the map focus and re-entering map **recomputes** it (a scope written before the focus change does not survive); outside map mode the write is accepted but has no visible effect | ☐ | the three inherited `MapController` behaviours (`OnFrame` clamp, `OnSwitchOn`→`SetDefaults`, mode-scoped) |
+| 16 | Upload a track (`cp flyby.json /sim/camera/track/flyby`), `echo flyby > /sim/camera/play`: shots run in order, `tail -f /sim/events` shows `camera.shot` per boundary and one `camera.finished reason=complete`; `/sim/ctl/schedules/camera/` appears with `kind camera-track`; `schedules/camera/{pause,scrub,rate}` drive the take | ☐ | the track player is a schedules-registry entry, so the whole schedule transport drives it |
+| 17 | `cp` a **deliberately malformed** track: the write/`cp` reports the error where it can, and `cat /sim/camera/last_error` names the track and the specific parse problem (shot/channel/key). A later `camera/play` of the same name answers **EINVAL with the same message**; a `play` that actually starts **clears** it | ☐ | a 9p clunk cannot carry an errno — this leaf is the diagnosis a guest can actually read |
+| 18 | A track's `"mode":"orbit"` circle and a hand-written `echo "90" > /sim/camera/pose/orbit/azimuth` (same radius/elevation/frame/anchor) put the camera in the **same place**; a full `0 → 360` azimuth sweep closes with **no seam** | ☐ | both resolve through the one `CameraPlacement.Spherical`; the 360° fold is bit-exact |
+| 19 | Frames degrade **honestly**: `pose/frame lvlh` about a landed vessel ⇒ **EOPNOTSUPP** with a message naming why (not a silent fallback); `enu` about a vessel at its parent's centre likewise; despawn the anchor mid-shot ⇒ the camera **holds the last good pose** and the log gets the reason **once**, not 60×/s | ☐ | nothing ever silently falls back to a different frame; no NaN reaches the view matrix |
+| 20 | Refusals are correct and explain themselves: `camera/mode`, `camera/follow`, `camera/tidal` ⇒ EOPNOTSUPP **while owned** (message points at `pose/anchor`+`pose/aim_target` or `camera/enabled 0`); `camera.follow part:…` ⇒ EOPNOTSUPP; an anchor/aim target that is not live ⇒ **ENOENT at write time**; `pose/geo` with a non-body anchor ⇒ EOPNOTSUPP naming both fixes | ☐ | ownership *is* a mode park with `Following == null`; a follow would give the transform a second writer |
+| 21 | `camera/enabled 0` **blends** back over `camera_release_blend_s` (0.6 s) onto a **moving** follow target and lands on the target, not on where it used to be; `camera/release` is an instant **hard cut**; taking the camera again mid-blend keeps the shot, baseline and overrides | ☐ | the restore point is recomputed every blend frame; two verbs, one restore path |
+| 22 | **(§5.2 / C5.3 — the open question this pass must answer)** With the camera far from the controlled vessel (a few km, and again a few hundred km), do distant objects render in the right place, or does the game's bubble-relative ego frame produce visible drift/precision artefacts? Note the distance at which anything becomes objectionable | ☐ | unfollowed, every object takes the plain `GetPositionEcl() − PositionEcl` path — self-consistent, so it *should* be fine, but it is an assumption until seen |
+| 23 | From the host: `curl http://127.0.0.1:4242/v1/fs/sim/camera/pose/fov` reads and `POST` sets it; `gatos/sim/camera/pose/fov` mirrors over MQTT; a `POST /v1/command` with a **bad** `camera.geo` payload is rejected **game-side** with the same errno the 9p write would give | ☐ | the HTTP/MQTT paths bypass the 9p parse — `CameraRules` re-runs in the actuator for exactly this |
+| 24 | With `[schedule] schedule_enabled = false`: every `pose/**` channel still works, and `camera/play`/`set`/`stop` answer **EOPNOTSUPP** with a message naming the flag | ☐ | a camera track *is* a schedules-registry entry — a real, reachable configuration |
+| 25 | With `[control] debug_namespace = false` **or** `[camera] camera_allow_time_channel = false`, a track whose shot drives `time` still runs at 1× and logs **one** warning naming which gate is off (not one per frame); the warning re-arms on the next ownership take | ☐ | ignore-with-a-warning, per plan §4.4 — failing a whole shot over a config flag would be worse |
+| 26 | Mod unload (quit) **with a track playing**: the camera is handed back, the take is stopped (`camera.finished reason=stopped`), no errors in the log. `[camera] camera_enabled = false` ⇒ the whole `/sim/camera` tree is **absent** and `camera.*` via `/v1/command` answers `EOPNOTSUPP`, while `ctl/focus` still works | ☐ | `TeardownGameCheats` → `Shutdown()` + the config gate; `camera.focus` is a separate, always-on action |
+
 ## KSA 2026.7.3.4826 upgrade — live re-check items — **NOT YET RUN**
 
 The 2026.6.9.4750 → 2026.7.3.4826 playbook pass (2026-07-03) was **clean** — build + tests green, full

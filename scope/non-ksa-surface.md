@@ -27,7 +27,7 @@ headlessly testable, and what confines KSA-update breakage to `Game/Ksa/**` (see
 | Ports | `PortAllocator.cs` | ephemeral loopback ports for ssh/sim/mnt/http/mqtt/serial | — |
 | Guest agent / readiness | `QgaClient.cs`, `ReadinessProbe.cs`, `QemuLocator.cs` | QGA comms, SSH readiness, QEMU discovery (incl. bundled `vendor/qemu/win-x64`) | QEMU |
 | Paths | `GatOsPaths.cs` | the **single** source of all filesystem locations (mod dir, data dir, disks, logs, config) | — |
-| Config | `Configuration/GatOsConfig*` (in GameMod) + Tomlyn | TOML load/seed/save; sections `[common]/[telemetry]/[control]/[http]/[mqtt]/[serial]/[[mounts]]` | Tomlyn |
+| Config | `Configuration/GatOsConfig*` (in GameMod) + Tomlyn | TOML load/seed/save; sections `[common]/[telemetry]/[control]/[http]/[mqtt]/[serial]/[display]/[audio]/[iva]/[camera]/[schedule]/[[mounts]]` | Tomlyn |
 
 Ports + disk layout table: [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md#port-allocation).
 
@@ -67,6 +67,59 @@ Ports + disk layout table: [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md#port
 > `SimSnapshot` and `SimCommand` are the **firewall**: KSA types stop here. `EventDiffer` only diffs
 > snapshots, so it inherits — but never widens — the KSA reads. See
 > [`ksa-read-surface.md#events`](ksa-read-surface.md#events).
+
+### Timed command scheduler — `/sim/ctl/timed_batch` + `/sim/ctl/schedules/**` {#scheduler}
+
+`gatOS.SimFs/Commands/` (plans/SCHEDULER_ASBUILT.md). A **complete write feature with zero KSA
+bindings**: it schedules gatOS's own `SimCommand`s against a timeline, so it never learns what a
+command *does*. `KsaCatalog` routes the whole `schedule.*` family straight to `ScheduleStore.Execute`
+— there is nothing game-side to re-validate, and a second implementation would be a second definition.
+Gated by `[schedule] schedule_enabled` (off ⇒ `SimFsTree.Build` gets `schedules: null` and the two
+nodes never exist; `/sim/ctl/batch` is unaffected either way).
+
+| Feature | Key files | Responsibility |
+|---|---|---|
+| Timeline primitive | `Commands/PlaybackClock.cs` | `ClockBase` (`Render`/`Wall`/`Ut`), `PlaybackState`, and the one clock: position/duration/rate `[0,100]` (`0` = frozen)/loop/pause/scrub, `LoopCount` + `ScrubGeneration` edge counters. Doubles published as bit-cast `long`s through `Volatile`, so transport threads read torn-free without a lock |
+| Committed schedule | `Commands/Schedule.cs` | `ScheduleEntry(DeadlineMs, Path, Command, IsTrigger)` + the immutable `Schedule`; entries stably sorted, so authored order survives inside one deadline and a group of `0`-offset lines behaves exactly like a `ctl/batch` |
+| Cursor + catch-up | `Commands/Scheduler.cs` | one live player's cursor and the **coalescing** policy: among the entries due in one tick every trigger fires in order, but only the **last per path** of the non-triggers does, cross-path order preserved — bounding a hitch's burst by *distinct leaves* instead of entries. Allocation-free on a 0-or-1-entry tick |
+| Registry + executor | `Commands/ScheduleStore.cs` | `ScheduleLimits`, the `IPlaybackPlayer` interface (which the camera track player also implements), id reservation, the game-thread `Activate`/`AdvanceAll`/`Tick`/`Execute`/`Clear`, the cap-pressure-only oldest-first eviction of **finished** players (`schedule.evicted`), and the bounded event queue |
+| Tree + grammar | `Commands/ScheduleTree.cs`, `TimedBatchFile.cs` | the `/sim/ctl/{timed_batch,schedules/}` nodes (every status leaf a live line, since `t` advances every frame) and the `@id`/`@clock`/`@rate`/`@loop`/`@group` + `<offsetMs> <path> <payload>` + `commit` grammar — up-front, all-or-nothing validation; phase mixing deliberately **allowed** (the one relaxation of `BatchFile`'s rule); `[control] enabled = false` ⇒ `EACCES` on commit |
+| Fire-and-forget seam | `Commands/CommandQueue.cs` | the added `IPostObserver` + `CommandQueue.Post(command, observer, token)` — no TCS, honours `ControlEnabled`, routes by `command.Phase`, and reports each outcome inline on the game thread into `schedules/<id>/last_error` |
+
+The game side is a **driver, not a binding**: `Mod.TickSchedules` (the seventh game-thread work site)
+plus the sampler's `DrainEvents` — see
+[`ksa-runtime-coupling.md#schedule-tick`](ksa-runtime-coupling.md#schedule-tick) for the clock
+sourcing, self-gating and failure mode. Transport parity is structural (ordinary VFS leaves ⇒ the HTTP
+`/v1/fs/...` and MQTT `gatos/sim/...` mirrors light up with no new code). Tests:
+`gatOS.SimFs.Tests/Commands/{PlaybackClockTests,SchedulerTests,TimedBatchFileTests,ScheduleTreeTests,
+ScheduleEvictionTests}` + the extended `CommandQueueTests`. In-game pass pending
+([`../docs/VALIDATION.md`](../docs/VALIDATION.md)).
+
+### Programmable camera — the game-free half {#camera-game-free}
+
+`gatOS.SimFs/Camera/` (plans/CAMERA_ASBUILT.md). Everything about `/sim/camera` **except the ~22
+lines' worth of KSA member access in the director** lives here and is unit-tested on a bare host; the
+game side is [`ksa-write-surface.md#camera-director`](ksa-write-surface.md#camera-director) /
+[`ksa-read-surface.md#camera`](ksa-read-surface.md#camera). Gated by `[camera] camera_enabled`.
+
+| Feature | Key files | Responsibility |
+|---|---|---|
+| Math primitives | `Camera/CameraMath.cs`, `Easing.cs`, `Splines.cs`, `PoseSmoother.cs` | `Vec3`/`Quat`, the ease curves (incl. cubic-bezier), Catmull-Rom / squad / bezier interpolation, and the critically-damped pose smoother — plain arithmetic over plain structs |
+| Vocabulary + rules | `Camera/CameraTypes.cs`, `CameraRules.cs` | `FrameKind`/`AimUpKind`/`CameraModeKind`/`TargetRef` (the `vessel:`/`body:`/`part:` addressing, round-tripping exactly) and every validation predicate. `CameraRules` reads **no config** — FOV bounds are parameters — and re-runs game-side in the actuator, because `POST /v1/command` bypasses the 9p parse |
+| The compositor | `Camera/CameraState.cs` | the 17 `CameraChannel`s, the mask, and `Track ?? Override ?? Baseline` per channel. `Compose` **allocates nothing** (asserted < 64 B over 10 000 calls) — it runs every rendered frame. Game-thread only, deliberately lock-free |
+| Store + track dir | `Camera/CameraStore.cs`, `CameraDirectory.cs` | caps/versioning, the writable `track/` upload dir (create/write/clunk-commit, `rm` evicts), the volatile `CameraStatus` the director publishes, `LastError`, and the bounded `camera.shot`/`camera.finished` queue. Unlike audio clips, camera tracks are **not** `IsStreaming`, so they *are* in the scalar field mirror |
+| Grammars + formatting | `Camera/CameraCommands.cs`, `CameraFormat.cs` | the 28 action keys and the six order-independent line grammars, plus the `/sim` text projection — every composite read-back **re-parses through its own grammar** (asserted), so "read a leaf, write it straight back" is a no-op |
+| Tracks | `Camera/CameraTrack.cs`, `TrackParser.cs`, `TrackEvaluator.cs`, `CameraSample.cs`, `Playback.cs` | the JSON shot schema and its whole validation matrix, absolute-from-start evaluation (a full orbit closes **bit-identically**), `blend_in` cross-fades over only the channels both shots declare, and `CameraPlayback`/`CameraPlaybackController` — which register into the **schedules** registry as `kind = camera-track` (so `schedules/<id>/{pause,scrub,rate,loop,stop}` drive a take too) and act as the commit-time track validator |
+
+Two consequences of that registration are worth stating here, because they are the feature's only
+cross-gate coupling: `camera.play`/`set`/`stop` answer **`EOPNOTSUPP`** when
+`[schedule] schedule_enabled = false` (there is nowhere to register a player), and because a
+`CameraPlayback` never reports `failed`, `ScheduleStore.IsFinished` reduces to `State == Done` for it —
+**a take in progress is structurally un-evictable under cap pressure**. Tests: twelve fixtures under
+`gatOS.SimFs.Tests/Camera/` — `{CameraMathTests,EasingTests,SplinesTests,PoseSmootherTests}` for the
+primitives and `{CameraRulesTests,CameraCommandsTests,CameraTreeTests,CameraStoreTests,CameraStateTests,
+TrackParserTests,TrackEvaluatorTests,CameraPlaybackTests}` for the surface and the tracks. In-game pass
+pending ([`../docs/VALIDATION.md`](../docs/VALIDATION.md)).
 
 ## HTTP `/v1` — `gatOS.Http`
 `SimHttpServer.cs` (raw `TcpListener`, no HTTP lib), `HttpRequestLine.cs`, `OpenApi.cs`. Serves
