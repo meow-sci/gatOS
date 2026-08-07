@@ -194,7 +194,14 @@ internal sealed class WeldManager
         return false;
     }
 
-    private static Part? FindPart(Vehicle vehicle, uint instanceId)
+    /// <summary>
+    ///     Finds a part (or subpart) by its <c>InstanceId</c> — the one <c>instance_id</c> → live-part
+    ///     resolver on the gatOS side. <c>internal</c> rather than private because the camera director's
+    ///     <c>part:&lt;vessel&gt;/&lt;iid&gt;</c> anchors resolve through it too: two copies of this walk
+    ///     could disagree about whether a subpart counts, and the welds anchor picker
+    ///     (<c>parts/json</c>) is what a director reads ids out of in the first place.
+    /// </summary>
+    internal static Part? FindPart(Vehicle vehicle, uint instanceId)
     {
         foreach (var part in vehicle.Parts.Parts)
         {

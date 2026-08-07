@@ -8,6 +8,7 @@ using gatOS.NineP.Server;
 using gatOS.NineP.Vfs;
 using gatOS.SimFs;
 using gatOS.SimFs.Audio;
+using gatOS.SimFs.Camera;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Display;
 using gatOS.SimFs.Snapshots;
@@ -88,6 +89,13 @@ public sealed partial class Mod
     // the game-thread tick that plays them (TickSchedules). Null when [schedule] schedule_enabled=false
     // — /sim/ctl/timed_batch and /sim/ctl/schedules then do not exist on any transport.
     private ScheduleStore? _scheduleStore;
+
+    // The camera surface's store (plans/CAMERA_CONTROLS_PLAN.md §4): the uploaded tracks, the §4.3
+    // compositor the director drives, and the volatile status snapshot every /sim/camera read renders
+    // from. Game-free (from gatOS.SimFs); shared between the transport threads that write control
+    // leaves and the game-thread director (Game/Ksa/Camera/CameraDirector). Null when
+    // [camera] camera_enabled=false — /sim/camera then does not exist on any transport.
+    private CameraStore? _cameraStore;
 
     // Timing of one telemetry sample (game thread, written by the sampler; read by the status
     // window). Allocation-free; owned here so the status window can read it before the sampler
@@ -225,8 +233,12 @@ public sealed partial class Mod
                 _scheduleStore = new ScheduleStore(new ScheduleLimits(
                     _config.ScheduleMaxLive, _config.ScheduleMaxEntries, _config.ScheduleMaxBytes,
                     ParseClockBase(_config.ScheduleDefaultClock)));
+            if (_config.CameraEnabled)
+                _cameraStore = new CameraStore(new CameraLimits(
+                    _config.CameraMaxTracks, _config.CameraMaxTrackBytes, _config.CameraMaxTotalBytes,
+                    _config.CameraMaxKeys, _config.CameraFovMin, _config.CameraFovMax));
             _simRoot = SimFsTree.Build(_simStore, _commandQueue, SimTransportsStatus, _displaySurface,
-                _audioStore, schedules: _scheduleStore);
+                _audioStore, schedules: _scheduleStore, camera: _cameraStore);
             StartSimServer(port: 0);
             StartHttpServer();
             StartMqttBroker();
@@ -380,13 +392,23 @@ public sealed partial class Mod
 
         var ranInGui = _uiHooksRanThisFrame;
         _uiHooksRanThisFrame = false;
-        if (ranInGui)
-            return;
+        if (!ranInGui)
+        {
+            // UI hidden: stand in for both GUI hooks, in their original order. Deliberately *not*
+            // DrawGameUi() — with DrawUI false there is no ImGui frame to draw into.
+            DrivePerFrame(dtPlayer);
+            DrivePostSolver(dtPlayer);
+        }
 
-        // UI hidden: stand in for both GUI hooks, in their original order. Deliberately *not*
-        // DrawGameUi() — with DrawUI false there is no ImGui frame to draw into.
-        DrivePerFrame(dtPlayer);
-        DrivePostSolver(dtPlayer);
+        // The camera director runs on EVERY frame, UI visible or not — unlike everything above, which
+        // stands in only for the frames the GUI hooks were skipped. Two reasons it must live here and
+        // not in DrivePerFrame/DrivePostSolver: the pose has to be written *after* the render so the
+        // next frame's Program.OnFrameViewports rebuilds every matrix from it (which is what lets gatOS
+        // own the camera with no Harmony patch), and a camera that stopped moving the instant the
+        // player hid the UI would be useless for the exact job it exists to do. It runs after the
+        // drives so it sees this frame's drained commands on every frame, not just GUI-visible ones,
+        // and self-gates to one branch while gatOS does not own the camera.
+        DriveCamera(dtPlayer);
     }
 
     /// <summary>
@@ -949,6 +971,7 @@ public sealed partial class Mod
     partial void DisposeDisplayCapture();
     partial void DriveWelds(double dt);
     partial void DriveIvaPhysics(double dt);
+    partial void DriveCamera(double dt);
     partial void UpdateThugLife();
     partial void TeardownGameCheats();
     partial void InstallSolverHook();

@@ -5,6 +5,9 @@ using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
 using HarmonyLib;
 using KSA;
+// The sibling gatOS.GameMod.Game.Ksa.Camera namespace (the camera director) shadows the simple name
+// `Camera` for every file under Game/Ksa, so the game type is named explicitly here.
+using KsaCamera = KSA.Camera;
 
 namespace gatOS.GameMod.Game.Ksa.Render;
 
@@ -122,7 +125,7 @@ internal static class VesselForceRender
             return;
 
         var getWorldMatrix = AccessTools.Method(typeof(Vehicle), nameof(Vehicle.GetWorldMatrix),
-            [typeof(Camera)]);
+            [typeof(KsaCamera)]);
         var updateRenderData = AccessTools.Method(typeof(Vehicle), nameof(Vehicle.UpdateRenderData),
             [typeof(Viewport), typeof(int)]);
         if (getWorldMatrix is null || updateRenderData is null)
@@ -176,7 +179,7 @@ internal static class VesselForceRender
         GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium,
         Notes = "Reproduces the GetWorldMatrix body (rotation * translation) without the "
             + "< 1 px visibility check. Ported from unscience i-feel-seen.")]
-    private static bool GetWorldMatrixPrefix(Vehicle __instance, Camera camera, ref float4x4? __result)
+    private static bool GetWorldMatrixPrefix(Vehicle __instance, KsaCamera camera, ref float4x4? __result)
     {
         try
         {

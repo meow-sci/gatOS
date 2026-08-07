@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using gatOS.GameMod.Game.Ksa;
+using gatOS.GameMod.Game.Ksa.Camera;
 using gatOS.GameMod.Game.Ksa.Fx;
 using gatOS.GameMod.Game.Ksa.Iva;
 using gatOS.GameMod.Game.Ksa.Readers;
@@ -44,6 +45,7 @@ internal sealed class TelemetrySampler
     private readonly PerfStat _ivaStats;
     private readonly AudioStore? _audio;
     private readonly ScheduleStore? _schedules;
+    private readonly CameraDirector? _camera;
     private readonly bool _debugNamespace;
     private int _appliedRateHz;
     private IReadOnlyList<double> _warpSpeeds = [];
@@ -88,6 +90,11 @@ internal sealed class TelemetrySampler
     ///     <c>finished</c>/<c>failed</c>/<c>dropped</c>/<c>evicted</c> events fold into each snapshot
     ///     the same way audio's and IVA's do. Null when scheduling is disabled.
     /// </param>
+    /// <param name="camera">
+    ///     The camera director — its pending <c>camera.*</c> events fold into each snapshot the same way
+    ///     audio's and the scheduler's do, and its captured follow target is pruned against the vessel
+    ///     list this sampler just enumerated. Null when the camera surface is disabled.
+    /// </param>
     /// <param name="debugNamespace">
     ///     <c>[control] debug_namespace</c>: gates the FX-editor sample (<c>/sim/debug/{engineplume,
     ///     plumetrail,clouds,terrain}</c>). Off ⇒ the families are never read and
@@ -96,7 +103,7 @@ internal sealed class TelemetrySampler
     internal TelemetrySampler(SnapshotStore store, TelemetrySettings settings, KsaHealth health,
         PerfStat sampleStats, ValueStat allocStats, WeldManager welds, ThugLifeManager thugLife,
         IvaPhysicsManager iva, PerfStat ivaStats, AudioStore? audio = null,
-        ScheduleStore? schedules = null, bool debugNamespace = false)
+        ScheduleStore? schedules = null, CameraDirector? camera = null, bool debugNamespace = false)
     {
         _debugNamespace = debugNamespace;
         _store = store;
@@ -112,6 +119,7 @@ internal sealed class TelemetrySampler
         _ivaStats = ivaStats;
         _audio = audio;
         _schedules = schedules;
+        _camera = camera;
     }
 
     /// <summary>
@@ -194,6 +202,11 @@ internal sealed class TelemetrySampler
             // enumeration that just happened instead of a per-frame hook. Self-gates when unmarked.
             VesselForceRender.Prune(vessels);
 
+            // Same discipline for the camera director's captured restore target: a vessel that
+            // despawned while gatOS held the camera must not be handed back to SetFollow. Self-gates
+            // while the camera is unowned.
+            _camera?.Prune(vessels);
+
             if (_settings.Bodies)
                 (bodies, systemSummary) = SampleBodiesPaced(system);
             else
@@ -213,6 +226,10 @@ internal sealed class TelemetrySampler
         // dropped / evicted) — the only way a fire-and-forget schedule reports itself.
         if (_schedules?.DrainEvents() is { Count: > 0 } scheduleEvents && _settings.Events)
             events = events.Count == 0 ? scheduleEvents : [.. events, .. scheduleEvents];
+        // Same for the camera surface's events (camera.shot / camera.finished — emitted once the C3
+        // track player lands; the queue is drained unconditionally so it can never pile up meanwhile).
+        if (_camera?.DrainEvents() is { Count: > 0 } cameraEvents && _settings.Events)
+            events = events.Count == 0 ? cameraEvents : [.. events, .. cameraEvents];
         var snapshot = new SimSnapshot(++_sequence, ut, warp, activeId, vessels, events,
             GameVersion(), _appliedRateHz, _health.Snapshot())
         {

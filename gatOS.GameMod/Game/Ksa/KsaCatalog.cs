@@ -1,5 +1,6 @@
 using Brutal.Numerics;
 using gatOS.GameMod.Game.Ksa.Actuators;
+using gatOS.GameMod.Game.Ksa.Camera;
 using gatOS.GameMod.Game.Ksa.Fx;
 using gatOS.GameMod.Game.Ksa.Iva;
 using gatOS.GameMod.Game.Ksa.Render;
@@ -20,7 +21,8 @@ namespace gatOS.GameMod.Game.Ksa;
 ///     the game thread by <see cref="CommandQueue.Drain"/>; never throws (faults are returned).
 /// </summary>
 internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager welds, ThugLifeManager thugLife,
-    IvaPhysicsManager iva, AudioActuator? audio = null, ScheduleStore? schedules = null)
+    IvaPhysicsManager iva, AudioActuator? audio = null, ScheduleStore? schedules = null,
+    CameraDirector? camera = null)
     : ICommandExecutor
 {
     /// <inheritdoc />
@@ -88,17 +90,12 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
                     ? scheduleStore.Execute(command)
                     : new CommandResult(CommandOutcome.Unsupported, "scheduling is disabled in gatos.toml"));
 
-            // camera.focus targets ANY astronomical (vessel or celestial) named by id and only moves
-            // the view — no vessel mutation, so it bypasses the vehicle-only resolution and the
-            // authority gate. The id rides in Token (debug/focus) or VesselId (the per-node triggers).
-            if (command.Action == "camera.focus")
-            {
-                var focusId = command.Token ?? command.VesselId;
-                var followable = ResolveAstronomical(focusId);
-                return followable is null
-                    ? new CommandResult(CommandOutcome.NotFound, $"'{focusId}' is gone")
-                    : Finish(accessor, CameraActuator.Focus(followable));
-            }
+            // The whole camera family (plans/CAMERA_CONTROLS_PLAN.md §4): the addressed entity is the
+            // main viewport's camera or an astronomical named by id — never a vehicle to mutate — so,
+            // exactly like audio.* and schedule.*, it routes here before the vehicle resolution and
+            // before the authority gate.
+            if (command.Action.StartsWith("camera.", StringComparison.Ordinal))
+                return Finish(accessor, Camera(command));
 
             // control_vessel targets the vehicle named by the token (the one to take control of),
             // not the (sender) VesselId.
@@ -199,6 +196,35 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
 
         _ => new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'"),
     };
+
+    /// <summary>
+    ///     Routes the whole <c>camera.*</c> family. <c>camera.focus</c> is handled here directly because
+    ///     it predates the director and must keep working with the camera surface disabled — it names any
+    ///     <see cref="Astronomical"/> (vehicle or celestial) by id and only moves the view. Everything
+    ///     else needs the director, so it answers EOPNOTSUPP when <c>[camera] camera_enabled</c> left it
+    ///     unwired.
+    /// </summary>
+    /// <remarks>
+    ///     One sub-dispatcher rather than two branches in <see cref="Execute"/>: focus and the C1/C2
+    ///     actions both act on <c>Program.MainViewport</c>'s cameras, and two independently-ordered
+    ///     entry points into the same object is how they would eventually come to disagree about, say,
+    ///     whether a follow change happens before or after an ownership take.
+    /// </remarks>
+    private CommandResult Camera(SimCommand c)
+    {
+        // The id rides in Token (debug/focus) or VesselId (the per-vessel and per-body triggers).
+        if (c.Action == "camera.focus")
+        {
+            var focusId = c.Token ?? c.VesselId;
+            return ResolveAstronomical(focusId) is { } followable
+                ? CameraActuator.Focus(followable)
+                : new CommandResult(CommandOutcome.NotFound, $"'{focusId}' is gone");
+        }
+
+        return camera is { } director
+            ? CameraActuator.Execute(c, director)
+            : new CommandResult(CommandOutcome.Unsupported, "camera is disabled in gatos.toml");
+    }
 
     /// <summary>
     ///     Routes the thug-life cheat actions to the <see cref="ThugLifeManager"/>. All registry-keyed

@@ -3,6 +3,7 @@ using Brutal.ImGuiApi;
 using gatOS.GameMod.Game;
 using gatOS.GameMod.Game.Ksa;
 using gatOS.GameMod.Game.Ksa.Actuators;
+using gatOS.GameMod.Game.Ksa.Camera;
 using gatOS.GameMod.Game.Ksa.Fx;
 using gatOS.GameMod.Game.Ksa.Iva;
 using gatOS.GameMod.Game.Ksa.Render;
@@ -105,6 +106,13 @@ public sealed partial class Mod
     // objects (null when [audio] enabled=false), ticked per frame by DriveAudio, torn down at unload.
     private AudioActuator? _audioActuator;
     private bool _audioDead;
+
+    // The camera director (Game/Ksa/Camera): owns the main viewport's camera while a guest has taken
+    // it, writes the composed pose after every render, and hands it back exactly as it found it.
+    // Created lazily on the game thread with the other control objects (null when
+    // [camera] camera_enabled=false), driven from OnAfterFrame by DriveCamera, released at unload.
+    private CameraDirector? _cameraDirector;
+    private bool _cameraDead;
 
     // Game-thread-only driver state for the timed-command scheduler (CAMERA_CONTROLS_PLAN §3.2).
     // The due list is reused across ticks (Clear()ed, never reallocated) so a steady-state tick
@@ -214,7 +222,7 @@ public sealed partial class Mod
             EnsureControlObjects();
             _telemetry ??= new TelemetrySampler(store, _telemetrySettings, _health!, _sampleStats,
                 _sampleAllocStats, _weldManager!, _thugLife!, _ivaPhysics!, _ivaStats, _audioStore,
-                _scheduleStore, Config.DebugNamespace);
+                _scheduleStore, _cameraDirector, Config.DebugNamespace);
             // Sample only while something can actually read /sim: the VM is up, or a host-side
             // transport client is connected (9p / HTTP / MQTT). Otherwise the sampler idles for free.
             var state = CurrentVmStatus.State;
@@ -273,8 +281,12 @@ public sealed partial class Mod
 
         if (_audioActuator is null && _audioStore is { } audioStore)
             _audioActuator = new AudioActuator(audioStore, Config.AudioMaxChannels);
+        // Constructing the director touches no camera and takes nothing: it stays idle (and DriveCamera
+        // stays one branch) until a guest writes /sim/camera/enabled.
+        if (_cameraDirector is null && _cameraStore is { } cameraStore)
+            _cameraDirector = new CameraDirector(cameraStore, Config.CameraReleaseBlendS);
         _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels, _weldManager, _thugLife,
-            _ivaPhysics, _audioActuator, _scheduleStore);
+            _ivaPhysics, _audioActuator, _scheduleStore, _cameraDirector);
     }
 
     /// <summary>Snapshots the <c>[iva]</c> config section into the cabin simulation's tuning record.</summary>
@@ -469,6 +481,40 @@ public sealed partial class Mod
     }
 
     /// <summary>
+    ///     Drives the camera director on the game thread from <c>OnAfterFrame</c> — the one hook that
+    ///     fires on <b>every</b> rendered frame, and the only place the pose can be written <i>after</i>
+    ///     the render so the next frame's <c>Program.OnFrameViewports</c> rebuilds the view/projection
+    ///     matrices from it (which is what lets gatOS own the camera with no Harmony patch). Self-gates
+    ///     to a single branch while gatOS does not own the camera — the default — so the feature costs
+    ///     nothing until a guest writes <c>/sim/camera/enabled</c>. A failure disables the camera for
+    ///     the session (one error log) after handing the camera back to the game.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void DriveCamera(double dt)
+    {
+        if (_cameraDead || _cameraDirector is not { } camera || camera.IsIdle)
+            return;
+        try
+        {
+            camera.Update(dt);
+        }
+        catch (Exception ex)
+        {
+            _cameraDead = true;
+            try
+            {
+                camera.Restore(); // never leave the player holding a camera gatOS stopped driving
+            }
+            catch (Exception restoreEx)
+            {
+                ModLog.Log.Debug($"gatOS camera restore error: {restoreEx.Message}");
+            }
+
+            ModLog.Log.Error($"gatOS camera disabled after a driver error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     ///     Validates thug-life entries on the game thread before the scene renders this frame: drops
     ///     entries whose vehicle is gone and re-resolves each anchor part by InstanceId (robust to
     ///     staging). Self-gates to nothing when empty; a failure disables the feature for the session.
@@ -529,6 +575,19 @@ public sealed partial class Mod
         catch (Exception ex)
         {
             ModLog.Log.Debug($"gatOS schedule teardown error: {ex.Message}");
+        }
+
+        try
+        {
+            // Hands the main viewport's camera back exactly as it was found (mode, follow, tidal lock,
+            // transform, FOV, projection) and drops every uploaded track. Unconditional and idempotent:
+            // leaving a player's camera parked in 'fixed' and unfollowed after an unload would look
+            // exactly like a broken game.
+            _cameraDirector?.Shutdown();
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS camera teardown error: {ex.Message}");
         }
 
         try
