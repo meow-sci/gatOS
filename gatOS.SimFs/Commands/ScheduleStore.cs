@@ -65,6 +65,14 @@ public interface IPlaybackPlayer
     /// <summary>The first failing entry's description, or <c>-</c> when nothing has failed.</summary>
     string LastError { get; }
 
+    /// <summary>
+    ///     Whether this player created — and is therefore responsible for advancing — its own
+    ///     <see cref="Clock"/>, as opposed to sharing a group's. The registry advances each distinct
+    ///     clock exactly once per tick (group clocks from its own table, ungrouped ones through this
+    ///     flag); advancing per member instead would run a group of N players at N× speed.
+    /// </summary>
+    bool OwnsClock { get; }
+
     /// <summary>Game thread: stops playback. The player stays in the registry until removed.</summary>
     void Stop();
 }
@@ -115,8 +123,10 @@ public sealed class ScheduleStore
     private readonly ConcurrentQueue<Schedule> _pending = new();
     private readonly Queue<SimEvent> _events = new();
 
-    // Game-thread only.
-    private readonly List<ScheduleRunner> _runners = [];
+    // Game-thread only. Typed as the interface, not as ScheduleRunner, because the registry also holds
+    // foreign kinds (a camera track — plan §3.4): one registry, one place to see what is running, and
+    // one place to stop it all.
+    private readonly List<IPlaybackPlayer> _runners = [];
     private readonly Dictionary<string, PlaybackClock> _groups = new(StringComparer.Ordinal);
 
     private volatile IReadOnlyList<IPlaybackPlayer> _players = [];
@@ -277,10 +287,78 @@ public sealed class ScheduleStore
             clock.Advance(renderDeltaMs, wallDeltaMs, utDeltaMs);
         for (var i = 0; i < _runners.Count; i++)
         {
-            var runner = _runners[i];
-            if (runner.OwnsClock)
-                runner.Clock.Advance(renderDeltaMs, wallDeltaMs, utDeltaMs);
+            var player = _runners[i];
+            if (player.OwnsClock)
+                player.Clock.Advance(renderDeltaMs, wallDeltaMs, utDeltaMs);
         }
+    }
+
+    /// <summary>
+    ///     Game thread: joins a player of a <i>foreign</i> kind — today a camera track
+    ///     (plan §3.4) — to the registry, so it inherits the whole
+    ///     <c>/sim/ctl/schedules/&lt;id&gt;/</c> transport verbatim.
+    /// </summary>
+    /// <remarks>
+    ///     The caller owns the two steps this deliberately does not do: claiming the id with
+    ///     <see cref="ReserveId"/> (so the cap and the duplicate check stay one atomic insert, exactly
+    ///     as for a schedule) and starting the clock. A grouped player must take its clock from
+    ///     <see cref="ResolveGroupClock"/> so it shares the group's single instance — that sharing is
+    ///     the whole point of a group, and constructing a second clock that merely agrees would drift.
+    /// </remarks>
+    /// <param name="player">The player, with an id already reserved.</param>
+    public void Register(IPlaybackPlayer player)
+    {
+        ArgumentNullException.ThrowIfNull(player);
+        _runners.Add(player);
+        Publish();
+    }
+
+    /// <summary>
+    ///     Game thread: stops and drops a player, releasing its id (and its group clock when it was the
+    ///     last member). The <c>schedule.remove</c> path by another name.
+    /// </summary>
+    /// <param name="id">The registry id.</param>
+    /// <returns>True when a player of that id was live.</returns>
+    public bool Unregister(string id)
+    {
+        if (FindPlayer(id) is not { } player)
+            return false;
+        Remove(player);
+        return true;
+    }
+
+    /// <summary>
+    ///     Game thread: the clock a player of <paramref name="group"/> must ride — the group's shared
+    ///     instance, created on first use. An empty group name yields a fresh private clock.
+    /// </summary>
+    /// <remarks>
+    ///     The group's base, rate and loop belong to whoever created it: a later joiner's would
+    ///     otherwise retroactively re-time everyone already playing in that take. A joiner starts at the
+    ///     group's <i>current</i> position — joining a take in progress.
+    /// </remarks>
+    /// <param name="group">The group name, or <c>""</c> for an ungrouped player.</param>
+    /// <param name="clockBase">The base to use if this call creates the group's clock.</param>
+    /// <param name="rate">The rate to use if this call creates the group's clock.</param>
+    /// <param name="loop">The loop flag to use if this call creates the group's clock.</param>
+    /// <param name="who">An id for the "clock base ignored" debug note, or null.</param>
+    public PlaybackClock ResolveGroupClock(
+        string group, ClockBase clockBase, double rate, bool loop, string? who = null)
+    {
+        if (group.Length == 0)
+            return new PlaybackClock(clockBase) { Rate = rate, Loop = loop };
+
+        if (_groups.TryGetValue(group, out var shared))
+        {
+            if (shared.Base != clockBase)
+                ModLog.Log.Debug(
+                    $"schedule '{who ?? "?"}': group '{group}' already runs on the "
+                    + $"{shared.Base} clock; ignoring {clockBase}");
+            return shared;
+        }
+
+        shared = new PlaybackClock(clockBase) { Rate = rate, Loop = loop };
+        _groups[group] = shared;
+        return shared;
     }
 
     /// <summary>
@@ -295,7 +373,10 @@ public sealed class ScheduleStore
     {
         _utSeconds = utSeconds;
         for (var i = 0; i < _runners.Count; i++)
-            _runners[i].Tick(due);
+            // Only entry-firing kinds have anything to do here; a camera track produces a pose, which
+            // the director samples off its own clock, not a command.
+            if (_runners[i] is ScheduleRunner runner)
+                runner.Tick(due);
     }
 
     /// <summary>
@@ -315,7 +396,7 @@ public sealed class ScheduleStore
         var id = command.Token;
         if (string.IsNullOrEmpty(id))
             return new CommandResult(CommandOutcome.Invalid, $"{command.Action}: no schedule id");
-        if (FindRunner(id) is not { } runner)
+        if (FindPlayer(id) is not { } runner)
             return new CommandResult(CommandOutcome.NotFound, $"no live schedule '{id}'");
 
         switch (command.Action)
@@ -407,10 +488,13 @@ public sealed class ScheduleStore
 
     // ---- internals ---------------------------------------------------------------------------
 
-    /// <summary>The sim time last handed to <see cref="Activate"/>/<see cref="Tick"/> (event stamping).</summary>
-    internal double UtSeconds => _utSeconds;
+    /// <summary>
+    ///     The sim time last handed to <see cref="Activate"/>/<see cref="Tick"/>. Foreign players stamp
+    ///     their own events with it so the whole registry shares one notion of "when".
+    /// </summary>
+    public double UtSeconds => _utSeconds;
 
-    private ScheduleRunner? FindRunner(string id)
+    private IPlaybackPlayer? FindPlayer(string id)
     {
         foreach (var runner in _runners)
             if (string.Equals(runner.Id, id, StringComparison.Ordinal))
@@ -418,7 +502,7 @@ public sealed class ScheduleStore
         return null;
     }
 
-    private void Remove(ScheduleRunner runner)
+    private void Remove(IPlaybackPlayer runner)
     {
         runner.Stop();
         _runners.Remove(runner);
@@ -431,7 +515,7 @@ public sealed class ScheduleStore
     ///     if it was the last of its group, out of the group table. Releasing the <i>id</i> is the
     ///     load-bearing half: <see cref="ReserveId"/>'s cap counts ids, not runners.
     /// </summary>
-    private void ReleaseSlot(ScheduleRunner runner)
+    private void ReleaseSlot(IPlaybackPlayer runner)
     {
         _ids.TryRemove(runner.Id, out _);
         // A group clock outlives its members only as long as one is left; otherwise it would keep
@@ -517,25 +601,7 @@ public sealed class ScheduleStore
     };
 
     private PlaybackClock ResolveClock(Schedule schedule)
-    {
-        if (schedule.Group.Length == 0)
-            return new PlaybackClock(schedule.Clock) { Rate = schedule.Rate, Loop = schedule.Loop };
-
-        if (_groups.TryGetValue(schedule.Group, out var shared))
-        {
-            // The group's timeline belongs to whoever created it: a joiner's @clock/@rate/@loop would
-            // otherwise retroactively re-time everyone already playing in that take.
-            if (shared.Base != schedule.Clock)
-                ModLog.Log.Debug(
-                    $"schedule '{schedule.Id}': group '{schedule.Group}' already runs on the "
-                    + $"{shared.Base} clock; ignoring @clock {schedule.Clock}");
-            return shared;
-        }
-
-        shared = new PlaybackClock(schedule.Clock) { Rate = schedule.Rate, Loop = schedule.Loop };
-        _groups[schedule.Group] = shared;
-        return shared;
-    }
+        => ResolveGroupClock(schedule.Group, schedule.Clock, schedule.Rate, schedule.Loop, schedule.Id);
 
     private void Publish() => _players = _runners.ToArray();
 
@@ -623,8 +689,8 @@ internal sealed class ScheduleRunner : IPlaybackPlayer, IPostObserver
     /// <inheritdoc />
     public string LastError => _lastError;
 
-    /// <summary>Whether this player created (and therefore must advance) its own clock.</summary>
-    internal bool OwnsClock => _schedule.Group.Length == 0;
+    /// <inheritdoc />
+    public bool OwnsClock => _schedule.Group.Length == 0;
 
     /// <inheritdoc />
     public void Stop() => _stopped = true;

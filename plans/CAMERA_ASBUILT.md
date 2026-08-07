@@ -555,3 +555,831 @@ built the queue, not the emitters.
   (`CameraStore.HttpUpload` is built and tested; the route is not).
 - Docs lockstep (AGENTS.md §9) from this note.
 - `docs/VALIDATION.md` — a `## camera — validation pass — **NOT YET RUN**` section per plan §9.
+
+---
+---
+
+# Game-side (director) — tasks C1/C2 of `plans/CAMERA_CONTROLS_PLAN.md`, as built
+
+> **Scope:** `gatOS.GameMod` only. The game-free half above was **used, not modified** — no file under
+> `gatOS.SimFs/**` or `gatOS.SimFs.Tests/**` was touched by this work item, and neither were
+> `SPEC_9P_FILESYSTEM.md`, `scope/**` or `docs/**`.
+>
+> Baseline: KSA `2026.8.5.5168`, every binding verified against
+> `ksa-game-assemblies/current/decomp/` on **2026-08-06**.
+>
+> **Zero Harmony patches.** The whole feature hangs off the existing `[StarMapAfterOnFrame]` hook.
+
+---
+
+## G1. Files added / changed
+
+### Added — `gatOS.GameMod/Game/Ksa/Camera/`
+
+| File | Contents |
+|---|---|
+| `CameraTargets.cs` | `CameraTarget` (a resolution) + `CameraTargets`: `vessel:` / `body:` / `part:` → live object, position, velocity, body-fixed frame, up axis; the reverse `Describe(IFollowable?)` for read-back; `IsLive` |
+| `CameraFrames.cs` | the six frames × anchor → ECL rotation; the placement precedence (orbit → geodetic → Cartesian); `GeoToEcl` / `TryEclToGeo` / `SphericalDirection` |
+| `CameraDirector.cs` | ownership take / eased release / hard restore, the per-frame apply, the live-camera controls (`mode`/`follow`/`tidal`), despawn prune, event drain |
+| `CameraReader.cs` | the live camera → `CameraStatus` sample, including filling in whichever position spelling the author did not write; the `CameraMode` ⇄ `CameraModeKind` mapping (both directions) |
+
+### Changed
+
+| File | Change |
+|---|---|
+| `Game/Ksa/Actuators/CameraActuator.cs` | **extended**: `Focus` keeps its behaviour but now sets follow on **both** viewport cameras with `alert: false` (**C1.4**); new `Execute(SimCommand, CameraDirector)` validating + routing the 26 new actions |
+| `Game/Ksa/KsaCatalog.cs` | `camera.focus`'s special case folded into one `Camera(SimCommand)` sub-dispatcher routing the whole `camera.*` family before vehicle resolution and before the authority gate; new `CameraDirector? camera = null` ctor param |
+| `Game/Ksa/Welds/WeldManager.cs` | `FindPart` `private` → `internal` (+ XML doc): the camera's `part:` anchors reuse the weld anchor resolver rather than duplicating it |
+| `Game/Ksa/Render/VesselForceRender.cs` | `using KsaCamera = KSA.Camera;` + two use sites — **namespace-shadowing collateral, see G9.1** |
+| `Game/Mod.Game.cs` | `_cameraDirector`/`_cameraDead`; construction in `EnsureControlObjects`; `partial void DriveCamera(double)`; `Shutdown()` in `TeardownGameCheats`; director passed to `KsaCatalog` + `TelemetrySampler` |
+| `Game/TelemetrySampler.cs` | new `CameraDirector? camera` ctor param; `_camera?.Prune(vessels)` beside `VesselForceRender.Prune`; `camera.*` events folded into `NewEvents` |
+| `Mod.cs` | `_cameraStore` built under `[camera] camera_enabled` and passed to `SimFsTree.Build(..., camera:)` **by named argument**; `partial void DriveCamera(double)`; the `OnAfterFrame` call site |
+
+Build **0 warnings / 0 errors**; test suite **1257 passed, 0 failed** (`gatOS.GameMod` has no test
+project — it is game-coupled, and every piece of logic that could be game-free already is, in
+`gatOS.SimFs/Camera/`).
+
+> **Note on the count:** the brief quoted 1199. The repo now reports 1257 because another work item is
+> concurrently adding C3 files (`gatOS.SimFs/Camera/{CameraTrack,CameraSample,TrackParser,
+> TrackEvaluator,Playback}.cs` + `gatOS.SimFs.Tests/Camera/TrackParserTests.cs`) and a
+> `ScheduleStore.cs` change. **None of those are mine** (`git status` confirms my diff is
+> `gatOS.GameMod` only) and no test regressed.
+
+---
+
+## G2. The `[KsaAnchor]` list
+
+All: `Verified = "2026-08-06"`, `GameVersion = "2026.8.5.5168"`.
+
+| # | Member | File | Risk | What it binds |
+|---|---|---|---|---|
+| 1 | `CameraTargets.TryResolve` | `Camera/CameraTargets.cs` | Low | `Universe.CurrentSystem.Get(id)` → `Astronomical`; `Vehicle`; `Celestial` |
+| 2 | `CameraTargets.PositionEcl` | `Camera/CameraTargets.cs` | Low | `Astronomical.GetPositionEcl()`; `Vehicle.{CenterOfMassAsmb,GetBodyFixed2Ecl}`; `Part.PositionVehicleAsmb` |
+| 3 | `CameraTargets.VelocityEcl` | `Camera/CameraTargets.cs` | Low | `Astronomical.GetVelocityEcl()` |
+| 4 | `CameraTargets.BodyFixed2Ecl` | `Camera/CameraTargets.cs` | Low | `IOrientation.GetBodyFixed2Ecl()`; `Part.Asmb2VehicleAsmb`; `doubleQuat.{Concatenate,NormalizeOrZero}` |
+| 5 | `CameraTargets.UpEcl` | `Camera/CameraTargets.cs` | **Medium** | `Celestial.GetRotationAxisCce()`; the `Vehicle.ComputeBody2Cce` axis convention (+X fwd, +Y right, **−Z up**) |
+| 6 | `CameraTargets.Describe` | `Camera/CameraTargets.cs` | Low | `Camera.Following` → `IFollowable`; `Astronomical.Id` |
+| 7 | `CameraTargets.IsLive` | `Camera/CameraTargets.cs` | Low | `Universe.CurrentSystem.All.UnsafeAsList()` |
+| 8 | `CameraFrames.TryFrame2Ecl` | `Camera/CameraFrames.cs` | Medium | `Vehicle.{GetEnu2Cce,GetLvlh2Cce,Body2Cce,ComputeEnu2Cce,ComputeLvlh2Cce,GetPositionCce,GetVelocityCce}`; `Celestial.{GetCci2Cce,GetCcf2Cce,GetDirCcfFromLatLon,MeanRadius,GetPositionCce,GetVelocityCce}` |
+| 9 | `CameraFrames.GeoToEcl` | `Camera/CameraFrames.cs` | Medium | `Celestial.{GetDirCcfFromLatLon,GetCcf2Cce,GetTerrainHeightFromDirCce,MeanRadius,GetPositionEclFromCce}` |
+| 10 | `CameraFrames.TryEclToGeo` | `Camera/CameraFrames.cs` | Medium | `Celestial.{GetPositionCceFromEcl,GetCcf2Cce,GetTerrainHeightFromDirCce,MeanRadius}` |
+| 11 | `CameraDirector.Take` | `Camera/CameraDirector.cs` | Medium | `Program.MainViewport`; `Viewport.{Mode,GetCamera,SetCameraMode,BaseCamera}`; `Camera.{PositionEcl,LocalPosition,LocalRotation,NoRotation,Following,TidalLocking,GetFieldOfView,Orthographic,Unfollow}` |
+| 12 | `CameraDirector.Restore` | `Camera/CameraDirector.cs` | Medium | `Camera.{SetFollow,Unfollow,LocalPosition,LocalRotation,NoRotation,SetFieldOfView,SetOrthographic}`; `Viewport.{Mode,SetCameraMode}` |
+| 13 | `CameraDirector.Apply` | `Camera/CameraDirector.cs` | Medium | `Camera.{PositionEcl,LocalRotation,LookAtRotation,SetFieldOfView,SetOrthographic,SetOrthoHalfHeight}` |
+| 14 | `CameraDirector.RestorePositionEcl` | `Camera/CameraDirector.cs` | Medium | the `Camera.PositionCce` composition (`LocalPosition` ⇄ `GetBodyFixed2Ecl` unless `NoRotation`); `IPosition.GetPositionEcl()` |
+| 15 | `CameraDirector.SetMode` | `Camera/CameraDirector.cs` | Medium | `Program.MainViewport`; `Viewport.SetCameraMode(CameraMode)` |
+| 16 | `CameraDirector.SetFollow` | `Camera/CameraDirector.cs` | Medium | `Program.MainViewport.{BaseCamera,MapCamera}`; `Camera.{SetFollow,Unfollow,TidalLocking}` |
+| 17 | `CameraDirector.SetTidal` | `Camera/CameraDirector.cs` | Medium | `Camera.{Following,TidalLocking,SetFollow,PositionEcl}` |
+| 18 | `CameraReader.Sample` | `Camera/CameraReader.cs` | Medium | `Viewport.Mode` (public field); `Camera.{Following,TidalLocking,GetFieldOfView,Orthographic}` |
+| 19 | `CameraReader.ModeOf(CameraMode)` | `Camera/CameraReader.cs` | Low | the `CameraMode` enum |
+| 20 | `CameraActuator.Focus` (**rebound**) | `Actuators/CameraActuator.cs` | Medium | `Program.MainViewport.{BaseCamera,MapCamera}`; `Camera.SetFollow(..., changeControl:false, alert:false)` |
+
+**Unchanged and still correct:** `KsaCatalog.ResolveAstronomical` / `ResolveVehicle`,
+`WeldManager.FindPart` (now also a camera binding — its existing anchor covers it),
+`VesselForceRender`'s two prefixes (only the type *name* was aliased).
+
+---
+
+## G3. The ownership sequence (`camera/enabled 1` → `CameraDirector.Take`)
+
+1. **Capture the restore state from the _active_ camera** — `Program.MainViewport.GetCamera()`, which
+   returns `MapCamera` in Map mode and `BaseCamera` otherwise, so the capture must not assume the base
+   camera: `Viewport.Mode`, `Following`, `TidalLocking`, `NoRotation`, `LocalPosition`,
+   `LocalRotation`, `Orthographic`, `PositionEcl` (as an absolute fallback), and
+   `GetFieldOfView() × 180/π` — **radians → degrees converted once, here, at the boundary**, because
+   `GetFieldOfView()` returns radians while `SetFieldOfView(float)` takes degrees.
+2. **Park the mode.** `Viewport.Mode = CameraMode.Fixed` by **direct field assignment**, so
+   `FixedController.OnSwitchOn`'s `TimedAlert("Fixed Camera")` never draws. **Exception: leaving Map
+   goes through `SetCameraMode`** — see G8.2.
+3. **`BaseCamera.Unfollow(changeControl: false)`** (the default `true` would null
+   `Program.ControlledVehicle` and drop the player's vessel). With `Following == null`,
+   `FixedController.OnFrame`'s entire body is skipped, so the game's camera solver writes nothing and
+   gatOS is the sole writer.
+4. `BaseCamera.NoRotation = false` (insurance against a stuck map flag re-interpreting every later
+   write), then seed `BaseCamera`'s `PositionEcl`/`LocalRotation` from the capture — so taking the
+   camera **from map mode** is still visually continuous.
+5. **Seed the compositor baseline** (`CameraState.SetBaseline`) from the captured values: position =
+   the captured absolute ECL point, `frame = ecl`, `anchor = none`, `rotation` = the captured
+   `LocalRotation`, `fov` = the captured degrees, `ortho` = the captured flag, everything else
+   `CameraPose.Default`. **An owned-but-unwritten camera therefore sits exactly where the game left
+   it.** (It no longer *follows*, which is inherent to unfollowing and documented.)
+6. `PoseSmoother.Reset()`, `_appliedFovDeg = NaN` (forces one FOV write), phase → `Owned`.
+
+`Take()` is idempotent, and **cancels an in-flight release blend** (a director who changes their mind
+mid-handback keeps their shot, baseline and overrides intact).
+
+### The per-frame re-assert (owned)
+
+Every frame the driver checks `Viewport.Mode != Fixed` and `Camera.Following != null` and undoes both.
+A camera hotkey or another mod could otherwise wake `FixedController.OnFrame` and leave two writers
+fighting over one transform. **Consequence to document: while gatOS owns the camera, the player's
+camera keys do nothing.** Release to get them back.
+
+---
+
+## G4. The release sequences — two verbs, one restore path
+
+All three entry points funnel into `CameraDirector.Restore()`; only the *approach* differs.
+
+| Entry point | Behaviour |
+|---|---|
+| `camera/enabled 0` → `Release()` | **eased blend-back** over `[camera] camera_release_blend_s` (default 0.6 s), then `Restore()`. A configured `0` collapses to an immediate cut. |
+| `camera/release` (trigger) → `Restore()` | **hard cut**, no blend — this is the "give it back *now*" verb (plan §4.1 calls it "hard restore to game control"). |
+| `Mod.TeardownGameCheats` → `Shutdown()` | `Restore()` + `CameraStore.Clear()` (drops every uploaded track). |
+
+### The blend (`StepRelease`)
+
+Eased `InOut` over the configured duration: `Vec3.Lerp` on position, `Splines.Slerp` on rotation,
+linear on FOV, from the pose gatOS was holding at blend start toward the restore pose. **The restore
+point is recomputed every frame of the blend**, not baked at its start, so blending back onto a moving
+follow target lands on the target rather than on where it used to be — `RestorePositionEcl()`
+reproduces `Camera.PositionCce`'s own composition (`LocalPosition` transformed through
+`GetBodyFixed2Ecl()` unless `NoRotation`) because the camera being blended is unfollowed and its own
+`PositionCce` would not use the captured target.
+
+### The restore itself (`Restore`), in order and why
+
+1. `SetFollow(saved, savedTidal, changeControl: false, alert: false)` **first** — it *teleports* the
+   camera to `target + 2.5 × MeanRadius × forward`, so the transform must be written over it, not
+   before it. If the saved target despawned (`CameraTargets.IsLive` false, or `Prune` nulled it), this
+   degrades to `Unfollow(changeControl: false)` rather than throwing.
+2. `NoRotation` (it changes how `LocalPosition` is interpreted), then `LocalPosition`, `LocalRotation`.
+3. `SetFieldOfView(savedDegrees)`, `SetOrthographic(savedFlag)`.
+4. `Viewport.Mode` **last** — direct assignment, except restoring **into** Map, which goes through
+   `SetCameraMode` so `MapController.OnSwitchOn` re-establishes `NoRotation`, `GridFlag` and the map's
+   own control state.
+5. `finally`: `CameraState.ClearAll()`, publish `CameraStatus.Idle`, reset the smoother, drop the
+   captured references. The phase flips to `Idle` **before** the try, so even a throwing restore leaves
+   the director idle rather than half-owned.
+
+Idempotent and safe to call at any time, including before the first `Take()`.
+
+---
+
+## G5. Frame resolution table — and how each frame degrades
+
+Placement precedence in `TryResolvePosition` is **orbit → geodetic → Cartesian**: a non-zero
+`pose/orbit/radius` is an explicit "place me on a sphere about the anchor" and wins; with radius `0`
+the orbit channels name no placement, so the position channel (whichever spelling is live) applies.
+Writing `0` to the radius hands placement back to `pose/position`.
+
+| Token | Resolution (vessel / part anchor) | Resolution (body anchor) | Degrades to |
+|---|---|---|---|
+| `ecl` | identity, **origin (0,0,0)** — the offset *is* the point; no anchor needed | same | never fails |
+| `cce` | identity rotation, origin = anchor `GetPositionEcl()` (CCE shares the ecliptic's axes) | same | `Unsupported` when no anchor resolves |
+| `bodyfixed` | `Vehicle.GetBodyFixed2Ecl()` = `Body2Cce`; for a `part:` anchor, `Concatenate(Part.Asmb2VehicleAsmb, Body2Cce)` | `Celestial.GetBodyFixed2Ecl()` = `GetCcf2Cce()` | `Unsupported` (no anchor) |
+| `enu` | `Vehicle.GetEnu2Cce()` — **nullable**, and it dereferences `Orbit.Parent` unguarded, so both are checked | built at the pose's **own geodetic lat/lon** via `Vehicle.ComputeEnu2Cce(surfaceCce, body.GetCci2Cce())` (CCI +Z *is* the spin axis) | `Unsupported`: "needs the anchor vessel to be orbiting a body" / "degenerate ... at its parent's centre" / "degenerate at this latitude (on the rotation axis)" |
+| `lvlh` | `Vehicle.GetLvlh2Cce()` — **nullable** (null on near-zero or collinear position+velocity) | `Vehicle.ComputeLvlh2Cce(body.GetPositionCce(), body.GetVelocityCce())` | `Unsupported`: "degenerate for this anchor (no orbital motion to derive it from)" |
+| `chase` | `Body2Cce` (part-aware; identical to `bodyfixed` — KSA's vehicle body frame *is* the chase convention) | — | `Unsupported`: "frame 'chase' needs a vessel or part anchor" |
+
+**Nothing ever silently falls back to a different frame.** At *write* time an unresolvable frame is an
+`Unsupported`/EOPNOTSUPP the guest's `write(2)` carries; **per frame**, the director **holds the last
+good pose** and logs the reason once (`ModLog.Debug`, de-duplicated by message so a despawned anchor
+cannot write 60 lines a second). A non-finite result is treated as unresolvable, so no NaN can reach
+the view matrix.
+
+**Aim** resolves the same way: `aimPointEcl = target position + offset.Transform(aimFrame2Ecl)`,
+re-resolved every frame — which is what makes `+0.9 m` on a kittenaut's own Y axis *stay* its head as
+it walks. A zero/near-zero forward vector (camera sitting on its subject) or a NaN `LookAtRotation`
+holds the previous rotation.
+
+**`pose/aim_up`:** `world` = ecliptic +Z; `target` = the aim target's own up (**celestial** → rotation
+axis `GetRotationAxisCce()`; **vehicle/part** → body **−Z**, per `ComputeBody2Cce`'s +X fwd / +Y right
+/ −Z up convention); `velocity` = the **anchor's** `GetVelocityEcl()`, falling back to the aim
+target's when no anchor is set; `free` = the camera's *current* up carried forward (parallel
+transport, so tracking never snaps the horizon back to level). Any degenerate/collinear up falls back
+to world +Z, then to ecliptic +X for the look-straight-along-the-pole case — a wrong roll is
+recoverable, a NaN view matrix is not.
+
+**Roll** is applied **only on the aim path** (the surface documents it as "applied after aim"): an
+explicit `pose/rotation` already names a complete orientation. Sign: `CreateFromAxisAngle(UnitZ,
+−roll)` composed **before** the view→ECL map, i.e. positive roll rolls the camera clockwise and the
+horizon tilts counter-clockwise. *(One for the live pass to confirm subjectively.)*
+
+---
+
+## G6. The `geo` axis convention — how it was resolved
+
+`Camera.SetLatLon` (`KSA/Camera.cs:925`) does **not** contain the trigonometry; it delegates to
+`Celestial.GetPositionEclFromLatLon`, which is
+`GetDirCcfFromLatLon(lat, lon).Transform(GetCcf2Cce()) × MeanRadius + GetPositionEcl()`. And
+`Celestial.GetDirCcfFromLatLon` (`KSA/Celestial.cs:674`) is:
+
+```csharp
+z = sin(lat);  x = cos(lat)*cos(lon);  y = cos(lat)*sin(lon);   // then .Normalized(), in CCF
+```
+
+i.e. **CCF +Z is the north pole and +X is the prime meridian on the equator**. gatOS **calls
+`GetDirCcfFromLatLon` rather than restating that trigonometry**, so a future convention change lands
+as a behaviour change we inherit instead of a silent divergence.
+
+The final point is composed in one expression, so no frame mixing can occur (gatOS cannot call
+`SetLatLon`/`SetAltitude` themselves — both bail out unless `_following is Celestial`, and the
+director deliberately unfollows):
+
+```csharp
+dirCce = GetDirCcfFromLatLon(lat, lon).Transform(GetCcf2Cce()).NormalizeOrZero();
+posEcl = body.GetPositionEclFromCce(dirCce * (MeanRadius + GetTerrainHeightFromDirCce(dirCce) + alt));
+```
+
+`GetSurfacePositionEclFromDirCce` is *literally* the same expression minus `alt`, and it expects a
+**unit** direction and does **not** normalize (its `FromCce` sibling does) — hence the explicit
+`NormalizeOrZero`. `GetTerrainHeightFromDirCce` returns **metres** and `0` for a body with no
+heightmap, so **altitude is above terrain**, degrading to above-mean-sphere.
+
+`TryEclToGeo` is the exact inverse (`lat = asin(ccf.Z)`, `lon = atan2(ccf.Y, ccf.X)`,
+`alt = |posCce| − (MeanRadius + terrain)`) — the same pair KSA's own `GetLatitudeFromCce` /
+`GetLongitudeFromCcf` use. It is what lets `CameraReader` **publish both position spellings**: a
+Cartesian placement about a body reads back a real latitude, and a geodetic placement back-projects
+into `pose/position`'s own frame. `NormalizeLongitude` keeps the read-back canonical (`[-180, 180)`).
+
+**`Camera.ClampCamera()` still applies** and is deliberately not worked around: it runs at the top of
+every `Camera.OnFrame` and pushes the camera to *surface + 0.5 m* whenever the frame viewport's
+altitude is at or below that. It is the ocean-skimming floor — but an altitude request below **0.5 m**
+is silently corrected, and the altitude it reads is the **frame** viewport's, not the camera being
+updated.
+
+---
+
+## G7. The C3 seam (exactly where the track evaluator plugs in)
+
+`CameraDirector.Update` computes, once per frame:
+
+```csharp
+const CameraChannelMask trackClaims = CameraChannelMask.None;   // <- C3 replaces both of these
+var pose = store.State.Compose(trackSample: null, trackClaims);  //    with the evaluated sample + mask
+```
+
+marked in-source with a `// ---- THE C3 SEAM ----` banner. `trackClaims` is threaded through
+`Apply` → `ApplyProjection` (not just used at the `Compose` call) precisely so a shot that animates
+`ortho_height` drives it even though no leaf override exists — see G8.3.
+
+Everything else C3 needs is already present and unused by this work item:
+`CameraStore.OnTrackCommitted` (the parse hook), `CameraStore.{TryGet,CurrentVersion}`,
+`CameraStore.EmitEvent` (drained by the sampler, G1), and the `CameraStatus` player fields
+(`TrackName`/`TrackTMs`/`TrackDurationMs`/`ShotName`/`ShotIndex`/`Playback`/`Rate`/`Loop`), which
+`CameraReader.Sample` currently fills with the idle values. **`camera.play` / `camera.set` /
+`camera.stop` return `Unsupported` (EOPNOTSUPP)** with the message *"camera track playback is not
+implemented yet (task C3); every camera channel is reachable from /sim/camera/pose and schedulable
+through /sim/ctl/timed_batch"* — the leaves exist on every transport, they just answer honestly.
+
+The **C4 time-channel seam** is likewise untouched: `CameraChannel.TimeScale` composes but has no
+leaf, no actuator and no `Universe.SetSimulationSpeed` call anywhere in `Game/Ksa/Camera/`.
+`[camera] camera_allow_time_channel` is still **not consumed by any code**.
+
+---
+
+## G8. Deviations from the brief, with justification
+
+1. **`camera/release` is a hard cut; only `camera/enabled 0` blends.** The brief asked for one restore
+   path *and* an optional eased blend; plan §4.1 calls `release` "hard restore to game control". Both
+   are satisfied by making the *approach* the difference and the *restore* shared: `release` is the
+   panic button (and the teardown path), `enabled 0` is the cinematic hand-back. Document both
+   spellings in the SPEC.
+
+2. **Leaving `CameraMode.Map` goes through `SetCameraMode` and accepts the "Fixed Camera" alert.** The
+   brief offered "or explicitly clear `NoRotation`". That alternative is **wrong here**:
+   `MapController.OnSwitchOn` also sets `Program.IsControlledVehicleActive = false` and stashes
+   `PreviouslyControlledVehicle`, and only `OnSwitchOff` restores them — bypassing it would strand the
+   player with an **uncontrollable vessel**. So taking the camera *from map view* prints one
+   three-second `TimedAlert`; every other entry mode is a silent direct assignment. (`SetCameraMode`
+   also calls `Program.ControlledVehicle?.ClearHeldPlayerInput()`, dropping any latched
+   `ctl/translate` / `ctl/rotate` flags — SPEC §3.4.19.)
+
+3. **`pose/ortho_height` is written only when its channel is explicitly claimed** (a live override or a
+   C3 track claim). `Camera` exposes `SetOrthoHalfHeight` but has **no public getter** for
+   `_orthoHalfHeight` in 5168, so there is nothing to capture at ownership take and **nothing to
+   restore at release**. Writing the composed default every frame would silently clobber a value that
+   could never be put back. Consequence for the SPEC: *changing `ortho_height` is the one camera
+   change gatOS cannot undo.*
+
+4. **`camera/mode`, `camera/follow` and `camera/tidal` are refused while gatOS owns the camera**
+   (`Unsupported`, with a message naming the alternative). Ownership *is* a mode park with
+   `Following == null`; honouring a follow would wake `FixedController.OnFrame` and give the transform
+   a second writer, and honouring a mode change would be undone by the next frame's re-assert. The
+   messages point at `pose/anchor` + `pose/aim_target` (which do everything a follow does, better) or
+   at writing `0` to `camera/enabled`.
+
+5. **`camera.follow` rejects a `part:` reference** (`Unsupported`): the game's camera can only follow a
+   whole `IFollowable`. Aiming at a part is fully supported — that is `pose/aim_target`.
+
+6. **`camera.follow` preserves the current tidal-locking flag** rather than defaulting it, so one leaf
+   never quietly resets another; `camera/tidal` is the leaf that changes it. `SetTidal` re-issues
+   `SetFollow` (the only writer of `TidalLocking`, which is get-only) **and re-asserts `PositionEcl`
+   afterwards** — a flag change must not fling the view the way `SetFollow`'s unconditional teleport
+   would. `camera.follow` itself **keeps** the teleport, matching `camera.focus` and the game's own
+   follow action.
+
+7. **`DriveCamera` is called at the *end* of `OnAfterFrame`, inside an `if (!ranInGui)`-restructured
+   body rather than literally before an early return.** The brief's phrasing assumed the early-return
+   shape; the requirement it encodes — *runs on every frame, not just UI-hidden ones* — is met exactly,
+   and putting it after `DrivePerFrame`/`DrivePostSolver` means the director sees **this** frame's
+   drained commands on every frame instead of only on GUI-visible ones. A comment at the call site says
+   why.
+
+8. **Existence is validated at write time** for `camera.anchor`, `camera.aim_target`, `camera.aim`,
+   `camera.follow` and `camera.geo`'s `body:` tail — a reference naming nothing live is `NotFound`
+   (ENOENT), per the brief's errno table. Note the consequence: you cannot pre-arm an anchor for a
+   vessel that has not spawned yet.
+
+9. **`camera.geo` without a `body:` tail requires the current `pose/anchor` to already be a body**,
+   else `Unsupported` with a message naming both fixes. A latitude about a vessel means nothing.
+
+---
+
+## G9. Things the brief did not settle (decisions taken, flagged for review)
+
+1. **Namespace shadowing — the one piece of collateral.** The mandated folder
+   `Game/Ksa/Camera/` implies namespace `gatOS.GameMod.Game.Ksa.Camera`, and a child namespace of
+   `Game.Ksa` **shadows the simple name `Camera` for every file under `Game/Ksa/`**, beating
+   `using KSA;`. New files use `using KsaCamera = KSA.Camera;`. The only pre-existing casualties were
+   `VesselForceRender.cs`'s `typeof(Camera)` and its `Camera camera` prefix parameter, fixed with the
+   same alias plus a comment. **Anyone adding a file under `Game/Ksa/` that names the game's `Camera`
+   type must now alias it.** (The alternative — namespace ≠ folder — was rejected as worse.)
+
+2. **`camera/target`, `camera/mode`, `camera/tidal` and `camera/status` report idle values while gatOS
+   does *not* own the camera.** The brief mandated the `AudioActuator._publishedEmpty` edge latch
+   ("an idle director publishes once and then does nothing"), which is also what keeps the feature
+   genuinely free when off — but it means those four leaves do not mirror the *player's* camera. If
+   observing an unowned camera turns out to be wanted, the fix is a cheap always-on sample in the
+   driver (three field reads) at the cost of the zero-work property. **Flagged for the SPEC wording.**
+
+3. **`enu` as an aim frame about a *celestial* aim target uses the camera pose's own lat/lon**, since
+   that is the only geodetic point in scope. For a *vessel* aim target `GetEnu2Cce()` is used and
+   lat/lon is ignored, so this only bites the (unusual) "aim offset in ENU about a planet" case.
+
+4. **The bubble-relative ego question (plan §5.2 / C5.3) is untouched and still open**: unfollowed,
+   every object takes the plain `GetPositionEcl() − PositionEcl` path. Self-consistent, so it should be
+   visually fine, but it is a VALIDATION item, not an assumption.
+
+5. **`pose/roll`'s sign** is a free creative choice and was defined, not derived (G5). Confirm it
+   subjectively in the live pass.
+
+6. **The C3 agent is working in `gatOS.SimFs/Camera/` concurrently.** If `CameraState.Compose`'s
+   signature or `CameraStatus`'s shape moves, the two call sites in `CameraDirector.Update` and the one
+   in `CameraReader.Sample` are the whole surface to re-check.
+
+---
+
+## G10. Threading (for the `CLAUDE.md` threading-rules paragraph)
+
+**A seventh game-thread work site: `Mod.DriveCamera` → `CameraDirector.Update`, run at the end of
+`[StarMapAfterOnFrame] Mod.OnAfterFrame`** — after the render, on **every** rendered frame (unlike
+every other driver, which stands in only on the frames the F2-gated GUI hooks were skipped). It writes
+`Camera.PositionEcl` / `LocalRotation` / the projection, so the *next* frame's
+`Program.OnFrameViewports` rebuilds every matrix from it; gatOS never touches a matrix and needs **no
+Harmony patch**. It self-gates to a single branch (`CameraDirector.IsIdle`) while gatOS does not own
+the camera — the default — and in that state no camera is read, no pose composed and nothing
+published. Camera teardown rides `Mod.TeardownGameCheats`.
+
+`CameraState` and the director's own fields are game-thread-only, with no locks by design; transport
+threads only enqueue `SimCommand`s (drained in the ordinary Frame phase — **no camera action is in
+`SimCommand.SolverActions`**) and read the volatile `CameraStore.Status` the director publishes with
+one swap. Despawn pruning rides the telemetry sampler's vehicle enumeration
+(`CameraDirector.Prune`, beside `VesselForceRender.Prune`), and `camera.*` events drain into each
+snapshot alongside audio's, IVA's and the scheduler's.
+
+---
+
+## G11. Still open after this work item
+
+- **C3** — the track parser/evaluator/player (G7 is where it plugs in).
+- **C4** — the `time` channel (`Universe.SetSimulationSpeed`), gated on `debug_namespace`;
+  `[camera] camera_allow_time_channel` is still unconsumed.
+- **C5** — IVA and Map ownership contexts; the bubble-relative ego re-check.
+- The HTTP `PUT /v1/camera/track/<name>` route (`CameraStore.HttpUpload` is built and tested; the route
+  is not).
+- **Docs lockstep (AGENTS.md §9)** from this note: `SPEC_9P_FILESYSTEM.md` (the `/sim/camera` family +
+  §5.1 action rows + the §2.5 `[camera]` gate), `docs/KSA_INTEGRATION_MATRIX.md` (G2's table),
+  `scope/FULL_SCOPE.md` + `scope/ksa-{read,write}-surface.md` + `scope/ksa-runtime-coupling.md` (the
+  `OnAfterFrame` camera driver), `CLAUDE.md` (status row + G10's threading paragraph),
+  `docs/MILESTONES.md`, and `docs/VALIDATION.md` (`## camera — **NOT YET RUN**`).
+- **In-game validation** — nothing here has been run against a live flight. Beyond plan §9's list, this
+  work item specifically wants: ownership/release round-trip leaves the camera exactly as found
+  (including *from* and *into* map mode); no `TimedAlert` text in footage except the documented
+  Map-exit one; F2 does not stall the director; the `pose/geo` ocean skim down to the 0.5 m
+  `ClampCamera` floor; aim-with-offset holding a kittenaut's head **plus the EVA-locomotion re-check**
+  (the `KittenEva.PrepareWorker` caveat documented on `CameraDirector`); FOV beyond the game's 15–120;
+  and `ortho_height`'s non-restorability (G8.3).
+
+---
+
+# Track evaluator (L3) — task C3, as built
+
+> **The `TryEvaluate` seam shipped EXACTLY as briefed — no deviation.** The director can wire to:
+> ```csharp
+> bool TryEvaluate(double tSeconds, out CameraPose sample, out CameraChannelMask channels);
+> ```
+> declared on the new `gatOS.SimFs.Camera.ITrackSampler` and implemented by **both**
+> `CameraPlayback` (one playing track) and `CameraPlaybackController` (the "is anything playing"
+> wrapper the director should hold). One addition, purely additive: `TryEvaluateNow(out sample, out
+> channels)` on both, which samples at the player's *own* `PlaybackClock` — **prefer it**, it is what
+> keeps the director from inventing a second notion of "now".
+>
+> **Scope:** 100 % game-free, entirely in `gatOS.SimFs/Camera/` + `gatOS.SimFs.Tests/Camera/`, plus
+> one minimal additive change to `gatOS.SimFs/Commands/ScheduleStore.cs` (§T6). No `gatOS.GameMod`,
+> `SPEC_9P_FILESYSTEM.md`, `scope/` or `docs/` file was touched. **Not committed.**
+
+## T1. Files added / changed
+
+### Added — `gatOS.SimFs/Camera/`
+
+| File | Contents |
+|---|---|
+| `CameraTrack.cs` | `CurveKind`, `PositionMode`, `TrackKey<TValue>`, `TrackChannel<TValue>`, `PositionSpec`, `AimSpec`, `TrackDefaults`, `Shot` (incl. the computed claim mask), `Track` |
+| `TrackParser.cs` | `TrackParser` — JSON to `Track`, full validation, `const int MaxShots = 256` |
+| `CameraSample.cs` | `CameraSample` (pose + mask + shot index/name), `CameraPlacement` (spherical to cartesian — the orbit resolution the director must share) |
+| `TrackEvaluator.cs` | `TrackEvaluator.Sample(Track, tSeconds)` — shot selection, blend-in, every curve kind |
+| `Playback.cs` | `ITrackSampler`, `CameraPlayback` (`IPlaybackPlayer`, `kind = camera-track`), `CameraPlaybackController` (the `camera.play`/`set`/`stop` executor + the commit-time validator + parsed-track cache) |
+
+### Changed
+
+| File | Change |
+|---|---|
+| `gatOS.SimFs/Commands/ScheduleStore.cs` | see §T6 — one new interface member, `_runners` retyped, three new public methods, `UtSeconds` promoted to public |
+
+### Added — tests (`gatOS.SimFs.Tests/Camera/`)
+
+`TrackParserTests.cs` (58), `TrackEvaluatorTests.cs` (24), `CameraPlaybackTests.cs` (27) — **109 tests**.
+
+Full solution: **build 0 warnings / 0 errors**; **1 308 passed, 0 failed** (`gatOS.SimFs.Tests`
+1 031 passed / 6 skipped, up from 922 — every prior test still green).
+
+---
+
+## T2. The JSON schema, as implemented
+
+```jsonc
+{
+  "loop": false,                        // bool,   default false — the authored loop default
+  "defaults": {                         // object, optional
+    "frame":  "cce",                    // frame token — the default for a shot's position block
+    "anchor": "vessel:apollo11",        // target ref — the default shot anchor
+    "ease":   "in-out",                 // ease token OR [x1,y1,x2,y2]; also the blend_in shape
+    "ease_power": 3                     // number [0.01,16]; requires "ease"; applies to both halves
+  },
+  "shots": [                            // REQUIRED, non-empty, <= 256, ordered by t, non-overlapping
+    {
+      "name":     "pad-rise",           // string,  default "shot-<index>"
+      "t":        0.0,                  // seconds >= 0, default 0 — absolute on the track timeline
+      "duration": 8.0,                  // seconds > 0, REQUIRED
+      "anchor":   "body:earth",         // target ref, default defaults.anchor, else none
+      "blend_in": 0.5,                  // seconds >= 0, default 0
+
+      "position": { ... },              // see below
+      "aim":      { ... },              // see below   (mutually exclusive with "rotation")
+      "rotation": { "curve": ..., "keys": [ {"t":..., "v":[x,y,z,w]} ] },
+      "roll":     { "keys": [ ... ] },  // degrees    (mutually exclusive with aim.roll)
+      "fov":      { "keys": [ ... ] },  // degrees, each key in [fov_min, fov_max]
+      "time":     { "keys": [ ... ] }   // sim-speed factor >= 0 (0 = paused) — see T3
+    }
+  ]
+}
+```
+
+### `position`
+
+```jsonc
+// mode "cartesian" (the default when "keys" is present)
+{ "mode": "cartesian", "curve": "catmull-rom", "frame": "bodyfixed",
+  "keys": [ { "t": 0, "v": [x,y,z], "ease": "out", "ease_power": 3,
+              "handle_out": [x,y,z], "handle_in": [x,y,z] } ] }
+
+// mode "orbit" (the default when any of radius/azimuth/elevation is present)
+{ "mode": "orbit", "frame": "bodyfixed",
+  "radius":    { "keys": [ {"t":0,"v":120} ] },                 // metres >= 0
+  "azimuth":   { "keys": [ {"t":0,"v":0}, {"t":8,"v":360} ] },  // degrees, any finite
+  "elevation": { "keys": [ {"t":0,"v":15} ] } }                 // degrees, [-90, 90]
+
+// mode "attach" (the default when "offset" is present)
+{ "mode": "attach", "frame": "chase", "offset": [0, 3, -12] }
+```
+
+`frame` default: the block's own, then `defaults.frame`, then `ecl`. An explicit `mode` **must** agree
+with what was authored (`"mode":"orbit"` + cartesian `keys` is EINVAL, per the brief).
+
+### `aim`
+
+```jsonc
+{ "target": "vessel:apollo11",     // REQUIRED, must not be "none"
+  "offset": [0, 1.2, 0],           // default [0,0,0]  — CONSTANT for the shot (see T4)
+  "frame":  "bodyfixed",           // default bodyfixed (NOT defaults.frame — see T4)
+  "up":     "world",               // default world
+  "roll":   { "keys": [ ... ] } }  // optional animated roll, degrees
+```
+
+### Channel shape
+
+Every channel is `{ "curve": ..., "keys": [ ... ] }`, or the **bare-array shorthand**
+`"fov": [ ... ]`. The `position` block is the one exception: its `curve` sits beside `keys` on the
+block, which is how plan §4.4 spells it.
+
+- `curve` is one of `step | linear | catmull-rom | bezier`. Default **`linear`**, except a
+  **rotation** channel whose default is **`catmull-rom`** (see T4).
+- `keys`: non-empty, at most `camera_max_keys` (`CameraLimits.MaxKeys`), times **strictly increasing**
+  and inside `[0, duration]`. One key is legal (a constant).
+- Key: `t` (REQUIRED), `v` (REQUIRED — number, `[x,y,z]`, or `[x,y,z,w]`), `ease`, `ease_power`,
+  `handle_in`, `handle_out`.
+
+### The ease-resolution rule (decided here — plan §4.4 is ambiguous)
+
+A segment's ease comes from its **start** key; if the start key names none, the **end** key's ease is
+used; failing both, `defaults.ease`; failing that, linear. *Why:* plan §4.4's own example uses **both**
+spellings — the position channel puts `"ease":"out","ease_power":3` on the *departing* key, while the
+`fov` and `aim.roll` channels put theirs on the *arriving* key. Either single rule would silently make
+half the plan's example inert. The rule is folded into every key **at parse time**, so `TrackKey.Ease`
+is already resolved and `TrackEvaluator` never looks sideways. The last key's ease is stored but inert.
+
+### Validation matrix (all EINVAL, all naming shot / channel / key)
+
+| Rejected | Message shape |
+|---|---|
+| empty upload; over `MaxTrackBytes` | `camera track: the track is empty` / `... past the N-byte per-track cap` |
+| unparseable JSON | `camera track: not valid JSON (...)` |
+| top level not an object; `shots` missing/empty/not an array; over 256 shots | `camera track: shots is empty ...` |
+| **any unknown key** at any level | `camera track: shots[0].durration is not a known key here (expected one of ...)` |
+| shot with no `duration`, `duration <= 0`, `t < 0`, `blend_in < 0` | `camera track: shots[0].duration is 0; a shot must last a positive time` |
+| shots out of time order, or overlapping | `camera track: shots[1] starts at t=4 but shots[0] runs to t=5; shots must not overlap` |
+| a shot that declares **no** channels | `camera track: shots[0] declares no channels ...` |
+| empty `keys`; non-monotonic/duplicate key times; a key outside `[0,duration]` | `camera track: shots[0].fov[2] is at t=2, not after [1] at t=4; key times must strictly increase` |
+| any non-finite number, anywhere | `... must be a finite number` |
+| out-of-range value (`fov` outside `[fov_min,fov_max]`, `elevation` outside `[-90,90]`, `radius<0`, `time<0`) | `camera track: shots[0].fov[0].v is 400; expected in [1, 179] degrees` |
+| unknown enum token (`frame`, `up`, `mode`, `curve`, `ease`) | `... must be one of ecl\|cce\|bodyfixed\|enu\|lvlh\|chase` |
+| `ease_power` without `ease`; `ease_power` with bezier handles; `ease_power` outside `[0.01,16]`; a 2- or 5-element ease array | `camera track: shots[0].fov[0].ease_power has no 'ease' to apply to` |
+| `curve: bezier` with a missing handle on any segment | `camera track: shots[0].position.keys[0] has no 'handle_out'; a bezier curve needs both handles on every segment` |
+| a handle on a **non**-bezier curve | `... carries a bezier handle but the curve is 'linear'` |
+| `curve: bezier` on a **rotation** channel | `... cannot be 'bezier' here — a rotation channel interpolates with slerp/squad ...` |
+| a quaternion key whose norm is outside `[0.5, 2]` (incl. all-zero) | `... is not a usable rotation ...` |
+| a malformed target ref; `aim.target` = `none` | `camera track: shots[0].aim.target must be "vessel:<id>" ...` |
+| `roll` declared **both** at shot level and inside `aim` | `... roll is declared both at the shot level and inside 'aim'; keep one of them` |
+
+**Warned, not rejected:** a shot declaring **both** `aim` and `rotation`. Per plan §4.4 `aim` wins;
+the rotation channel is dropped and a `ModLog.Warn` says so (a warning path, per the brief).
+
+**Accepted deliberately:** `//` and `/* */` comments and trailing commas (`JsonCommentHandling.Skip`,
+`AllowTrailingCommas`) — plan §4.4 documents the format *with* comments, and a shot list is exactly
+the kind of file people annotate. `MaxDepth = 32`.
+
+---
+
+## T3. Channel to `pose/` leaf correspondence — **one documented mismatch, as pre-authorised**
+
+| Track channel | `/sim/camera/pose/` leaf | `CameraChannelMask` bits claimed |
+|---|---|---|
+| `position` (cartesian / attach) | `position` (+ `frame`, `anchor`) | `Position \| Frame` (+ `Anchor`) |
+| `position` (orbit) | `orbit/radius`, `orbit/azimuth`, `orbit/elevation` (+ `frame`, `anchor`) | `Frame` (+ `Anchor`) + one bit **per authored** sub-channel |
+| `aim` | `aim` (which is `aim_target`, `aim_offset`, `aim_frame`, `aim_up`) | `AimTarget \| AimOffset \| AimFrame \| AimUp` |
+| `aim.roll` / `roll` | `roll` | `Roll` |
+| `rotation` | `rotation` | `Rotation` |
+| `fov` | `fov` | `Fov` |
+| **`time`** | **none** | `TimeScale` |
+
+**`time` is the mismatch, and it is the one CAMERA_ASBUILT §8.10 already records:**
+`CameraChannel.TimeScale` exists in the compositor with **no `/sim` leaf**, because the plan puts the
+`time` channel in task **C4** and gates it on `[control] debug_namespace`. C3 therefore **parses and
+evaluates** `time` (validated as a finite factor >= 0) and claims `TimeScale` in the mask — but
+**applying** it is C4's, and the director must ignore the `TimeScale` bit until then (and gate it on
+`camera_allow_time_channel` + `debug_namespace` after). No other channel was invented; every other one
+maps to a leaf that already exists.
+
+Leaves with **no** track channel (deliberate, not an oversight): `geo`, `ortho`, `ortho_height`,
+`smoothing`, and `frame`/`anchor`/`aim_*` as standalone channels. They stay L1/L2-only; adding one
+later is non-breaking *because unknown channel names are rejected today*, so nothing can silently
+depend on their absence.
+
+### The mask discipline (plan §4.3), as enforced
+
+- The mask is computed in `Shot.Channels` from **what was authored**, never widened.
+- `Frame` is claimed **only** when the shot drives a position (any mode); `Anchor` **only** when it
+  drives a position *and* an anchor resolved. A `fov`-only shot in a track with `defaults.anchor` set
+  claims **`Fov` alone** — asserted (`AFovOnlyShot_ClaimsNeitherAnchorNorFrame`).
+- Orbit mode claims one bit per authored sub-channel, so `{"azimuth": ...}` alone leaves radius and
+  elevation to the live overrides.
+- The unclaimed fields of the emitted `CameraPose` carry `CameraPose.Default`'s values (60 degree FOV,
+  ...) and are **meaningless** — `AnUndeclaredChannel_IsNotClobberedByThePosesDefault` is the
+  regression guard.
+
+---
+
+## T4. Evaluation semantics
+
+- **Absolute-from-start, never incremental.** Every channel is evaluated from its keys at the absolute
+  `t`. A full turn is the key pair `0 -> 360`; there is no `azimuth += omega*dt` anywhere. At
+  `t == duration` the eased progress snaps to exactly `1.0` (`Easing.Apply`), so the azimuth is
+  **exactly** `360.0`, and `CameraPlacement.Spherical` folds that to **exactly** `0` before any
+  trigonometry (`360 - 360*floor(360/360)`) — so the resolved placement is **bit-identical** to the
+  one at `t == 0`. Asserted twice (`AFullOrbit_ClosesBitIdentically`,
+  `AnEasedFullOrbit_AlsoClosesExactly`). The emitted **scalar** stays un-normalised (monotonic
+  `0..360`) so a smoother does not see a 359-to-1 discontinuity; the fold happens only in the
+  resolution.
+- **`CameraPlacement.Spherical(radius, azDeg, elDeg)` is the ONE orbit resolution.** Azimuth in the
+  frame's XY plane from +X toward +Y, elevation above it toward +Z; elevation clamped to `[-90,90]`
+  (a Bezier ease may deliberately overshoot); non-finite gives `Vec3.Zero`. **The director must resolve
+  `pose/orbit/*` through it** rather than re-deriving the trigonometry, or a track's circle and a
+  hand-written `echo 90 > pose/orbit/azimuth` land in two different places.
+- **Curves.** `step` holds; `linear` lerps (slerp for rotation); `catmull-rom` is
+  `Splines.CatmullRom` with the terminal keys repeated as their own missing neighbours (centripetal,
+  alpha = 0.5); `bezier` is `Splines.Bezier` with the per-key handles. Scalars are lifted to `(v,0,0)`
+  and read back from `.X`, so they reuse the landed, tested primitives (a 1-D centripetal Catmull-Rom
+  *is* the 3-D one on that lift).
+- **Rotation** defaults to `catmull-rom` (squad) — `a = SquadIntermediate(k-1,k0,k1)`,
+  `b = SquadIntermediate(k0,k1,k2)`, terminal keys repeated — when the channel has **at least 3 keys**,
+  and slerp otherwise; explicit `"curve":"linear"` forces slerp. `bezier` is rejected. Asserted C1
+  across a key boundary, with the slerp discontinuity as the control.
+- **Bezier-ease overshoot survives.** `Easing.Apply` may legitimately return outside `[0,1]`;
+  `linear` segments use a private `LerpUnclamped` (endpoints still snapped exactly) so anticipation and
+  overshoot reach the pose. Spline segments keep the landed **clamped** behaviour — extrapolating a
+  spline past its hull really would fling the camera. Documented asymmetry.
+- **Shot selection** is a binary search for the last shot started by `t`. **Outside a shot the
+  evaluator holds, it does not release:** before the first shot, in a gap, and past the last shot it
+  returns the nearest shot's terminal sample. A gap is a hold; ending playback is the *player's*
+  decision.
+- **`blend_in`** cross-fades from the **previous shot evaluated at its own end** over `blend_in`
+  seconds, eased by `defaults.ease` (falling back to `in-out` — a linear blend edge reads as two cuts).
+  It fades **only the channels both shots declare** (`Position`, `Rotation` (slerp), `AimOffset`,
+  `Roll`, `Fov`, `Orbit*`, `TimeScale`); a channel only the new shot drives is taken at full value, a
+  channel only the old shot drove is released, and discrete channels (frame, anchor, aim target, aim
+  frame, up) cut. The **first** shot has nothing to blend from and starts at full value — softening
+  that edge is the director's `PoseSmoother`, which can see the live composed pose the evaluator
+  deliberately cannot.
+- **`aim.offset`/`target`/`frame`/`up` are constant for a shot** on purpose: the point of an aim
+  channel is that the host re-resolves it against the *live* target every frame. `aim.frame` defaults
+  to **`bodyfixed`**, *not* `defaults.frame` — an aim offset is measured on the subject, which is what
+  makes "+0.9 m on the kittenaut's own Y axis" stay its head as it walks.
+- **Determinism** is asserted directly: the same `t` sampled twice, and sampled out of order, is
+  bit-identical (`TheSameT_AlwaysYieldsABitIdenticalSample`). A NaN `t` degrades to the track start.
+- **Allocation:** `TheSamplePath_AllocatesNothing` — under 64 B over 10 000 samples of a Catmull-Rom +
+  scalar track.
+
+---
+
+## T5. The player, the controller, and the registry
+
+### `CameraPlayback : IPlaybackPlayer, ITrackSampler`
+
+| Member | Value |
+|---|---|
+| `const string CameraTrackKind` | **`"camera-track"`** — the `schedules/<id>/kind` leaf value |
+| `Kind` | `camera-track` |
+| `Clock` | a `PlaybackClock` on **`ClockBase.Render`** (plan §4.4: the playback clock is `dtPlayer`) |
+| `DurationMs` | the track's own length (end of its last shot; a leading gap counts) |
+| `PendingCount` / `Dropped` / `LastError` | **0 / 0 / `-`** — a track fires no entries |
+| `State` | **computed, never latched**: stopped is `done`; clock not started is `pending`; `!loop && position >= duration` is `done`; paused is `paused`; else `running`. **Never `failed`** |
+| `OwnsClock` | `group == ""` |
+| `TrackName`, `Track`, `ShotIndex` | for the director's `CameraStatus` publish |
+
+**Completing is a hold; stopping is a release.** A non-looping track that runs past its end reports
+`done` and **keeps returning its final sample**, so the shot does not snap away the instant it lands.
+`camera.stop` is what makes `TryEvaluate` return false and hands the channels back to the overrides and
+the baseline. (The blend-back seam is the director's — `camera_release_blend_s` + `PoseSmoother`.)
+
+**Eviction safety:** because the player never reports `failed`, `ScheduleStore.IsFinished` reduces for
+this kind to `State == Done`, which is reached only by an explicit stop or by running past the end. A
+take in progress is therefore **structurally un-evictable** under cap pressure — asserted
+(`APlayingTrack_IsNeverEvictedUnderCapPressure`, `MaxLive: 1`, five `Activate` passes).
+
+### `CameraPlaybackController`
+
+Holds the one live player and executes the three verbs — the game-free executor `KsaCatalog` should
+route `camera.play` / `camera.set` / `camera.stop` to, exactly as it routes `schedule.*` to
+`ScheduleStore.Execute`.
+
+| Action | Behaviour | Errnos |
+|---|---|---|
+| `camera.play` | resolve track, parse (cached by version), **retire the current take (`reason=replaced`)**, reserve id, resolve clock, apply `at`/`rate`/`loop`, `Register`, `Start` | ENOENT (no such track), EBUSY (still uploading), EINVAL (bad name, parse failure — **with the parse message** — or the `MaxLive` cap) |
+| `camera.set` | `t` scrubs (`sec*1000`), `rate` sets `Clock.Rate`, plus `loop` and `paused` — the *same* clock the `schedules/<id>/` leaves drive | ENOENT (nothing playing), EINVAL (bad pair/range) |
+| `camera.stop` | retire (`reason=stopped`), unregister | — (**idempotent**: Ok with nothing playing) |
+
+- **Registry id:** the fixed, predictable **`"camera"`** when free, else an auto `#N`
+  (`ReserveId(null)`). So the surface is normally `/sim/ctl/schedules/camera/`.
+- **`loop`** comes from the `play` line when present, else from the track's own `"loop"`.
+- **`rate`** defaults to 1.
+- **Grouped players ignore `at`/`rate`/`loop`** (a Debug note says so) — the ScheduleStore rule that
+  the group's timeline belongs to whoever created it. `camera.set`, being a *live* control, always
+  drives the clock, group or not — exactly like `schedules/<id>/scrub`.
+- **Replacing removes the old player from the registry** (unlike a finished schedule, which persists):
+  there is only ever one camera player and leaving a corpse named `camera` would block id reuse.
+- `Clear()` — teardown: retire, drop the parsed-track cache, reset `LastTrackError`.
+
+### The commit-time validator (the `OnTrackCommitted` seam, promoted)
+
+`CameraPlaybackController`'s constructor installs itself as `CameraStore.OnTrackCommitted`
+(suppressible with `hookCommits: false`). On commit it parses, caches the result by
+`(name, version)`, and — when the bytes are **non-empty** and invalid — **throws
+`VfsErrorException(EINVAL)`**, as CAMERA_ASBUILT §8.9 pre-authorised.
+
+- **An empty commit does not throw.** A zero-byte commit is the ordinary shape of `truncate -s 0` and
+  of a not-yet-started upload, not an authoring error; it is recorded only.
+- The 9p clunk swallows the throw (`Session.FidEntry.Dispose` logs it at Debug) and **cannot carry an
+  errno** — by design. The diagnosis therefore reaches the author **three** ways:
+  1. `ModLog.Warn("camera: rejected track '<name>': <message>")`;
+  2. `CameraPlaybackController.LastTrackError` (`"<name>: <message>"`, `-` when clean);
+  3. the **EINVAL with the same parse message** that `camera/play <name>` returns.
+- **The committed bytes are deliberately left in place**, so `cat /sim/camera/track/<name>` still
+  shows what was written. The HTTP `complete=1` path *does* surface the EINVAL directly.
+- **Deviation from the brief:** the brief asked for the parse error in "the store's status/info text".
+  No such field exists on `CameraStore`, and adding a leaf would require a `SPEC_9P_FILESYSTEM.md`
+  change this work item is forbidden from making. The three surfaces above carry it instead; a
+  `camera/last_error` leaf is a clean C6 follow-up.
+
+### Events (through `CameraStore.EmitEvent`, the bounded `audio.finished` queue)
+
+| Type | `Detail` |
+|---|---|
+| `camera.shot` | `<id> track=<track> shot=<index> name=<shot-name>` |
+| `camera.finished` | `<id> track=<track> kind=camera-track reason=complete\|stopped\|replaced` |
+
+`VesselId` is always `null`; the UT stamp is `ScheduleStore.UtSeconds` (one notion of "when" for the
+whole registry). `camera.shot` fires on each shot boundary and **re-arms on a loop wrap** (diffed off
+`PlaybackClock.LoopCount`), so a looping take announces shot 0 each cycle. `camera.finished
+reason=complete` fires **once**. Emission happens in `CameraPlayback.Poll`, called from
+`TryEvaluate` — the director samples every frame while it drives the camera, which is exactly when a
+track is playing. `Poll(in CameraSample)` is public so a driver may pump the edges without sampling.
+
+> **For the GameMod agent:** the telemetry sampler must drain `CameraStore.DrainEvents()` exactly like
+> `AudioStore`/`ScheduleStore`, gated by `_settings.Events`.
+
+---
+
+## T6. The `ScheduleStore` change (minimal + additive)
+
+| Change | Why |
+|---|---|
+| **`IPlaybackPlayer` gains `bool OwnsClock { get; }`** | the registry advances each distinct clock once per tick and needs to know which players own theirs. It was already `ScheduleRunner.OwnsClock` (`internal`), just not on the interface. No external implementor exists (verified across the whole solution + tests), so this breaks nothing. |
+| **`_runners` retyped `List<ScheduleRunner>` to `List<IPlaybackPlayer>`** | one registry for both kinds. `Tick` now pattern-tests `is ScheduleRunner` (only entry-firing kinds have work there). |
+| `FindRunner` becomes **`FindPlayer`**; `Remove`/`ReleaseSlot`/`GroupInUse` take `IPlaybackPlayer` | so `schedule.pause/scrub/rate/loop/stop/remove` reach a camera track too — asserted (`TheScheduleTransport_DrivesACameraTrackPlayerToo`). |
+| **new `public void Register(IPlaybackPlayer)`** | joins a foreign player. Caller owns `ReserveId` and `Clock.Start()`, exactly as the schedule path does. |
+| **new `public bool Unregister(string id)`** | stop + drop + release id/group — the `schedule.remove` path by another name. |
+| **new `public PlaybackClock ResolveGroupClock(group, base, rate, loop, who = null)`** | extracted from the private `ResolveClock(Schedule)`, which now delegates to it. **Behaviour is unchanged** for schedules; the camera player needs the *same* shared instance, not one that merely agrees. |
+| **`internal double UtSeconds` promoted to `public`** | foreign players stamp their events with the registry's UT. |
+
+`Activate`, `AdvanceAll`, `Publish`, `Clear` and the cap-pressure eviction all work over the unified
+list unchanged. **No schedule path, grammar, leaf or errno moved**; all ~120 existing scheduler tests
+(`ScheduleEvictionTests` included) pass untouched.
+
+---
+
+## T7. Deviations from the brief / plan (with justification)
+
+1. **`Channel<T>`/`Key<T>` are named `TrackChannel<TValue>`/`TrackKey<TValue>`.** *Why:*
+   `CameraChannel` already exists in this namespace and means something different and load-bearing (a
+   compositor channel, i.e. a mask bit). A second unrelated `Channel<T>` beside it would make the mask
+   discipline — the single most important invariant here — read ambiguously at every call site.
+   `TrackChannel` also avoids shadowing `System.Threading.Channels.Channel<T>`.
+2. **`TrackChannel<TValue>` is a sealed class, not a record.** A record's positional array property is
+   handed out mutable; a committed track must be immutable so a shot that started against version 3
+   keeps playing version 3. The indexer also keeps the evaluator's inner loop an array access.
+3. **`TrackKey.Ease` is already resolved** (non-nullable) rather than "the ease as authored". The
+   start-key-else-end-key-else-default rule (T2) is folded in at parse time so the evaluator never has
+   to look at a key's neighbours to know how to leave it.
+4. **`const int TrackParser.MaxShots = 256`, rather than a `CameraLimits` field.** The brief lists
+   "shot count" among the caps, but `CameraLimits` has none and adding one would mean a new
+   `[camera] camera_max_shots` key in `GatOsConfig.cs` + the default TOML — a config-surface change
+   outside this work item. 256 is far past anything hand-authored and exists only to bound the object
+   graph inside the byte cap.
+5. **A seventh public type, `CameraPlacement`.** The orbit channels need spherical-to-cartesian
+   resolution, that maths is game-free, and the director needs *the same* definition for the
+   `pose/orbit/*` leaves. Putting it anywhere else would guarantee two implementations that disagree
+   at the third decimal — and it is where the 360-degree-closure fold lives.
+6. **`CameraPlaybackController` is a new type the brief did not name.** `Playback.cs` was briefed as
+   "the track player"; but `camera.play`/`set`/`stop` need a game-free executor with a stable home (the
+   `ScheduleStore.Execute` precedent), the `OnTrackCommitted` seam needs an owner, and the director
+   needs one object to ask "is anything playing". One type covers all three; `CameraPlayback` stays
+   purely "one playing track".
+7. **`TryEvaluateNow` added beside the briefed `TryEvaluate(tSeconds, ...)`.** Purely additive. The
+   briefed signature ships verbatim (see the banner); `TryEvaluateNow` is the form that keeps the
+   director from deriving a second "now" from something other than the player's own clock.
+8. **`aim.frame` defaults to `bodyfixed`, not `defaults.frame`.** Matching the landed
+   `CameraCommands.ParseAim` default, and for the same reason: an aim offset is measured on the
+   *subject*.
+9. **A rotation channel's default curve is `catmull-rom` (squad), while every other channel defaults
+   to `linear`.** The brief requires "squad when >= 3 keys"; slerp's C0 flick at each waypoint is the
+   documented defect a rotation track exists to avoid. `"curve":"linear"` forces slerp.
+10. **`linear` segments extrapolate (endpoints still snapped); spline segments clamp.** The brief notes
+    a Bezier ease may legitimately leave `[0,1]` and that consumers must clamp themselves. Clamping
+    *everything* would delete anticipation/overshoot — the only shapes a power curve cannot express —
+    so linear segments honour it and splines (whose extrapolation would fling the camera outside the
+    key hull) do not.
+11. **A gap, a pre-roll and a run-off-the-end all HOLD.** The brief left this open. Releasing in a gap
+    would snap the camera back to the overrides and then snap again when the next shot began.
+12. **The parse error is not in `CameraStore`'s status/info text** — see T5's deviation note.
+
+---
+
+## T8. Still open (not this work item)
+
+- **Wiring in `gatOS.GameMod`:** construct `CameraPlaybackController(camera, schedules)`; route
+  `camera.play`/`camera.set`/`camera.stop` in `KsaCatalog` to `controller.Execute`; call
+  `controller.TryEvaluateNow(out pose, out channels)` in the director and feed
+  `CameraState.Compose(pose, channels)`; publish `CameraStatus` from `controller.Current`
+  (`TrackName`, `Clock.PositionMs`, `DurationMs`, `ShotIndex` + `Track.Shots[i].Name`, `State`,
+  `Clock.Rate`, `Clock.Loop`); drain `CameraStore.DrainEvents()` in the telemetry sampler; call
+  `controller.Clear()` from `Mod.TeardownGameCheats`.
+- **The `TimeScale` bit must be ignored by the director until C4**, then gated on
+  `camera_allow_time_channel` + `[control] debug_namespace`.
+- **The director must resolve `pose/orbit/*` through `CameraPlacement.Spherical`.**
+- Docs lockstep (AGENTS.md §9) from this note — notably the SPEC's `/sim/camera` track-schema section
+  (T2 is the source text), the `schedules/<id>/kind` value `camera-track`, and the two event rows.
+- `docs/VALIDATION.md` — the camera checklist per plan §9.
+- Optional C6 follow-ups: a `camera/last_error` leaf for T5's upload-rejection text; a
+  `camera_max_shots` config key for T7.4.
