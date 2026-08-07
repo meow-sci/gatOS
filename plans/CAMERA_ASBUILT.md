@@ -943,6 +943,11 @@ snapshot alongside audio's, IVA's and the scheduler's.
 
 ## G11. Still open after this work item
 
+> **Superseded — read §W9 instead.** C3 landed (the `# Track evaluator (L3)` section below), and its
+> wiring plus C4 and the shippable half of C5 landed in the `# Integration + C4 + C5` section at the end
+> of this file. The list below is kept as the record of what was open *at the time*; every item except
+> the HTTP track route, the docs lockstep and the live pass is now done or has a verdict.
+
 - **C3** — the track parser/evaluator/player (G7 is where it plugs in).
 - **C4** — the `time` channel (`Universe.SetSimulationSpeed`), gated on `debug_namespace`;
   `[camera] camera_allow_time_channel` is still unconsumed.
@@ -1368,6 +1373,10 @@ list unchanged. **No schedule path, grammar, leaf or errno moved**; all ~120 exi
 
 ## T8. Still open (not this work item)
 
+> **Superseded — read §W9 instead.** Every GameMod wiring item below is done (§W2), the `TimeScale` bit
+> now has its applier (§W3), and the director resolves `pose/orbit/*` through `CameraPlacement.Spherical`.
+> `camera/last_error` shipped (§W5). The list is kept as the record of what was open at the time.
+
 - **Wiring in `gatOS.GameMod`:** construct `CameraPlaybackController(camera, schedules)`; route
   `camera.play`/`camera.set`/`camera.stop` in `KsaCatalog` to `controller.Execute`; call
   `controller.TryEvaluateNow(out pose, out channels)` in the director and feed
@@ -1383,3 +1392,317 @@ list unchanged. **No schedule path, grammar, leaf or errno moved**; all ~120 exi
 - `docs/VALIDATION.md` — the camera checklist per plan §9.
 - Optional C6 follow-ups: a `camera/last_error` leaf for T5's upload-rejection text; a
   `camera_max_shots` config key for T7.4.
+
+---
+---
+
+# Integration + C4 + C5 — the track seam wired, the time channel, and the map/IVA verdict, as built
+
+> **Scope:** the C3 evaluator is now actually driving the camera; task **C4** (the interpolated `time`
+> channel) is complete; task **C5** is **partially** complete — `C5.2` ships `/sim/camera/map/scope`,
+> and **`C5.1` (IVA) and the "park in Map" half of `C5.2` are NOT implementable without a Harmony
+> patch** (§W6 — evidence, not opinion). Two new `/sim` leaves. **Zero Harmony patches**, still.
+>
+> Baseline: KSA `2026.8.5.5168`, every new binding verified against
+> `ksa-game-assemblies/current/decomp/` on **2026-08-06**.
+>
+> Build **0 warnings / 0 errors**; **1 313 passed, 0 failed** (from 1 308 — +5 new, none regressed).
+> `SPEC_9P_FILESYSTEM.md`, `scope/**` and `docs/**` were **not** touched: this section is their input.
+> **Not committed.**
+
+---
+
+## W1. Files changed
+
+| File | Change |
+|---|---|
+| `gatOS.SimFs/Camera/CameraStore.cs` | `CameraStatus` gains **`double MapScope = 0`** (trailing, defaulted — every existing construction site compiles unchanged); `CameraStore` gains the volatile **`LastError`** property; the `OnTrackCommitted` doc no longer says "C3 has not landed" |
+| `gatOS.SimFs/Camera/CameraCommands.cs` | new action key **`MapScopeAction = "camera.map_scope"`** |
+| `gatOS.SimFs/Camera/CameraFormat.cs` | `Status()` gains a **`map_scope <m>`** line (after `tidal`) |
+| `gatOS.SimFs/Camera/Playback.cs` | `CameraPlaybackController.LastTrackError` now **delegates to `CameraStore.LastError`** (one definition); every `camera.play` failure funnels through a new private `Fail(...)` that records it; a successful `play` clears it |
+| `gatOS.SimFs/SimFsTree.cs` | `camera/last_error` (`LiveLine`) and the `camera/map/` dir with `scope` (`RangedControl`) |
+| `gatOS.GameMod/Game/Ksa/Camera/CameraDirector.cs` | the **C3 seam wired**; the **C4 time channel** (`ApplyTimeScale`); **`SetMapScope`**; a `Playback` property; playback stop + sim-speed restore in `Restore`; `playback.Clear()` in `Shutdown`; the §W6 verdict written into the type remarks |
+| `gatOS.GameMod/Game/Ksa/Camera/CameraReader.cs` | `Sample` takes the live `CameraPlayback?` and fills the eight player fields + `MapScope` from it |
+| `gatOS.GameMod/Game/Ksa/Camera/CameraFrames.cs` | `TryResolvePosition` resolves `pose/orbit/*` through **`CameraPlacement.Spherical`**; the local `SphericalDirection` (and the now-unused `DegToRad`) deleted |
+| `gatOS.GameMod/Game/Ksa/Actuators/CameraActuator.cs` | `camera.play`/`set`/`stop` route to `director.Playback.Execute`; new `camera.map_scope` case |
+| `gatOS.GameMod/Game/Mod.Game.cs` | `CameraPlaybackController` constructed in `EnsureControlObjects` and passed to the director, with the two time-channel config gates |
+
+Tests: `CameraTreeTests` (+2 tests, +3 `TestCase`s, three expectations updated),
+`SimFsTreeTests`' control-enabled crawl guard extended with both new paths.
+
+---
+
+## W2. The C3 seam, as wired
+
+`CameraDirector.Update` (the `// ---- THE C3 SEAM ----` banner is gone; the code is the comment now):
+
+```csharp
+CameraPose? trackSample = null;
+var trackClaims = CameraChannelMask.None;
+if (playback is { } player && player.TryEvaluateNow(out var sampled, out var claims))
+{
+    trackSample = sampled;
+    trackClaims = claims;
+}
+
+var pose = store.State.Compose(trackSample, trackClaims);
+```
+
+- **`TryEvaluateNow`, never `TryEvaluate(t, …)`.** It samples at the player's own `PlaybackClock` — the
+  same instance `/sim/ctl/schedules/<id>/{t,rate,pause,scrub,loop}` drives and the same one a shared-clock
+  group shares. Deriving a second "now" here (from `dt`, or from `Program.FrameNumber`) is exactly the
+  drift plan §3.4 exists to prevent.
+- **`trackClaims` is passed unmasked**, including `TimeScale` — C4 lands in the same work item, so the
+  bit now has an applier (§W3). It continues to be threaded through `Apply` to `ApplyProjection` for the
+  `ortho_height` case, and now also to `ApplyTimeScale`.
+- **The player fields are published, not latched.** `CameraReader.Sample` takes `playback?.Current` and
+  reads `TrackName`, `Clock.PositionMs`, `DurationMs`, `ShotIndex` (plus the bounds-checked
+  `Track.Shots[i].Name`), `State`, `Clock.Rate`, `Clock.Loop` straight off it, so `camera/playback` and
+  `ctl/schedules/camera/t` can never disagree about where the take is.
+- **`camera.play`/`set`/`stop` route to `CameraPlaybackController.Execute`** from `CameraActuator`,
+  exactly as `KsaCatalog` routes `schedule.*` to `ScheduleStore.Execute`. The former EOPNOTSUPP stub is
+  gone; a *new* EOPNOTSUPP takes its place for the one configuration that genuinely cannot play a track
+  — see §W8.4.
+- **`pose/orbit/*` now resolves through `CameraPlacement.Spherical`** (game-free, shared with the
+  track's `"mode":"orbit"`), so a track's circle and `echo 90 > pose/orbit/azimuth` land in the same
+  place, and the leaf path inherits the 360-degree closure fold. `CameraFrames.SphericalDirection` is
+  deleted: a second implementation is the failure mode, so it does not get to survive as dead code.
+- **Events** already reached `/sim/events`: `TelemetrySampler` was drilling `CameraDirector.DrainEvents`
+  into `CameraStore.DrainEvents` from the previous work item; `CameraPlayback.Poll` (called from
+  `TryEvaluate`) is now what fills that queue.
+- **Construction** (`Mod.Game.cs`): `new CameraPlaybackController(cameraStore, scheduleStore)` with
+  `hookCommits` left at its default `true` — nothing else wants `CameraStore.OnTrackCommitted`, so the
+  controller is the commit-time validator, and a malformed upload fails the write.
+
+### Two lifecycle decisions the brief left open
+
+1. **Releasing the camera stops the take.** `CameraDirector.Restore()` ends with
+   `playback?.Execute(camera.stop)`. *Why:* once the director is idle nothing samples the player, so a
+   surviving take would drive nothing, emit no further `camera.shot` edges, and still occupy
+   `/sim/ctl/schedules/camera` as a live entry. It is literally the `camera/stop` verb, so it emits the
+   documented `camera.finished reason=stopped`. It is the **last** statement in the restore's `try`, so
+   giving the player their camera back can never be skipped by a failure in it.
+2. **`Shutdown()` additionally calls `playback.Clear()`** — drops the parsed-track cache and resets
+   `LastError` alongside `CameraStore.Clear()`'s track eviction. `Restore()` deliberately does *not*
+   clear `LastError`: a release must not erase the diagnosis a guest is about to read.
+
+---
+
+## W3. C4 — the interpolated `time` channel
+
+`CameraDirector.ApplyTimeScale(pose, trackClaims)`, called from `Apply` right after `ApplyProjection`.
+**No new `/sim` leaf**: plan §7 C4.1 is explicit that `debug/time/warp` (action `debug.warp`,
+`SimFsTree.cs:1272`, the same `Universe.SetSimulationSpeed` primitive) already covers the discrete case
+and is already schedulable through `ctl/timed_batch`. C4 adds only the interpolated channel, which is
+authored as a track's `"time": { "keys": [...] }` and claims `CameraChannel.TimeScale`.
+
+| Aspect | Behaviour |
+|---|---|
+| Binding | `Universe.SetSimulationSpeed(value, alert: false)` (`KSA/Universe.cs:1998`). `alert: false` is load-bearing — the default draws a speed `TimedAlert` on screen, i.e. in the footage. |
+| Gates | **`[control] debug_namespace` AND `[camera] camera_allow_time_channel`**, both passed to the director's constructor. |
+| Gate closed | **Ignored with a one-shot `ModLog.Warn`, not an error.** Plan §4.4 says "ignored with a warning otherwise", and failing a whole shot over a config flag would be worse than running it at 1x. The message names *which* gate is off. Re-armed on each `Take()`, so one warning per ownership session rather than one per process (a 60 Hz driver must not fill the log). |
+| Capture | `Universe.GetSimulationSpeed()` (`:2021`), read **lazily — the first frame the channel is actually driven**, never at ownership take. |
+| Restore | In `Restore()`, **only when that capture happened**. A director that never touches time leaves the player's warp setting exactly as found. `_timeCaptured`/`_appliedTimeScale` reset in the `finally`, so even a throwing restore leaves no latch. |
+| Idempotence | The write is skipped while the composed value equals the last applied one, so a settled curve does not re-write every frame. |
+| Values | `0` pauses, `0.15` is slow-mo, `> 1` warps. Non-finite or negative is ignored (the parser already rejects those; this is the belt). |
+| Read-back | Already existed: `camera/status`' `time_scale` line now reports the composed effective value, because the `TimeScale` bit reaches `Compose`. |
+
+### The `Universe.IsAutoWarpActive` interaction (documented, deliberately **not** guarded)
+
+Neither public `SetSimulationSpeed` overload checks `Universe.IsAutoWarpActive` (`:96`) — only the
+private `simspeed` terminal command (`SetSimulationSpeedDirect`, `:622`) does, and it refuses outright.
+Meanwhile the auto-warp update itself calls `SetSimulationSpeed(num10, alert: false)` **every step**
+(`:1929`). So a track driving the time channel during an auto-warp *fights* it, and whoever wrote last
+in the frame wins — in practice gatOS, because the auto-warp update runs inside the sim step and
+`ApplyTimeScale` runs after the render. No guard was added because the game itself does not pick a
+winner and both alternatives are worse: refusing would make a shot silently ignore its own authored
+curve, and stopping the auto-warp would cancel a manoeuvre the player scheduled. **Stop the auto-warp
+before rolling the shot.** Stated in the `ApplyTimeScale` XML docs and worth a SPEC sentence.
+
+---
+
+## W4. C5.2 — `/sim/camera/map/scope` (the part of C5 that ships)
+
+| | |
+|---|---|
+| Path | `/sim/camera/map/scope` — its own `map/` directory, so a second map knob needs no new top-level name |
+| Archetype | **St** — `RangedControl` `[0, inf)`; read-only `StaticTextFile` twin with no command sink |
+| Action | `camera.map_scope`, **global** addressing (`VesselId = ""`, `Ordinal = NoOrdinal`), **Frame** phase |
+| Binding | `Program.MainViewport.MapController.Scope` (`KSA/MapController.cs:33`, a plain `public double`) |
+| Errnos | EINVAL (non-finite, or `< 0`) |
+| Read-back | `CameraStatus.MapScope`, plus a new `map_scope <m>` line in `camera/status` |
+| Ownership | **Not gated.** Like `mode`/`follow`/`tidal` it configures the *game's* camera, not the composed pose |
+
+Three inherited behaviours the SPEC should state, all of them the game's own:
+
+1. `MapController.OnFrame` clamps `Scope` **up** to `Camera.Following.MeanRadius` on every map frame, so
+   a smaller written value reads back clamped.
+2. `OnSwitchOn` calls `SetDefaults()` — which recomputes `Scope` wholesale from the focus's mean radius
+   and sphere of influence — whenever the follow target changed since the map was last left. A scope
+   written before a focus change does not survive it.
+3. It has **no visible effect outside `map` mode**; until then it is a stored field.
+
+**The read-back publish.** `SetMapScope` writes the field and then publishes
+`store.Status with { MapScope = controller.Scope }` (one volatile swap). This is necessary because the
+director only samples the live viewport while it *owns* the camera — and map is precisely the mode in
+which it does not — so without it the leaf would report the idle `0` for a value the guest had just
+written. It does **not** change the §G9.2 property that `mode`/`follow`/`tidal`/`target` report idle
+values for an unowned camera; it just means a write to this one leaf is observable.
+
+---
+
+## W5. `/sim/camera/last_error` (the second new leaf)
+
+| | |
+|---|---|
+| Path | `/sim/camera/last_error` |
+| Archetype | **S** — `LiveLine`, formatted per access |
+| Value | `"<track>: <message>"`, or `-` when clean |
+| Source | **`CameraStore.LastError`** (a volatile string on the store, not on `CameraStatus`) |
+
+*Why it exists:* a 9p **clunk** — which is what commits an upload — cannot carry an errno, so a guest
+that `cp`s a malformed track had no way to *read* why it was rejected. Task C3 left the diagnosis in
+three places (`ModLog.Warn`, `CameraPlaybackController.LastTrackError`, and the later EINVAL from
+`camera/play`), **none of which is visible from inside the guest at the moment it went wrong**. This is
+that diagnosis, on the filesystem, on every transport.
+
+*Why on the store and not on `CameraStatus`:* the status is published only by the director, and only
+while gatOS owns the camera — which is not when tracks get uploaded. `CameraPlaybackController.LastTrackError`
+now simply **delegates** to `CameraStore.LastError`, so there is one definition and the property and the
+leaf cannot disagree.
+
+**What sets it:**
+
+- a commit that failed to parse (`OnTrackCommitted`) — including the empty-commit case, which records
+  but does not throw;
+- **every** `camera.play` rejection — bad name, ENOENT, EBUSY, a parse failure, or the `MaxLive` cap —
+  funnelled through a new private `Fail(name, outcome, message)`. This matters most on the
+  `ctl/timed_batch` path, where the errno has no caller left to read it;
+- **cleared by a `camera.play` that actually started** (a take that started is the proof the track is
+  good) and by `CameraPlaybackController.Clear()` (teardown). Nothing else clears it: an error that
+  stays until something works is more useful than one that quietly ages out.
+
+Empty/whitespace assignments render as `-`, so the leaf is never blank.
+
+---
+
+## W6. C5.1 (IVA) and "park in Map" — **NOT implemented; here is the evidence**
+
+The plan's §7 C5.1/C5.2 assume "gatOS writes last (end of `OnAfterFrame`, after `OnFrameViewports`), so
+the seat-pin and the cone-clamp are bypassed". **That assumption is false**, and the decomp says so
+plainly. The real per-frame order is:
+
+```
+frame N   : OnFrameViewports -> controller.OnFrame -> Camera.OnFrame (builds _vp) -> Render
+            ... -> [StarMapAfterOnFrame] -> gatOS writes PositionEcl / LocalRotation
+frame N+1 : OnFrameViewports -> controller.OnFrame   <- overwrites, BEFORE any matrix is rebuilt
+                             -> Camera.OnFrame       <- builds _vp from the CONTROLLER's values
+```
+
+(`Viewport.OnFrame`, `KSA/Viewport.cs:139-144`, is literally
+`GetActiveController().OnFrame(this, dt); GetCamera().OnFrame(dt);`.)
+
+gatOS writing "last" in frame *N* therefore only reaches the screen because the active controller writes
+**nothing** at the top of frame *N+1*. `FixedController.OnFrame` (`KSA/FixedController.cs:18-35`) wraps
+its **entire body** in `if (following != null)`, and ownership unfollows — that is the whole trick, and
+it is specific to `FixedController`.
+
+**`IVAController.OnFrame` (`KSA/IVAController.cs:27-118`) — what it actually does:**
+
+- lines 29-38: `if (!(Camera.Following is Vehicle vehicle))` then `Program.HoveredViewport.NextCameraMode(); return;`
+  and the same for `vehicle != LastFollowing`. gatOS's ownership requires `Following == null`, so this
+  fires **immediately** and cycles the mode (IVA to Orbit) — on the *hovered* viewport, which need not
+  even be the one gatOS bound.
+- line 41: `Camera.PositionEcl = vehicle.GetPositionEcl() + ...` — **unconditional**; the seat pin is not
+  something a later writer can win, it is the first thing written each frame.
+- line 112: `Camera.LocalRotation = localRotation` — written on every frame except the switch frame,
+  after the cone clamp (lines 82-108).
+
+So C5.1 as designed does not "bypass the seat pin"; it produces a camera that either bounces straight
+out of IVA mode or is driven entirely by the IVA controller with gatOS's writes never rendered — the
+"silently does nothing" outcome the brief said to report rather than ship.
+
+**`MapController.OnFrame` (`KSA/MapController.cs:124-289`) fails the same test:** lines 126-130,
+`if (Camera.Following == null) { Program.SetCameraMode(CameraMode.Free); return; }`; and lines 281-282
+assign **both** `Camera.PositionEcl` and `Camera.LocalRotation` from its own scope/orbit-view solution,
+unconditionally, at the end of every frame.
+
+**Conclusion.** Making either an ownership context requires a Harmony patch to suppress a controller's
+`OnFrame` — the exact thing this feature's design exists to avoid (plan §0.2, §5.2, and the `unscience`
+`UnpatchAll` cautionary tale of §1.3). Neither is offered, and the reasoning is written into
+`CameraDirector`'s type remarks so the next reader does not re-derive it. The rest of C5.2 —
+`MapController.Scope` as a first-class leaf — ships (§W4), and it is the part with standalone value.
+
+**Hazard 10 (`Camera.NoRotation` changing the meaning of `PositionCce`/`LocalPosition`) is
+consequently moot for the owned camera** and needs no frame-resolution change: `Take` sets
+`NoRotation = false` on the base camera and unfollows, and with `_following == null` *and* `Parent == null`
+both `Camera.PositionEcl` (`KSA/Camera.cs:106-127`) and `WorldRotation` (`:130-146`) bypass the flag
+entirely. It still matters on the **restore** path, where it is already handled (§G4 step 2, and
+`RestorePositionEcl`'s reproduction of the `PositionCce` composition).
+
+**C5.3 remains a VALIDATION item**, untouched and correctly so — the bubble-relative ego question is
+explicitly conditional on what a live pass shows.
+
+---
+
+## W7. New / updated `[KsaAnchor]`s
+
+All `Verified = "2026-08-06"`, `GameVersion = "2026.8.5.5168"`.
+
+| Member | File | Risk | Binds |
+|---|---|---|---|
+| `CameraDirector.ApplyTimeScale` (**new**) | `Camera/CameraDirector.cs` | Medium | `Universe.SetSimulationSpeed(double, alert:false)` (`:1998`), `Universe.GetSimulationSpeed()` (`:2021`), `Universe.IsAutoWarpActive` (`:96`) |
+| `CameraDirector.SetMapScope` (**new**) | `Camera/CameraDirector.cs` | Medium | `Program.MainViewport.MapController`; `MapController.Scope` (`:33`) |
+| `CameraDirector.Restore` (**extended**) | `Camera/CameraDirector.cs` | Medium | plus `Universe.SetSimulationSpeed` (conditional restore) |
+| `CameraReader.Sample` (**extended**) | `Camera/CameraReader.cs` | Medium | plus `Viewport.MapController`, `MapController.Scope` |
+
+`CameraFrames.TryResolvePosition` lost no binding — the deleted `SphericalDirection` was pure
+trigonometry with no KSA type in it.
+
+---
+
+## W8. Deviations / decisions flagged for review
+
+1. **`camera/status` gained a `map_scope` line.** The status block is documented as "the whole camera
+   state, one `key value...` per line", and `mode`/`follow`/`tidal` — the other game-camera controls —
+   are already there. `last_error` deliberately is **not** added: it is a diagnostic, not state, and
+   status is meant to stay trivially machine-parseable.
+2. **`CameraStatus.MapScope` is a trailing defaulted positional parameter.** A record's positional
+   parameters accept defaults, so every existing construction site (one in tests, one in
+   `CameraReader`) compiled unchanged and `CameraStatus.Idle` did not have to be respelled.
+3. **`camera.map_scope` is range-validated in the director, not in a new `CameraRules` member.** The
+   rule is "finite and >= 0" — identical to `IsValidOrbitRadius`, and a second name for it would only
+   invite the two to drift. The 9p path is bounded by the leaf's own `RangedControl`; the HTTP/MQTT
+   `POST /v1/command` path hits the director's check, which is where the game's own clamping and the
+   read-back publish also live.
+4. **`camera.play`/`set`/`stop` answer EOPNOTSUPP when `[schedule] schedule_enabled = false`,** with a
+   message naming the flag. A camera track *is* a `/sim/ctl/schedules` entry (`kind = camera-track`), so
+   there is genuinely nowhere to register a player without the registry. Every L1/L2 channel still works
+   in that configuration, and the message says so. This is a real, reachable configuration and wants a
+   SPEC sentence.
+5. **The blend-back samples the track.** During a `Phase.Releasing` blend the evaluator is still called
+   (so `camera.shot` edges keep firing and the published status stays truthful about the player's
+   timeline) even though `StepRelease` ignores the pose. The take is stopped at the end of the blend, by
+   `Restore`.
+6. **`_timeWarned` is per ownership session,** not per process — see §W3.
+
+---
+
+## W9. Still open after this work item
+
+- **C5.1 (IVA) and Map-as-an-ownership-context** — blocked on the §W6 finding; they need a Harmony patch
+  or a redesign, and neither was improvised.
+- **C5.3** — the bubble-relative ego re-check (a VALIDATION item by construction).
+- The HTTP `PUT /v1/camera/track/<name>` route (`CameraStore.HttpUpload` is built and tested; the route
+  is not).
+- **Docs lockstep (AGENTS.md §9)** from this note: `SPEC_9P_FILESYSTEM.md` (the two new leaves, the
+  `camera.map_scope` action row, the `map_scope` status line, the §W3 time-channel semantics and its two
+  config gates, and the §W8.4 EOPNOTSUPP), `docs/KSA_INTEGRATION_MATRIX.md` (§W7),
+  `scope/FULL_SCOPE.md` + `scope/ksa-{read,write}-surface.md`, `CLAUDE.md`, `docs/MILESTONES.md`.
+- **In-game validation** — nothing here has run against a live flight. Beyond plan §9's list this work
+  item specifically wants: a track actually driving the camera end to end (upload, `play`, shot edges,
+  `finished`); `camera/last_error` after a deliberately malformed `cp`; the time channel easing into
+  slow-mo and **restoring the player's warp on release** (and *not* touching it when no shot used it);
+  the one-shot warning with either gate off; `camera/map/scope` in map mode, including the two clamping
+  behaviours of §W4; and confirmation that `pose/orbit/*` and a track's `"mode":"orbit"` now put the
+  camera in the same place.

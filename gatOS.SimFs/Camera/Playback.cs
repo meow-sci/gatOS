@@ -257,8 +257,6 @@ public sealed class CameraPlaybackController : ITrackSampler
     private readonly object _cacheLock = new();
     private readonly Dictionary<string, CachedTrack> _cache = new(StringComparer.Ordinal);
 
-    private volatile string _lastTrackError = "-";
-
     /// <param name="camera">The track store (and the <c>camera.*</c> event queue).</param>
     /// <param name="schedules">The player registry this controller's player joins.</param>
     /// <param name="hookCommits">
@@ -279,10 +277,15 @@ public sealed class CameraPlaybackController : ITrackSampler
     public CameraPlayback? Current { get; private set; }
 
     /// <summary>
-    ///     The last upload rejection, or <c>-</c>. The clunk that committed a bad track could not carry
-    ///     an errno, so this is where that diagnosis lives until someone tries to play it.
+    ///     The last upload or playback rejection, or <c>-</c>. The clunk that committed a bad track could
+    ///     not carry an errno, so this is where that diagnosis lives until someone tries to play it.
     /// </summary>
-    public string LastTrackError => _lastTrackError;
+    /// <remarks>
+    ///     Backed by <see cref="CameraStore.LastError"/> — one definition, so the <c>camera/last_error</c>
+    ///     leaf and this property can never disagree, and the leaf stays readable while gatOS does not
+    ///     own the camera (which is when tracks are uploaded).
+    /// </remarks>
+    public string LastTrackError => _camera.LastError;
 
     /// <inheritdoc />
     public bool TryEvaluate(double tSeconds, out CameraPose sample, out CameraChannelMask channels)
@@ -338,7 +341,7 @@ public sealed class CameraPlaybackController : ITrackSampler
             _cache.Clear();
         }
 
-        _lastTrackError = "-";
+        _camera.LastError = CameraFormat.Absent;
     }
 
     // ---- camera.play / set / stop -------------------------------------------------------------------
@@ -347,18 +350,18 @@ public sealed class CameraPlaybackController : ITrackSampler
     {
         var name = command.Token;
         if (string.IsNullOrEmpty(name) || !CameraStore.IsValidName(name))
-            return new CommandResult(CommandOutcome.Invalid, "camera.play: no track name");
+            return Fail(name ?? "", CommandOutcome.Invalid, "camera.play: no track name");
 
         switch (_camera.TryGet(name, out var raw))
         {
             case CameraTrackLookup.Missing:
-                return new CommandResult(CommandOutcome.NotFound, $"no camera track '{name}'");
+                return Fail(name, CommandOutcome.NotFound, $"no camera track '{name}'");
             case CameraTrackLookup.Uploading:
-                return new CommandResult(CommandOutcome.Busy, $"camera track '{name}' is still uploading");
+                return Fail(name, CommandOutcome.Busy, $"camera track '{name}' is still uploading");
         }
 
         if (!TryResolve(raw!, out var track, out var error))
-            return new CommandResult(CommandOutcome.Invalid, error);
+            return Fail(name, CommandOutcome.Invalid, error!);
 
         var values = command.Values;
         var group = command.Aux ?? "";
@@ -381,7 +384,7 @@ public sealed class CameraPlaybackController : ITrackSampler
         }
         catch (VfsErrorException ex)
         {
-            return new CommandResult(CommandOutcome.Invalid, ex.Message);
+            return Fail(name, CommandOutcome.Invalid, ex.Message);
         }
 
         var clock = _schedules.ResolveGroupClock(group, ClockBase.Render, rate, loop, id);
@@ -410,7 +413,23 @@ public sealed class CameraPlaybackController : ITrackSampler
         _schedules.Register(player);
         clock.Start();
         Current = player;
+        // A take that actually started is the proof the track is good, so it clears the diagnosis a
+        // failed upload or a failed play left behind. Nothing else clears it: an error that stayed on
+        // screen until something worked is far more useful than one that quietly ages out.
+        _camera.LastError = CameraFormat.Absent;
         return CommandResult.Ok;
+    }
+
+    /// <summary>
+    ///     Records a play rejection in <see cref="CameraStore.LastError"/> and returns it. Every
+    ///     <c>camera.play</c> failure funnels through here so <c>camera/last_error</c> explains a failed
+    ///     <i>play</i> as well as a failed upload — the errno reaches only the caller, and on the
+    ///     <c>ctl/timed_batch</c> path there is no caller left to read it.
+    /// </summary>
+    private CommandResult Fail(string name, CommandOutcome outcome, string message)
+    {
+        _camera.LastError = name.Length > 0 ? $"{name}: {message}" : message;
+        return new CommandResult(outcome, message);
     }
 
     private CommandResult Set(SimCommand command)
@@ -499,7 +518,7 @@ public sealed class CameraPlaybackController : ITrackSampler
         if (ok)
             return;
 
-        _lastTrackError = $"{track.Name}: {error}";
+        _camera.LastError = $"{track.Name}: {error}";
         ModLog.Log.Warn($"camera: rejected track '{track.Name}': {error}");
 
         // An empty commit is the ordinary shape of `truncate -s 0` and of an upload that has not

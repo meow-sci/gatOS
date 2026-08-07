@@ -255,9 +255,9 @@ public sealed class SimFsTreeTests
             "ctl/schedules/crawl/pause", "ctl/schedules/crawl/scrub", "ctl/schedules/crawl/rate",
             "ctl/schedules/crawl/loop", "ctl/schedules/crawl/stop", "ctl/schedules/crawl/remove",
             // the programmable camera: ownership, the granular pose channels, the track dir, playback
-            "camera/status", "camera/info", "camera/target", "camera/playback",
+            "camera/status", "camera/info", "camera/target", "camera/playback", "camera/last_error",
             "camera/enabled", "camera/release", "camera/mode", "camera/follow", "camera/tidal",
-            "camera/track/crawl.json",
+            "camera/map/scope", "camera/track/crawl.json",
             "camera/pose/position", "camera/pose/frame", "camera/pose/anchor", "camera/pose/geo",
             "camera/pose/orbit/radius", "camera/pose/orbit/azimuth", "camera/pose/orbit/elevation",
             "camera/pose/rotation", "camera/pose/aim", "camera/pose/aim_target",

@@ -53,6 +53,14 @@ public static class CameraCommands
     /// <summary>Set the tidal-locking flag of the follow.</summary>
     public const string TidalAction = "camera.tidal";
 
+    /// <summary>
+    ///     Set the map view's scope (zoom radius), metres. Like <see cref="ModeAction"/>,
+    ///     <see cref="FollowAction"/> and <see cref="TidalAction"/> this drives the <i>game's</i> camera
+    ///     rather than the composed pose, so it is not a <see cref="CameraChannel"/> and has no track
+    ///     channel; it only has a visible effect while the viewport is in <c>map</c> mode.
+    /// </summary>
+    public const string MapScopeAction = "camera.map_scope";
+
     /// <summary>Place the camera: <c>"x y z [frame]"</c>.</summary>
     public const string PositionAction = "camera.position";
 

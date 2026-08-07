@@ -92,6 +92,7 @@ public static class CameraFormat
                + $"mode {Mode(status.Mode)}\n"
                + $"follow {status.Follow}\n"
                + $"tidal {(status.Tidal ? 1 : 0)}\n"
+               + $"map_scope {Formats.Scalar(status.MapScope)}\n"
                + $"anchor {pose.Anchor}\n"
                + $"frame {Frame(pose.Frame)}\n"
                + $"position {Formats.Scalar(pose.Position.X)} {Formats.Scalar(pose.Position.Y)} "

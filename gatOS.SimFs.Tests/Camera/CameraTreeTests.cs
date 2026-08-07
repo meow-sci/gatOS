@@ -91,7 +91,8 @@ public sealed class CameraTreeTests
             ShotIndex: 0,
             Playback: PlaybackState.Running,
             Rate: 0.5,
-            Loop: false));
+            Loop: false,
+            MapScope: 1500000));
 
     // ---- structure --------------------------------------------------------------------------------
 
@@ -101,13 +102,15 @@ public sealed class CameraTreeTests
         var camera = await ListAsync("camera");
         var pose = await ListAsync("camera", "pose");
         var orbit = await ListAsync("camera", "pose", "orbit");
+        var map = await ListAsync("camera", "map");
         Assert.Multiple(() =>
         {
             Assert.That(camera, Is.EquivalentTo(new[]
             {
-                "status", "info", "target", "playback", "track", "enabled", "mode", "follow", "tidal",
-                "pose", "play", "set", "release", "stop",
+                "status", "info", "target", "playback", "last_error", "track", "enabled", "mode",
+                "follow", "tidal", "map", "pose", "play", "set", "release", "stop",
             }));
+            Assert.That(map, Is.EqualTo(new[] { "scope" }));
             Assert.That(pose, Is.EquivalentTo(new[]
             {
                 "position", "frame", "anchor", "geo", "orbit", "rotation", "aim", "aim_target",
@@ -128,7 +131,7 @@ public sealed class CameraTreeTests
         string[][] leaves =
         [
             ["camera", "enabled"], ["camera", "mode"], ["camera", "follow"], ["camera", "tidal"],
-            ["camera", "target"],
+            ["camera", "target"], ["camera", "map", "scope"],
             ["camera", "pose", "position"], ["camera", "pose", "frame"], ["camera", "pose", "anchor"],
             ["camera", "pose", "geo"], ["camera", "pose", "rotation"], ["camera", "pose", "aim"],
             ["camera", "pose", "aim_target"], ["camera", "pose", "aim_offset"],
@@ -140,7 +143,7 @@ public sealed class CameraTreeTests
         ];
         string[] expected =
         [
-            "1\n", "fixed\n", "vessel:apollo11\n", "1\n", "apollo11\n",
+            "1\n", "fixed\n", "vessel:apollo11\n", "1\n", "apollo11\n", "1500000\n",
             "-40 8 12 bodyfixed\n", "bodyfixed\n", "body:earth\n",
             "28.5 -80.5 45 body:earth\n", "0 0 0 1\n",
             "part:apollo11/77 off 0 1.2 0 frame lvlh up velocity roll -6\n",
@@ -169,6 +172,7 @@ public sealed class CameraTreeTests
             + "mode fixed\n"
             + "follow vessel:apollo11\n"
             + "tidal 1\n"
+            + "map_scope 1500000\n"
             + "anchor body:earth\n"
             + "frame bodyfixed\n"
             + "position -40 8 12\n"
@@ -208,6 +212,58 @@ public sealed class CameraTreeTests
         });
     }
 
+    [Test]
+    public async Task LastError_ReadsTheStoresDiagnosis_AndIsDashWhenClean()
+    {
+        // The leaf reads the STORE, not the published status, precisely so it works while gatOS does
+        // not own the camera — which is exactly when tracks are uploaded and rejected.
+        var clean = await ReadAsync("camera", "last_error");
+
+        _camera.LastError = "flyby: camera track: shots is empty";
+        var dirty = await ReadAsync("camera", "last_error");
+
+        _camera.LastError = "";
+        var cleared = await ReadAsync("camera", "last_error");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(clean, Is.EqualTo("-\n"));
+            Assert.That(dirty, Is.EqualTo("flyby: camera track: shots is empty\n"));
+            Assert.That(cleared, Is.EqualTo("-\n"), "an empty message renders as absent, never blank");
+        });
+    }
+
+    [Test]
+    public async Task LastError_CarriesACommitRejectionEndToEnd()
+    {
+        // The whole point of the leaf: a `cp` of a malformed track clunks (which cannot carry an errno)
+        // and the author still gets to read why.
+        using var controller = new DisposableController(_camera, _schedules);
+        var dirFid = await WalkAsync("camera", "track");
+        await _client.LcreateAsync(dirFid, "bad");
+        await _client.WriteAsync(dirFid, 0, "{ \"shots\": [] }"u8.ToArray());
+        await _client.ClunkAsync(dirFid);
+
+        Assert.That(await ReadAsync("camera", "last_error"),
+            Does.StartWith("bad:").And.Contain("shots is empty"));
+    }
+
+    /// <summary>
+    ///     Installs a <see cref="CameraPlaybackController"/> as the store's commit validator for the
+    ///     duration of a test and takes it back off afterwards — the store holds exactly one handler,
+    ///     and a leaked one would validate the next test's uploads.
+    /// </summary>
+    private sealed class DisposableController(CameraStore camera, ScheduleStore schedules) : IDisposable
+    {
+        private readonly CameraPlaybackController _controller = new(camera, schedules);
+
+        public void Dispose()
+        {
+            camera.OnTrackCommitted = null;
+            _controller.Clear();
+        }
+    }
+
     // ---- write → exact command (AGENTS.md §10.2) ------------------------------------------------------
 
     [TestCase("camera/enabled", "1", "camera.enabled")]
@@ -237,6 +293,7 @@ public sealed class CameraTreeTests
     [TestCase("camera/pose/orbit/radius", "120", "camera.orbit_radius", 120.0)]
     [TestCase("camera/pose/orbit/azimuth", "-450", "camera.orbit_azimuth", -450.0)]
     [TestCase("camera/pose/orbit/elevation", "-15", "camera.orbit_elevation", -15.0)]
+    [TestCase("camera/map/scope", "1500000", "camera.map_scope", 1500000.0)]
     public async Task NumberControls_SubmitTheirValue(string path, string value, string action, double expected)
     {
         await WriteAsync(value + "\n", path.Split('/'));
@@ -384,6 +441,8 @@ public sealed class CameraTreeTests
     [TestCase("camera/pose/smoothing", "-1")]
     [TestCase("camera/pose/orbit/radius", "-1")]
     [TestCase("camera/pose/orbit/elevation", "91")]
+    [TestCase("camera/map/scope", "-1")]
+    [TestCase("camera/map/scope", "nan")]
     [TestCase("camera/pose/position", "1 2")]
     [TestCase("camera/pose/geo", "91 0 0")]
     [TestCase("camera/pose/rotation", "0 0 0 0")]

@@ -11,6 +11,7 @@ using gatOS.GameMod.Game.Ksa.ThugLife;
 using gatOS.GameMod.Game.Ksa.Welds;
 using gatOS.Logging;
 using gatOS.SimFs;
+using gatOS.SimFs.Camera;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Display;
 using gatOS.SimFs.Snapshots;
@@ -284,7 +285,17 @@ public sealed partial class Mod
         // Constructing the director touches no camera and takes nothing: it stays idle (and DriveCamera
         // stays one branch) until a guest writes /sim/camera/enabled.
         if (_cameraDirector is null && _cameraStore is { } cameraStore)
-            _cameraDirector = new CameraDirector(cameraStore, Config.CameraReleaseBlendS);
+        {
+            // The track player is an entry in the /sim/ctl/schedules registry (kind = camera-track), so
+            // it exists only when scheduling does; the controller also installs itself as the store's
+            // commit-time track validator, which is what turns a malformed upload into an EINVAL on the
+            // write rather than a mystery at play time.
+            var cameraPlayback = _scheduleStore is { } scheduleStore
+                ? new CameraPlaybackController(cameraStore, scheduleStore)
+                : null;
+            _cameraDirector = new CameraDirector(cameraStore, Config.CameraReleaseBlendS, cameraPlayback,
+                Config.DebugNamespace, Config.CameraAllowTimeChannel);
+        }
         _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels, _weldManager, _thugLife,
             _ivaPhysics, _audioActuator, _scheduleStore, _cameraDirector);
     }
@@ -580,9 +591,10 @@ public sealed partial class Mod
         try
         {
             // Hands the main viewport's camera back exactly as it was found (mode, follow, tidal lock,
-            // transform, FOV, projection) and drops every uploaded track. Unconditional and idempotent:
-            // leaving a player's camera parked in 'fixed' and unfollowed after an unload would look
-            // exactly like a broken game.
+            // transform, FOV, projection — plus the simulation speed, if and only if a shot's time
+            // channel moved it), stops the track player, and drops every uploaded track. Unconditional
+            // and idempotent: leaving a player's camera parked in 'fixed' and unfollowed after an
+            // unload would look exactly like a broken game.
             _cameraDirector?.Shutdown();
         }
         catch (Exception ex)

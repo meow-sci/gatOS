@@ -37,7 +37,6 @@ namespace gatOS.GameMod.Game.Ksa.Camera;
 /// </remarks>
 internal static class CameraFrames
 {
-    private const double DegToRad = Math.PI / 180.0;
     private const double RadToDeg = 180.0 / Math.PI;
 
     /// <summary>
@@ -146,9 +145,15 @@ internal static class CameraFrames
         if (!TryFrame2Ecl(pose.Frame, anchor, pose.Latitude, pose.Longitude, out var frame2Ecl, out error))
             return false;
 
-        var offset = pose.OrbitRadius > 0
-            ? SphericalDirection(pose.OrbitAzimuth, pose.OrbitElevation) * pose.OrbitRadius
-            : new double3(pose.Position.X, pose.Position.Y, pose.Position.Z);
+        // The spherical resolution comes from CameraPlacement, the game-free definition a track's
+        // "mode": "orbit" placement also uses. That is deliberate and load-bearing: re-deriving the
+        // trigonometry here would put a track's circle and a hand-written `echo 90 >
+        // pose/orbit/azimuth` in two subtly different places (and would lose the 360°-closure fold
+        // that keeps a looping orbit bit-identical at the wrap).
+        var placement = pose.OrbitRadius > 0
+            ? CameraPlacement.Spherical(pose.OrbitRadius, pose.OrbitAzimuth, pose.OrbitElevation)
+            : pose.Position;
+        var offset = new double3(placement.X, placement.Y, placement.Z);
 
         // ECL is absolute: the offset IS the point. Every other frame is anchor-relative.
         var origin = pose.Frame == FrameKind.Ecl ? double3.Zero : CameraTargets.PositionEcl(anchor);
@@ -229,23 +234,6 @@ internal static class CameraFrames
         altitudeMetres = radius - (body.MeanRadius + body.GetTerrainHeightFromDirCce(dirCce));
         return double.IsFinite(latitudeDeg) && double.IsFinite(longitudeDeg)
                && double.IsFinite(altitudeMetres);
-    }
-
-    /// <summary>
-    ///     The unit direction for a spherical (<c>pose/orbit/*</c>) placement, in the frame's own axes.
-    ///     Elevation is a latitude and azimuth a longitude — deliberately the <i>same</i> convention as
-    ///     <c>Celestial.GetDirCcfFromLatLon</c>, so "orbit the anchor" and "stand at this lat/lon" agree
-    ///     about which way is up and which way is round.
-    /// </summary>
-    internal static double3 SphericalDirection(double azimuthDeg, double elevationDeg)
-    {
-        var elevation = elevationDeg * DegToRad;
-        var azimuth = azimuthDeg * DegToRad;
-        var cosElevation = Math.Cos(elevation);
-        return new double3(
-            cosElevation * Math.Cos(azimuth),
-            cosElevation * Math.Sin(azimuth),
-            Math.Sin(elevation));
     }
 
     /// <summary>

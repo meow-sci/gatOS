@@ -7,8 +7,9 @@ namespace gatOS.GameMod.Game.Ksa.Actuators;
 
 /// <summary>
 ///     The write half of <c>/sim/camera</c>: <c>camera.focus</c> (the original one-action surface) plus
-///     the twenty-six <c>camera.*</c> actions of tasks C1/C2, validated game-side and applied through
-///     the <see cref="CameraDirector"/>.
+///     the twenty-seven <c>camera.*</c> actions of tasks C1/C2 (the ownership, live-camera and pose
+///     families), C3 (<c>play</c>/<c>set</c>/<c>stop</c>) and C5 (<c>map_scope</c>) — validated
+///     game-side and applied through the <see cref="CameraDirector"/>.
 /// </summary>
 /// <remarks>
 ///     <para>
@@ -106,6 +107,11 @@ internal static class CameraActuator
                 if (!TryFlag(c.Value, out var tidal))
                     return Invalid("camera.tidal expects 0 or 1");
                 return director.SetTidal(tidal);
+
+            case CameraCommands.MapScopeAction:
+                // Range-validated inside the director, which is also where the game's own clamping and
+                // its read-back publish live — one place, so the two cannot drift apart.
+                return director.SetMapScope(c.Value);
 
             // ---- placement ---------------------------------------------------------------------------
             case CameraCommands.PositionAction:
@@ -269,12 +275,20 @@ internal static class CameraActuator
                 return CommandResult.Ok;
 
             // ---- track playback (task C3) ---------------------------------------------------------------
+            // Straight to the game-free executor, exactly as KsaCatalog routes schedule.* to
+            // ScheduleStore.Execute: resolving a track, parsing it, driving a PlaybackClock and
+            // registering the player touch no KSA type at all, and re-implementing any of it here would
+            // be a second definition of the grammar. A camera track IS a /sim/ctl/schedules entry, so
+            // with [schedule] scheduling off there is no registry to put one in.
             case CameraCommands.PlayAction:
             case CameraCommands.SetAction:
             case CameraCommands.StopAction:
-                return new CommandResult(CommandOutcome.Unsupported,
-                    "camera track playback is not implemented yet (task C3); every camera channel is "
-                    + "reachable from /sim/camera/pose and schedulable through /sim/ctl/timed_batch");
+                return director.Playback is { } track
+                    ? track.Execute(c)
+                    : new CommandResult(CommandOutcome.Unsupported,
+                        "camera track playback needs [schedule] schedule_enabled = true (a track is a "
+                        + "player in /sim/ctl/schedules); every camera channel is still reachable from "
+                        + "/sim/camera/pose and schedulable through /sim/ctl/timed_batch");
 
             default:
                 return new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'");

@@ -38,30 +38,47 @@ internal static class CameraReader
     /// <param name="pose">The composed effective pose this frame.</param>
     /// <param name="anchor">The resolved anchor, for the position back-projection.</param>
     /// <param name="resolvedPositionEcl">The absolute ecliptic point the placement resolved to.</param>
-    [KsaAnchor("Viewport.Mode (public field); Camera.{Following,TidalLocking,GetFieldOfView,Orthographic}",
-        SourceFile = "KSA/Viewport.cs / KSA/Camera.cs", Verified = "2026-08-06",
+    /// <param name="player">The live camera-track player, or null when nothing is playing.</param>
+    [KsaAnchor("Viewport.{Mode,MapController} (public fields); MapController.Scope (public double); "
+            + "Camera.{Following,TidalLocking,GetFieldOfView,Orthographic}",
+        SourceFile = "KSA/Viewport.cs / KSA/MapController.cs / KSA/Camera.cs", Verified = "2026-08-06",
         GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
         Notes = "GetFieldOfView() returns RADIANS while SetFieldOfView(float) takes DEGREES — the "
             + "asymmetry is converted here, once, at the boundary, so nothing downstream carries a "
-            + "radian. Viewport.Mode is read (not GetCameraMode(), which reads the FRAME viewport).")]
+            + "radian. Viewport.Mode is read (not GetCameraMode(), which reads the FRAME viewport). "
+            + "MapController.Scope is a plain public field the controller clamps to the followed "
+            + "object's MeanRadius on every map frame, so a smaller written value reads back clamped.")]
     internal static CameraStatus Sample(Viewport viewport, KsaCamera camera, bool owned,
-        in CameraPose pose, in CameraTarget anchor, double3 resolvedPositionEcl)
+        in CameraPose pose, in CameraTarget anchor, double3 resolvedPositionEcl,
+        CameraPlayback? player)
         => new(
             Owned: owned,
             Mode: ModeOf(viewport.Mode),
             Follow: CameraTargets.Describe(camera.Following),
             Tidal: camera.TidalLocking,
             Pose: WithBothSpellings(pose, anchor, resolvedPositionEcl),
-            // Track playback is task C3: the player fields stay at their idle values, which is what
-            // camera/playback and camera/set already render as "nothing loaded".
-            TrackName: "",
-            TrackTMs: 0,
-            TrackDurationMs: 0,
-            ShotName: "",
-            ShotIndex: -1,
-            Playback: PlaybackState.Done,
-            Rate: 1,
-            Loop: false);
+            // The player fields come off the live track player's own PlaybackClock — the same clock the
+            // /sim/ctl/schedules/<id>/ leaves drive — rather than being latched here, so camera/playback
+            // and schedules/camera/t can never disagree about where the take is.
+            TrackName: player?.TrackName ?? "",
+            TrackTMs: player?.Clock.PositionMs ?? 0,
+            TrackDurationMs: player?.DurationMs ?? 0,
+            ShotName: ShotNameOf(player),
+            ShotIndex: player?.ShotIndex ?? -1,
+            Playback: player?.State ?? PlaybackState.Done,
+            Rate: player?.Clock.Rate ?? 1,
+            Loop: player?.Clock.Loop ?? false,
+            MapScope: viewport.MapController.Scope);
+
+    /// <summary>
+    ///     The active shot's authored name, or <c>""</c> before the first shot edge. Bounds-checked
+    ///     rather than trusted: the index is the last edge the player <i>reported</i>, and a track that
+    ///     was replaced between the report and this sample would otherwise index the wrong list.
+    /// </summary>
+    private static string ShotNameOf(CameraPlayback? player)
+        => player is { } p && p.ShotIndex >= 0 && p.ShotIndex < p.Track.Shots.Count
+            ? p.Track.Shots[p.ShotIndex].Name
+            : "";
 
     /// <summary>
     ///     Fills in whichever of the two position spellings the author did not write, from the point

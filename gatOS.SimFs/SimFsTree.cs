@@ -512,6 +512,10 @@ public static class SimFsTree
                 LiveLine("camera/info", "info", () => CameraFormat.Info(store)),
                 LiveLine("camera/target", "target", () => CameraFormat.FollowId(Status())),
                 LiveLine("camera/playback", "playback", () => CameraFormat.Playback(Status())),
+                // The upload/play diagnosis. A 9p clunk cannot carry an errno, so without this a guest
+                // that `cp`s a malformed track has no way to read WHY it was rejected — the message
+                // would exist only in the host log and in a later camera/play EINVAL.
+                LiveLine("camera/last_error", "last_error", () => store.LastError),
                 new CameraDirectory("track", Qid("camera/track"), store, Qid),
                 FlagControl("camera/enabled", "enabled", "", CameraCommands.EnabledAction,
                     SimCommand.NoOrdinal, () => Formats.Flag(Status().Owned)),
@@ -521,6 +525,13 @@ public static class SimFsTree
                     () => Status().Follow.ToString()),
                 FlagControl("camera/tidal", "tidal", "", CameraCommands.TidalAction,
                     SimCommand.NoOrdinal, () => Formats.Flag(Status().Tidal)),
+                // The map view's own knob. It sits beside mode/follow/tidal — the controls that drive
+                // the GAME's camera — rather than under pose/, because it is not a composable channel:
+                // it is a field of the game's map controller and only bites while the viewport is in
+                // map mode. Its own directory so a second map knob does not need a new top-level name.
+                DelegateDirectory.Fixed("map", Qid("camera/map"),
+                    RangedControl("camera/map/scope", "scope", "", CameraCommands.MapScopeAction,
+                        0, double.MaxValue, () => Formats.Scalar(Status().MapScope))),
                 CameraPoseDir(store),
                 LineControl("camera/play", "play", () => CameraFormat.Play(Status()),
                     CameraCommands.ParsePlay),

@@ -48,6 +48,31 @@ namespace gatOS.GameMod.Game.Ksa.Camera;
 ///         <c>SetCameraMode</c> and accepts the three-second alert.
 ///     </para>
 ///     <para>
+///         <b>Fixed is the only mode gatOS can own the camera in, and that is a property of the game,
+///         not a choice.</b> The order inside <c>Program.OnFrame</c> is
+///         <c>OnFrameViewports</c> → <c>Render</c> → <c>[StarMapAfterOnFrame]</c>, and
+///         <c>Viewport.OnFrame</c> is <c>GetActiveController().OnFrame(...)</c> <i>then</i>
+///         <c>GetCamera().OnFrame(...)</c>. So gatOS writing last in frame <i>N</i> only survives because
+///         the active controller writes <b>nothing</b> at the top of frame <i>N+1</i>, before the
+///         matrices are rebuilt. <c>FixedController.OnFrame</c> wraps its entire body in
+///         <c>if (Following != null)</c>, which the ownership unfollow makes false — that is the whole
+///         trick. It does <b>not</b> generalise:
+///         <list type="bullet">
+///             <item><b>IVA</b> (task C5.1) — <c>IVAController.OnFrame</c> writes
+///                 <c>Camera.PositionEcl</c> from the seat unconditionally and <c>LocalRotation</c> on
+///                 every frame but the switch frame, so a gatOS pose would be overwritten before it was
+///                 ever rendered; and with <c>Following == null</c> its first two lines call
+///                 <c>Program.HoveredViewport.NextCameraMode()</c>, cycling straight back out of IVA.</item>
+///             <item><b>Map</b> (task C5.2) — <c>MapController.OnFrame</c> likewise ends by assigning
+///                 both <c>PositionEcl</c> and <c>LocalRotation</c> from its own scope/orbit solution,
+///                 and with <c>Following == null</c> it calls <c>Program.SetCameraMode(Free)</c>.</item>
+///         </list>
+///         Making either an ownership context therefore needs a Harmony patch to suppress a controller —
+///         which this feature's whole design exists to avoid — so neither is offered. What C5.2 <i>does</i>
+///         ship is <see cref="SetMapScope"/>: the map's own zoom as a first-class control, in the same
+///         "drives the game's camera" family as <c>mode</c>/<c>follow</c>/<c>tidal</c>.
+///     </para>
+///     <para>
 ///         <b>⚠ Owning the main camera changes which way a kittenaut walks.</b>
 ///         <c>KittenEva.PrepareWorker</c> feeds <c>Program.GetMainCamera().GetForwardEcl()</c> /
 ///         <c>GetRightEcl()</c> / <c>GetUpEcl()</c> into EVA locomotion, so while gatOS holds the camera,
@@ -60,7 +85,22 @@ namespace gatOS.GameMod.Game.Ksa.Camera;
 ///         <c>SimCommand</c>s and read the volatile <c>CameraStatus</c> this class publishes.
 ///     </para>
 /// </remarks>
-internal sealed class CameraDirector(CameraStore store, double releaseBlendSeconds)
+/// <param name="store">The game-free camera store: tracks, the compositor, the status, the events.</param>
+/// <param name="releaseBlendSeconds"><c>[camera] camera_release_blend_s</c> — the eased hand-back.</param>
+/// <param name="playback">
+///     The track player (task C3), or null when <c>[schedule] schedule_enabled=false</c> left the
+///     registry it lives in unwired — a camera track is a <c>/sim/ctl/schedules</c> entry with
+///     <c>kind = camera-track</c>, so there is nowhere to register one without it. Every L1/L2 channel
+///     still works in that configuration; only <c>camera/play</c> is unavailable.
+/// </param>
+/// <param name="debugNamespace"><c>[control] debug_namespace</c> — the first gate on the time channel.</param>
+/// <param name="allowTimeChannel"><c>[camera] camera_allow_time_channel</c> — the second gate.</param>
+internal sealed class CameraDirector(
+    CameraStore store,
+    double releaseBlendSeconds,
+    CameraPlaybackController? playback = null,
+    bool debugNamespace = false,
+    bool allowTimeChannel = false)
 {
     private const double RadToDeg = 180.0 / Math.PI;
 
@@ -101,6 +141,15 @@ internal sealed class CameraDirector(CameraStore store, double releaseBlendSecon
     private double _appliedFovDeg = double.NaN;
     private string _degradeReason = "";
 
+    // ---- the interpolated time channel (task C4) ---------------------------------------------------
+    // The simulation speed is captured LAZILY, the first time a shot actually drives the channel, and
+    // restored only if it was captured: a director that never touches time must not stomp the warp
+    // setting the player left running.
+    private bool _timeCaptured;
+    private double _restoreSimSpeed = 1;
+    private double _appliedTimeScale = double.NaN;
+    private bool _timeWarned;
+
     // ---- release blend -----------------------------------------------------------------------------
     private double _blendElapsed;
     private double _blendDuration;
@@ -110,6 +159,13 @@ internal sealed class CameraDirector(CameraStore store, double releaseBlendSecon
 
     /// <summary>The game-free store this director drives (tracks, compositor, status, events).</summary>
     internal CameraStore Store => store;
+
+    /// <summary>
+    ///     The game-free <c>camera.play</c>/<c>set</c>/<c>stop</c> executor and track sampler, or null
+    ///     when scheduling is disabled. The actuator routes those three verbs straight to it rather than
+    ///     re-implementing them — nothing about playing a track touches KSA.
+    /// </summary>
+    internal CameraPlaybackController? Playback => playback;
 
     /// <summary>
     ///     True when the per-frame driver can be skipped entirely: gatOS does not own the camera and the
@@ -212,6 +268,7 @@ internal sealed class CameraDirector(CameraStore store, double releaseBlendSecon
         _lastRotation = _restoreLocalRotation;
         _appliedFovDeg = double.NaN;
         _degradeReason = "";
+        _timeWarned = false; // one warning per ownership session, not one per process
         _smoother.Reset();
         _phase = Phase.Owned;
         _publishedIdle = false;
@@ -256,14 +313,15 @@ internal sealed class CameraDirector(CameraStore store, double releaseBlendSecon
     ///     camera degrades to no-follow rather than throwing.
     /// </remarks>
     [KsaAnchor("Camera.{SetFollow,Unfollow,LocalPosition,LocalRotation,NoRotation,SetFieldOfView,"
-            + "SetOrthographic}; Viewport.{Mode,SetCameraMode}",
-        SourceFile = "KSA/Camera.cs / KSA/Viewport.cs", Verified = "2026-08-06",
+            + "SetOrthographic}; Viewport.{Mode,SetCameraMode}; Universe.SetSimulationSpeed",
+        SourceFile = "KSA/Camera.cs / KSA/Viewport.cs / KSA/Universe.cs", Verified = "2026-08-06",
         GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
         Notes = "SetFollow(target, tidal, changeControl:false, alert:false) — the defaults would take "
             + "the player's vessel and print 'Following X' on screen. Restoring INTO Map goes through "
             + "SetCameraMode so MapController.OnSwitchOn re-establishes NoRotation and the map's own "
             + "control state; every other mode is a direct field assignment (no alert). The orthographic "
-            + "HALF-HEIGHT is not restored: Camera has no public getter for it (see ApplyProjection).")]
+            + "HALF-HEIGHT is not restored: Camera has no public getter for it (see ApplyProjection). "
+            + "The simulation speed is restored ONLY when the C4 time channel actually captured it.")]
     internal CommandResult Restore()
     {
         if (_phase == Phase.Idle)
@@ -272,6 +330,10 @@ internal sealed class CameraDirector(CameraStore store, double releaseBlendSecon
         _phase = Phase.Idle;
         try
         {
+            // Only if the time channel was actually driven — see ApplyTimeScale.
+            if (_timeCaptured)
+                Universe.SetSimulationSpeed(_restoreSimSpeed, alert: false);
+
             var viewport = Program.MainViewport;
             var camera = _restoreCamera ?? viewport.BaseCamera;
 
@@ -290,12 +352,22 @@ internal sealed class CameraDirector(CameraStore store, double releaseBlendSecon
                 viewport.SetCameraMode(CameraMode.Map);
             else
                 viewport.Mode = _restoreMode;
+
+            // The take ends with the camera: a track that kept running would drive nothing (the driver
+            // goes idle here) yet still sit in /sim/ctl/schedules as a live player, and its shot events
+            // would stop firing because the director is what samples it. This is literally the
+            // camera/stop verb, so it emits the documented `camera.finished reason=stopped`. It comes
+            // last on purpose — giving the player their camera back is the part that must not be
+            // skipped if anything above it throws.
+            playback?.Execute(new SimCommand("", CameraCommands.StopAction, SimCommand.NoOrdinal, 1));
         }
         finally
         {
             _restoreCamera = null;
             _restoreFollowing = null;
             _appliedFovDeg = double.NaN;
+            _timeCaptured = false;
+            _appliedTimeScale = double.NaN;
             _degradeReason = "";
             store.State.ClearAll();
             store.PublishStatus(CameraStatus.Idle);
@@ -306,11 +378,17 @@ internal sealed class CameraDirector(CameraStore store, double releaseBlendSecon
         return CommandResult.Ok;
     }
 
-    /// <summary>Unload teardown: gives the camera back and drops every uploaded track.</summary>
+    /// <summary>
+    ///     Unload teardown: gives the camera back (restoring the simulation speed if a shot moved it),
+    ///     stops and unregisters the track player, and drops every uploaded track and parsed-track
+    ///     cache. Unconditional and idempotent — leaving a player's camera parked in <c>fixed</c> and
+    ///     unfollowed after an unload would look exactly like a broken game.
+    /// </summary>
     internal void Shutdown()
     {
         Restore();
         store.Clear();
+        playback?.Clear();
     }
 
     // ================================================================================================
@@ -348,13 +426,22 @@ internal sealed class CameraDirector(CameraStore store, double releaseBlendSecon
         if (camera.Following is not null)
             camera.Unfollow(changeControl: false);
 
-        // ---- THE C3 SEAM -------------------------------------------------------------------------
-        // The track evaluator will pass its evaluated sample and the channel mask the active shot
-        // declares in here; the compositor's Track ?? Override ?? Baseline precedence then does the
-        // rest, with no other change to this driver. Until C3 lands nothing claims anything, so every
-        // channel resolves to a live override or to the baseline captured at ownership take.
-        const CameraChannelMask trackClaims = CameraChannelMask.None;
-        var pose = store.State.Compose(trackSample: null, trackClaims);
+        // ---- the track evaluator (task C3) ---------------------------------------------------------
+        // TryEvaluateNow, not TryEvaluate(t, …): it samples at the player's OWN PlaybackClock, which is
+        // the same instance /sim/ctl/schedules/<id>/{t,rate,pause,scrub} drives and the same one a
+        // shared-clock group shares. Deriving a second notion of "now" here — from dt, or from the
+        // frame counter — is exactly the drift that makes a dolly move slide against its own cue track.
+        // The compositor's Track ?? Override ?? Baseline precedence then does the rest: a shot claims
+        // only what it declares, so a timed_batch can still pull focus mid-shot.
+        CameraPose? trackSample = null;
+        var trackClaims = CameraChannelMask.None;
+        if (playback is { } player && player.TryEvaluateNow(out var sampled, out var claims))
+        {
+            trackSample = sampled;
+            trackClaims = claims;
+        }
+
+        var pose = store.State.Compose(trackSample, trackClaims);
         CameraTargets.TryResolve(pose.Anchor, out var anchor);
 
         if (_phase == Phase.Releasing)
@@ -369,7 +456,7 @@ internal sealed class CameraDirector(CameraStore store, double releaseBlendSecon
         }
 
         store.PublishStatus(CameraReader.Sample(viewport, camera, owned: true, pose, anchor,
-            _lastResolvedPositionEcl));
+            _lastResolvedPositionEcl, playback?.Current));
         _publishedIdle = false;
     }
 
@@ -421,6 +508,90 @@ internal sealed class CameraDirector(CameraStore store, double releaseBlendSecon
         camera.LocalRotation = _lastRotation;
 
         ApplyProjection(camera, pose, trackClaims);
+        ApplyTimeScale(pose, trackClaims);
+    }
+
+    /// <summary>
+    ///     Task C4 — the interpolated <c>time</c> channel: drives the simulation speed from the composed
+    ///     pose, so a shot can ease into slow motion (<c>0.15</c>), hold on a paused world (<c>0</c>) or
+    ///     ramp into warp (<c>&gt; 1</c>) as one continuous curve rather than as discrete
+    ///     <c>debug/time/warp</c> steps. The discrete case still exists and is still schedulable through
+    ///     <c>ctl/timed_batch</c>; this only adds the interpolated one, and it adds <b>no</b> new
+    ///     <c>/sim</c> leaf.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>Double-gated, and a closed gate is a warning rather than a failure.</b> The channel
+    ///         needs both <c>[control] debug_namespace</c> (it is <c>debug.warp</c>'s power under a new
+    ///         name) and <c>[camera] camera_allow_time_channel</c>. When either is off the channel is
+    ///         ignored and the rest of the shot runs at 1× — failing the whole take because of a config
+    ///         flag would be strictly worse than running it at normal speed, and the author would have no
+    ///         way to see why from inside the shot. The warning is one-shot per ownership session so a
+    ///         60 Hz driver cannot fill the log.
+    ///     </para>
+    ///     <para>
+    ///         <b>Capture is lazy and restore is conditional.</b> <c>Universe.GetSimulationSpeed()</c> is
+    ///         read the first time the channel is actually driven, not at ownership take, and
+    ///         <see cref="Restore"/> puts it back only if that capture happened — a director who never
+    ///         touches time must leave the player's own warp setting exactly as it found it.
+    ///     </para>
+    ///     <para>
+    ///         <b>⚠ Auto-warp interaction, stated rather than guarded.</b> Neither public
+    ///         <c>Universe.SetSimulationSpeed</c> overload checks <c>Universe.IsAutoWarpActive</c> — only
+    ///         the private <c>simspeed</c> terminal command does, and it refuses outright. So a track
+    ///         driving the time channel while an auto-warp is running will <i>fight</i> it: auto-warp
+    ///         re-computes and re-sets the speed every step of its own update, and whichever wrote last
+    ///         in the frame wins (the auto-warp update runs inside the sim step, this runs after the
+    ///         render, so in practice this one does). No guard is added here because both behaviours are
+    ///         defensible and the game itself does not pick: refusing would make a shot silently ignore
+    ///         its own time curve, and stopping the auto-warp would cancel a manoeuvre the player
+    ///         scheduled. Stop the auto-warp before rolling the shot.
+    ///     </para>
+    /// </remarks>
+    [KsaAnchor("Universe.SetSimulationSpeed(double, alert:false); Universe.GetSimulationSpeed(); "
+            + "Universe.IsAutoWarpActive",
+        SourceFile = "KSA/Universe.cs", Verified = "2026-08-06", GameVersion = "2026.8.5.5168",
+        Risk = ChurnRisk.Medium,
+        Notes = "SetSimulationSpeed(:1998) writes _simulationSpeed and draws a TimedAlert unless "
+            + "alert:false — which matters here, the alert would be in the footage. It does NOT check "
+            + "IsAutoWarpActive (:96); only the private SetSimulationSpeedDirect terminal command does. "
+            + "GetSimulationSpeed (:2021) is the plain getter. The same primitive debug.warp binds.")]
+    private void ApplyTimeScale(in CameraPose pose, CameraChannelMask trackClaims)
+    {
+        // Nothing claims the channel unless a shot declares it: there is no pose/time leaf, by design
+        // (plan §7 C4.1 — debug/time/warp already covers the discrete case). The override arm is kept
+        // so a future leaf lights up here with no change.
+        if (!store.State.HasOverride(CameraChannel.TimeScale) && !trackClaims.Has(CameraChannel.TimeScale))
+            return;
+
+        if (!debugNamespace || !allowTimeChannel)
+        {
+            if (_timeWarned)
+                return;
+            _timeWarned = true;
+            ModLog.Log.Warn("gatOS camera: this track drives the 'time' channel, which is ignored — "
+                            + (debugNamespace
+                                ? "set [camera] camera_allow_time_channel = true in gatos.toml to enable it."
+                                : "it needs [control] debug_namespace = true in gatos.toml.")
+                            + " The rest of the shot plays at normal speed.");
+            return;
+        }
+
+        if (!double.IsFinite(pose.TimeScale) || pose.TimeScale < 0)
+            return;
+
+        if (!_timeCaptured)
+        {
+            _restoreSimSpeed = Universe.GetSimulationSpeed();
+            _timeCaptured = true;
+        }
+
+        // Self-gating: SetSimulationSpeed is cheap, but a curve that has settled on a value should not
+        // keep re-writing it (and the alert-suppressed path still walks the change test inside).
+        if (pose.TimeScale == _appliedTimeScale)
+            return;
+        Universe.SetSimulationSpeed(pose.TimeScale, alert: false);
+        _appliedTimeScale = pose.TimeScale;
     }
 
     /// <summary>
@@ -718,6 +889,47 @@ internal sealed class CameraDirector(CameraStore store, double releaseBlendSecon
         return changed
             ? CommandResult.Ok
             : new CommandResult(CommandOutcome.NotFound, "the camera is not following anything");
+    }
+
+    /// <summary>
+    ///     <c>camera/map/scope</c> (task C5.2): sets the map view's scope — the radius, in metres, the
+    ///     map camera orbits its focus at, i.e. the map's zoom. Accepted whether or not gatOS owns the
+    ///     camera, because it configures the <i>game's</i> map controller rather than the composed pose.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>Three things the caller should expect, all of them the game's own behaviour.</b>
+    ///         (1) <c>MapController.OnFrame</c> clamps <c>Scope</c> up to the followed object's
+    ///         <c>MeanRadius</c> on every map frame, so a smaller value reads back clamped.
+    ///         (2) <c>OnSwitchOn</c> calls <c>SetDefaults()</c> — which recomputes <c>Scope</c> from the
+    ///         focus's radius and sphere of influence — whenever the follow target changed since the map
+    ///         was last left, so a scope written before a focus change does not survive it.
+    ///         (3) It has no visible effect outside <c>map</c> mode; it is a stored field until then.
+    ///     </para>
+    ///     <para>
+    ///         The write is published straight back into the status, because the director only samples
+    ///         the live viewport while it <i>owns</i> the camera — and the map is precisely the mode in
+    ///         which it does not. Without this the read-back would report the idle <c>0</c> for a value
+    ///         the guest had just written.
+    ///     </para>
+    /// </remarks>
+    [KsaAnchor("Program.MainViewport.MapController; MapController.Scope",
+        SourceFile = "KSA/Viewport.cs / KSA/MapController.cs", Verified = "2026-08-06",
+        GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
+        Notes = "Scope is a plain public double field (MapController.cs:33) with no setter hook. It is "
+            + "clamped up to Camera.Following.MeanRadius near the end of every MapController.OnFrame "
+            + "and recomputed wholesale by SetDefaults() from OnSwitchOn after a focus change. The "
+            + "viewport's MapController instance is per-viewport, so bind the main one explicitly.")]
+    internal CommandResult SetMapScope(double scopeMetres)
+    {
+        if (!double.IsFinite(scopeMetres) || scopeMetres < 0)
+            return new CommandResult(CommandOutcome.Invalid,
+                "camera.map_scope expects a finite radius in metres >= 0");
+
+        var controller = Program.MainViewport.MapController;
+        controller.Scope = scopeMetres;
+        store.PublishStatus(store.Status with { MapScope = controller.Scope });
+        return CommandResult.Ok;
     }
 
     private static bool RetuneTidal(KsaCamera camera, bool tidal)

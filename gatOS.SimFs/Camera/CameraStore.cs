@@ -81,6 +81,11 @@ public readonly record struct CameraTrackInfo(string Name, long Bytes, int Versi
 /// <param name="Playback">The player's lifecycle state (shared vocabulary with <c>ctl/schedules</c>).</param>
 /// <param name="Rate">The player's rate multiplier.</param>
 /// <param name="Loop">Whether the player loops.</param>
+/// <param name="MapScope">
+///     The map view's scope (its zoom radius) in metres — <c>camera/map/scope</c>'s read-back. It is a
+///     property of the game's own map controller, not of the composed pose, which is why it sits beside
+///     <see cref="Mode"/> and <see cref="Follow"/> rather than inside <see cref="Pose"/>.
+/// </param>
 public sealed record CameraStatus(
     bool Owned,
     CameraModeKind Mode,
@@ -94,7 +99,8 @@ public sealed record CameraStatus(
     int ShotIndex,
     PlaybackState Playback,
     double Rate,
-    bool Loop)
+    bool Loop,
+    double MapScope = 0)
 {
     /// <summary>
     ///     The state before the director has ever published: unowned, orbit mode, nothing followed,
@@ -132,6 +138,7 @@ public sealed class CameraStore
     private long _pendingBytes;
 
     private volatile CameraStatus _status = CameraStatus.Idle;
+    private volatile string _lastError = CameraFormat.Absent;
 
     // camera.shot / camera.finished await the next telemetry sample; bounded exactly like
     // AudioStore's queue so a disabled sampler can never grow it (signals, not a ledger).
@@ -167,10 +174,37 @@ public sealed class CameraStore
     public void PublishStatus(CameraStatus status) => _status = status;
 
     /// <summary>
-    ///     <b>The C3 seam.</b> Invoked (on the committing thread, outside the store lock) whenever a
-    ///     track's bytes commit. The track evaluator will hang its JSON parse here so a malformed
-    ///     track is diagnosed at upload rather than at <c>play</c> time; until C3 lands, committing
-    ///     deliberately does <i>not</i> parse and the bytes are stored verbatim.
+    ///     <c>camera/last_error</c>: the most recent track parse or playback rejection, or
+    ///     <see cref="CameraFormat.Absent"/> when the last thing that happened was fine.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>Why this exists as state rather than only an errno.</b> A 9p <c>clunk</c> — which is
+    ///         what commits an upload — cannot carry an errno, so a guest that <c>cp</c>s a malformed
+    ///         track has no way to <i>read</i> why it was rejected: the diagnosis reaches the host log and
+    ///         the (much later) EINVAL from <c>camera/play</c>, neither of which is visible from inside
+    ///         the guest at the moment it went wrong. This leaf is that diagnosis.
+    ///     </para>
+    ///     <para>
+    ///         It lives on the store, not on <see cref="CameraStatus"/>, precisely so it is readable while
+    ///         gatOS does <b>not</b> own the camera — which is exactly when tracks get uploaded, and when
+    ///         the director publishes nothing at all.
+    ///     </para>
+    ///     <para>Any thread: a reference assignment, published volatile.</para>
+    /// </remarks>
+    public string LastError
+    {
+        get => _lastError;
+        set => _lastError = string.IsNullOrEmpty(value) ? CameraFormat.Absent : value;
+    }
+
+    /// <summary>
+    ///     <b>The track-commit seam.</b> Invoked (on the committing thread, outside the store lock)
+    ///     whenever a track's bytes commit. <c>CameraPlaybackController</c> installs itself here and
+    ///     promotes it from a notification to a <i>rejecting validator</i>: it parses, caches the result
+    ///     by version, records <see cref="LastError"/>, and throws <c>VfsErrorException(EINVAL)</c> for a
+    ///     malformed non-empty upload — so a bad track is diagnosed at upload rather than at
+    ///     <c>play</c> time.
     /// </summary>
     public Action<CameraTrack>? OnTrackCommitted { get; set; }
 
