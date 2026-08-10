@@ -91,7 +91,7 @@ surface, projected per transport, never re-implemented:
 Aggregate reads project the one `SimSnapshot` through `gatOS.SimFs/SimJson` (HTTP + MQTT) or
 `Formats` (9p); the field-level mirror **walks the one `/sim` VFS tree** (`VfsScan`) the 9p server
 serves; writes funnel the one `SimCommand` through the single `ICommandSink`. Add a read to `SimJson`
-/ a `/sim` node / an action to the command table once — every transport gets it. See CLAUDE.md
+/ a `/sim` node / an action to the command table once — every transport gets it. See AGENTS.md
 "THE transport-parity rule".
 
 ## Archetypes (KSA_GAME_INTEGRATION_PLAN Part 2)

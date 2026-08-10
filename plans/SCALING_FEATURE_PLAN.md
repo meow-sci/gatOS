@@ -4,7 +4,7 @@ Status: **implemented** (2026-07-02; in-game validation — checklist item 10 in
 live KSA flight, checklist now in `docs/VALIDATION.md`). The D6 "minimal documentation" choice was
 superseded the same day when the sibling `always_render` feature landed with full doc lockstep: `scale`
 is now also catalogued in `docs/KSA_INTEGRATION_MATRIX.md`, `scope/ksa-write-surface.md`,
-`docs/MILESTONES.md`, the CLAUDE.md status table, and the `gatos` skill (the authority-gate exemption
+`docs/MILESTONES.md`, the AGENTS.md status table, and the `gatos` skill (the authority-gate exemption
 was promoted to `KsaCatalog.AnyVesselActions` as §3.2b anticipated). This plan adds an independent
 **vessel model scaling**
 feature to gatOS, ported from the scaling behavior in the sibling `unscience/garrys-torch` mod but
@@ -35,7 +35,7 @@ A new read/write node:
 | **D3** | **Any vessel by id** — scaling is exempt from the active-vessel authority gate. | The use case is resizing *arbitrary* vessels by path. This is the first deliberate step of moving per-vessel controls **out of `/sim/debug`**. |
 | **D4** | **Placed under the regular vessel area** (`/sim/vessels/by-id/<id>/`), **not** `/sim/debug/`. | Requester wants to break this class of control out of the cumbersome debug namespace. |
 | **D5** | **No dedicated config gate.** Reuses the existing `control_enabled` master write switch (like every other control). | Welds/IVA/thug_life have no per-cheat toggle either; a new gate is unnecessary. |
-| **D6** | **Minimal documentation.** The *only* doc note is that `scale` lives under the regular vessel area intentionally. No `scope/`, `KSA_INTEGRATION_MATRIX`, `ARCHITECTURE`, `MILESTONES`, `gatos` skill, or `CLAUDE.md` status/threading churn. | Per requester direction. The one-shot actuator adds **no** new game-thread mutation site / driver / Harmony patch, so the threading-rules and architecture docs genuinely need no change anyway (see §7). The `[KsaAnchor]` attribute remains the in-code source of truth for the KSA binding. |
+| **D6** | **Minimal documentation.** The *only* doc note is that `scale` lives under the regular vessel area intentionally. No `scope/`, `KSA_INTEGRATION_MATRIX`, `ARCHITECTURE`, `MILESTONES`, `gatos` skill, or `AGENTS.md` status/threading churn. | Per requester direction. The one-shot actuator adds **no** new game-thread mutation site / driver / Harmony patch, so the threading-rules and architecture docs genuinely need no change anyway (see §7). The `[KsaAnchor]` attribute remains the in-code source of truth for the KSA binding. |
 
 ### Non-goals
 
@@ -210,8 +210,8 @@ Notes / defensive posture:
   degrade to `CommandOutcome.Unsupported` (EOPNOTSUPP) when absent. **Verify at implementation time.**
 - `KsaCatalog.Execute` already wraps `Dispatch` in try/catch → a thrown KSA call becomes
   `CommandOutcome.Fault` (EIO) + a health latch, so `Set` doesn't need its own catch.
-- Placed in the existing `Actuators/` folder (already enumerated in the CLAUDE.md G2 rule) — **avoids a
-  new `Game/Ksa/` subfolder and therefore avoids a CLAUDE.md project-map edit** (supports D6).
+- Placed in the existing `Actuators/` folder (already enumerated in the AGENTS.md G2 rule) — **avoids a
+  new `Game/Ksa/` subfolder and therefore avoids a AGENTS.md project-map edit** (supports D6).
 
 ### 3.2 `gatOS.GameMod/Game/Ksa/KsaCatalog.cs`
 
@@ -312,7 +312,7 @@ the failing `write`. This matches every other gatOS control file.
 - **Read is sampled on the game thread** in `VesselReader.Sample` and published via the single volatile
   snapshot swap; 9p/HTTP/MQTT threads only read the published snapshot (rule 2).
 - **No per-frame driver, no Harmony patch, no render-thread work.** Because there is no new
-  game-thread mutation site or driver, CLAUDE.md's threading rules, `docs/ARCHITECTURE.md`
+  game-thread mutation site or driver, AGENTS.md's threading rules, `docs/ARCHITECTURE.md`
   "game-thread cheats", and `scope/ksa-runtime-coupling.md` genuinely require **no** edit (consistent
   with D6). This is the concrete payoff of D1 (one-shot).
 - Teardown: nothing to tear down (no registry). A vessel left scaled simply stays scaled until the game
@@ -359,8 +359,8 @@ Frame | scale | positive-only; EINVAL if ≤0 |` — if you want the action list
 want the truly minimal touch; the SPEC row above already names the action.)
 
 **Explicitly NOT updated** (per D6): `scope/*`, `docs/KSA_INTEGRATION_MATRIX.md`,
-`docs/ARCHITECTURE.md`, `docs/MILESTONES.md`, the `gatos` skill (`.claude/skills/gatos/`),
-`CLAUDE.md` status table / threading rules / project map. The one-shot actuator adds no new
+`docs/ARCHITECTURE.md`, `docs/MILESTONES.md`, the `gatos` skill (`.agents/skills/gatos/`),
+`AGENTS.md` status table / threading rules / project map. The one-shot actuator adds no new
 mutation-site/driver, so the threading & architecture docs need no change on the merits either; the
 `[KsaAnchor]` attribute on `ScaleActuator` is the in-code source of truth for the KSA binding and can
 be surfaced into those docs later if full lockstep is ever desired.

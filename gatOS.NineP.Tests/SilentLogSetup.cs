@@ -4,7 +4,7 @@ namespace gatOS.NineP.Tests;
 
 /// <summary>
 ///     Routes <see cref="ModLog"/> away from the console for the whole assembly — the server
-///     logs per-connection lines that would otherwise spew from passing tests (CLAUDE.md:
+///     logs per-connection lines that would otherwise spew from passing tests (AGENTS.md:
 ///     keep test output minimal). Errors still surface through failed assertions.
 /// </summary>
 [SetUpFixture]

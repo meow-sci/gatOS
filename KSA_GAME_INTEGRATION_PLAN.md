@@ -8,7 +8,7 @@
 > reserved experiment.) A few catalog reads/events below are aspirational and not yet built —
 > `staged`/`encounter` events, body CCI-frame vectors, `orbit/{mean_anomaly,t_pe}`, the
 > `solar/<n>/tracker/` subdir shape; the **Deferred** list in `docs/KSA_INTEGRATION_MATRIX.md`
-> tracks them. As-built reality: `CLAUDE.md` + `docs/KSA_INTEGRATION_MATRIX.md`.
+> tracks them. As-built reality: `AGENTS.md` + `docs/KSA_INTEGRATION_MATRIX.md`.
 > A user-requested **MQTT transport** (`gatOS.Mqtt`, MQTTnet embedded broker) is also built — an
 > additional bridge alongside 9p/HTTP/serial. Guest v3 is built + fetched; all transports are
 > validated in-guest (`GATOS_IT`). Remaining: the in-game pass (live KSA flight).
@@ -16,7 +16,7 @@
 > in `OS_PLAN.md`. It is the central, co-located reference for **every KSA data point we read
 > and every KSA mutation we perform** — the document you update first when a new decompiled
 > source drop lands. Companion docs: `OS_PLAN.md` (VM/terminal execution plan), `OS_ANALYSIS.md`
-> (architecture research), `CLAUDE.md` (as-built reality).
+> (architecture research), `AGENTS.md` (as-built reality).
 
 Decisions already made with the project owner (2026-06-12):
 
@@ -160,7 +160,7 @@ the only file touching KSA telemetry APIs. This plan formalizes it and extends i
 ```
 
 - **Reads** (existing, unchanged): game thread samples → immutable `SimSnapshot` → volatile swap →
-  server threads read the latest snapshot. Threading rules 1–2 of `CLAUDE.md` untouched.
+  server threads read the latest snapshot. Threading rules 1–2 of `AGENTS.md` untouched.
 - **Writes** (new): server threads enqueue an immutable `SimCommand` carrying a
   `TaskCompletionSource<CommandResult>`; the game thread drains the queue each frame (bounded,
   default 64/frame), executes via the actuator catalog, completes the TCS. The 9p/HTTP handler
@@ -204,7 +204,7 @@ gatOS.GameMod/Game/Ksa/
                          owns per-accessor health latches
 ```
 
-Rule (extends the binding dependency rule in `CLAUDE.md`): **a KSA type name may appear only
+Rule (extends the binding dependency rule in `AGENTS.md`): **a KSA type name may appear only
 under `gatOS.GameMod/Game/Ksa/`**. Transports, trees, formats, SDKs never see one. When a new
 decomp drop breaks the build, the diff is confined to this folder + this document.
 
@@ -438,7 +438,7 @@ game thread (or solver phase), synchronous result. Per **G-D1** any vessel is ad
 > granularity, the same control points and the whole `/sim/debug` cheat surface as the `/sim` tree —
 > `POST /v1/command` / `gatos/command` accept exactly the action set the 9p control files build.
 > Add a read to `SimJson` / an action to the command table once and every transport gets it. The
-> binding statement lives in CLAUDE.md ("THE transport-parity rule").
+> binding statement lives in AGENTS.md ("THE transport-parity rule").
 
 ### T1 — 9p writable control files (primary; phase G1)
 
@@ -598,7 +598,7 @@ APIs so `apk add nodejs` works too. (A `bun` skill exists in this workspace for 
 ## Part 9 — Phasing (G-series; independent of OS_PLAN M-numbering)
 
 Each phase ends with build + full test suite green (game-free unit tests + `GATOS_IT` guest
-fixtures), matrix/doc updates, and a `CLAUDE.md` status touch — same discipline as M-tasks.
+fixtures), matrix/doc updates, and a `AGENTS.md` status touch — same discipline as M-tasks.
 Suggested ordering below; G1–G2 are the foundation and should precede or interleave with M10/M11
 at the owner's discretion (no hard dependency either way; G5's guest v3 should ride the same
 image bump as any M10 guest changes to avoid churning `GUEST_VERSION` twice).
@@ -609,7 +609,7 @@ image bump as any M10 guest changes to avoid churning `GUEST_VERSION` twice).
 | **G2 — integration layer formalization** ✅ **BUILT** | `Game/Ksa/` Readers/Actuators/Catalog refactor (TelemetrySampler absorbed), `[KsaAnchor]`, `docs/KSA_INTEGRATION_MATRIX.md` seeded, health latches + `/sim/status/` | Matrix covers the exposed points; a faulting accessor degrades gracefully and surfaces in `/sim/status/accessors`. **Done** (the `[KsaAnchor]`↔matrix consistency *test* is deferred — `gatOS.GameMod` has no test project; the matrix is maintained by hand) |
 | **G3 — read-surface expansion** ✅ **BUILT** | `/sim/bodies`, `/sim/system`, `time/{sim_dt,warp_speeds,auto_warp,alarm}`, vessel `telemetry` JSON, environment/navball/orbit-extras/encounters, solar/lights/animations/docking/decoupler/generator/rcs read views, new event types, light colour/brightness writes (template-clone) | New tree verified over the 9p client; `EventDiffer` tests per new event. **Done** (in-guest pass pending the purrTTY tip release; aero `cda` deferred — private) |
 | **G4 — full control surface** ✅ **BUILT** | throttle (reflection), attitude/burn (FlightComputer), RCS, staging, decouplers, solver-phase queue (Harmony prefix on `ExecuteNextVehicleSolvers`), `/sim/debug/*` (teleport/refill/warp/switch) | Control surface verified over the 9p client + `[control]` config. **Done** (gimbal command + `parts/<instanceId>` tree + RCS pulse deferred — see matrix; scripted-burn in-game pass pending) |
-| **G5 — HTTP transport** ✅ **BUILT** | `gatOS.Http` (raw `TcpListener`, **not** GenHTTP/HttpListener — see CLAUDE.md), REST snapshot projections + SSE + `time/wait` long-poll + OpenAPI + generic `POST /v1/command`, errno→status; `[http]` config; `gatos.httpport` cmdline; guest v3 plumbing written (hosts `sim`, `$GATOS_HTTP`) | `gatOS.Http.Tests` (13, HttpClient over the live socket) green. **Done** host-side; in-guest `curl http://sim:<port>/v1/...` pass rides guest v3 |
+| **G5 — HTTP transport** ✅ **BUILT** | `gatOS.Http` (raw `TcpListener`, **not** GenHTTP/HttpListener — see AGENTS.md), REST snapshot projections + SSE + `time/wait` long-poll + OpenAPI + generic `POST /v1/command`, errno→status; `[http]` config; `gatos.httpport` cmdline; guest v3 plumbing written (hosts `sim`, `$GATOS_HTTP`) | `gatOS.Http.Tests` (13, HttpClient over the live socket) green. **Done** host-side; in-guest `curl http://sim:<port>/v1/...` pass rides guest v3 |
 | **G6 — SDK + player docs** ✅ **BUILT** | `examples/sdk-ts` (Bun/Node): `FsTransport`+`HttpTransport` behind one typed `GatosClient`, reactive events, warp-aware time helpers, `GatosError` errno, example scripts + pure-shell README | Type-careful TS; runs in-guest against both transports (Bun musl). **Done** |
 | **G7 — serial bus** ✅ **BUILT** | `gatOS.Bus`: `Ccsds` TM packets, `Nmea` sentences+checksum, `ScpiCommandPort`→`SimCommand`, `SerialTelemetry` (NDJSON/NMEA/CCSDS); **+ the live bridge** — `SerialBridge` (duplex telemetry-out/SCPI-in over one `Stream`) + `SerialBridgeConnector` (connect-with-retry to QEMU's `gatos.serial` chardev); `VmHost` allocates the port, `QemuCommandBuilder` wires `virtserialport,name=gatos.serial`, `Mod` runs the bridge on VM status; `[serial]` config (mode/interval/directions); guest `/dev/virtio-ports/gatos.serial` | `gatOS.Bus.Tests` (20, codecs + bridge/connector over a loopback socket pair) green; `GATOS_IT` `GuestSerialPort_StreamsTelemetry_AndAcceptsCommands` reads NDJSON + actuates SCPI on the real v3 guest. **Done.** (1553/SpaceWire framing variants remain a reserved experiment) |
 

@@ -2,7 +2,7 @@
 
 > **Status:** research/analysis only. Nothing below is built yet. If any of the proposed
 > `/sim` surface is implemented, `SPEC_9P_FILESYSTEM.md` and
-> `docs/KSA_INTEGRATION_MATRIX.md` MUST be updated in lockstep (see CLAUDE.md "The `/sim` API
+> `docs/KSA_INTEGRATION_MATRIX.md` MUST be updated in lockstep (see AGENTS.md "The `/sim` API
 > contract"). All KSA type names proposed here live **only** under
 > `gatOS.GameMod/Game/Ksa/` per the G2 dependency rule.
 

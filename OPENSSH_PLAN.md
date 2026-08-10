@@ -342,7 +342,7 @@ zero-code remedy if it regresses.
 
 ## 6. Docs to update (Instruction Maintenance Mandate)
 
-Per CLAUDE.md, update the host↔guest-seam docs in the same work item:
+Per AGENTS.md, update the host↔guest-seam docs in the same work item:
 
 - `docs/ARCHITECTURE.md` — runtime diagram box "dropbear sshd :22" → "OpenSSH sshd :22"; the port
   table row "SSH (hostfwd to dropbear :22) … dropbear" → OpenSSH.
@@ -356,7 +356,7 @@ Per CLAUDE.md, update the host↔guest-seam docs in the same work item:
 - `docs/MILESTONES.md` — M1/M2 as-built notes that say "dropbear key-only" / "the dropbear host key is
   `dropbearconvert`ed from the committed OpenSSH key" → OpenSSH equivalents.
 - `THIRD-PARTY-NOTICES.md` — swap the `dropbear = MIT-style` component entry for `OpenSSH = BSD`.
-- `CLAUDE.md` — the runtime diagram's "dropbear sshd :22" line.
+- `AGENTS.md` — the runtime diagram's "dropbear sshd :22" line.
 - **Stale-but-historical** (`OS_PLAN.md`, `OS_ANALYSIS.md` §3.5, `spike/NOTES.md`): these record the
   original *decision/spike* (dropbear was chosen for size). Leave the historical narrative, but add a
   one-line forward note where they describe the *current* server (e.g. OS_PLAN.md M2 exit criterion
@@ -423,7 +423,7 @@ produce the "unexpected SSH host key" failure — this swap is strictly safer th
    apply §2.2 fallback only if negotiation fails. (§7.3)
 9. Run plain `dotnet test gatos.slnx` (regression). (§7.4)
 10. Docs sweep: `docs/ARCHITECTURE.md`, `guest/README.md`, `guest/keys/README.md`,
-    `docs/MILESTONES.md`, `THIRD-PARTY-NOTICES.md`, `CLAUDE.md` diagram, and the forward-notes in
+    `docs/MILESTONES.md`, `THIRD-PARTY-NOTICES.md`, `AGENTS.md` diagram, and the forward-notes in
     `OS_PLAN.md`/`OS_ANALYSIS.md`. (§6)
 11. Decide `GUEST_VERSION` (keep 11 if unpublished, else bump). (§8)
 12. Commit per-task with task-id-style messages; in-game smoke (purrTTY tab → htop/resize). (§7.5)
@@ -443,7 +443,7 @@ produce the "unexpected SSH host key" failure — this swap is strictly safer th
 
 **Docs:**
 - `docs/ARCHITECTURE.md`, `guest/README.md`, `guest/keys/README.md`, `docs/MILESTONES.md`,
-  `THIRD-PARTY-NOTICES.md`, `CLAUDE.md`, plus forward-notes in `OS_PLAN.md` / `OS_ANALYSIS.md`.
+  `THIRD-PARTY-NOTICES.md`, `AGENTS.md`, plus forward-notes in `OS_PLAN.md` / `OS_ANALYSIS.md`.
 
 **Untouched (notable):** `gatOS.Ssh/SshShellSession.cs`, `gatOS.Vm/ReadinessProbe.cs`,
 `gatOS.Vm/QemuCommandBuilder.cs`, `manifest.toml` pin **value**, the committed `guest/keys/*`, all of

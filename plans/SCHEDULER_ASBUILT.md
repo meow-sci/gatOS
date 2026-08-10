@@ -5,7 +5,7 @@
 > this work item** — the game-thread driver (task **S.5**, `Mod.TickSchedules`) and the
 > `KsaCatalog` routing of the `schedule.*` family are a separate agent's.
 >
-> This note is the input for the docs lockstep pass (AGENTS.md §9): SPEC, `scope/`, `CLAUDE.md`,
+> This note is the input for the docs lockstep pass (AGENTS.md §9): SPEC, `scope/`, `AGENTS.md`,
 > `docs/MILESTONES.md`, `docs/VALIDATION.md`, and the `gatos` skill. Nothing in `SPEC_9P_FILESYSTEM.md`,
 > `scope/` or `docs/` was touched here.
 
@@ -364,7 +364,7 @@ Task **C0.2** owns the `GatOsConfig.cs` property + `Sections` row + clamp-and-wa
 
 ---
 
-## 9. Threading (for the `CLAUDE.md` threading-rules paragraph)
+## 9. Threading (for the `AGENTS.md` threading-rules paragraph)
 
 - Transport threads only ever call `ScheduleStore.ReserveId`/`Submit`/`Find`/`Players`/`IsIdLive`/
   `Count` — a `ConcurrentDictionary`, a `ConcurrentQueue`, and one volatile immutable array.

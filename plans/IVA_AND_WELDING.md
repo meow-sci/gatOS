@@ -390,7 +390,7 @@ treat the dynamic `ApplyVehicleSolvers` patch as a validated-later optimization.
 
 > This introduces a third game-thread mutation site (after the Frame drain and the solver-phase
 > prefix). It obeys threading rule 1 (game thread only) and matches unscience's proven pattern.
-> Document it in `docs/ARCHITECTURE.md` and the threading section of `CLAUDE.md`.
+> Document it in `docs/ARCHITECTURE.md` and the threading section of `AGENTS.md`.
 
 ### 5.3 Weld lifecycle & robustness (in the driver, per tick)
 For each weld (port unscience's guards + add liveness checks):
@@ -526,7 +526,7 @@ the rest parse as finite doubles (`part`→Values[0], `lock`→0/1); reject othe
 7. **IvaForceRender** + `IvaActuator`; KsaCatalog dispatch; Mod lifecycle (disable on unload).
 8. **WeldEntry/WeldEngine/WeldManager** (+ `QuatToEulerDegrees`, capture); `WeldActuator`; KsaCatalog
    dispatch; sampler projection of `Welds`; driver in `OnAfterUi`; clear on unload.
-9. **Docs**: SPEC, KSA_INTEGRATION_MATRIX, scope pages, ARCHITECTURE, CLAUDE.md status/threading,
+9. **Docs**: SPEC, KSA_INTEGRATION_MATRIX, scope pages, ARCHITECTURE, AGENTS.md status/threading,
    VALIDATION checklist, gatos skill (+ optional recipe).
 
 Game-free steps (1–5) are fully unit-tested. Game-coupled steps (6–8) compile-gate on `KSA.dll` and
@@ -565,9 +565,9 @@ are covered by the in-game checklist (§9) per gatOS convention.
   inventory. Each with its game-version status. (binding)
 - **`docs/ARCHITECTURE.md`** — the new game-thread mutation site (`OnAfterUi` weld driver) + the
   `gatos.iva` dynamic Harmony instance + the parts cache.
-- **`CLAUDE.md`** — status table (new feature row) + threading section (third mutation site); status
+- **`AGENTS.md`** — status table (new feature row) + threading section (third mutation site); status
   detail in `docs/MILESTONES.md`.
-- **`.claude/skills/gatos/`** — mention welds/IVA/parts and point at the SPEC; optional `recipes.md`
+- **`.agents/skills/gatos/`** — mention welds/IVA/parts and point at the SPEC; optional `recipes.md`
   entry (`weld_here` two vessels).
 
 ---

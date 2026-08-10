@@ -66,7 +66,7 @@ firewall; KSA types never cross them. Everything downstream (the 9p/HTTP/MQTT/se
 `/sim` tree, SimFs, the VM/SSH/guest stack) is **game-free and cannot be broken by a KSA update.**
 
 This is *the binding rule* — see "THE dependency rule" and its "Stronger form for KSA integration
-(G2)" in [`CLAUDE.md`](../../../CLAUDE.md). It is why the blast radius is small and discoverable:
+(G2)" in [`AGENTS.md`](../../../AGENTS.md). It is why the blast radius is small and discoverable:
 
 - Every KSA member gatOS binds to non-reflectively carries a **`[KsaAnchor]`** attribute
   (`Member`, `SourceFile`, `Verified`, `GameVersion`, `Risk`, `Notes`) — defined in
@@ -197,13 +197,13 @@ For each confirmed break/drift, and **only** after confirming the fix approach w
 2. Update its **`[KsaAnchor]`** — `Member`, `Verified` (today's date), `GameVersion` (the CURRENT
    build id), and `Notes` if semantics moved.
 3. Update **all** human views in the **same** change (the lockstep mandate in
-   [`CLAUDE.md`](../../../CLAUDE.md) — "Instruction Maintenance Mandate" + the `/sim` API constitution):
+   [`AGENTS.md`](../../../AGENTS.md) — "Instruction Maintenance Mandate" + the `/sim` API constitution):
    - the matching [`scope/`](../../../scope/FULL_SCOPE.md) page(s) and the row's **game-version status**
      ([read](../../../scope/ksa-read-surface.md) / [write](../../../scope/ksa-write-surface.md) /
      [runtime](../../../scope/ksa-runtime-coupling.md) / [assets](../../../scope/ksa-assets-and-versions.md));
    - [`docs/KSA_INTEGRATION_MATRIX.md`](../../../docs/KSA_INTEGRATION_MATRIX.md) (the anchor mirror);
    - [`SPEC_9P_FILESYSTEM.md`](../../../SPEC_9P_FILESYSTEM.md) **iff** the `/sim` surface, a unit, a
-     format, a phase, or a semantic actually moved (its own binding constitution — see `CLAUDE.md`);
+     format, a phase, or a semantic actually moved (its own binding constitution — see `AGENTS.md`);
    - the affected checklist in [`docs/VALIDATION.md`](../../../docs/VALIDATION.md) (mark it for a live re-run).
 4. Rebuild + run the full test suite green (`dotnet test gatos.slnx --nologo -v quiet`). Note that
    in-flight behavior still needs a live KSA session — the automated suite cannot cover it.

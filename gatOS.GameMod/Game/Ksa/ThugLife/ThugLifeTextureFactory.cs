@@ -14,7 +14,7 @@ namespace gatOS.GameMod.Game.Ksa.ThugLife;
 ///     Produces an <c>R8G8B8A8UNorm</c> 2D texture so the stock <c>UnlitMeshFrag</c> shader's
 ///     <c>gammaToLinear()</c> decode is the only color transform applied to the texel — using an SRGB
 ///     format would double-decode (the GPU decodes on sample, then the shader decodes again → too dark).
-///     See <c>.claude/skills/ksa/quad.md</c> "Texture format gotcha".
+///     See <c>.agents/skills/ksa/quad.md</c> "Texture format gotcha".
 /// </remarks>
 internal sealed class ThugLifeTextureFactory : IDisposable
 {

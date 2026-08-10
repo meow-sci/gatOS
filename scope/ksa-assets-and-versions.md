@@ -262,7 +262,7 @@ symmetry infrastructure, terrain-impact prediction, ice/wetness FX) misses the g
 removal, a near-SoI gravitation-refactor nuance, and the solar-cell stock value 50→100 W (below). No
 `plans/` gap plan was needed. Live re-check items: `docs/VALIDATION.md`. 4826 is now the verified baseline.
 
-> The ksa skill (`.claude/skills/ksa/`) also points at decompiled sources under `decomp/ksa/` (and a
+> The ksa skill (`.agents/skills/ksa/`) also points at decompiled sources under `decomp/ksa/` (and a
 > working copy lives at `…/unscience/decomp/ksa`). Any of these decomp trees is readable; for
 > break-checking use the one **versioned with the DLLs you're building against** (the game-assemblies
 > checkout) so source and binary match. (`[KsaAnchor].SourceFile`'s docstring says "under

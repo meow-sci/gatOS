@@ -12,7 +12,7 @@ namespace gatOS.GameMod.Game.Ksa.ThugLife;
 /// <summary>
 ///     Owns the per-draw GPU resources (pipeline, descriptor set, vertex/index buffers, texture) for the
 ///     thug-life sunglasses quad and records one draw per entry per frame (ported from the sibling
-///     <c>unscience</c> mod; see <c>.claude/skills/ksa/quad.md</c> for the why behind every pipeline
+///     <c>unscience</c> mod; see <c>.agents/skills/ksa/quad.md</c> for the why behind every pipeline
 ///     choice). The model matrix is rebuilt per entry per frame and pushed as a vertex push constant.
 /// </summary>
 internal sealed unsafe class ThugLifeQuadRenderer : IDisposable

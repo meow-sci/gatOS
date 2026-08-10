@@ -25,7 +25,7 @@ contract, not KSA game state):
 
 The game-coupled hook bodies live in the partial `Game/Mod.Game.cs` and are `[MethodImpl(NoInlining)]`
 partial methods, so a missing KSA assembly fails at the *call site* (caught) rather than JIT of the
-caller — the whole solution still builds without the game DLLs (CLAUDE.md dependency rule).
+caller — the whole solution still builds without the game DLLs (AGENTS.md dependency rule).
 
 ### The `DrawUI` / F2 hook change (C0.1) — the third StarMap hook {#f2-hook}
 
@@ -517,7 +517,7 @@ Full inventory: [`non-ksa-surface.md#scheduler`](non-ksa-surface.md#scheduler).
   28 `camera.*` writes themselves are ordinary Frame-phase commands, and **no camera action is in
   `SolverActions`** — nothing about the camera is visible to the vehicle solver.
 
-Threading rules 1–5 (CLAUDE.md): game state read+mutated **only** on the game thread; 9p/HTTP/MQTT
+Threading rules 1–5 (AGENTS.md): game state read+mutated **only** on the game thread; 9p/HTTP/MQTT
 threads only enqueue `SimCommand` and read the last published snapshot; `VmHost` is one-semaphore async;
 nothing blocks the render thread.
 

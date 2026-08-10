@@ -58,7 +58,7 @@ These are decided; do not re-litigate:
   one class (`GatOsPaths`, T0.4); never hardcode elsewhere.
 - Commit style: small, per-task commits; message starts with the task id (e.g.
   `T3.4: qemu readiness probe`).
-- **CLAUDE.md maintenance mandate**: the new repo gets a CLAUDE.md (T0.6). Every task that
+- **AGENTS.md maintenance mandate**: the new repo gets a AGENTS.md (T0.6). Every task that
   changes structure, commands, or behavior contracts must update it in the same commit.
 
 ### 0.3 Reference material available to agents
@@ -97,7 +97,7 @@ These are decided; do not re-litigate:
 gatos/
 ├── gatos.slnx
 ├── Directory.Build.props
-├── CLAUDE.md
+├── AGENTS.md
 ├── README.md
 ├── LICENSE                          # MIT (the mod's own code)
 ├── THIRD-PARTY-NOTICES.md           # QEMU GPLv2, Alpine components, SSH.NET, Tomlyn…
@@ -188,7 +188,7 @@ Threading rules (binding for every task):
 
 | Milestone | Deliverable | Exit criterion |
 |---|---|---|
-| **M0** Repo scaffold | Solution, props, logging, vendored contract, CI skeleton, CLAUDE.md | `dotnet test` green on empty-ish projects; CI runs |
+| **M0** Repo scaffold | Solution, props, logging, vendored contract, CI skeleton, AGENTS.md | `dotnet test` green on empty-ish projects; CI runs |
 | **M1** De-risking spike | Throwaway scripts/console apps proving the 2 novel channels | 9p synthetic file `cat`/`tail -f`/Ctrl-C from a real guest; SSH shell with live resize from C# |
 | **M2** Guest image pipeline | Reproducible `build-image.sh` → base.qcow2 + kernel + initrd + manifest + keys; guest-release workflow | Image boots to dropbear in <2 s accelerated; artifacts published as `guest-v1` |
 | **M3** gatOS.Vm | QemuProcess, accel ladder, ports, readiness, shutdown ladder, DiskManager, QgaClient | Integration test boots/destroys a real VM on dev + CI (KVM) |
@@ -350,13 +350,13 @@ Key facts about the contract (verified against purrtty today; namespace
 
 **Accept:** solution builds with the references in place.
 
-## T0.6 — CLAUDE.md + README + CI skeleton
+## T0.6 — AGENTS.md + README + CI skeleton
 
 **Goal:** working agreements + a CI that runs tests on every push.
 
-1. `CLAUDE.md`: project overview (3 paragraphs from Part 0/2 of this plan), build/test commands,
+1. `AGENTS.md`: project overview (3 paragraphs from Part 0/2 of this plan), build/test commands,
    project map, the threading rules (§2.2), the "only GameMod touches game DLLs" rule, and the
-   instruction-maintenance mandate (copy the wording from purrtty's CLAUDE.md).
+   instruction-maintenance mandate (copy the wording from purrtty's AGENTS.md).
 2. `README.md`: what gatOS is, requirements (purrTTY mod, QEMU on Linux/macOS, WHP feature note
    for Windows), install steps, links to OS_ANALYSIS in the purrtty repo.
 3. `.github/workflows/build.yml`: copy the **shape** of `../purrtty/.github/workflows/release.yml`
@@ -913,7 +913,7 @@ Also a unit test: ctor+Dispose without StartAsync does nothing (registry-probe s
 # M5 — Upstream purrTTY changes (executed in the `purrtty` repo) — **DONE**
 
 > Two small changes; keep them independent commits. They ship in a normal purrTTY tip release
-> **before** M6 in-game testing. Follow purrtty's CLAUDE.md mandate (update its docs).
+> **before** M6 in-game testing. Follow purrtty's AGENTS.md mandate (update its docs).
 
 > (As built: purrtty commits `9fb5e13` (T5.1) and `a56966a` (T5.2) on its current working
 > branch; full purrtty suite green (325 tests, 0 warnings). The **tip release cut is the one
@@ -958,7 +958,7 @@ violated; reading live instead of caching solves cross-mod registration timing w
 refresh hook.
 
 **Accept:** purrTTY test suite green; in-game smoke: Game Console still opens; a dummy shell
-registered from a test mod appears in both menus. Update purrtty CLAUDE.md (menu section) +
+registered from a test mod appears in both menus. Update purrtty AGENTS.md (menu section) +
 tip release cut.
 
 > (As built: the loop lives in a `DrawRegisteredCustomShellItems` helper called from **both**
@@ -967,7 +967,7 @@ tip release cut.
 > against the init order: `InitializeTerminal` runs `EnsureGameShellsDiscovered()` synchronously
 > before publishing `MenuController`, and the menus are unreachable until `MenuController` is
 > non-null — so `GetAvailableShells()` on the draw path can never trigger discovery. purrtty
-> CLAUDE.md updated (menu section, custom-shell how-to, and the allocation-free claim now
+> AGENTS.md updated (menu section, custom-shell how-to, and the allocation-free claim now
 > carves out this LINQ read, which only runs while a New Tab/New Window menu is open). The
 > in-game smoke (Game Console + a cross-mod shell in both menus) rides M6's first in-game test;
 > headlessly the suite is green.)
@@ -1397,7 +1397,7 @@ public readonly record struct QuatSnap(double X, double Y, double Z, double W);
 ```
 (Field availability is grounded in OS_ANALYSIS §10's verified KSA API sweep; the sampler task
 T9.1 maps them. If a field proves unreachable, drop it from BOTH the record and the tree and
-note it in CLAUDE.md.)
+note it in AGENTS.md.)
 
 `SnapshotStore`:
 ```csharp
@@ -1811,7 +1811,7 @@ zstd, …), so we produce one. Expected dist growth ≈ +100–150 MB uncompress
 1. Code + tests written; `dotnet build gatos.slnx` and `dotnet test gatos.slnx` green.
 2. New behavior covered by tests at the right level (unit for pure logic; `GATOS_IT=1`
    integration for anything touching qemu/ssh/9p-kernel).
-3. CLAUDE.md / README / this plan updated if commands, structure, or contracts changed.
+3. AGENTS.md / README / this plan updated if commands, structure, or contracts changed.
 4. Committed with the task id; no unrelated changes in the commit.
 5. No game-assembly references outside `gatOS.GameMod`; no blocking calls on the render
    thread; no unbounded queues; every spawned thread/process has an owner that stops it.

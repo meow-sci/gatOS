@@ -429,5 +429,5 @@ gatOS.SimFs.Tests/Audio/…                       NEW  unit tests
 - `scope/FULL_SCOPE.md` + scope page for the FMOD binding; `[KsaAnchor]` at the call sites.
 - `docs/KSA_INTEGRATION_MATRIX.md` — `GameAudio`/`Fmod` rows.
 - `docs/VALIDATION.md` — the in-game checklist above.
-- `CLAUDE.md` — feature mention if the architecture summary enumerates sections.
+- `AGENTS.md` — feature mention if the architecture summary enumerates sections.
 - `Configuration/gatos.default.toml` — `[audio]` defaults.

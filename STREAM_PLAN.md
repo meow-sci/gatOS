@@ -35,7 +35,7 @@ external emulators alike — can display it by consuming the stream from guest u
 > 5. Clients are **not** limited to in-game purrTTY tabs — external kitty-capable terminals SSH-ing into
 >    the guest must work too.
 >
-> Because this puts a new surface under `/sim`, it is bound by the **SPEC constitution** in `CLAUDE.md`:
+> Because this puts a new surface under `/sim`, it is bound by the **SPEC constitution** in `AGENTS.md`:
 > `SPEC_9P_FILESYSTEM.md` MUST be updated in lockstep, and the transport-parity rule applies (control
 > leaves mirror to HTTP/MQTT automatically; the streaming file is a media exception, handled like
 > `stream`/`events`/`alarm`).
@@ -364,7 +364,7 @@ terminals supported.
 - **Dependency rule:** unchanged — only `GameMod` references KSA; only `Game/Ksa/` names KSA Vulkan types;
   `SimFs/Display/` is game-free.
 - **Docs (Instruction Maintenance Mandate):** `SPEC_9P_FILESYSTEM.md` (the new `/sim/display/*` surface —
-  **mandatory, in lockstep**); `CLAUDE.md` status table + project map; `docs/ARCHITECTURE.md` (pipeline +
+  **mandatory, in lockstep**); `AGENTS.md` status table + project map; `docs/ARCHITECTURE.md` (pipeline +
   `[display]`); `docs/KSA_INTEGRATION_MATRIX.md` (the `FrameCapture` anchor); the `gatos` skill +
   `examples/` (the consumer recipe).
 

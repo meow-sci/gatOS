@@ -359,7 +359,7 @@ against a narrow internal interface so Option C remains a drop-in.
 ## 4. Design
 
 All new KSA-touching code lives under `gatOS.GameMod/Game/Ksa/Iva/` and carries `[KsaAnchor]`
-attributes — the stronger form of the dependency rule (CLAUDE.md) applies: no Bepu or KSA type may
+attributes — the stronger form of the dependency rule (AGENTS.md) applies: no Bepu or KSA type may
 escape that folder. The `/sim` tree, transports and command pipeline see only plain snapshots and
 `SimCommand`s.
 
@@ -469,7 +469,7 @@ empty.
 ## 5. Phases
 
 Each phase ends with `dotnet build gatos.slnx` + `dotnet test gatos.slnx` green and zero warnings
-(CLAUDE.md), and every phase touching `/sim` updates `SPEC_9P_FILESYSTEM.md` in the same commit.
+(AGENTS.md), and every phase touching `/sim` updates `SPEC_9P_FILESYSTEM.md` in the same commit.
 
 ### V0 — build plumbing and the seam
 - **V0.1** Add `Bepu*.dll` to `ksa-game-assemblies/copy-ksa.ts` patterns; add condition-guarded
@@ -546,7 +546,7 @@ and shape overrides in a shipped TOML; drag from cabin atmosphere (a simple `−
 
 ---
 
-## 6. Documentation lockstep (binding, per CLAUDE.md)
+## 6. Documentation lockstep (binding, per AGENTS.md)
 
 Landing any of the above requires, **in the same work item**:
 
@@ -556,10 +556,10 @@ Landing any of the above requires, **in the same work item**:
   `PartModelModule`/`MeshReference`/`AccelerationBody` bindings) and `scope/ksa-write-surface.md`
   (the `Part.PositionParentAsmb` driver) with game-version status rows.
 - `docs/KSA_INTEGRATION_MATRIX.md` — one row per new `[KsaAnchor]`.
-- `CLAUDE.md` — status table row, project map note (the Bepu reference), and the threading-rules
+- `AGENTS.md` — status table row, project map note (the Bepu reference), and the threading-rules
   section (`Mod.DriveIvaPhysics` becomes a sixth game-thread work site).
 - `docs/ARCHITECTURE.md` — the cabin-sim box in the runtime diagram.
-- `.claude/skills/gatos/` — a recipe once the surface is live.
+- `.agents/skills/gatos/` — a recipe once the surface is live.
 
 ---
 

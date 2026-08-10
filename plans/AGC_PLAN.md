@@ -716,7 +716,7 @@ checkout). **If** a future convenience tarball ships yaAGC binaries or rope imag
 The plan itself adds no `/sim` surface. **W1 does** (below) and must ride the constitution:
 SPEC_9P_FILESYSTEM.md + `scope/` pages + `docs/KSA_INTEGRATION_MATRIX.md` + `docs/VALIDATION.md`
 in the same change. The examples get a `site/` tutorial (via the `tutorials` skill) at A7, and
-CLAUDE.md's status table gains a row when A2 first ships something usable.
+AGENTS.md's status table gains a row when A2 first ships something usable.
 
 ### 7.4 W1 — `ctl/rotate` (the one gatOS augmentation; prerequisite for A4) — **DONE 2026-07-22**
 
@@ -789,7 +789,7 @@ kill/restart mid-flight resumes from the auto core dump.
 **A7 — Polish & CM.** Downlink NDJSON + decoded `status` page (ddd-77772 TSV), `/sim/audio`
 alarms, Comanche mode (`agc start cm`, CMSIM cfg, CM DSKY lamp set, P00/P52/P40 card), in-world
 cockpit recipe (welds + purrTTY quad + `dsky`), `site/` tutorial, VALIDATION.md sweep.
-*Exit:* M-E card; docs complete; status row added to CLAUDE.md.
+*Exit:* M-E card; docs complete; status row added to AGENTS.md.
 
 ---
 

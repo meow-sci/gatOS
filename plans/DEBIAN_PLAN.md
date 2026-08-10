@@ -15,7 +15,7 @@ dotnet test  gatos.slnx --nologo -v quiet
 
 > **Required reading before starting:** `spike/NOTES.md` (9p mount options, i_size truthfulness on
 > ≥6.11 kernels, the two file models), `guest/README.md` (the as-built Alpine pipeline), and the
-> "Threading rules" + "dependency rule" sections of `CLAUDE.md`. None of the threading rules are
+> "Threading rules" + "dependency rule" sections of `AGENTS.md`. None of the threading rules are
 > touched by this plan — the whole change lives on the guest seam.
 
 ---
@@ -499,16 +499,16 @@ comparison alpine vs debian, accelerated) in `docs/VALIDATION.md`.
 ships in the debian release assets.
 
 **DG20 — documentation sweep (the lockstep mandate, §6).**
-Update every stale statement per the §6 checklist in one work item. Highlights: CLAUDE.md status
+Update every stale statement per the §6 checklist in one work item. Highlights: AGENTS.md status
 table gains a "Debian guest flavor" row + the M2 row's `GUEST_VERSION`=14 → per-flavor pins;
 README gains a "Guest flavors" section (what Debian costs — download size, RAM ≥ 512 MB, apt vs
 apk — and the 3-step switch) and dual `apk`/`apt` wording where package installs are suggested;
 `guest/README.md` rewritten around the flavor layout; `docs/ARCHITECTURE.md` disk-layout tree gets
 the flavor-qualified names; `scope/non-ksa-surface.md` guest rows split per flavor;
-`.claude/skills/gatos/flight-programs.md:19` gains the `apt install cargo` variant; OS_PLAN P4
+`.agents/skills/gatos/flight-programs.md:19` gains the `apt install cargo` variant; OS_PLAN P4
 marked superseded; `docs/MILESTONES.md` gains the as-built section when done.
 **Accept:** grep for `guest-v<N>`-era phrasing and `GUEST_VERSION` finds only historical notes;
-CLAUDE.md "Current status" reflects reality.
+AGENTS.md "Current status" reflects reality.
 
 ### Phase 6 — in-game validation
 
@@ -527,7 +527,7 @@ overlay alone → display stream sanity (guest-neutral, one quick look). Record 
 
 | File | Stale statement / needed counterpart |
 |---|---|
-| `CLAUDE.md` | intro "real, minimal Alpine Linux" → "Alpine or barebones Debian"; M2 row pin; tail-shim note (applies to both flavors — Debian's coreutils is the *reason* the shim exists); build/test commands (`fetch-guest --flavor`); repo-layout `guest/` entry; architecture diagram guest box; status table new row |
+| `AGENTS.md` | intro "real, minimal Alpine Linux" → "Alpine or barebones Debian"; M2 row pin; tail-shim note (applies to both flavors — Debian's coreutils is the *reason* the shim exists); build/test commands (`fetch-guest --flavor`); repo-layout `guest/` entry; architecture diagram guest box; status table new row |
 | `README.md` / `README_DETAILS.md` | "boots a genuine, tiny Alpine Linux"; new **Guest flavors** section; `apk` mentions gain `apt` twins; "What's in the mod folder" guest listing; License §; disk-space/auto-grow §; `/mnt` v10+ note becomes per-flavor version notes |
 | `docs/MILESTONES.md` | new section for this plan's landing; M2 section notes the restructure |
 | `docs/ARCHITECTURE.md` | disk-layout tree (flavor-qualified names, per-flavor bases); diagram guest box; config key list |
@@ -535,7 +535,7 @@ overlay alone → display stream sanity (guest-neutral, one quick look). Record 
 | `OS_PLAN.md` | Part 1 D1 dated revision note (fulfilled/extended by this plan); Part 3 M12/P4 superseded pointer; T11.2 Debian source-mirroring note |
 | `scope/FULL_SCOPE.md`, `scope/non-ksa-surface.md` | guest/VM rows: pipeline per flavor, `guest_flavor` config gate, new disks naming (row G routing is non-KSA — confirmed no KSA scope pages involved) |
 | `SPEC_9P_FILESYSTEM.md` | **no change** (verified distro-agnostic) — state nothing; do not add guest content to the SPEC |
-| `.claude/skills/gatos/flight-programs.md` | line 19 Alpine/apk → both flavors |
+| `.agents/skills/gatos/flight-programs.md` | line 19 Alpine/apk → both flavors |
 | `THIRD-PARTY-NOTICES.md` | DG19 |
 | `guest/README.md`, `guest/keys/README.md` | full rewrite around §4 layout; keys README notes both flavors share the pins |
 | `gatos.default.toml` | DG7 (`guest_flavor` + the `telemetry_vessel_parts` drift fix) |

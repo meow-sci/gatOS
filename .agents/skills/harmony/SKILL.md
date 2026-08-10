@@ -37,7 +37,7 @@ There is **no** `[Patch]`/`[Unpatch]`/`ModInfo` attribute on these methods. The 
 - The ID is a **string literal**, either the mod folder name (`"zippo"`, `"flexo"`, `"thug-life"`) or a fully-qualified namespace (`"MeowSci.Blinky"`, `"MeowSci.Unscience"`). Pick one and reuse the exact same string for `UnpatchAll`.
 - Created either inline (`= new Harmony("zippo")`) or lazily in `Patch()` (`_harmony = new Harmony("MeowSci.Blinky")`). Lazy creation pairs naturally with `_harmony = null` in `Unload()`.
 
-### HotkeyGuard is mandatory (see CLAUDE.md)
+### HotkeyGuard is mandatory (see AGENTS.md)
 
 Every top-level mod MUST apply `HotkeyGuard` from `MeowSci.KsaAbstractions`. Patch it in `Patch()`, unpatch it **first** in `Unload()`:
 
@@ -304,7 +304,7 @@ private static void Postfix() { /* ImGui.BeginMenu(...) ... */ }
 
 ## Logging & error-handling conventions
 
-- Log with `Console.WriteLine` (per CLAUDE.md). Standard messages: `"<mod>: Harmony patches applied"` / `"<mod>: patches removed"`, and on failure `"<mod>: Error applying patches: {ex.Message}"`.
+- Log with `Console.WriteLine` (per AGENTS.md). Standard messages: `"<mod>: Harmony patches applied"` / `"<mod>: patches removed"`, and on failure `"<mod>: Error applying patches: {ex.Message}"`.
 - Wrap `Patch()`/`Unload()` bodies in try/catch so a failed patch can't take down mod loading.
 - Wrap the **body of render/hot-path prefixes & postfixes** in try/catch too — an exception thrown from inside a patch on a per-frame game method would otherwise spam or destabilize the game loop.
 

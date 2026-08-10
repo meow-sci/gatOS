@@ -3,7 +3,7 @@ using gatOS.Logging;
 namespace gatOS.SimFs.Tests;
 
 /// <summary>
-///     Routes <see cref="ModLog"/> away from the console for the whole assembly (CLAUDE.md:
+///     Routes <see cref="ModLog"/> away from the console for the whole assembly (AGENTS.md:
 ///     keep test output minimal — the 9p server logs per-connection lines otherwise).
 /// </summary>
 [SetUpFixture]

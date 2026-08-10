@@ -16,7 +16,7 @@
 >
 > Companion references: [`AGENTS.md`](../AGENTS.md) (the `/sim` schema-change constitution — this
 > plan obeys it), [`SPEC_9P_FILESYSTEM.md`](../SPEC_9P_FILESYSTEM.md), [`scope/`](../scope/FULL_SCOPE.md),
-> `.claude/skills/ksa/camera.md` (**stale — see §11.3**).
+> `.agents/skills/ksa/camera.md` (**stale — see §11.3**).
 
 ---
 
@@ -813,11 +813,11 @@ bubble-relative ego question of §5.2**; no `TimedAlert` text appears in footage
 | `scope/ksa-read-surface.md` | the camera-state read binding |
 | `scope/ksa-runtime-coupling.md` | `###` entries for the `OnAfterFrame` driver, the scheduler tick, **and** the C0.1 hook change |
 | `scope/non-ksa-surface.md` | the scheduler (game-free — it belongs here, not in the KSA pages) |
-| `CLAUDE.md` | status-table rows; **threading-rules paragraph — two new game-thread work sites**; the `DrawUI` fix |
+| `AGENTS.md` | status-table rows; **threading-rules paragraph — two new game-thread work sites**; the `DrawUI` fix |
 | `docs/VALIDATION.md` | `## camera` and `## schedules` — **NOT YET RUN** (§9) |
 | `docs/MILESTONES.md` | as-built detail |
-| `.claude/skills/gatos/` + `docs/TUTORIAL_DATA_REFERENCE.md` | recipes: timed sequences, shot authoring, frames, aim-with-offset |
-| `.claude/skills/ksa/camera.md`, `.claude/skills/harmony/SKILL.md` | **correct the stale `___Transform` / `OnFrame(double)` claims** |
+| `.agents/skills/gatos/` + `docs/TUTORIAL_DATA_REFERENCE.md` | recipes: timed sequences, shot authoring, frames, aim-with-offset |
+| `.agents/skills/ksa/camera.md`, `.agents/skills/harmony/SKILL.md` | **correct the stale `___Transform` / `OnFrame(double)` claims** |
 
 ---
 
@@ -829,9 +829,9 @@ bubble-relative ego question of §5.2**; no `TimedAlert` text appears in footage
 2. **FOV unit asymmetry.** `SetFieldOfView` takes **degrees** and does **not** clamp;
    `GetFieldOfView()` returns **radians**; `ChangeFieldOfView` takes a degree delta and clamps
    `[15,120]`. Encode units in the helper names.
-3. **Two stale docs will mislead an implementer.** `.claude/skills/ksa/camera.md` documents
+3. **Two stale docs will mislead an implementer.** `.agents/skills/ksa/camera.md` documents
    `OnFrame(double)` and a `___Transform` Harmony field injector that **has never existed**;
-   `.claude/skills/harmony/SKILL.md:199` repeats it. Fix in **C6.3**. (`Controller.OnFrame` is
+   `.agents/skills/harmony/SKILL.md:199` repeats it. Fix in **C6.3**. (`Controller.OnFrame` is
    `(Viewport, double)`; the camera is the public field `Controller.Camera`.)
 4. **Overriding the main camera changes where kittens walk.** `KittenEva.PrepareWorker` feeds
    `Program.GetMainCamera().GetForwardEcl()/GetRightEcl()/GetUpEcl()` into EVA locomotion

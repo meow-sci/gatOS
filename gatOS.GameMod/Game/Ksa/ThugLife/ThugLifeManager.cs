@@ -13,7 +13,7 @@ namespace gatOS.GameMod.Game.Ksa.ThugLife;
 ///     dynamic render hook. Lives on the game/main thread: entries are created/edited/removed in the
 ///     command drain, validated once per frame (<see cref="Update"/>), projected for telemetry by the
 ///     sampler (<see cref="Snapshot"/>), and drawn by the render postfix (<see cref="RecordDraws"/>,
-///     which runs on the same main thread — see <c>.claude/skills/ksa/quad.md</c>).
+///     which runs on the same main thread — see <c>.agents/skills/ksa/quad.md</c>).
 /// </summary>
 /// <remarks>
 ///     Empty by default ⇒ <b>no</b> Harmony patch and <b>no</b> GPU allocation. The render postfix is

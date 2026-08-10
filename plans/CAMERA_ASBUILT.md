@@ -7,7 +7,7 @@
 > (`gatOS.GameMod/Game/Ksa/Camera/**`, plan §6.2) are a separate agent's, as is the `KsaCatalog`
 > routing of the `camera.*` family.
 >
-> This note is the input for the docs lockstep pass (AGENTS.md §9): SPEC, `scope/`, `CLAUDE.md`,
+> This note is the input for the docs lockstep pass (AGENTS.md §9): SPEC, `scope/`, `AGENTS.md`,
 > `docs/MILESTONES.md`, `docs/VALIDATION.md`, and the `gatos` skill. Nothing in
 > `SPEC_9P_FILESYSTEM.md`, `scope/` or `docs/` was touched here.
 >
@@ -523,7 +523,7 @@ built the queue, not the emitters.
 
 ---
 
-## 9. Threading (for the `CLAUDE.md` threading-rules paragraph)
+## 9. Threading (for the `AGENTS.md` threading-rules paragraph)
 
 - `CameraState` is **game-thread only**, both for mutation (via the command drain) and for reads (the
   director). **There are no locks in it on purpose** — adding one would only hide a rule violation.
@@ -923,7 +923,7 @@ leaf, no actuator and no `Universe.SetSimulationSpeed` call anywhere in `Game/Ks
 
 ---
 
-## G10. Threading (for the `CLAUDE.md` threading-rules paragraph)
+## G10. Threading (for the `AGENTS.md` threading-rules paragraph)
 
 **A seventh game-thread work site: `Mod.DriveCamera` → `CameraDirector.Update`, run at the end of
 `[StarMapAfterOnFrame] Mod.OnAfterFrame`** — after the render, on **every** rendered frame (unlike
@@ -959,7 +959,7 @@ snapshot alongside audio's, IVA's and the scheduler's.
 - **Docs lockstep (AGENTS.md §9)** from this note: `SPEC_9P_FILESYSTEM.md` (the `/sim/camera` family +
   §5.1 action rows + the §2.5 `[camera]` gate), `docs/KSA_INTEGRATION_MATRIX.md` (G2's table),
   `scope/FULL_SCOPE.md` + `scope/ksa-{read,write}-surface.md` + `scope/ksa-runtime-coupling.md` (the
-  `OnAfterFrame` camera driver), `CLAUDE.md` (status row + G10's threading paragraph),
+  `OnAfterFrame` camera driver), `AGENTS.md` (status row + G10's threading paragraph),
   `docs/MILESTONES.md`, and `docs/VALIDATION.md` (`## camera — **NOT YET RUN**`).
 - **In-game validation** — nothing here has been run against a live flight. Beyond plan §9's list, this
   work item specifically wants: ownership/release round-trip leaves the camera exactly as found
@@ -1700,7 +1700,7 @@ trigonometry with no KSA type in it.
 - **Docs lockstep (AGENTS.md §9)** from this note: `SPEC_9P_FILESYSTEM.md` (the two new leaves, the
   `camera.map_scope` action row, the `map_scope` status line, the §W3 time-channel semantics and its two
   config gates, and the §W8.4 EOPNOTSUPP), `docs/KSA_INTEGRATION_MATRIX.md` (§W7),
-  `scope/FULL_SCOPE.md` + `scope/ksa-{read,write}-surface.md`, `CLAUDE.md`, `docs/MILESTONES.md`.
+  `scope/FULL_SCOPE.md` + `scope/ksa-{read,write}-surface.md`, `AGENTS.md`, `docs/MILESTONES.md`.
 - **In-game validation** — nothing here has run against a live flight. Beyond plan §9's list this work
   item specifically wants: a track actually driving the camera end to end (upload, `play`, shot edges,
   `finished`); `camera/last_error` after a deliberately malformed `cp`; the time channel easing into

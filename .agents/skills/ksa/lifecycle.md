@@ -57,7 +57,7 @@ internal static class Patcher
         try
         {
             _harmony ??= new Harmony("my-mod-id");
-            HotkeyGuard.Patch(_harmony);              // REQUIRED for every mod (see CLAUDE.md)
+            HotkeyGuard.Patch(_harmony);              // REQUIRED for every mod (see AGENTS.md)
             MyThingPatches.Apply(_harmony);           // shared static patch class in the .lib
         }
         catch (Exception ex) { Console.WriteLine($"my-mod-id: Error applying patches: {ex.Message}"); }
@@ -203,4 +203,4 @@ ImportedAssemblies = ["MeowSci.ZippoLib"]
 - **Logging:** `Console.WriteLine($"<mod-id>: ...")` always. Wrap lifecycle/patch bodies in try/catch that logs.
 - **Window-toggle hotkey:** F11 is the default (`ImGui.IsKeyPressed(ImGuiKey.F11)` in `OnAfterUi`). Deviations in use: F8 (doh), F9 (glass, kiwis-marbles), F12 (thug-life).
 - **Persistence:** `KsaPaths.UserDataDir` = `MyDocuments\My Games\Kitten Space Agency`. This repo persists under a `.unscience` subfolder, as TOML via Tomlyn (see SKILL.md TOML section).
-- **HotkeyGuard is mandatory** — see SKILL.md and CLAUDE.md. Patch in `Patch()`, unpatch in `Unload()`.
+- **HotkeyGuard is mandatory** — see SKILL.md and AGENTS.md. Patch in `Patch()`, unpatch in `Unload()`.

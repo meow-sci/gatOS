@@ -12,7 +12,7 @@ namespace gatOS.SimFs;
 ///     (<c>gatOS.Http</c>) and the MQTT broker (<c>gatOS.Mqtt</c>) — projects reads through this
 ///     class, so the JSON one transport serves is the JSON every other transport serves. That is
 ///     what makes the cross-transport <b>feature-parity</b> invariant structural rather than a
-///     manual sync chore (CLAUDE.md "transport parity"): add a read here and both transports get it.
+///     manual sync chore (AGENTS.md "transport parity"): add a read here and both transports get it.
 /// </summary>
 /// <remarks>
 ///     <para>Two shapes coexist deliberately and are <b>both</b> reachable on every transport:</para>

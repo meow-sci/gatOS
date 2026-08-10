@@ -162,7 +162,7 @@ dotnet test  gatos.slnx --nologo -v quiet
 
 The KSA reference assemblies resolve via `Directory.Build.props` (env `KSA_DLL_DIR`, a sibling
 `ksa-game-assemblies` checkout, or a per-OS default). Only `gatOS.GameMod` needs them; the rest of
-the solution builds without. See **`CLAUDE.md`** for conventions and the project map.
+the solution builds without. See **`AGENTS.md`** for conventions and the project map.
 
 ## License
 

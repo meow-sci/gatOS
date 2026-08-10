@@ -34,7 +34,7 @@ connected to the QEMU `gatos.serial` chardev:
 | `echo CTL:IGNITE >` the device actuates → `OK`; the command reaches the executor | ✅ |
 | A bad command (`CTL:BOGUS`) → `ERR EINVAL` (no executor hit) | ✅ |
 
-Full `GATOS_IT=1` suite re-run on v3: **green, 278/278, 0 skipped** (see CLAUDE.md). The only
+Full `GATOS_IT=1` suite re-run on v3: **green, 278/278, 0 skipped** (see AGENTS.md). The only
 remaining item is the **in-game pass** (the purrTTY tip release is now cut, so the
 T6.6/T9.3/G1–G4 checklists below are runnable, but they need a live KSA flight).
 
@@ -72,7 +72,7 @@ dist assemblies, lifecycle hooks invoked by reflection, the session opened throu
 ## T6.6 — In-game validation pass #1 (the M6 exit) — **NOT YET RUN**
 
 Prereq: a purrTTY install carrying the T5.1/T5.2 changes (the purrTTY tip release cut is still
-pending — see CLAUDE.md M5 note).
+pending — see AGENTS.md M5 note).
 
 | # | Check | Result | Notes |
 |---|---|---|---|

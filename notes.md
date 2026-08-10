@@ -73,7 +73,7 @@ What was built
   timeout-killed cat (kernel Tflush) leaving the mount fully usable. It passed on the first run on this machine — 11 s including the TCG boot — and
   the full GATOS_IT=1 suite is 172/172; the plain suite is green with the IT self-skipping. Zero build warnings throughout.
 
-  CLAUDE.md now documents M7/M8 as reality (frontier moved to "everything past M8"), OS_PLAN.md carries as-built notes wherever the spike overrode
+  AGENTS.md now documents M7/M8 as reality (frontier moved to "everything past M8"), OS_PLAN.md carries as-built notes wherever the spike overrode
   the sketches, and the README status mentions the proven /sim stack. Next milestone: M9 — the game-thread TelemetrySampler/EventDiffer and wiring
   the NinePServer into Mod.OnFullyLoaded, which lights up /sim with live vehicle data in-game.
 
@@ -129,7 +129,7 @@ What was built
 
   Verification: full non-IT suite 263 passed, 6 IT-skipped, zero warnings. Two slices need a guest image v3 build (which I can't
   run/validate here) to go live in-VM: the $GATOS_HTTP/$GATOS_MQTT/sim guest env (scripts written, GUEST_VERSION left at 2 so the
-  v2 IT path stays green) and G7's QEMU virtio-serial port wiring — both documented in CLAUDE.md/the plan as the v3 integration
+  v2 IT path stays green) and G7's QEMU virtio-serial port wiring — both documented in AGENTS.md/the plan as the v3 integration
   step. The in-game pass remains blocked on the purrTTY tip release, same as the earlier milestones.
 
   The branch isn't pushed and no PR was opened — say the word if you'd like either.

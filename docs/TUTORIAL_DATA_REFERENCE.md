@@ -9,9 +9,9 @@ HTTP `/v1` mirror.
 It is not the catalog. The catalog is [`SPEC_9P_FILESYSTEM.md`](../SPEC_9P_FILESYSTEM.md) (every path,
 format, unit, errno, action key). This page pulls out the ~20% of that surface tutorials use 80% of
 the time, adds the file↔HTTP correspondence so "show both approaches" is a copy job, and links back
-to the SPEC and the [`gatos` skill](../.claude/skills/gatos/SKILL.md) for depth.
+to the SPEC and the [`gatos` skill](../.agents/skills/gatos/SKILL.md) for depth.
 
-> **Companion:** the **`tutorials` skill** (`.claude/skills/tutorials/`) is the *authoring* guide —
+> **Companion:** the **`tutorials` skill** (`.agents/skills/tutorials/`) is the *authoring* guide —
 > house style, Starlight/MDX mechanics, the tutorial ladder, and the reusable code-snippet library.
 > This doc is the *data*; that skill is *how to write it up*. Read both before authoring a tutorial.
 
@@ -34,7 +34,7 @@ HTTP `/v1` (and MQTT), so the identical program logic runs two places:
 
 The dual presentation is a **deliberate tutorial requirement**: every tutorial that actuates the game
 should show the `/sim` file way and the HTTP way, so a reader can pick whichever fits their context.
-The [`tutorials` skill's `authoring.md`](../.claude/skills/tutorials/authoring.md) documents the
+The [`tutorials` skill's `authoring.md`](../.agents/skills/tutorials/authoring.md) documents the
 synced-`<Tabs>` component that renders the two side by side.
 
 ---
@@ -168,7 +168,7 @@ The single most important choice in a flight tutorial:
    ```
    The autopilot points body **+X** (the nose/thrust axis) along `transform(+X, q)` in CCI. Building
    `q` correctly is the crux of the intermediate tutorials — see §5 and the verbatim helper in the
-   [`tutorials` skill's `snippets.md`](../.claude/skills/tutorials/snippets.md).
+   [`tutorials` skill's `snippets.md`](../.agents/skills/tutorials/snippets.md).
 
 ### 4.3 Burns (Solver phase)
 
@@ -193,7 +193,7 @@ drains these in the solver prefix so they stick — you just write the file.) Co
 
 ## 5. Reference frames — the facts flight tutorials keep needing
 
-Full treatment: [`gatos/coordinate-frames.md`](../.claude/skills/gatos/coordinate-frames.md) (the
+Full treatment: [`gatos/coordinate-frames.md`](../.agents/skills/gatos/coordinate-frames.md) (the
 working reference) and [`docs/KSA_CELESTIAL_COORDINATE_FRAMES.md`](KSA_CELESTIAL_COORDINATE_FRAMES.md)
 (the KSA model). The distilled facts a tutorial cites:
 
@@ -213,7 +213,7 @@ working reference) and [`docs/KSA_CELESTIAL_COORDINATE_FRAMES.md`](KSA_CELESTIAL
   `transform(UnitX, q) == desired_direction_cci` by construction. **Use KSA's exact quaternion
   arithmetic** (Shepperd's method, Hamilton product) — a generic library with a different sign/handedness
   convention *looks* close and steers wrong. The verbatim port is in
-  [`snippets.md`](../.claude/skills/tutorials/snippets.md) and the worked WIP tutorial
+  [`snippets.md`](../.agents/skills/tutorials/snippets.md) and the worked WIP tutorial
   [`vessel-control-point-at-parent.mdx`](../site/src/content/docs/guides/vessel-control-point-at-parent.mdx).
 - **Surface-relative velocity** (for landing, ground speed, drag): `v_surface = v_cci − ω × r`, with
   `ω = [0,0,rotation_rate]` in CCI. The scalar `velocity/surface` is provided; compute the vector
@@ -287,7 +287,7 @@ Hold control (stop writing, keep the last command, show a banner) when any of th
 | **non-finite / missing** | `!isFinite(x)` or empty | a closed gate / absent module yields `0`/empty — sanitize |
 
 Named modes and scheduled burns survive warp; it's per-tick computed control that must hold at 1×.
-Detail: [`gatos/flight-programs.md §4–§5`](../.claude/skills/gatos/flight-programs.md).
+Detail: [`gatos/flight-programs.md §4–§5`](../.agents/skills/gatos/flight-programs.md).
 
 ---
 
@@ -405,7 +405,7 @@ Tutorials often need to *place* a vessel before demonstrating control. `debug/**
   **The vessel must already orbit the intended body** — teleport doesn't change which body it orbits.
   A circular orbit needs `r = radius + altitude`, `v = sqrt(μ/r)`, velocity ⟂ position; `[r,0,0,0,v,0]`
   is equatorial. Full semantics: [SPEC §6](../SPEC_9P_FILESYSTEM.md); worked program:
-  [`gatos/recipes.md §1`](../.claude/skills/gatos/recipes.md).
+  [`gatos/recipes.md §1`](../.agents/skills/gatos/recipes.md).
 - **One-shot impulse** — kick a vessel without propellant or pointing: `x y z [cci|body] [ns|dv]`
   to `/sim/debug/vessels/<id>/impulse`. Defaults: parent-CCI frame, newton-seconds (Δv = J ÷ live
   mass — KSA's own separation-impulse math). `body` reads the vector in the vessel frame (+X = nose);
@@ -450,7 +450,7 @@ Ranges, units and the per-family caveats are in [SPEC §3.7](../SPEC_9P_FILESYST
 | camera "up" | `bodyfixed` is `−Z` up (the aircraft triad), so an "above the hull" offset is negative. |
 
 Full units table: [SPEC §8](../SPEC_9P_FILESYSTEM.md). Full gotcha list:
-[`coordinate-frames.md §7`](../.claude/skills/gatos/coordinate-frames.md).
+[`coordinate-frames.md §7`](../.agents/skills/gatos/coordinate-frames.md).
 
 ---
 
@@ -460,17 +460,17 @@ Full units table: [SPEC §8](../SPEC_9P_FILESYSTEM.md). Full gotcha list:
 |---|---|
 | reading telemetry | this §3; [SPEC §3.4 / §4](../SPEC_9P_FILESYSTEM.md) |
 | throttle / ignite / staging | this §4.1; [SPEC §3.4.18 / §5.1](../SPEC_9P_FILESYSTEM.md); example `examples/gogogo-rs` |
-| named attitude modes | this §4.2; [SPEC §3.4.19](../SPEC_9P_FILESYSTEM.md); [`coordinate-frames.md §5`](../.claude/skills/gatos/coordinate-frames.md) |
-| custom attitude / pointing | this §4.2 + §5; [`coordinate-frames.md §4`](../.claude/skills/gatos/coordinate-frames.md); WIP `vessel-control-point-at-parent.mdx`; [`snippets.md`](../.claude/skills/tutorials/snippets.md) |
-| orbital math / burns | this §4.3 + §5.1; [SPEC §6](../SPEC_9P_FILESYSTEM.md); [`recipes.md §4`](../.claude/skills/gatos/recipes.md) |
-| reference frames | [`coordinate-frames.md`](../.claude/skills/gatos/coordinate-frames.md); [`KSA_CELESTIAL_COORDINATE_FRAMES.md`](KSA_CELESTIAL_COORDINATE_FRAMES.md) |
-| control loops / gating / pacing | this §7; [`flight-programs.md`](../.claude/skills/gatos/flight-programs.md) |
+| named attitude modes | this §4.2; [SPEC §3.4.19](../SPEC_9P_FILESYSTEM.md); [`coordinate-frames.md §5`](../.agents/skills/gatos/coordinate-frames.md) |
+| custom attitude / pointing | this §4.2 + §5; [`coordinate-frames.md §4`](../.agents/skills/gatos/coordinate-frames.md); WIP `vessel-control-point-at-parent.mdx`; [`snippets.md`](../.agents/skills/tutorials/snippets.md) |
+| orbital math / burns | this §4.3 + §5.1; [SPEC §6](../SPEC_9P_FILESYSTEM.md); [`recipes.md §4`](../.agents/skills/gatos/recipes.md) |
+| reference frames | [`coordinate-frames.md`](../.agents/skills/gatos/coordinate-frames.md); [`KSA_CELESTIAL_COORDINATE_FRAMES.md`](KSA_CELESTIAL_COORDINATE_FRAMES.md) |
+| control loops / gating / pacing | this §7; [`flight-programs.md`](../.agents/skills/gatos/flight-programs.md) |
 | events & waiting | this §8; [SPEC §3.5 / §7](../SPEC_9P_FILESYSTEM.md) |
-| teleport / scenario setup | this §10; [SPEC §6](../SPEC_9P_FILESYSTEM.md); [`recipes.md §1`](../.claude/skills/gatos/recipes.md) |
-| timed sequences / schedules | this §9.1; [SPEC §3.10](../SPEC_9P_FILESYSTEM.md); [`recipes.md §12`](../.claude/skills/gatos/recipes.md) |
-| camera shots / cinematics | this §9.2; [SPEC §3.11](../SPEC_9P_FILESYSTEM.md); [`recipes.md §13`](../.claude/skills/gatos/recipes.md); [`coordinate-frames.md §8`](../.claude/skills/gatos/coordinate-frames.md); guide `direct-a-camera-shot.mdx` |
+| teleport / scenario setup | this §10; [SPEC §6](../SPEC_9P_FILESYSTEM.md); [`recipes.md §1`](../.agents/skills/gatos/recipes.md) |
+| timed sequences / schedules | this §9.1; [SPEC §3.10](../SPEC_9P_FILESYSTEM.md); [`recipes.md §12`](../.agents/skills/gatos/recipes.md) |
+| camera shots / cinematics | this §9.2; [SPEC §3.11](../SPEC_9P_FILESYSTEM.md); [`recipes.md §13`](../.agents/skills/gatos/recipes.md); [`coordinate-frames.md §8`](../.agents/skills/gatos/coordinate-frames.md); guide `direct-a-camera-shot.mdx` |
 | the HTTP API in general | [SPEC §7](../SPEC_9P_FILESYSTEM.md); `examples/sdk-ts` |
-| a closed-loop autopilot (advanced) | [`flight-programs.md §8`](../.claude/skills/gatos/flight-programs.md); `examples/land-o-matic` |
+| a closed-loop autopilot (advanced) | [`flight-programs.md §8`](../.agents/skills/gatos/flight-programs.md); `examples/land-o-matic` |
 
 Keep this doc in lockstep with the SPEC: when the `/sim` surface changes, the SPEC is updated in the
 same change (its constitution) — refresh the affected rows here too so tutorials never teach a stale API.

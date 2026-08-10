@@ -376,4 +376,4 @@ section; `scope/FULL_SCOPE.md` inventory + census; `scope/ksa-write-surface.md` 
 `{#fx-editors}` sections; `scope/ksa-read-surface.md` (FxEditorReader); `scope/ksa-runtime-coupling.md`
 (the reflection accessors: `_volumetricTrailRenderer`, `_planetTransparenciesRenderer`,
 cloud apply privates, terrain UBO maps, `VolumetricExhaustTemplate.References`);
-`CLAUDE.md` status row; `docs/VALIDATION.md` checklist section; `docs/MILESTONES.md` as-built.
+`AGENTS.md` status row; `docs/VALIDATION.md` checklist section; `docs/MILESTONES.md` as-built.

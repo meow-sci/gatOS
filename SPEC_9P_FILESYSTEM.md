@@ -3,7 +3,7 @@
 > **This file is the single source of truth for the `/sim` API surface.** Every path the guest can
 > `cat`/`echo`, every HTTP `/v1` route, every MQTT topic, every command action key, the exact value
 > formats, the units, and the read/write semantics are cataloged here. The `gatos` skill
-> (`.claude/skills/gatos/SKILL.md`) and any program written against gatOS reference this document.
+> (`.agents/skills/gatos/SKILL.md`) and any program written against gatOS reference this document.
 >
 > **⚠️ CONSTITUTION — keep this in sync.** The `/sim` tree, the HTTP/MQTT mirrors and the command
 > set are a frozen, user-facing API. **Whenever you add, remove, rename, or change the format/units
@@ -1538,7 +1538,7 @@ velocity m/s) and applies it **about the vessel's *current* parent body** via
   computed is the spacing you get.
 
 `mu` and `radius` come from `/sim/bodies/<parent>/{mu,radius}` (or SDK `bodies()` → `mu`,
-`mean_radius`). See `.claude/skills/gatos/recipes.md` for a complete teleport program.
+`mean_radius`). See `.agents/skills/gatos/recipes.md` for a complete teleport program.
 
 **Impulse** (`debug.impulse`) rides the same machinery — it reads the current CCI state, bumps only
 the **velocity**, and re-teleports at the same position — so everything above about the frame applies:

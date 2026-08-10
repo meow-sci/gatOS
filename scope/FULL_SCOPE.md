@@ -15,7 +15,7 @@
 
 **Maintenance is mandatory.** Any change to a gatOS feature or its KSA binding MUST update the relevant
 `scope/` page in the same work item — see the *Instruction Maintenance Mandate* in
-[`CLAUDE.md`](../CLAUDE.md). Keeping `scope/` stale defeats its entire purpose.
+[`AGENTS.md`](../AGENTS.md). Keeping `scope/` stale defeats its entire purpose.
 
 ---
 
@@ -314,7 +314,7 @@ KSA game update have any chance of breaking it.
 
 ## 3. Where KSA actually appears in gatOS (the complete coupling census)
 
-The binding rule (CLAUDE.md "THE dependency rule" + its G2 stronger form) is that KSA/Brutal/StarMap
+The binding rule (AGENTS.md "THE dependency rule" + its G2 stronger form) is that KSA/Brutal/StarMap
 type names live **only** in `gatOS.GameMod`. Within that project, the KSA *game-state* surface is
 confined to `Game/Ksa/**`. The full census — the only files a KSA update can touch:
 

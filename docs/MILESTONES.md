@@ -1,7 +1,7 @@
 # Milestone & Feature Build Status
 
 Full per-milestone implementation notes, class names, and as-built deviations from the plan.
-Summaries and current status table live in [CLAUDE.md](../CLAUDE.md); this file has the detail.
+Summaries and current status table live in [AGENTS.md](../AGENTS.md); this file has the detail.
 
 ---
 

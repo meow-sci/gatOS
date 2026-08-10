@@ -455,7 +455,7 @@ Two surgical ghostty-fork patches, candidates for upstreaming:
 4. **Docs:** fix the stale msize figure (`STREAM_PLAN.md:204`); SPEC §3.8 keyframe note (P0.3) +
    encoding default (P6); `docs/ARCHITECTURE.md` display-pipeline section; `scope/` +
    `KSA_INTEGRATION_MATRIX` rows for the P1 blit anchors; purrtty gotchas 18/33/34 close-outs;
-   CLAUDE.md status line for the display row when phases land (Instruction Maintenance Mandate).
+   AGENTS.md status line for the display row when phases land (Instruction Maintenance Mandate).
 
 ---
 

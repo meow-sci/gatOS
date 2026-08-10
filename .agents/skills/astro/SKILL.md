@@ -148,7 +148,7 @@ export default defineConfig({
 
 ```sh
 pnpm install                 # once
-pnpm astro dev --background  # dev server (background mode — see site/CLAUDE.md)
+pnpm astro dev --background  # dev server (background mode — see site/AGENTS.md)
 pnpm astro dev status        # is it up?
 pnpm astro dev logs          # tail output
 pnpm astro dev stop          # shut down

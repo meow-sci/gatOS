@@ -59,7 +59,7 @@ Six files; the UI (`ThugLifeSubmod.cs`) and host (`thug-life/Mod.cs`, `Patcher.c
 unscience's host (`thug-life/Mod.cs`) constructs the manager (→ `Program.GetRenderer()`) and applies the
 render patch **at `[StarMapAllModsLoaded]` (OnFullyLoaded)**, confirming the renderer is live by then.
 
-### 0.2 The gatOS quad-rendering skill (`.claude/skills/ksa/quad.md`)
+### 0.2 The gatOS quad-rendering skill (`.agents/skills/ksa/quad.md`)
 
 The repo already carries a **curated, working-mod-derived how-to** for exactly this (anchoring a textured
 quad to a part). It is the authoritative reference and matches the unscience code. Load-bearing facts:
@@ -148,7 +148,7 @@ quad to a part). It is the authoritative reference and matches the unscience cod
   while ≥1 entry exists; lazy GPU init on the first entry; GPU dispose + unpatch when the last entry is
   removed and at unload.
 - Snapshot projection (`ThugLifeSnapshot`) → all three transports (free via parity).
-- SPEC + scope + matrix + ARCHITECTURE + CLAUDE.md + MILESTONES + VALIDATION + gatos-skill updates;
+- SPEC + scope + matrix + ARCHITECTURE + AGENTS.md + MILESTONES + VALIDATION + gatos-skill updates;
   game-free tests; an in-game validation checklist.
 
 **Out (explicitly):**
@@ -347,7 +347,7 @@ the manager resolves parts live, never via that cache.)
 > **New mutation/work site (document it):** this adds gatOS's **first render-thread draw injection**
 > (the `RenderMainPass` postfix) and a fourth game-thread work site (`UpdateThugLife` in `OnBeforeUi`).
 > Both obey the engine's main-thread model and the "degrade, never crash" rule. Note in
-> `docs/ARCHITECTURE.md` and the threading section of `CLAUDE.md`.
+> `docs/ARCHITECTURE.md` and the threading section of `AGENTS.md`.
 
 ---
 
@@ -469,7 +469,7 @@ checklist) — same staging as the welds work.
 7. **ThugLifeActuator + KsaCatalog dispatch** — the 7 actions; ctor wiring.
 8. **Sampler + Mod lifecycle** — `Snapshot()` projection; `UpdateThugLife()` in OnBeforeUi; teardown.
 9. **Docs**: SPEC, KSA_INTEGRATION_MATRIX, scope (read/write/runtime/assets + FULL_SCOPE), ARCHITECTURE,
-   CLAUDE.md (status + threading), MILESTONES, VALIDATION checklist, gatos skill (+ a recipe).
+   AGENTS.md (status + threading), MILESTONES, VALIDATION checklist, gatos skill (+ a recipe).
 
 ---
 
@@ -513,9 +513,9 @@ checklist) — same staging as the welds work.
   `scope/FULL_SCOPE.md` inventory. Each with its game-version status. (binding)
 - **`docs/ARCHITECTURE.md`** — the render-thread draw-injection site, the `gatos.thug_life` dynamic
   Harmony instance + lazy GPU lifecycle, the `UpdateThugLife` validation site.
-- **`CLAUDE.md`** — status table row + threading section (render-injection + 4th game-thread work site);
+- **`AGENTS.md`** — status table row + threading section (render-injection + 4th game-thread work site);
   the new GameMod render-DLL deps + `AllowUnsafeBlocks`; detail in `docs/MILESTONES.md`.
-- **`.claude/skills/gatos/`** — mention thug-life and point at the SPEC; a `recipes.md` entry
+- **`.agents/skills/gatos/`** — mention thug-life and point at the SPEC; a `recipes.md` entry
   (anchor sunglasses to a part). The `ksa/quad.md` skill is the upstream how-to — cross-link it.
 
 ---
