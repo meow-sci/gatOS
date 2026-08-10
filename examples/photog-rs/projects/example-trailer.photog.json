@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "name": "Hunter Reveal",
+  "loop": false,
+  "shots": [
+    {
+      "name": "world-establishing",
+      "duration_s": 6.0,
+      "blend_in_s": 0.0,
+      "anchor": "body:Kerth",
+      "aim": {
+        "target": "body:Kerth",
+        "offset_m": [0.0, 0.0, 0.0],
+        "frame": "bodyfixed",
+        "up": "world"
+      },
+      "frame": "bodyfixed",
+      "kind": {
+        "type": "orbit",
+        "radius_m": 18000000.0,
+        "azimuth_deg": { "start": -25.0, "end": 18.0 },
+        "elevation_deg": { "start": 18.0, "end": 8.0 }
+      },
+      "lens": {
+        "fov_deg": { "start": 38.0, "end": 31.0 },
+        "projection": { "type": "perspective" }
+      },
+      "smoothing_s": 0.3,
+      "ease": { "kind": "in-out", "power": 3.0 }
+    },
+    {
+      "name": "hull-push",
+      "duration_s": 5.0,
+      "blend_in_s": 0.6,
+      "anchor": "vessel:Hunter",
+      "aim": {
+        "target": "vessel:Hunter",
+        "offset_m": [0.0, 0.0, -1.2],
+        "frame": "bodyfixed",
+        "up": "world"
+      },
+      "frame": "bodyfixed",
+      "kind": {
+        "type": "dolly",
+        "from_m": [-42.0, 9.0, -7.0],
+        "to_m": [-13.0, 3.0, -3.0]
+      },
+      "lens": {
+        "fov_deg": { "start": 44.0, "end": 27.0 },
+        "roll_deg": { "start": -2.0, "end": 0.0 },
+        "projection": { "type": "perspective" }
+      },
+      "smoothing_s": 0.18,
+      "ease": { "kind": "out", "power": 3.2 }
+    },
+    {
+      "name": "formation-chase",
+      "duration_s": 7.0,
+      "blend_in_s": 0.35,
+      "anchor": "vessel:Hunter",
+      "aim": {
+        "target": "vessel:Hunter",
+        "offset_m": [0.0, 0.0, -1.0],
+        "frame": "bodyfixed",
+        "up": "velocity"
+      },
+      "frame": "chase",
+      "kind": {
+        "type": "chase",
+        "offset_m": [-24.0, 5.0, -4.0]
+      },
+      "lens": {
+        "fov_deg": 48.0,
+        "projection": { "type": "perspective" }
+      },
+      "smoothing_s": 0.42,
+      "ease": { "kind": "linear", "power": 3.0 }
+    },
+    {
+      "name": "blueprint-beat",
+      "duration_s": 2.5,
+      "blend_in_s": 0.2,
+      "anchor": "none",
+      "aim": {
+        "target": "none",
+        "offset_m": [0.0, 0.0, 0.0],
+        "frame": "bodyfixed",
+        "up": "free"
+      },
+      "frame": "ecl",
+      "kind": { "type": "lens_only" },
+      "lens": {
+        "fov_deg": { "start": 48.0, "end": 34.0 },
+        "roll_deg": { "start": 0.0, "end": 5.0 },
+        "projection": { "type": "orthographic", "half_height_m": 16.0 }
+      },
+      "smoothing_s": 0.0,
+      "ease": { "kind": "in", "power": 2.4 }
+    },
+    {
+      "name": "hero-cutaway",
+      "duration_s": 4.5,
+      "blend_in_s": 0.15,
+      "anchor": "vessel:Hunter",
+      "aim": {
+        "target": "vessel:Hunter",
+        "offset_m": [0.0, 0.0, -1.2],
+        "frame": "bodyfixed",
+        "up": "target"
+      },
+      "frame": "bodyfixed",
+      "kind": {
+        "type": "static",
+        "position_m": [-18.0, -11.0, -5.0]
+      },
+      "lens": {
+        "fov_deg": 32.0,
+        "roll_deg": 0.0,
+        "projection": { "type": "perspective" }
+      },
+      "smoothing_s": 0.12,
+      "ease": { "kind": "in-out", "power": 3.0 }
+    }
+  ]
+}

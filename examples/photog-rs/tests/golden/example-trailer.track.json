@@ -1,0 +1,261 @@
+{
+  "loop": false,
+  "shots": [
+    {
+      "aim": {
+        "frame": "bodyfixed",
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "target": "body:Kerth",
+        "up": "world"
+      },
+      "anchor": "body:Kerth",
+      "blend_in": 0.0,
+      "duration": 6.0,
+      "fov": {
+        "keys": [
+          {
+            "ease": "in-out",
+            "ease_power": 3.0,
+            "t": 0.0,
+            "v": 38.0
+          },
+          {
+            "t": 6.0,
+            "v": 31.0
+          }
+        ]
+      },
+      "name": "world-establishing",
+      "position": {
+        "azimuth": {
+          "keys": [
+            {
+              "ease": "in-out",
+              "ease_power": 3.0,
+              "t": 0.0,
+              "v": -25.0
+            },
+            {
+              "t": 6.0,
+              "v": 18.0
+            }
+          ]
+        },
+        "elevation": {
+          "keys": [
+            {
+              "ease": "in-out",
+              "ease_power": 3.0,
+              "t": 0.0,
+              "v": 18.0
+            },
+            {
+              "t": 6.0,
+              "v": 8.0
+            }
+          ]
+        },
+        "frame": "bodyfixed",
+        "mode": "orbit",
+        "radius": {
+          "keys": [
+            {
+              "t": 0.0,
+              "v": 18000000.0
+            }
+          ]
+        }
+      },
+      "t": 0.0
+    },
+    {
+      "aim": {
+        "frame": "bodyfixed",
+        "offset": [
+          0.0,
+          0.0,
+          -1.2
+        ],
+        "roll": {
+          "keys": [
+            {
+              "ease": "out",
+              "ease_power": 3.2,
+              "t": 0.0,
+              "v": -2.0
+            },
+            {
+              "t": 5.0,
+              "v": 0.0
+            }
+          ]
+        },
+        "target": "vessel:Hunter",
+        "up": "world"
+      },
+      "anchor": "vessel:Hunter",
+      "blend_in": 0.6,
+      "duration": 5.0,
+      "fov": {
+        "keys": [
+          {
+            "ease": "out",
+            "ease_power": 3.2,
+            "t": 0.0,
+            "v": 44.0
+          },
+          {
+            "t": 5.0,
+            "v": 27.0
+          }
+        ]
+      },
+      "name": "hull-push",
+      "position": {
+        "curve": "linear",
+        "frame": "bodyfixed",
+        "keys": [
+          {
+            "ease": "out",
+            "ease_power": 3.2,
+            "t": 0.0,
+            "v": [
+              -42.0,
+              9.0,
+              -7.0
+            ]
+          },
+          {
+            "t": 5.0,
+            "v": [
+              -13.0,
+              3.0,
+              -3.0
+            ]
+          }
+        ],
+        "mode": "cartesian"
+      },
+      "t": 6.0
+    },
+    {
+      "aim": {
+        "frame": "bodyfixed",
+        "offset": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "target": "vessel:Hunter",
+        "up": "velocity"
+      },
+      "anchor": "vessel:Hunter",
+      "blend_in": 0.35,
+      "duration": 7.0,
+      "fov": {
+        "keys": [
+          {
+            "t": 0.0,
+            "v": 48.0
+          }
+        ]
+      },
+      "name": "formation-chase",
+      "position": {
+        "frame": "chase",
+        "mode": "attach",
+        "offset": [
+          -24.0,
+          5.0,
+          -4.0
+        ]
+      },
+      "t": 11.0
+    },
+    {
+      "blend_in": 0.2,
+      "duration": 2.5,
+      "fov": {
+        "keys": [
+          {
+            "ease": "in",
+            "ease_power": 2.4,
+            "t": 0.0,
+            "v": 48.0
+          },
+          {
+            "t": 2.5,
+            "v": 34.0
+          }
+        ]
+      },
+      "name": "blueprint-beat",
+      "roll": {
+        "keys": [
+          {
+            "ease": "in",
+            "ease_power": 2.4,
+            "t": 0.0,
+            "v": 0.0
+          },
+          {
+            "t": 2.5,
+            "v": 5.0
+          }
+        ]
+      },
+      "t": 18.0
+    },
+    {
+      "aim": {
+        "frame": "bodyfixed",
+        "offset": [
+          0.0,
+          0.0,
+          -1.2
+        ],
+        "roll": {
+          "keys": [
+            {
+              "t": 0.0,
+              "v": 0.0
+            }
+          ]
+        },
+        "target": "vessel:Hunter",
+        "up": "target"
+      },
+      "anchor": "vessel:Hunter",
+      "blend_in": 0.15,
+      "duration": 4.5,
+      "fov": {
+        "keys": [
+          {
+            "t": 0.0,
+            "v": 32.0
+          }
+        ]
+      },
+      "name": "hero-cutaway",
+      "position": {
+        "frame": "bodyfixed",
+        "keys": [
+          {
+            "t": 0.0,
+            "v": [
+              -18.0,
+              -11.0,
+              -5.0
+            ]
+          }
+        ],
+        "mode": "cartesian"
+      },
+      "t": 20.5
+    }
+  ]
+}
