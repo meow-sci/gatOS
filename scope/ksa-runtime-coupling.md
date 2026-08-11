@@ -20,7 +20,8 @@ contract, not KSA game state):
 | `[StarMapAllModsLoaded]` | `OnFullyLoaded` | asset validation, config, build `/sim` stack + transports, `VmHost`/broker (no boot), register `"gatos"` shell, **install Harmony hooks** | install-time only |
 | `[StarMapBeforeGui]` | `OnBeforeUi(dt)` | sets the "ran this frame" latch, then `DrivePerFrame(dt)` = `SampleTelemetry` → `TickSchedules` → `DrainCommands` (**Frame phase**) → `DriveAudio` → `UpdateThugLife` | reads + Frame writes |
 | `[StarMapAfterGui]` | `OnAfterUi(dt)` | `DrivePostSolver(dt)` = `DriveWelds(dt)` → `DriveIvaPhysics(dt)` (both **game-thread mutations**, run first and independently of the UI, each self-gated to a no-op when its registry is empty) then `DrawGameUi()` (ImGui status window) | weld `Teleport` + IVA SubPart poses + ImGui |
-| `[StarMapAfterOnFrame]` | `OnAfterFrame(t, dtPlayer)` | **the F2-proof hook (C0.1)** — a postfix on `Program.OnFrame` itself, so it always runs, exactly once per rendered frame: re-runs `DrivePerFrame`+`DrivePostSolver` **only on the frames the two GUI hooks were skipped**, then `DriveCamera(dtPlayer)` **unconditionally** | camera pose write; otherwise whatever the two drives would have done |
+| `[StarMapAfterOnFrame]` | `OnAfterFrame(t, dtPlayer)` | **the F2 fallback hook (C0.1)** — a postfix on `Program.OnFrame`: when GUI hooks were skipped it completes the per-frame non-camera drivers. The main-viewport prefix has already sampled/ticked/drained when available, so the latch prevents a double step | F2 fallback only; no camera pose write |
+| Harmony prefix/postfix: `Viewport.OnFrame(double)` | `CameraViewportPatch` | Bound strictly by `ReferenceEquals(viewport, Program.MainViewport)`. Prefix samples, advances schedules, drains frame commands and applies the camera after simulation advance; original method runs controller + `Camera.OnFrame`; postfix publishes the final clamped transform | same-render camera ownership + applied read-back |
 | `[StarMapUnload]` | `Unload` | `TeardownGameCheats` (clear welds, restore/unpatch IVA + thug_life + always_render, FX pristine restore, audio shutdown, `ScheduleStore.Clear()`, `CameraDirector.Shutdown()`), remove hooks, stop serial, dispose broker/servers (bounded) | cheat/camera/schedule teardown + uninstall |
 
 The game-coupled hook bodies live in the partial `Game/Mod.Game.cs` and are `[MethodImpl(NoInlining)]`
@@ -360,23 +361,22 @@ nearest-neighbour convert. **KSA members touched:** `Program.GetRenderer/MainVie
 degrades to no-injection; a capture-time managed fault latches the feature off for the session
 (`DisplayRenderPatch._faulted`, one error log).
 
-### Camera director per-frame driver (no patch) {#camera-driver}
+### Camera director same-frame viewport driver {#camera-driver}
 
-The **programmable camera** (`Game/Ksa/Camera/`, plans/CAMERA_ASBUILT.md) needs **no** Harmony patch
-either, and unlike the welds and IVA drivers that is not merely convenient — it is the whole design.
-`CameraDirector.Update(dt)` runs from `Mod.DriveCamera` at the **end of `[StarMapAfterOnFrame]
-Mod.OnAfterFrame`**, i.e. after the render, on **every** rendered frame — the **eighth game-thread work
-site**, and the only one that is not standing in for an F2-skipped GUI hook. It composes
-`Track ?? Override ?? Baseline`, resolves the frame/placement/aim, and writes `Camera.PositionEcl`,
-`Camera.LocalRotation` and the projection; the **next** frame's `Program.OnFrameViewports` then rebuilds
-every view/projection matrix from those fields. gatOS therefore never touches a matrix, never patches a
-renderer, and never runs on the render thread.
+The **programmable camera** (`Game/Ksa/Camera/`, plans/CAMERA_ASBUILT.md) installs one Harmony
+prefix/postfix pair on public `Viewport.OnFrame(double)`. Both bind strictly by
+`ReferenceEquals(__instance, Program.MainViewport)` because KSA owns four viewports. The prefix calls
+`Mod.PrepareMainViewportFrame(dt)`: sample telemetry, advance shared schedule clocks, post and drain due
+commands, then run `CameraDirector.Update(dt)`. It composes `Track ?? Override ?? Baseline`, resolves
+current-frame placement/aim, and writes `Camera.PositionEcl`, `Camera.LocalRotation` and projection.
+The original method then runs the parked controller and immediately `Camera.OnFrame`, rebuilding every
+matrix from that transform; the postfix publishes the final position/rotation after KSA's clamp. gatOS
+never touches a matrix or renderer. The obsolete after-render design was one simulation frame behind a
+moving ECL target and was removed after the first live validation exposed it.
 
-**Why writing "last" is enough — and exactly how narrow that is.** `Program.OnFrame`'s order is
-`OnFrameViewports` → `Render` → `[StarMapAfterOnFrame]`, and `Viewport.OnFrame` (`KSA/Viewport.cs:139`)
-is literally `GetActiveController().OnFrame(this, dt); GetCamera().OnFrame(dt);`. So a gatOS write at
-the end of frame *N* survives **only because the active controller writes nothing at the top of frame
-*N+1***, before any matrix is rebuilt. That is true of exactly one controller:
+**Why the parked controller remains important.** `Viewport.OnFrame` (`KSA/Viewport.cs:139`) is
+literally `GetActiveController().OnFrame(this, dt); GetCamera().OnFrame(dt);`. The prefix must leave no
+game controller that overwrites its transform before the matrix build. That is true of exactly one:
 `FixedController.OnFrame` (`KSA/FixedController.cs:18-35`) wraps its **entire body** in
 `if (following != null)`, and ownership unfollows. Hence `CameraDirector.Take()` parks
 `Viewport.Mode = CameraMode.Fixed` (**by direct field assignment**, so `FixedController.OnSwitchOn`'s

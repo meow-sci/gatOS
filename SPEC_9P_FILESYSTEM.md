@@ -1070,13 +1070,16 @@ frame. The surface is deliberately **three layers over one channel set** — wri
 **track** and let gatOS interpolate it with easing and splines at render rate (L3). **Every track
 channel has a corresponding `pose/` leaf**, so the JSON is an *option* and never the only route to
 anything; the two are the same surface, which is what lets a hand-written `echo` pull focus in the
-middle of a running shot. Ownership is a **mode park**, not a hook: `camera/enabled 1` captures the
+middle of a running shot. Ownership is a **mode park plus a same-frame viewport hook**:
+`camera/enabled 1` captures the
 live camera's state, switches the viewport to `Fixed` and unfollows, which makes the game's own
-camera controller write nothing — so gatOS is the sole writer and **needs no Harmony patch**.
+camera controller write nothing — so gatOS is the sole transform writer. A guarded Harmony prefix on
+the **main** `Viewport.OnFrame` applies the pose after simulation advances and immediately before KSA
+rebuilds that viewport's camera matrices; its postfix publishes the final clamped transform.
 Everything you write is an *override* layered on the captured baseline, so a channel you never touch
 falls through to how the game had it, and release puts it all back. The pose is composed after the
-render and read by the *next* frame's matrix build, giving a **constant one-frame latency** —
-invisible in motion, and the reason the whole feature costs a single branch while idle.
+shared schedule clock advances and before the current frame's matrix build, so a moving anchor, camera
+track and timed sidecar all describe the **same rendered frame**.
 
 ```sh
 echo 1 > /sim/camera/enabled                        # take it (parks the game's camera controller)
@@ -1094,7 +1097,7 @@ echo 0 > /sim/camera/enabled                        # eased hand-back (camera_re
 
 | Path | A | Format / Write | Meaning |
 |---|---|---|---|
-| `camera/status` | S | multi-line `key value…` | The whole camera state in one read: `owned mode follow tidal map_scope anchor frame position geo rotation aim fov ortho smoothing orbit time_scale`. `geo`'s fourth field is `1` when the geodetic spelling is the live one; `ortho` is `<enabled> <half-height m>`; `orbit` is `radius azimuth elevation`. |
+| `camera/status` | S | multi-line `key value…` | The whole camera state in one read: `owned mode follow tidal map_scope anchor frame position geo rotation applied_position_ecl applied_rotation aim fov ortho smoothing orbit time_scale`. `position`/`rotation` are the composed writable pose channels; `applied_position_ecl`/`applied_rotation` are KSA's final render-time transform after placement, smoothing and its camera clamp. `geo`'s fourth field is `1` when the geodetic spelling is live; `ortho` is `<enabled> <half-height m>`; `orbit` is `radius azimuth elevation`. |
 | `camera/info` | S | one line `k=v …` | `enabled owned tracks tracks_max bytes bytes_max track_bytes_max keys_max fov_min fov_max`, plus the `frames=`/`modes=`/`up=` token vocabularies this build accepts. |
 | `camera/target` | S | string | The follow target's **bare id**, or `-`. |
 | `camera/playback` | S | `<state> <t_ms> <duration_ms> <shot> <index> <rate> <loop>` | The live track player. Times are ms with one decimal, matching `ctl/schedules/<id>/t`; `state` is the §3.10 vocabulary; `<shot>` is `-` before the first shot edge and `<index>` is `-1`. |
@@ -1119,7 +1122,7 @@ echo 0 > /sim/camera/enabled                        # eased hand-back (camera_re
 | `camera/pose/orbit/elevation` | **St** | degrees `[-90, 90]` → `camera.orbit_elevation` | Rise above that plane toward +Z. `EINVAL` outside the range. |
 | `camera/pose/rotation` | **St** | `<x> <y> <z> <w>` → `camera.rotation` | An explicit orientation quaternion — a vector(4) control with **one extra constraint**: the norm must be in `[0.5, 2]`, so an all-zero quaternion (which names no rotation) is `EINVAL` rather than being silently normalized to identity. Superseded by `aim` whenever an aim target is set. |
 | `camera/pose/aim` | **St** | `<target> [off <x> <y> <z>] [frame <frame>] [up <up>] [roll <deg>]` → `camera.aim` | Four channels at once. Defaults for omitted keywords: offset `0 0 0`, frame `bodyfixed`, up `world`. **Roll is the exception** — a line without `roll` leaves the roll channel alone, because roll is animatable on its own. Keywords are order-independent and may appear at most once. `EINVAL` bad grammar/values, `ENOENT` target not live. |
-| `camera/pose/aim_target` | **St** | target ref → `camera.aim_target` | What to look at — same vocabulary as `anchor`, including `part:`. Re-resolved **every frame**, which is what makes an offset stay glued to a moving subject. `EINVAL`/`ENOENT`. |
+| `camera/pose/aim_target` | **St** | target ref → `camera.aim_target` | What to look at — same vocabulary as `anchor`, including `part:`. Re-resolved **in the current simulation frame** and applied as an exact look-at constraint, so smoothing never lets a moving subject drift off-centre. `EINVAL`/`ENOENT`. |
 | `camera/pose/aim_offset` | **St** | vector(3) → `camera.aim_offset` | Offset from the aim target, metres, measured in the **aim frame** (i.e. on the subject). `EINVAL` non-finite. |
 | `camera/pose/aim_frame` | **St** | frame token → `camera.aim_frame` | The frame the aim offset is measured in. Defaults to `bodyfixed`, deliberately *not* the pose frame. |
 | `camera/pose/aim_up` | **St** | `world`\|`target`\|`velocity`\|`free` → `camera.aim_up` | Which way is up while aiming (below). `EINVAL` otherwise. |
@@ -1127,7 +1130,7 @@ echo 0 > /sim/camera/enabled                        # eased hand-back (camera_re
 | `camera/pose/fov` | **St** | degrees `[camera_fov_min, camera_fov_max]` → `camera.fov` | Vertical field of view. The default `1..179` is far wider than the game's own 15–120 — `SetFieldOfView` does not clamp, so fisheye and extreme telephoto really are available. `EINVAL` outside the configured range. |
 | `camera/pose/ortho` | **St** | `0`/`1` → `camera.ortho` | Orthographic projection instead of perspective. `EINVAL` if not 0/1. |
 | `camera/pose/ortho_height` | **St** | metres `> 0` → `camera.ortho_height` | Orthographic half-height. `EINVAL` on `≤ 0` or non-finite. ⚠ **The one camera change gatOS cannot undo** — KSA exposes a setter but no getter for it (5168), so there is nothing to capture at ownership and nothing to restore at release. It is therefore written only while the channel is explicitly claimed by an override or a track. |
-| `camera/pose/smoothing` | **St** | seconds `[0, 10]` → `camera.smoothing` | Critically-damped filter on the composed pose — the cheapest way to turn a coarse `timed_batch` ladder into a glide. `0` is raw. `EINVAL` outside the range. |
+| `camera/pose/smoothing` | **St** | seconds `[0, 10]` → `camera.smoothing` | Critically-damped filter on authored camera motion — the cheapest way to turn a coarse `timed_batch` ladder into a glide. For anchored placement it smooths the camera-to-anchor component while passing the anchor's translation through exactly; aim remains an exact constraint. Explicit (non-aim) rotation is smoothed. `0` is raw. `EINVAL` outside the range. |
 | `camera/pose/reset` | **T** | `1` → `camera.pose_reset` | Drop **your overrides only**. An active track keeps driving; a reset is about your writes, not about stopping playback. Use `camera/release` to clear everything including the baseline. |
 
 **The six frames.** A camera position is meaningless until you say what it is measured *about* (the
@@ -1289,10 +1292,11 @@ is also what makes adding a channel later non-breaking:
   yielding to it (KSA itself picks no winner); stop an auto-warp before rolling a shot that drives
   time.
 
-**Engine notes.** The director runs at the end of the per-frame hook, after the render, on **every**
-rendered frame, and self-gates to one branch while gatOS does not own the camera — the default. It
-writes only `PositionEcl`, `LocalRotation` and the projection, so the next frame's viewport rebuild
-derives every matrix from them; gatOS never touches a matrix and installs **no Harmony patch**. A
+**Engine notes.** The director runs in a main-viewport-identity prefix after simulation advance and
+before that viewport's controller/matrix build, and self-gates while unowned. It writes only
+`PositionEcl`, `LocalRotation` and projection; KSA's immediately following `Camera.OnFrame` derives
+every matrix, and the hook's postfix publishes the final applied transform. gatOS never touches a
+matrix. A
 playing track is a real entry in the `/sim/ctl/schedules` registry with `kind = camera-track` and the
 predictable id **`camera`**, so `pause`/`scrub`/`rate`/`loop`/`stop` work on it through *either*
 surface and `camera/playback` and `ctl/schedules/camera/t` can never disagree — it is the same

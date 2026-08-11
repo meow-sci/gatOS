@@ -86,6 +86,8 @@ public readonly record struct CameraTrackInfo(string Name, long Bytes, int Versi
 ///     property of the game's own map controller, not of the composed pose, which is why it sits beside
 ///     <see cref="Mode"/> and <see cref="Follow"/> rather than inside <see cref="Pose"/>.
 /// </param>
+/// <param name="AppliedPositionEcl">The final game-camera position used for rendering, in ECL metres.</param>
+/// <param name="AppliedRotation">The final game-camera local rotation used for rendering.</param>
 public sealed record CameraStatus(
     bool Owned,
     CameraModeKind Mode,
@@ -100,7 +102,9 @@ public sealed record CameraStatus(
     PlaybackState Playback,
     double Rate,
     bool Loop,
-    double MapScope = 0)
+    double MapScope = 0,
+    Vec3 AppliedPositionEcl = default,
+    Quat AppliedRotation = default)
 {
     /// <summary>
     ///     The state before the director has ever published: unowned, orbit mode, nothing followed,
@@ -109,7 +113,8 @@ public sealed record CameraStatus(
     /// </summary>
     public static CameraStatus Idle { get; } = new(
         false, CameraModeKind.Orbit, TargetRef.None, false, CameraPose.Default,
-        "", 0, 0, "", -1, PlaybackState.Done, 1, false);
+        "", 0, 0, "", -1, PlaybackState.Done, 1, false,
+        AppliedRotation: Quat.Identity);
 }
 
 /// <summary>

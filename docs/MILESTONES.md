@@ -1043,13 +1043,15 @@ gatOS as the sole writer of the main viewport's camera — ownership take/releas
 aim-with-offset, geodetic placement, JSON shot tracks, an interpolated `time` channel and the map's own
 zoom — landed 2026-08-06 in five commits (`0acf836` the F2-proof hook + `[camera]`/`[schedule]` config,
 `d9f4468` the math primitives, `5fe0ef0` the `/sim` surface, `c860f7d` the C1/C2 director, `80dcf77`
-the C3 track evaluator, `1467864` the wiring + the `time` channel + `map/scope`). **Zero Harmony
-patches.** Gated by `[camera] camera_enabled` (+ `camera_max_tracks` 32, `camera_max_track_bytes` 1 MiB,
+the C3 track evaluator, `1467864` the wiring + the `time` channel + `map/scope`). The first live pass
+falsified the after-render driver; the 2026-08-09 correction uses a main-viewport-identity
+`Viewport.OnFrame` prefix/postfix for same-frame apply/final read-back, plus anchor-relative smoothing
+and exact aim. Gated by `[camera] camera_enabled` (+ `camera_max_tracks` 32, `camera_max_track_bytes` 1 MiB,
 `camera_max_total_bytes` 8 MiB, `camera_max_keys` 4096, `camera_fov_min`/`max` 1/179,
 `camera_release_blend_s` 0.6, `camera_allow_time_channel`).
 
 **Game-free half** (`gatOS.SimFs/Camera/`, 16 files): the math primitives (`CameraMath`, `Easing`,
-`Splines`, `PoseSmoother`); `CameraRules` — every validation predicate, reading **no config** (FOV
+`Splines`, `PoseSmoother`, `AnchoredPositionSmoother`); `CameraRules` — every validation predicate, reading **no config** (FOV
 bounds are parameters); the addressing vocabulary (`FrameKind`, `AimUpKind`, `CameraModeKind`,
 `TargetRef` with exact round-tripping); the **three-layer compositor** `CameraState` — 17 channels,
 `Track ?? Override ?? Baseline` per channel, `Compose` **allocating nothing** (asserted < 64 B over
@@ -1074,11 +1076,11 @@ the per-frame apply, `mode`/`follow`/`tidal`/`map_scope`, despawn prune, event d
 `CameraReader` (the live camera → `CameraStatus`, **publishing both position spellings** so a Cartesian
 placement reads back a real latitude).
 
-**Why it needs no Harmony patch, and exactly how narrow that is.** `Program.OnFrame`'s order is
-`OnFrameViewports` → `Render` → `[StarMapAfterOnFrame]`, and `Viewport.OnFrame` is
-`GetActiveController().OnFrame(...)` *then* `GetCamera().OnFrame(...)`. A gatOS write at the end of
-frame *N* survives only because the active controller writes **nothing** at the top of frame *N+1* —
-true of exactly one controller: `FixedController.OnFrame` wraps its entire body in
+**Why the same-frame patch is narrow.** `Viewport.OnFrame` is
+`GetActiveController().OnFrame(...)` *then* `GetCamera().OnFrame(...)`; the prefix writes immediately
+before those calls and the postfix samples immediately after. It guards `Program.MainViewport` by
+identity because KSA owns four viewports. The active controller must still write **nothing** — true of
+exactly one controller: `FixedController.OnFrame` wraps its entire body in
 `if (following != null)`. So `Take()` parks `Viewport.Mode = Fixed` **by direct field assignment** (so
 `OnSwitchOn`'s `TimedAlert("Fixed Camera")` never draws in the footage) and calls
 `Unfollow(changeControl:false)`, and the driver re-asserts both every frame. **`IVAController` and

@@ -539,16 +539,19 @@ need `[schedule] schedule_enabled` (a camera track *is* a `/sim/ctl/schedules` e
 working. All 28 action keys on `CameraCommands` — plus the pre-existing `camera.focus` — are **Frame**
 phase; none is in `SimCommand.SolverActions` (nothing about the camera is visible to the vehicle solver).
 
-Everything except the twenty-two anchors below is **game-free** (`gatOS.SimFs/Camera/**`: the math
+Everything except the game anchors below is **game-free** (`gatOS.SimFs/Camera/**`: the math
 primitives, the validation rules, the three-layer `Track ?? Override ?? Baseline` compositor, the
 store + writable `track/` dir, the line grammars, and the whole JSON track parser/evaluator/player).
-**Zero Harmony patches** — the feature hangs off `[StarMapAfterOnFrame] Mod.OnAfterFrame` (see
-[`scope/ksa-runtime-coupling.md#camera-driver`](../scope/ksa-runtime-coupling.md#camera-driver)),
-which works only because ownership parks `CameraMode.Fixed` and unfollows, and
+One guarded Harmony prefix/postfix targets public `Viewport.OnFrame(double)` and binds only
+`Program.MainViewport` by identity (see
+[`scope/ksa-runtime-coupling.md#camera-driver`](../scope/ksa-runtime-coupling.md#camera-driver)). The
+prefix applies against current-frame target state immediately before KSA builds matrices; the postfix
+publishes the final clamped transform. Ownership parks `CameraMode.Fixed` and unfollows, and
 `FixedController.OnFrame` wraps its entire body in `if (following != null)`. **IVA and Map ownership
 contexts are NOT implemented and are not implementable without a Harmony patch** — evidence in
 [`scope/ksa-runtime-coupling.md#camera-mode-contexts`](../scope/ksa-runtime-coupling.md#camera-mode-contexts).
-All anchors verified **2026-08-06 against `2026.8.5.5168`**; in-game pass pending
+Original anchors verified **2026-08-06**, viewport hook verified **2026-08-09**, against
+`2026.8.5.5168`; live recheck pending
 (`docs/VALIDATION.md`).
 
 **Ownership + the live game camera** (`Game/Ksa/Camera/CameraDirector.cs`):

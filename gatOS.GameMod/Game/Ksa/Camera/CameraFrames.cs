@@ -126,7 +126,24 @@ internal static class CameraFrames
     internal static bool TryResolvePosition(in CameraPose pose, in CameraTarget anchor,
         out double3 positionEcl, out string error)
     {
-        positionEcl = double3.Zero;
+        if (!TryResolvePlacement(pose, anchor, out var placement, out error))
+        {
+            positionEcl = double3.Zero;
+            return false;
+        }
+
+        positionEcl = placement.PositionEcl;
+        return true;
+    }
+
+    /// <summary>
+    ///     Resolves both halves of a placement. Keeping the live origin separate from its authored
+    ///     component lets the director smooth the latter while following the former exactly.
+    /// </summary>
+    internal static bool TryResolvePlacement(in CameraPose pose, in CameraTarget anchor,
+        out ResolvedPlacement placement, out string error)
+    {
+        placement = default;
 
         // Geodetic placement composes through the celestial itself, so no frame mixing can occur.
         if (pose.OrbitRadius <= 0 && pose.PositionIsGeo)
@@ -137,9 +154,13 @@ internal static class CameraFrames
                 return false;
             }
 
-            positionEcl = GeoToEcl(body, pose.Latitude, pose.Longitude, pose.Altitude);
+            var positionEcl = GeoToEcl(body, pose.Latitude, pose.Longitude, pose.Altitude);
             error = "";
-            return positionEcl.IsFinite() || Fail(out error, "the geodetic placement is not finite");
+            if (!positionEcl.IsFinite())
+                return Fail(out error, "the geodetic placement is not finite");
+            var originEcl = body.GetPositionEcl();
+            placement = new ResolvedPlacement(originEcl, positionEcl - originEcl, Relative: true);
+            return true;
         }
 
         if (!TryFrame2Ecl(pose.Frame, anchor, pose.Latitude, pose.Longitude, out var frame2Ecl, out error))
@@ -150,15 +171,18 @@ internal static class CameraFrames
         // trigonometry here would put a track's circle and a hand-written `echo 90 >
         // pose/orbit/azimuth` in two subtly different places (and would lose the 360°-closure fold
         // that keeps a looping orbit bit-identical at the wrap).
-        var placement = pose.OrbitRadius > 0
+        var authored = pose.OrbitRadius > 0
             ? CameraPlacement.Spherical(pose.OrbitRadius, pose.OrbitAzimuth, pose.OrbitElevation)
             : pose.Position;
-        var offset = new double3(placement.X, placement.Y, placement.Z);
+        var offset = new double3(authored.X, authored.Y, authored.Z);
 
         // ECL is absolute: the offset IS the point. Every other frame is anchor-relative.
-        var origin = pose.Frame == FrameKind.Ecl ? double3.Zero : CameraTargets.PositionEcl(anchor);
-        positionEcl = origin + offset.Transform(frame2Ecl);
-        return positionEcl.IsFinite() || Fail(out error, "the resolved position is not finite");
+        var relative = pose.Frame != FrameKind.Ecl && anchor.Found;
+        var origin = relative ? CameraTargets.PositionEcl(anchor) : double3.Zero;
+        var component = offset.Transform(frame2Ecl);
+        placement = new ResolvedPlacement(origin, component, relative);
+        return placement.PositionEcl.IsFinite()
+               || Fail(out error, "the resolved position is not finite");
     }
 
     /// <summary>
@@ -319,4 +343,10 @@ internal static class CameraFrames
         error = message;
         return false;
     }
+}
+
+/// <summary>An ECL placement split into its live origin and authored/smoothed component.</summary>
+internal readonly record struct ResolvedPlacement(double3 OriginEcl, double3 ComponentEcl, bool Relative)
+{
+    internal double3 PositionEcl => OriginEcl + ComponentEcl;
 }

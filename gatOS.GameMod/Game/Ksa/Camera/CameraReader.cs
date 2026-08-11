@@ -40,8 +40,8 @@ internal static class CameraReader
     /// <param name="resolvedPositionEcl">The absolute ecliptic point the placement resolved to.</param>
     /// <param name="player">The live camera-track player, or null when nothing is playing.</param>
     [KsaAnchor("Viewport.{Mode,MapController} (public fields); MapController.Scope (public double); "
-            + "Camera.{Following,TidalLocking,GetFieldOfView,Orthographic}",
-        SourceFile = "KSA/Viewport.cs / KSA/MapController.cs / KSA/Camera.cs", Verified = "2026-08-06",
+            + "Camera.{Following,TidalLocking,PositionEcl,LocalRotation,GetFieldOfView,Orthographic}",
+        SourceFile = "KSA/Viewport.cs / KSA/MapController.cs / KSA/Camera.cs", Verified = "2026-08-09",
         GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
         Notes = "GetFieldOfView() returns RADIANS while SetFieldOfView(float) takes DEGREES — the "
             + "asymmetry is converted here, once, at the boundary, so nothing downstream carries a "
@@ -68,7 +68,10 @@ internal static class CameraReader
             Playback: player?.State ?? PlaybackState.Done,
             Rate: player?.Clock.Rate ?? 1,
             Loop: player?.Clock.Loop ?? false,
-            MapScope: viewport.MapController.Scope);
+            MapScope: viewport.MapController.Scope,
+            AppliedPositionEcl: new Vec3(camera.PositionEcl.X, camera.PositionEcl.Y, camera.PositionEcl.Z),
+            AppliedRotation: new Quat(camera.LocalRotation.X, camera.LocalRotation.Y,
+                camera.LocalRotation.Z, camera.LocalRotation.W));
 
     /// <summary>
     ///     The active shot's authored name, or <c>""</c> before the first shot edge. Bounds-checked

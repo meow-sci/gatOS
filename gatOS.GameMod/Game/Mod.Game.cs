@@ -109,11 +109,12 @@ public sealed partial class Mod
     private bool _audioDead;
 
     // The camera director (Game/Ksa/Camera): owns the main viewport's camera while a guest has taken
-    // it, writes the composed pose after every render, and hands it back exactly as it found it.
+    // it, writes the composed pose in Viewport.OnFrame before KSA builds matrices, and hands it back.
     // Created lazily on the game thread with the other control objects (null when
-    // [camera] camera_enabled=false), driven from OnAfterFrame by DriveCamera, released at unload.
+    // [camera] camera_enabled=false), driven by CameraViewportPatch, released at unload.
     private CameraDirector? _cameraDirector;
     private bool _cameraDead;
+    private Harmony? _cameraHarmony;
 
     // Game-thread-only driver state for the timed-command scheduler (CAMERA_CONTROLS_PLAN §3.2).
     // The due list is reused across ticks (Clear()ed, never reallocated) so a steady-state tick
@@ -492,10 +493,8 @@ public sealed partial class Mod
     }
 
     /// <summary>
-    ///     Drives the camera director on the game thread from <c>OnAfterFrame</c> — the one hook that
-    ///     fires on <b>every</b> rendered frame, and the only place the pose can be written <i>after</i>
-    ///     the render so the next frame's <c>Program.OnFrameViewports</c> rebuilds the view/projection
-    ///     matrices from it (which is what lets gatOS own the camera with no Harmony patch). Self-gates
+    ///     Drives the camera director on the game thread from the main viewport prefix, after KSA has
+    ///     advanced simulation state and immediately before it rebuilds view/projection matrices. Self-gates
     ///     to a single branch while gatOS does not own the camera — the default — so the feature costs
     ///     nothing until a guest writes <c>/sim/camera/enabled</c>. A failure disables the camera for
     ///     the session (one error log) after handing the camera back to the game.
@@ -522,6 +521,64 @@ public sealed partial class Mod
             }
 
             ModLog.Log.Error($"gatOS camera disabled after a driver error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    ///     Entry from <see cref="CameraViewportPatch"/>. Runs the old BeforeGui trio early enough for
+    ///     camera commands and shared-clock timed cues to affect this render, then applies the camera.
+    /// </summary>
+    internal static void PrepareMainViewportFrame(double dt)
+    {
+        if (_instance is not { IsInitialized: true } mod)
+            return;
+        mod.SampleTelemetry(dt);
+        mod.TickSchedules(dt);
+        mod.DrainCommands();
+        mod._mainViewportPreparedThisFrame = true;
+        mod.DriveCamera(dt);
+    }
+
+    /// <summary>Entry from the viewport postfix: publish KSA's final clamped camera transform.</summary>
+    internal static void PublishMainViewportCameraStatus()
+    {
+        if (_instance is { IsInitialized: true, _cameraDead: false, _cameraDirector: { } camera })
+            camera.PublishAppliedStatus();
+    }
+
+    partial void InstallCameraHook()
+    {
+        if (_cameraStore is null)
+            return;
+        try
+        {
+            _cameraHarmony = new Harmony("gatos.camera");
+            if (!CameraViewportPatch.Install(_cameraHarmony))
+            {
+                _cameraHarmony = null;
+                _cameraDead = true;
+                return;
+            }
+            ModLog.Log.Info("gatOS same-frame main-viewport camera hook installed.");
+        }
+        catch (Exception ex)
+        {
+            _cameraHarmony = null;
+            _cameraDead = true;
+            ModLog.Log.Error($"gatOS camera hook failed to install (camera disabled): {ex.Message}");
+        }
+    }
+
+    partial void RemoveCameraHook()
+    {
+        try
+        {
+            _cameraHarmony?.UnpatchAll("gatos.camera");
+            _cameraHarmony = null;
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS camera hook unpatch error: {ex.Message}");
         }
     }
 

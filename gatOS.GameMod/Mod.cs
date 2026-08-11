@@ -60,6 +60,11 @@ public sealed partial class Mod
     // frames the GUI hooks were skipped, so behaviour with the UI visible is unchanged.
     private bool _uiHooksRanThisFrame;
 
+    // Set by the main-viewport Harmony prefix after it performs the sample/schedule/drain work that
+    // used to happen in StarMapBeforeGui. The later GUI or F2 fallback consumes the latch and runs only
+    // the remaining audio/thug-life work, preventing a second tick in the same rendered frame.
+    private bool _mainViewportPreparedThisFrame;
+
     // The /sim stack (T9.3): store + tree are immutable after init; the server reference is
     // volatile because Restart SimFs swaps it from a background task while the render thread
     // reads it (threading rule 5) and the sampler/VM boot consult it on their own threads.
@@ -281,6 +286,10 @@ public sealed partial class Mod
             // A no-op build without the KSA assemblies drops this call (partial seam).
             InstallSolverHook();
 
+            // CAMERA: drive the main camera before its matrices are built, against current-frame
+            // vessel state. Also advances shared camera/schedule clocks before that same render.
+            InstallCameraHook();
+
             // STREAM_PLAN.md: inject the screen-stream capture into KSA's render loop (records into
             // the engine's own frame command buffer). Default-off; drops out without the KSA assemblies.
             InstallDisplayHook();
@@ -400,15 +409,6 @@ public sealed partial class Mod
             DrivePostSolver(dtPlayer);
         }
 
-        // The camera director runs on EVERY frame, UI visible or not — unlike everything above, which
-        // stands in only for the frames the GUI hooks were skipped. Two reasons it must live here and
-        // not in DrivePerFrame/DrivePostSolver: the pose has to be written *after* the render so the
-        // next frame's Program.OnFrameViewports rebuilds every matrix from it (which is what lets gatOS
-        // own the camera with no Harmony patch), and a camera that stopped moving the instant the
-        // player hid the UI would be useless for the exact job it exists to do. It runs after the
-        // drives so it sees this frame's drained commands on every frame, not just GUI-visible ones,
-        // and self-gates to one branch while gatOS does not own the camera.
-        DriveCamera(dtPlayer);
     }
 
     /// <summary>
@@ -418,12 +418,18 @@ public sealed partial class Mod
     /// </summary>
     private void DrivePerFrame(double dt)
     {
-        SampleTelemetry(dt);
-        // Immediately before the drain (CAMERA_CONTROLS_PLAN §3.2): a scheduled command that comes
-        // due on this frame is posted into the queue the very frame it executes, so a schedule's
-        // timing is the frame grid and not the frame grid plus one.
-        TickSchedules(dt);
-        DrainCommands();
+        if (_mainViewportPreparedThisFrame)
+        {
+            _mainViewportPreparedThisFrame = false;
+        }
+        else
+        {
+            // No camera hook (camera feature disabled, installation failure, or no live viewport):
+            // preserve the original StarMap/F2 path so telemetry and control never stop altogether.
+            SampleTelemetry(dt);
+            TickSchedules(dt);
+            DrainCommands();
+        }
         DriveAudio(); // right after the drain: prune finished channels, enforce end=, publish status
         UpdateThugLife(); // validate/re-resolve thug-life anchors on the game thread, before the scene renders
     }
@@ -451,6 +457,7 @@ public sealed partial class Mod
             _instance = null;
             IsInitialized = false;
             TeardownGameCheats(); // partial: clears welds + restores IVA (unpatches the IVA hooks)
+            RemoveCameraHook();   // partial: no viewport callbacks after camera state is torn down
             RemoveSolverHook();   // partial: drops out without the KSA assemblies
             RemoveMenuFallback(); // partial: drops out without the KSA assemblies
             DisposeDisplayCapture(); // partial: frees the capture's Vulkan resources (drops out without KSA)
@@ -972,6 +979,8 @@ public sealed partial class Mod
     partial void DriveWelds(double dt);
     partial void DriveIvaPhysics(double dt);
     partial void DriveCamera(double dt);
+    partial void InstallCameraHook();
+    partial void RemoveCameraHook();
     partial void UpdateThugLife();
     partial void TeardownGameCheats();
     partial void InstallSolverHook();

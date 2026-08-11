@@ -365,7 +365,7 @@ at ownership; `camera/enabled 0` blends back, `camera/release` cuts back.
 | …or by latitude/longitude | `camera/pose/geo` | `lat lon alt [body:<id>]` — altitude is **above terrain** |
 | what to look at | `camera/pose/aim` | `<target> [off x y z] [frame <f>] [up world\|target\|velocity\|free] [roll <deg>]` |
 | lens | `camera/pose/{fov,ortho,ortho_height,roll}` | degrees / flag / metres / degrees |
-| take the edge off coarse keyframes | `camera/pose/smoothing` | seconds, `0..10` |
+| take the edge off coarse keyframes | `camera/pose/smoothing` | seconds, `0..10`; anchored offsets smooth while live anchor translation and aim tracking remain exact |
 
 - **`bodyfixed` is the aircraft triad tutorials already teach** — `+X` nose, `+Y` right, **`−Z` up**
   — the exact convention `ctl/translate` uses (§4/§5), so `-40 0 -6` reads as "40 m aft, 6 m up".

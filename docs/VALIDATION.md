@@ -444,7 +444,7 @@ See `SPEC_9P_FILESYSTEM.md` (the `ctl/timed_batch` + `ctl/schedules` family),
 | 15 | From the host: `curl http://127.0.0.1:4242/v1/fs/sim/ctl/schedules/<id>/rate` reads it and `POST` sets it; the MQTT topic `gatos/sim/ctl/schedules/<id>/t` mirrors; `POST /v1/command` with `schedule.pause` works | ☐ | field-level parity is structural (ordinary VFS leaves) |
 | 16 | Mod unload (quit) with schedules running → clean unload, no errors in the log; `[schedule] schedule_enabled = false` ⇒ `/sim/ctl/timed_batch` and `/sim/ctl/schedules` are **absent** while `/sim/ctl/batch` still works, and `schedule.*` via `/v1/command` answers `EOPNOTSUPP` | ☐ | `TeardownGameCheats` + the config gate |
 
-## Programmable camera (`/sim/camera`) — validation pass — **NOT YET RUN**
+## Programmable camera (`/sim/camera`) — validation pass — **FIRST PASS FOUND DRIVER BUG; FIX LANDED, RECHECK PENDING**
 
 Prereq: the T6.6 pass. `[camera] camera_enabled = true` and `[control] control_enabled = true` (both
 default); tracks additionally need `[schedule] schedule_enabled = true`, and the interpolated `time`
@@ -456,8 +456,9 @@ the compositor, the rules, the grammars, the tree and gating, the whole JSON tra
 the player's registry behaviour — is covered by `gatOS.SimFs.Tests/Camera/**` (12 fixtures), so the items
 below are only what a live game can show. See `SPEC_9P_FILESYSTEM.md` (the `/sim/camera` family),
 `docs/KSA_INTEGRATION_MATRIX.md` (programmable camera),
-`scope/ksa-write-surface.md#camera-director` and `plans/CAMERA_ASBUILT.md`. **All items pending a live
-flight.**
+`scope/ksa-write-surface.md#camera-director` and `plans/CAMERA_ASBUILT.md`. The first Hunter/Gemini7
+orbit attempt failed and directly motivated the same-frame driver correction below; all rows remain
+pending a clean recheck.
 
 > **Out of scope, deliberately:** IVA and Map as *ownership contexts* are **not implemented and are not
 > implementable without a Harmony patch** (`plans/CAMERA_ASBUILT.md` §W6,
@@ -466,6 +467,7 @@ flight.**
 
 | # | Check | Result | Notes |
 |---|---|---|---|
+| 0 | Regression: orbit 5 m and 20 m around `vessel:Hunter`, aim at Hunter, then step azimuth 0/90/180/270. Hunter remains centred and background geometry is stable; repeat on Gemini7 at 20–50 m. `camera/status` reports changing `applied_position_ecl` and a unit `applied_rotation` | ☐ | **2026-08-09 first live pass failed:** target absent and distant rocket jumped. Root cause was an after-render frame-N pose rendered against frame-N+1 target. Fixed with main `Viewport.OnFrame` prefix/postfix, anchor-relative smoothing and exact aim; this is the required recheck |
 | 1 | Own the camera, start a move, then press **F2** (hide UI): the shot **keeps moving** smoothly, a `timed_batch` sequence keeps firing, `/sim/stream` keeps advancing and guest writes still actuate. F2 again — no jump, no double-step | ☐ | **the C0.1 regression**; the director is the one driver that runs on *every* frame, F2 or not |
 | 2 | `echo 1 > /sim/camera/enabled` then `echo 1 > /sim/camera/release` from **orbit** mode: the camera comes back to **exactly** where and how it was — position, rotation, follow target, tidal flag, FOV, ortho, and mode. Repeat entering **from** map mode and restoring **into** map mode | ☐ | the restore order (`SetFollow` first — it teleports — then `NoRotation`→pose→projection→mode last) |
 | 3 | Record ~30 s of footage across a take + release: **no `TimedAlert` text appears at all** except the one documented alert when taking the camera *from* map mode ("Fixed Camera") | ☐ | direct `Viewport.Mode` assignment + `alert:false` on every follow; the Map exception is `MapController.OnSwitchOn`'s control state, not cosmetics |
@@ -476,7 +478,7 @@ flight.**
 | 8 | `echo 5 > /sim/camera/pose/fov` and `echo 170 > …/fov` both take effect (the game's own UI only offers 15–120); `echo 1 > /sim/camera/pose/ortho` gives a real orthographic view; `ortho_height` changes the framing | ☐ | `SetFieldOfView` does not clamp — that is what puts fisheye/telephoto in reach |
 | 9 | After changing `ortho_height`, release the camera: the half-height is **not** restored (there is no public getter in 5168 to capture it from). Confirm this is acceptable in practice — i.e. it is only visible if the player was already in ortho | ☐ | the one camera change gatOS **cannot** undo; if unacceptable, the fix is a gatOS-side latch, not a restore |
 | 10 | `pose/geo` over an ocean, walking the altitude down: the view descends to the surface and then **stops at ~0.5 m** no matter how much lower you ask for | ☐ | `Camera.ClampCamera()` runs at the top of every `Camera.OnFrame` and is deliberately not worked around |
-| 11 | A `pose/geo` climb straight through a **cloud deck**: the clouds render correctly from inside and above, with no popping or z-fighting from the pose being written after the render | ☐ | the "write after render, matrices rebuilt next frame" contract, tested against volumetric passes |
+| 11 | A `pose/geo` climb straight through a **cloud deck**: the clouds render correctly from inside and above, with no popping or z-fighting | ☐ | same-frame viewport apply, tested against volumetric passes |
 | 12 | `pose/roll 30` — confirm **subjectively** that the sign feels right (positive roll rolls the camera clockwise, so the horizon tilts counter-clockwise) | ☐ | the sign was **defined, not derived**; if it reads backwards, flip it once, in `Apply`, and say so in the SPEC |
 | 13 | A track with a `"time"` channel eases into slow-mo (`0.15`) and back: the sim visibly slows; on **release**, the player's original warp setting is **restored**. Then run a shot with **no** `time` channel and confirm the warp setting is **untouched** | ☐ | the capture is **lazy** — first frame the channel is driven — and the restore is conditional on it |
 | 14 | Start an **auto-warp** (a manoeuvre-node warp), then run a `time`-channel shot over it: note who wins frame by frame. Then run the same shot with the auto-warp stopped first | ☐ | neither public `SetSimulationSpeed` overload checks `IsAutoWarpActive`; gatOS deliberately adds no guard — **stop the auto-warp before rolling the shot** |

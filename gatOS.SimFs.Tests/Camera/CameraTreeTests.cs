@@ -92,7 +92,9 @@ public sealed class CameraTreeTests
             Playback: PlaybackState.Running,
             Rate: 0.5,
             Loop: false,
-            MapScope: 1500000));
+            MapScope: 1500000,
+            AppliedPositionEcl: new Vec3(1000, 2000, 3000),
+            AppliedRotation: new Quat(0.1, 0.2, 0.3, 0.9)));
 
     // ---- structure --------------------------------------------------------------------------------
 
@@ -178,6 +180,8 @@ public sealed class CameraTreeTests
             + "position -40 8 12\n"
             + "geo 28.5 -80.5 45 0\n"
             + "rotation 0 0 0 1\n"
+            + "applied_position_ecl 1000 2000 3000\n"
+            + "applied_rotation 0.1 0.2 0.3 0.9\n"
             + "aim part:apollo11/77 off 0 1.2 0 frame lvlh up velocity roll -6\n"
             + "fov 42\n"
             + "ortho 1 250\n"

@@ -570,7 +570,13 @@ built the queue, not the emitters.
 > Baseline: KSA `2026.8.5.5168`, every binding verified against
 > `ksa-game-assemblies/current/decomp/` on **2026-08-06**.
 >
-> **Zero Harmony patches.** The whole feature hangs off the existing `[StarMapAfterOnFrame]` hook.
+> **2026-08-09 live correction:** the original zero-patch `[StarMapAfterOnFrame]` driver was one
+> simulation frame behind moving ECL targets. `CameraViewportPatch` now prefixes/postfixes the main
+> `Viewport.OnFrame(double)` by identity: the prefix advances shared schedules, drains commands and
+> applies the camera before KSA's matrix build; the postfix publishes the final clamped transform.
+> Anchored smoothing filters only the relative component and aim is exact. The historical sections
+> below describe the original landing and are superseded wherever they claim after-render timing or
+> zero Harmony patches.
 
 ---
 
@@ -1403,7 +1409,9 @@ list unchanged. **No schedule path, grammar, leaf or errno moved**; all ~120 exi
 > **Scope:** the C3 evaluator is now actually driving the camera; task **C4** (the interpolated `time`
 > channel) is complete; task **C5** is **partially** complete — `C5.2` ships `/sim/camera/map/scope`,
 > and **`C5.1` (IVA) and the "park in Map" half of `C5.2` are NOT implementable without a Harmony
-> patch** (§W6 — evidence, not opinion). Two new `/sim` leaves. **Zero Harmony patches**, still.
+> patch** (§W6 — evidence, not opinion). Two new `/sim` leaves. **At the original landing this used
+> zero Harmony patches; the 2026-08-09 same-frame correction described at the top supersedes that
+> lifecycle choice.**
 >
 > Baseline: KSA `2026.8.5.5168`, every new binding verified against
 > `ksa-game-assemblies/current/decomp/` on **2026-08-06**.

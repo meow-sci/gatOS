@@ -30,13 +30,17 @@ Four decisions carry the design.
    track evaluator (interpolating, camera-only). They **compose**: L2 can drive FOV and cuts while
    L3 interpolates position. (§2)
 
-2. **No Harmony patch. The driver hangs off `[StarMapAfterOnFrame]`.** gatOS's existing per-frame
+2. **Same-frame main-viewport hook.** The original no-patch `[StarMapAfterOnFrame]` design was
+   falsified by live testing: it aimed at frame N's ECL target but rendered against frame N+1's moved
+   target. A guarded prefix/postfix on `Viewport.OnFrame`, bound by `Program.MainViewport` identity,
+   applies after simulation advance and immediately before `Camera.OnFrame`, then reads back KSA's
+   final clamped transform. The prefix also performs the sample/schedule/drain work early; the existing
    hooks (`[StarMapBeforeGui]` / `[StarMapAfterGui]`) sit **inside `if (Program.DrawUI)`** in
    `Program.OnFrame` — so **pressing F2 to hide the UI kills every gatOS game-thread driver**,
    including the command drain. F2 is the first thing a director presses. `[StarMapAfterOnFrame]`
-   (a postfix on `Program.OnFrame`) runs unconditionally, exactly once per rendered frame. Writing
-   the camera there lets the *game's own* `Camera.OnFrame` rebuild the view/projection matrices on
-   the next frame — no matrix surgery, no patch, correct in every camera mode. (§5)
+   (a postfix on `Program.OnFrame`) remains the non-camera fallback when UI is hidden; a latch prevents
+   it from ticking sample/schedule/drain twice. The camera hook lets the game's own `Camera.OnFrame`
+   rebuild view/projection matrices immediately — no matrix surgery. (§5)
 
 3. **Ownership is a mode park, not a fight.** `Viewport.Mode = CameraMode.Fixed` +
    `Camera.Unfollow(changeControl: false)` makes `FixedController.OnFrame` a **literal no-op** (it
@@ -524,16 +528,16 @@ partials from there, guarded by a `Program.FrameNumber` "already ran this frame"
 behaviour bit-for-bit unchanged; UI hidden ⇒ everything keeps ticking. **Both** the scheduler and
 the camera director depend on it.
 
-### 5.2 Why writing after the render is correct
+### 5.2 Why the same-frame viewport prefix is correct
 
-Writing the pose at the end of frame *N* means frame *N+1* does:
+The main-viewport prefix runs after KSA advances simulation state and before the original method does:
 
-`OnFrameViewports` → `FixedController.OnFrame` (**no-op**, below) → `Camera.OnFrame(dt)` rebuilds
-`_vp` / `_vpInv` / frustum planes **from gatOS's transform** → celestial LOD, lights, cursor ray,
-`UpdateShaderData` and `RenderGame` all consume it consistently.
+`FixedController.OnFrame` (**no-op**, below) → `Camera.OnFrame(dt)` rebuilds `_vp` / `_vpInv` /
+frustum planes **from gatOS's transform** → celestial LOD, lights, cursor ray, `UpdateShaderData` and
+`RenderGame` all consume it consistently. The postfix then reads back the final clamped transform.
 
-gatOS never touches a matrix, never calls `camera.OnFrame` by hand, and needs no patch. The cost is
-one frame of pipeline latency — **constant**, therefore invisible.
+gatOS never touches a matrix or calls `camera.OnFrame` by hand, and there is no simulation-frame
+latency between a moving subject and its camera.
 
 **Ownership** (`enabled 1`):
 
@@ -576,16 +580,19 @@ Prune on vessel despawn by riding the sampler's vehicle enumeration, like `Vesse
 
 ### 5.4 Threading
 
-Two new game-thread work sites, both self-gating:
+The camera path has one narrow game-thread hook, self-gated by main-viewport identity:
 
-- **`Mod.TickSchedules`** — inside the (F2-proof) command drain, immediately before
-  `CommandQueue.Drain`. `Post`s due commands with no waiter. No-ops when no schedule is live.
-- **`Mod.DriveCamera`** — in `OnAfterFrame`. No-ops while gatOS does not own the camera (the
-  default), so the feature costs nothing until a guest turns it on.
+- **`CameraViewportPatch.Prefix`** — before `Program.MainViewport.OnFrame(double)`, samples telemetry,
+  advances schedules, drains due commands, and calls `Mod.DriveCamera`. This is the only timing point
+  that lets KSA's same invocation of `Camera.OnFrame` build matrices from the newly authored pose.
+- **`CameraViewportPatch.Postfix`** — publishes the transform KSA actually applied, including its
+  terrain clamp.
+- **`Mod.DrivePerFrame` fallback** — retains the ordinary sample/schedule/drain path if no main
+  viewport prefix ran; it does not drive an owned camera after rendering.
 
-No Harmony patch for either. Transport threads only ever *enqueue* `SimCommand`s and read
-volatile-published status. Teardown rides `Mod.TeardownGameCheats`. This is the `DriveWelds` /
-`DriveIvaPhysics` shape exactly.
+The Harmony patch never suppresses the original method and ignores the other three viewports.
+Transport threads only ever *enqueue* `SimCommand`s and read volatile-published status. Teardown
+removes the patch and rides `Mod.TeardownGameCheats`.
 
 ---
 
@@ -661,7 +668,9 @@ The scheduler needs **no** `Game/Ksa/` code at all — it dispatches through the
 | `Program.FrameNumber` | `public static ulong` | `Program.cs:268` | Low (C0.1 latch) |
 | `CameraMode` enum | enum | `CameraMode.cs:5` | Low |
 
-**Zero Harmony patches.** Compare unscience: 2 string-named prefixes + 1 private-field poke.
+**One public-method Harmony patch.** It targets `Viewport.OnFrame(double)`, guards the main viewport
+by identity, and uses no private-field injection. This keeps unscience's successful same-frame timing
+while avoiding its legacy `___Transform` injector and first-controller/multi-viewport bugs.
 
 ---
 
@@ -690,7 +699,8 @@ The scheduler needs **no** `Game/Ksa/` code at all — it dispatches through the
 ### C1 — ownership + live pose *(R2, R3, R4)*
 
 - **C1.1** `CameraDirector` skeleton: ownership take/release, restore capture, `Mode`/`Unfollow`
-  park, `Mod.DriveCamera` in `OnAfterFrame`, teardown in `TeardownGameCheats`.
+  park, main-viewport `OnFrame` prefix/postfix around KSA's matrix build, teardown in
+  `TeardownGameCheats`.
 - **C1.2** `/sim/camera/{enabled,release,status,info,mode,follow,tidal,target}` + actuators.
 - **C1.3** `pose/{position,frame,anchor,rotation,fov,ortho,ortho_height,smoothing,reset}` +
   `CameraFrames` (`ecl`/`cce`/`bodyfixed`); `CameraState` compositing (§4.3).

@@ -253,7 +253,9 @@ puts it all back. A pose is **anchor** (`pose/anchor`: `vessel:`/`body:`/`part:<
 `pose/orbit/{radius,azimuth,elevation}` (a non-zero radius wins). Orientation is normally
 `pose/aim <target> [off x y z] [frame <f>] [up world|target|velocity|free] [roll <deg>]` — the offset
 is measured **on the subject** and re-resolved every frame, which is what glues it to a moving hull.
-`pose/{fov,ortho,ortho_height,roll,smoothing}` are the lens.
+`pose/{fov,ortho,ortho_height,roll,smoothing}` are the lens. Anchored smoothing filters only the
+camera-to-anchor component: the anchor's current-frame translation passes through exactly, and an
+`aim` target remains centred because look-at is an exact constraint rather than a smoothed rotation.
 
 ```sh
 echo 1 > /sim/camera/enabled
@@ -262,7 +264,7 @@ echo "bodyfixed" > /sim/camera/pose/frame     # +X nose, +Y right, -Z up (so "up
 echo "-40 0 -6"  > /sim/camera/pose/position
 echo "vessel:apollo11 off 0 0 -1.2 up world" > /sim/camera/pose/aim
 echo 0.35 > /sim/camera/pose/smoothing        # critically-damped filter, seconds
-cat /sim/camera/status                        # one "key value…" line per channel
+cat /sim/camera/status                        # pose channels + applied_position_ecl/applied_rotation
 echo 0 > /sim/camera/enabled                  # eased hand-back
 ```
 

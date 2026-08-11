@@ -626,12 +626,13 @@ gatOS owns the camera the player's camera keys do nothing** (a per-frame re-asse
 | `camera/pose/{position,frame,orbit/*,aim_frame}` | `camera.{position,frame,orbit_radius,orbit_azimuth,orbit_elevation,aim_frame}` | `CameraFrames.TryFrame2Ecl` | `Vehicle.{GetEnu2Cce,GetLvlh2Cce,Body2Cce,ComputeEnu2Cce,ComputeLvlh2Cce,GetPositionCce,GetVelocityCce}`; `Celestial.{GetCci2Cce,GetCcf2Cce,GetDirCcfFromLatLon,MeanRadius,GetPositionCce,GetVelocityCce}`. `GetEnu2Cce`/`GetLvlh2Cce` are **nullable** and `GetEnu2Cce` dereferences `Orbit.Parent` unguarded — both guarded | `KSA/Vehicle.cs`, `KSA/Celestial.cs` | Medium | ➕ new 2026-08-06 |
 | `camera/pose/geo` | `camera.geo` | `CameraFrames.GeoToEcl` | `Celestial.{GetDirCcfFromLatLon,GetCcf2Cce,GetTerrainHeightFromDirCce,MeanRadius,GetPositionEclFromCce}` — gatOS **calls** the game's own lat/lon trigonometry rather than restating it (CCF +Z = north pole, +X = prime meridian on the equator) | `KSA/Celestial.cs` (`:674`), `KSA/Camera.cs` (`SetLatLon` is the model) | Medium | ➕ new 2026-08-06 |
 
-**Runtime coupling beyond the writes:** the per-frame driver (`Mod.DriveCamera` →
-`CameraDirector.Update`, at the **end of `[StarMapAfterOnFrame] Mod.OnAfterFrame`** — the eighth
-game-thread work site, and the only one that runs on **every** rendered frame rather than standing in
-for the F2-skipped GUI hooks) composes `Track ?? Override ?? Baseline`, resolves the frame + placement +
-aim, and writes the pose; the *next* frame's `Program.OnFrameViewports` rebuilds every matrix from it,
-so gatOS never touches a matrix and needs **no Harmony patch** — lifecycle detail in
+**Runtime coupling beyond the writes:** the per-frame driver (`CameraViewportPatch` →
+`Mod.PrepareMainViewportFrame` → `CameraDirector.Update`) is a guarded prefix on the main
+`Viewport.OnFrame(double)`. It advances the shared schedule clock, drains due/direct camera commands,
+composes `Track ?? Override ?? Baseline`, resolves the current-frame placement + aim, and writes the
+pose immediately before the original method runs `Camera.OnFrame`; a postfix publishes KSA's final
+clamped transform. gatOS touches no matrix. Anchored placement smooths its relative component while
+live anchor translation and aim pass through exactly — lifecycle detail in
 [`ksa-runtime-coupling.md#camera-driver`](ksa-runtime-coupling.md#camera-driver). It self-gates to one
 branch (`CameraDirector.IsIdle`) while gatOS does not own the camera, which is the default. The read
 half (`CameraReader.Sample` → the volatile `CameraStore.Status` every leaf renders from) is

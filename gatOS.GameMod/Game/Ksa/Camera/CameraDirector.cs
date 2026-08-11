@@ -15,14 +15,12 @@ namespace gatOS.GameMod.Game.Ksa.Camera;
 /// </summary>
 /// <remarks>
 ///     <para>
-///         <b>Zero Harmony patches — and that is the design, not an economy.</b> The pose is written at
-///         the <i>end</i> of frame <i>N</i> (from the <c>[StarMapAfterOnFrame]</c> postfix on
-///         <c>Program.OnFrame</c>), so frame <i>N+1</i>'s <c>OnFrameViewports</c> runs
-///         <c>Camera.OnFrame</c> and rebuilds the view/projection matrices and frustum <b>from gatOS's
-///         transform</b> — and then celestial LOD, the light system, the cursor ray,
-///         <c>UpdateShaderData</c> and the render all consume that one consistent camera. gatOS never
-///         touches a matrix. The cost is exactly one frame of pipeline latency, which is constant and
-///         therefore invisible.
+///         <b>The director runs in the main viewport's <c>OnFrame</c> prefix.</b> KSA advances vessel
+///         state before it visits the viewports, then each <c>Viewport.OnFrame</c> runs its controller
+///         and immediately calls <c>Camera.OnFrame</c> to rebuild the matrices. Writing here means the
+///         pose and the subject come from the same simulation frame and the matrices, frustum, celestial
+///         LOD, cursor ray and render all consume that same pose. The old after-render driver was one
+///         simulation frame behind every moving target — hundreds of metres at orbital speed.
 ///     </para>
 ///     <para>
 ///         <b>Ownership is a mode park, not a fight.</b> <c>Viewport.Mode = CameraMode.Fixed</c> plus
@@ -48,13 +46,9 @@ namespace gatOS.GameMod.Game.Ksa.Camera;
 ///         <c>SetCameraMode</c> and accepts the three-second alert.
 ///     </para>
 ///     <para>
-///         <b>Fixed is the only mode gatOS can own the camera in, and that is a property of the game,
-///         not a choice.</b> The order inside <c>Program.OnFrame</c> is
-///         <c>OnFrameViewports</c> → <c>Render</c> → <c>[StarMapAfterOnFrame]</c>, and
-///         <c>Viewport.OnFrame</c> is <c>GetActiveController().OnFrame(...)</c> <i>then</i>
-///         <c>GetCamera().OnFrame(...)</c>. So gatOS writing last in frame <i>N</i> only survives because
-///         the active controller writes <b>nothing</b> at the top of frame <i>N+1</i>, before the
-///         matrices are rebuilt. <c>FixedController.OnFrame</c> wraps its entire body in
+///         <b>Fixed is the only mode gatOS can own the camera in without replacing a game controller.</b>
+///         The prefix writes first, then <c>Viewport.OnFrame</c> calls the parked controller followed by
+///         <c>Camera.OnFrame</c>. <c>FixedController.OnFrame</c> wraps its entire body in
 ///         <c>if (Following != null)</c>, which the ownership unfollow makes false — that is the whole
 ///         trick. It does <b>not</b> generalise:
 ///         <list type="bullet">
@@ -117,7 +111,8 @@ internal sealed class CameraDirector(
         Releasing,
     }
 
-    private readonly PoseSmoother _smoother = new();
+    private readonly AnchoredPositionSmoother _positionSmoother = new();
+    private readonly PoseSmoother _rotationSmoother = new();
 
     private Phase _phase = Phase.Idle;
     private bool _publishedIdle = true; // the store starts at CameraStatus.Idle
@@ -140,6 +135,8 @@ internal sealed class CameraDirector(
     private double3 _lastResolvedPositionEcl;
     private double _appliedFovDeg = double.NaN;
     private string _degradeReason = "";
+    private CameraPose _statusPose = CameraPose.Default;
+    private CameraTarget _statusAnchor;
 
     // ---- the interpolated time channel (task C4) ---------------------------------------------------
     // The simulation speed is captured LAZILY, the first time a shot actually drives the channel, and
@@ -212,7 +209,7 @@ internal sealed class CameraDirector(
         if (_phase == Phase.Releasing)
         {
             _phase = Phase.Owned;
-            _smoother.Reset();
+            ResetSmoothing();
             return CommandResult.Ok;
         }
 
@@ -269,7 +266,7 @@ internal sealed class CameraDirector(
         _appliedFovDeg = double.NaN;
         _degradeReason = "";
         _timeWarned = false; // one warning per ownership session, not one per process
-        _smoother.Reset();
+        ResetSmoothing();
         _phase = Phase.Owned;
         _publishedIdle = false;
         return CommandResult.Ok;
@@ -372,7 +369,7 @@ internal sealed class CameraDirector(
             store.State.ClearAll();
             store.PublishStatus(CameraStatus.Idle);
             _publishedIdle = true;
-            _smoother.Reset();
+            ResetSmoothing();
         }
 
         return CommandResult.Ok;
@@ -396,11 +393,8 @@ internal sealed class CameraDirector(
     // ================================================================================================
 
     /// <summary>
-    ///     The per-frame drive, called from <c>Mod.OnAfterFrame</c> — the one hook that fires on
-    ///     <b>every</b> rendered frame. (The two StarMap GUI hooks live inside
-    ///     <c>Program.OnFrame</c>'s <c>if (DrawUI)</c> block, and hiding the UI with F2 is the first
-    ///     thing a director does, so a camera driven from those would freeze the moment the shot got
-    ///     clean.)
+    ///     The per-frame drive, called by the main viewport prefix after KSA has advanced the
+    ///     simulation and immediately before that viewport rebuilds its camera matrices.
     /// </summary>
     /// <param name="dt">The frame's player-clock delta, in seconds.</param>
     internal void Update(double dt)
@@ -443,6 +437,8 @@ internal sealed class CameraDirector(
 
         var pose = store.State.Compose(trackSample, trackClaims);
         CameraTargets.TryResolve(pose.Anchor, out var anchor);
+        _statusPose = pose;
+        _statusAnchor = anchor;
 
         if (_phase == Phase.Releasing)
         {
@@ -461,6 +457,20 @@ internal sealed class CameraDirector(
     }
 
     /// <summary>
+    ///     Re-publishes status after the original <c>Viewport.OnFrame</c> has run, so the applied fields
+    ///     include KSA's own camera clamp and are true render-time read-back rather than requested input.
+    /// </summary>
+    internal void PublishAppliedStatus()
+    {
+        if (_phase == Phase.Idle)
+            return;
+        var viewport = Program.MainViewport;
+        store.PublishStatus(CameraReader.Sample(viewport, viewport.BaseCamera, owned: true,
+            _statusPose, _statusAnchor, _lastResolvedPositionEcl, playback?.Current));
+        _publishedIdle = false;
+    }
+
+    /// <summary>
     ///     Writes one composed pose onto the camera: resolve the placement, resolve the orientation,
     ///     run both through the critically-damped smoother, then set the projection.
     /// </summary>
@@ -470,9 +480,9 @@ internal sealed class CameraDirector(
     ///     mid-shot leaves the camera exactly where it was, which is the least surprising failure and
     ///     the only one that can be recovered from by writing a new target.
     /// </remarks>
-    [KsaAnchor("Camera.{PositionEcl,LocalRotation,LookAtRotation,SetFieldOfView,SetOrthographic,"
-            + "SetOrthoHalfHeight}",
-        SourceFile = "KSA/Camera.cs", Verified = "2026-08-06", GameVersion = "2026.8.5.5168",
+    [KsaAnchor("Camera.{PositionEcl,LocalRotation,LookAtRotation,ClampCamera,SetFieldOfView,"
+            + "SetOrthographic,SetOrthoHalfHeight}",
+        SourceFile = "KSA/Camera.cs", Verified = "2026-08-09", GameVersion = "2026.8.5.5168",
         Risk = ChurnRisk.Medium,
         Notes = "LocalRotation (a Transform3D public field) is what Camera.OnFrame builds the view "
             + "matrix from — Ego2View is LocalRotation.Inverse(), NOT WorldRotation — so the pose is "
@@ -484,31 +494,60 @@ internal sealed class CameraDirector(
         CameraChannelMask trackClaims, double dt)
     {
         // ---- placement -----------------------------------------------------------------------------
-        if (CameraFrames.TryResolvePosition(pose, anchor, out var targetPositionEcl, out var error))
+        if (CameraFrames.TryResolvePlacement(pose, anchor, out var placement, out var error))
         {
-            _lastResolvedPositionEcl = targetPositionEcl;
+            _lastResolvedPositionEcl = placement.PositionEcl;
             _degradeReason = "";
         }
         else
         {
             LogDegradeOnce(error);
-            targetPositionEcl = _lastResolvedPositionEcl;
+            placement = new ResolvedPlacement(double3.Zero, _lastResolvedPositionEcl, Relative: false);
         }
 
-        var smoothed = _smoother.Step(ToVec(_lastPositionEcl), ToVec(targetPositionEcl),
-            pose.Smoothing, dt);
+        var smoothed = _positionSmoother.Step(
+            ToVec(_lastPositionEcl),
+            ToVec(placement.OriginEcl),
+            ToVec(placement.ComponentEcl),
+            pose.Anchor,
+            placement.Relative,
+            pose.Smoothing,
+            dt);
         _lastPositionEcl = ToKsa(smoothed);
         camera.PositionEcl = _lastPositionEcl;
 
+        // Camera.OnFrame clamps immediately before constructing the view matrices. Perform that same
+        // public clamp now so look-at is solved from the position KSA will actually render, not from a
+        // potentially below-terrain authored point. Camera.OnFrame repeats this idempotently below us.
+        camera.ClampCamera();
+        _lastPositionEcl = camera.PositionEcl;
+
         // ---- orientation ---------------------------------------------------------------------------
         var targetRotation = ResolveRotation(pose, anchor, _lastPositionEcl);
-        var smoothedRotation = _smoother.Step(ToQuat(_lastRotation), ToQuat(targetRotation),
-            pose.Smoothing, dt);
-        _lastRotation = ToKsaQuat(smoothedRotation);
+        if (pose.AimTarget.HasTarget)
+        {
+            // Aim is a constraint, not a loose rotation suggestion: smoothing it makes a moving
+            // subject drift out of frame. Smooth the camera's offset, then solve look-at exactly from
+            // that applied point every frame, matching unscience's successful tracking model.
+            _rotationSmoother.Reset();
+            _lastRotation = targetRotation;
+        }
+        else
+        {
+            var smoothedRotation = _rotationSmoother.Step(ToQuat(_lastRotation), ToQuat(targetRotation),
+                pose.Smoothing, dt);
+            _lastRotation = ToKsaQuat(smoothedRotation);
+        }
         camera.LocalRotation = _lastRotation;
 
         ApplyProjection(camera, pose, trackClaims);
         ApplyTimeScale(pose, trackClaims);
+    }
+
+    private void ResetSmoothing()
+    {
+        _positionSmoother.Reset();
+        _rotationSmoother.Reset();
     }
 
     /// <summary>
@@ -956,7 +995,7 @@ internal sealed class CameraDirector(
     internal void ResetPose()
     {
         store.State.ClearOverrides();
-        _smoother.Reset();
+        ResetSmoothing();
     }
 
     /// <summary>

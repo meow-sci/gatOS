@@ -39,7 +39,9 @@ Program.OnFrame
 │     OnDrawUiFrame       ── [StarMapBeforeGui] Mod.OnBeforeUi ──► DrivePerFrame(dt)
 │                                                                  ├ SampleTelemetry
 │                                                                  ├ TickSchedules   (7th work site)
-│                                                                  ├ DrainCommands   (Frame phase)
+│  Main Viewport.OnFrame prefix ─► SampleTelemetry → TickSchedules → DrainCommands → DriveCamera
+│                                                                  (same-frame camera apply)
+│                                                                  ├ DrainCommands   (fallback only)
 │                                                                  ├ DriveAudio      (5th)
 │                                                                  └ UpdateThugLife  (4th)
 │     …
@@ -49,8 +51,7 @@ Program.OnFrame
 │                                                                  then DrawGameUi()
 │  }
 ├─ Render
-└─ ── [StarMapAfterOnFrame] Mod.OnAfterFrame ──► if (!ranInGui) { DrivePerFrame; DrivePostSolver }
-                                                 DriveCamera(dt)  (8th — ALWAYS)
+└─ ── [StarMapAfterOnFrame] Mod.OnAfterFrame ──► if (!ranInGui) { remaining DrivePerFrame; DrivePostSolver }
 ```
 
 **Why the third hook exists (C0.1).** StarMap implements the two GUI hooks as patches on
@@ -62,10 +63,10 @@ frame-number compare — this half of the partial class must compile with no KSA
 `FrameNumber` is bumped before the postfix anyway). `DrawGameUi()` is never re-run: with `DrawUI` false
 there is no ImGui frame to draw into.
 
-**`DriveCamera` is the one exception — it runs unconditionally**, because the camera pose must be
-written *after* the render so the next frame's `OnFrameViewports` rebuilds every matrix from it (which
-is what lets gatOS own the camera with **no Harmony patch**), and because a camera that froze the
-instant the player hid the UI would be useless. The **Solver phase** is separate from all of this: a
+**The programmable camera is the one same-frame exception.** A guarded Harmony prefix on the main
+`Viewport.OnFrame` performs the telemetry/schedule/drain trio and applies the camera after simulation
+advance but before KSA immediately rebuilds its matrices; a postfix publishes the applied transform.
+The GUI/F2 path consumes a latch and cannot double-step those clocks. The **Solver phase** is separate: a
 `Priority.First` Harmony prefix on `Universe.ExecuteNextVehicleSolvers` (`Mod.DrainSolverCommands`).
 
 **`TickSchedules` sits immediately before the drain** on purpose: a scheduled command that falls due on
