@@ -18,13 +18,18 @@ internal static class WeldEngine
     /// </summary>
     [KsaAnchor("Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,BodyRates,CenterOfMassAsmb,Parent,Orbit,"
             + "Teleport,UpdatePerFrameData}; Orbit.OrbitLineColor; IParentBody.GetCci2Cce; "
-            + "Orbit.CreateFromStateCci(IParentBody,SimTime,double3,double3,byte4); "
+            + "Orbit.CreateFromStateCci(IParentBody,UniverseTime,double3,double3,byte4); "
             + "Universe.GetJobSimStep(double).NextTime; Program.GetPlayerDeltaTime; "
             + "Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}",
-        SourceFile = "KSA/Vehicle.cs / KSA/Orbit.cs / KSA/Universe.cs / KSA/Part.cs", Verified = "2026-06-28",
-        GameVersion = "2026.6.9.4750", Risk = ChurnRisk.High,
+        SourceFile = "KSA/Vehicle.cs / KSA/Orbit.cs / KSA/Universe.cs / KSA/Part.cs", Verified = "2026-08-11",
+        GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
         Notes = "The welds per-tick teleport. Stamps the orbit with the NEXT sim-step time (not "
-            + "GetElapsedSimTime) so the source body time aligns with the queued solver tick.")]
+            + "GetElapsedTime) so the source body time aligns with the queued solver tick. 5261: the time "
+            + "argument became UniverseTime (rev 5211); GetJobSimStep's body is otherwise unchanged, so "
+            + "the NextTime rationale still holds exactly. Vehicle.Teleport keeps its signature but now "
+            + "detaches via the object-pooled PhysicsBubble (RemoveFromBubble, revs 5215/5220) instead of "
+            + "the old VehicleUpdateTask — per-frame welds therefore drive a pooled bubble split/merge "
+            + "every tick, which only a live flight can confirm is stable.")]
     public static bool UpdateWeld(WeldEntry entry)
     {
         var source = entry.Source;
@@ -86,10 +91,10 @@ internal static class WeldEngine
         }
 
         // Stamp the orbit with the time the just-completed worker tick advanced to, NOT
-        // GetElapsedSimTime() (the PREVIOUS tick's end). Teleport sets body.Time = orbit StateTime;
+        // GetElapsedTime() (the PREVIOUS tick's end). Teleport sets body.Time = orbit StateTime;
         // using the next-tick time keeps the source aligned with the queued solver origin (see the
         // unscience notes) — otherwise the worker logs a "SnapToLeader body/origin time" mismatch.
-        SimTime tickEndTime = Universe.GetJobSimStep(Program.GetPlayerDeltaTime()).NextTime;
+        UniverseTime tickEndTime = Universe.GetJobSimStep(Program.GetPlayerDeltaTime()).NextTime;
         Orbit newOrbit = Orbit.CreateFromStateCci(
             source.Parent, tickEndTime, newSrcPosCci, newSrcVelCci, source.Orbit.OrbitLineColor);
         source.Teleport(newOrbit, newSrcBody2Cce, newBodyRates);

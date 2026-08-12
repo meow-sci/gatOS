@@ -187,6 +187,29 @@ capture is render-thread Vulkan code that cannot be exercised headlessly — the
 | 8 | Two readers at once (purrTTY tab + external terminal) both render; closing one leaves the other streaming | ☐ | multi-reader fan-out |
 | 9 | `cat /sim/display/format` reports the live `WxH@fps enc`; `POST /v1/fs/display/enabled` (HTTP) toggles it too | ☐ | transport parity for the controls |
 
+## KSA `2026.8.19.5261` upgrade re-verification — **NOT YET RUN**
+
+Prereq: the mod built + deployed against the 5261 DLLs. Everything below is what the **static** pass of
+the 2026-08-11 upgrade could not settle — reflection, Harmony install, render correctness, and the
+per-frame lifecycle underneath the new object-pooled `PhysicsBubble`. The static findings are in
+[`../scope/ksa-assets-and-versions.md#5261-pass`](../scope/ksa-assets-and-versions.md#5261-pass);
+build + full suite were green (0 warnings, 1317 passed).
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | `cat /sim/status/accessors` is clean (no degraded latches) after a flight with throttle, translate/rotate, staging, and an FC setpoint | ☐ | reflection + Harmony can't be build-checked; `ManualControlInputs` gained `GrabHeld` (rev 5203) but `EngineThrottle`/`ThrusterCommandFlags` are unmoved |
+| 2 | On a **hyperbolic / escape** trajectory, `cat …/orbit/{time_to_ap,time_to_pe}` read `0` — **not** ~1.7e29 | ☐ | **the 5261 semantic break.** `UniverseTime.EndOfTime.Seconds()` is finite; `IsSaturated()` guards restore the `0` contract |
+| 3 | On a vessel with no upcoming SOI change, `cat …/orbit/next_patch` reads `0`; on one with a patch ahead it reads a plausible UT | ☐ | same sentinel; `_nextPatchEventTime` now defaults to `EndOfTime` |
+| 4 | `cat /sim/time/ut` advances smoothly and matches in-game elapsed time under warp | ☐ | `GetElapsedSimTime()` → `GetElapsedSeconds()`; `UniverseTime` is Int128 ns, so precision should *improve* |
+| 5 | `echo "<ut> <dvx> <dvy> <dvz>" > …/ctl/burn` still plans a burn; writing a **non-finite** `ut` returns `Invalid` and leaves `/sim/status/accessors` **clean** | ☐ | `new UniverseTime(NaN)` **throws** where `SimTime` did not — the guard must reject before constructing |
+| 6 | Welds still track rigidly through translation, rotation and **time-warp**, and hold for several minutes without a physics blowup, log spam, or a "SnapToLeader body/origin time" mismatch | ☐ | **highest live risk.** `VehicleSolver.Wait()` (renamed) + `Teleport` now detaching via the **object-pooled** `PhysicsBubble` (`RemoveFromBubble`, revs 5215/5220/5237) on every weld tick |
+| 7 | Weld two vessels, then **separate them far enough to split the physics bubble** and rejoin — no crash, no stale Bepu handle | ☐ | rev 5220 pooling + rev 5237 stale-handle fix; per-frame teleport exercises merge/split hard |
+| 8 | `thug_life` quad still draws in the right place, right size, correctly depth-tested and occluded — including in a **supersampled screenshot** | ☐ | rev 5241 added `Program.SetViewport` inside `RenderMainPass`; gatOS already set it itself, so verify no double-set artifact |
+| 9 | `/sim/display` screen stream still captures correct, non-corrupt frames | ☐ | transpiler anchor (final `commandBuffer2.End()`) + `ShaderReadOnlyOptimal` assumption re-derived statically; see also the purrTTY-side notes |
+| 10 | IVA cabin physics still tracks (accelerometer/rates sane, no jitter) | ☐ | shares the renamed `VehicleSolver.Wait()` drain |
+| 11 | `cat …/battery/{charge,capacity}` reflect the **×10** capacities (rev 5227) and `fraction` still spans 0…1 | ☐ | value-only change, unit `J` unchanged — flag any guest flight program with an absolute charge threshold |
+| 12 | On an uncontrollable vessel (no control module), `/sim` writes still actuate it while the stock UI now refuses **all** keyboard input | ☐ | revs 5252/5253 widened `ControlsLockout` in `Vehicle.OnKey`; gatOS bypasses that path — confirm the documented divergence is still the intended Option-A behavior |
+
 ## Welds / `always_render_iva` / parts — validation pass — **NOT YET RUN**
 
 Prereq: the T6.6 pass (purrTTY tip release). `[control] debug_namespace = true` and
@@ -206,13 +229,13 @@ ImGui) — drive them over `/sim` (or HTTP/MQTT). See `SPEC_9P_FILESYSTEM.md` §
 | 5 | Stage/decouple or edit the active vessel → `parts/` updates within a sample (count-change invalidation); a count-preserving edit updates within 10 s | ☐ | per-vehicle cache invalidation |
 | 6 | `telemetry_vessel_parts=false` (the "Vessel parts" telemetry menu toggle or config) → `/sim/vessels/<id>/parts/` is gone | ☐ | gate |
 | 7 | Pick an anchor `<piid>` from the target's `parts/<n>/instance_id`; `echo "<target> <piid>" > /sim/debug/vessels/<source>/weld_here` welds the source at its current pose (it stays put relative to the target) | ☐ | `weld_here` capture |
-| 8 | The welded source tracks the target **rigidly** through translation, rotation, and **time-warp** (offset/orientation preserved); `cat /sim/debug/welds/count` ≥1 and `/sim/debug/welds/<source>/{target,part,offset,rotation,lock_rotation}` reflect it | ☐ | per-frame driver after `VehicleSolvers.Wait()` |
+| 8 | The welded source tracks the target **rigidly** through translation, rotation, and **time-warp** (offset/orientation preserved); `cat /sim/debug/welds/count` ≥1 and `/sim/debug/welds/<source>/{target,part,offset,rotation,lock_rotation}` reflect it | ☐ | per-frame driver after `VehicleSolver.Wait()` |
 | 9 | `echo 0 > /sim/debug/welds/<source>/enabled` suspends tracking (entry kept; source free); `echo 1 …` resumes it | ☐ | suspend/resume |
 | 10 | Staging an **unrelated** part on the target (anchor part survives) does **not** drop the weld; removing the anchor part itself falls back to body-frame anchoring (still not dropped) | ☐ | anchor re-resolution each tick |
 | 10b | Weld to a **subpart** `<piid>` (from `parts/<n>/subparts/<m>/instance_id`) — `weld_here` captures and tracks exactly like a part anchor; anchored to an **animated** subpart (e.g. a landing-leg / robotics segment), the welded source follows the animation as the subpart moves | ☐ | subpart anchor (2026-07-16); `PositionVehicleAsmb`/`Asmb2VehicleAsmb` compose through `PartParent` |
 | 11 | `echo 1 > /sim/debug/vessels/<source>/unweld` removes that weld; `echo 1 > /sim/debug/welds/clear` removes all (count → 0) | ☐ | remove / clear |
 | 12 | Weld a vessel to itself, or to one orbiting a different body → `EBUSY`; bad `<piid>`/target → `ENOENT`; bad arity/values → `EINVAL` | ☐ | errnos |
-| 13 | With **no** welds active, the `OnAfterUi` driver is a no-op — no measurable per-frame cost, no `VehicleSolvers.Wait()` | ☐ | `WeldManager.IsEmpty` early-out |
+| 13 | With **no** welds active, the `OnAfterUi` driver is a no-op — no measurable per-frame cost, no `VehicleSolver.Wait()` | ☐ | `WeldManager.IsEmpty` early-out |
 | 14 | Quit with welds active → clean unload (welds cleared, no exception); reload shows welds are **not** persisted | ☐ | runtime-only; `TeardownGameCheats` |
 
 ## thug_life (world-space quad render cheat) — validation pass — **NOT YET RUN**

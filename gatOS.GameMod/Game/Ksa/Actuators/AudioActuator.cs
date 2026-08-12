@@ -407,7 +407,7 @@ internal sealed class AudioActuator(AudioStore store, int maxChannels)
     {
         try
         {
-            return Universe.GetElapsedSimTime().Seconds();
+            return Universe.GetElapsedSeconds();
         }
         catch
         {

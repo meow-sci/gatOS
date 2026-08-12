@@ -655,7 +655,7 @@ controls under `/sim/debug/vessels/<id>/`: `weld` (explicit pose), `weld_here` (
 relative pose), `unweld`; registry view + ops under `/sim/debug/welds/`: `clear`, `count`, and
 `<source>/{target,part,offset,rotation,lock_rotation,enabled}`. Action keys `debug.weld_{create,here,
 remove,enable,clear}` (all Frame). The driver runs in `OnAfterUi` (`Mod.DriveWelds`) after
-`JobSystems.VehicleSolvers.Wait()` — the **third game-thread mutation site**, beside the Frame and Solver
+`JobSystems.VehicleSolver.Wait()` — the **third game-thread mutation site**, beside the Frame and Solver
 drains; self-gated to a no-op when empty, so **no** Harmony patch and zero cost when unused.
 
 **`thug_life`** — gatOS's **first custom GPU rendering**: anchors a flat, world-space textured quad (the
@@ -691,7 +691,7 @@ anchor vehicle via `ResolveVehicle` from the command `Token`, the entry id trave
 `OnAfterUi` and thug_life via `UpdateThugLife()` from `OnBeforeUi`, tears all cheats down via
 `TeardownGameCheats`, and adds a "Vessel parts" telemetry menu toggle; `TelemetrySampler` projects
 `ThugLife = _thugLife.Snapshot()`. `gatOS.GameMod.csproj` gained `Brutal.Concurrency` (for
-`JobSystems.VehicleSolvers.Wait()`) and the `thug_life` render refs `Brutal.Core.Memory`/`Brutal.Vulkan`/
+`JobSystems.VehicleSolver.Wait()`) and the `thug_life` render refs `Brutal.Core.Memory`/`Brutal.Vulkan`/
 `Brutal.Vulkan.Abstractions`/`Brutal.Vulkan.Vma`/`Planet.Render.Core` (all `<Private>false</Private>`,
 KSA-guarded), and set `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>`.
 
@@ -872,7 +872,7 @@ touchable interior surfaces; both windings emitted by default, with a bounding-b
 `FloatingObject` (the driven SubPart + the parent-frame transform math + exact rest-pose restore);
 `IvaPhysicsManager` (registry, lifecycle, `adopt`/`adopt_all`/`release`/`clear`/`nudge`, the leash, and
 the per-frame driver). **No Harmony patch.** `Mod.DriveIvaPhysics` runs in `OnAfterUi` right after
-`DriveWelds` — the **sixth game-thread work site** — and like it calls `JobSystems.VehicleSolvers.Wait()`
+`DriveWelds` — the **sixth game-thread work site** — and like it calls `JobSystems.VehicleSolver.Wait()`
 first so the accelerometer/rates/CoM readings are settled; `Timestep` runs with no `IThreadDispatcher`,
 so every Bepu callback is on that same thread.
 

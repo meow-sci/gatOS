@@ -344,7 +344,7 @@ internal static class FxReflect
     {
         try
         {
-            return Universe.GetElapsedSimTime().Seconds();
+            return Universe.GetElapsedSeconds();
         }
         catch
         {

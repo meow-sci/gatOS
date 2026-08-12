@@ -35,8 +35,14 @@ internal static class DebugActuator
     }
 
     [KsaAnchor("Orbit.CreateFromStateCci + Vehicle.Teleport + Vehicle.UpdatePerFrameData (physics-bypass teleport pattern)",
-        SourceFile = "KSA/Orbit.cs / KSA/Vehicle.cs", Verified = "2026-06-12", Risk = ChurnRisk.High,
-        Notes = "Sets a CCI state vector about the current parent; UpdatePerFrameData syncs caches.")]
+        SourceFile = "KSA/Orbit.cs / KSA/Vehicle.cs", Verified = "2026-08-11",
+        GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
+        Notes = "Sets a CCI state vector about the current parent; UpdatePerFrameData syncs caches. "
+            + "5261: CreateFromStateCci's time argument became UniverseTime (rev 5211). Teleport keeps "
+            + "its (Orbit?, doubleQuat?, double3?) signature and its null semantics — gatOS passes null "
+            + "body2Cce/bodyRates, i.e. 'leave attitude and rates unchanged' — so rev 5226's new default "
+            + "surface-teleport orientation ('pitch down is north') applies to KSA's own launch/placement "
+            + "path and NOT to this actuator.")]
     internal static CommandResult Teleport(Vehicle vehicle, IReadOnlyList<double> state)
     {
         if (state.Count != 6)
@@ -49,7 +55,7 @@ internal static class DebugActuator
 
         var position = new double3(state[0], state[1], state[2]);
         var velocity = new double3(state[3], state[4], state[5]);
-        var orbit = Orbit.CreateFromStateCci(parent, Universe.GetElapsedSimTime(), position, velocity, default);
+        var orbit = Orbit.CreateFromStateCci(parent, Universe.GetElapsedTime(), position, velocity, default);
         vehicle.Teleport(orbit, null, null);
         vehicle.UpdatePerFrameData();
         return CommandResult.Ok;
@@ -89,7 +95,7 @@ internal static class DebugActuator
         if (!double.IsFinite(velocity.X) || !double.IsFinite(velocity.Y) || !double.IsFinite(velocity.Z))
             return new CommandResult(CommandOutcome.Invalid, "resulting velocity is not finite");
 
-        var orbit = Orbit.CreateFromStateCci(parent, Universe.GetElapsedSimTime(),
+        var orbit = Orbit.CreateFromStateCci(parent, Universe.GetElapsedTime(),
             vehicle.GetPositionCci(), velocity, default);
         vehicle.Teleport(orbit, null, null);
         vehicle.UpdatePerFrameData();

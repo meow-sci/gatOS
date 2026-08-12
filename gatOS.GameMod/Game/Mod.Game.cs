@@ -397,7 +397,7 @@ public sealed partial class Mod
     }
 
     /// <summary>
-    ///     The current sim time, or 0 if the universe is not up yet. <c>GetElapsedSimTime</c> is a
+    ///     The current sim time, or 0 if the universe is not up yet. <c>GetElapsedSeconds</c> is a
     ///     static field read, so this is safe to call every frame — but it throws before the first
     ///     sim step, and a scheduler tick must not die on that.
     /// </summary>
@@ -405,7 +405,7 @@ public sealed partial class Mod
     {
         try
         {
-            return Universe.GetElapsedSimTime().Seconds();
+            return Universe.GetElapsedSeconds();
         }
         catch
         {

@@ -463,7 +463,7 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
     {
         try
         {
-            return Universe.GetElapsedSimTime().Seconds();
+            return Universe.GetElapsedSeconds();
         }
         catch
         {

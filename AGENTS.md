@@ -448,7 +448,7 @@ host.
    (the `SimCommand.SolverActions` set is the single source of truth — every transport gets it by
    construction); never pass a phase at a construction site. **A third game-thread mutation site** is the
    welds per-frame driver (`Mod.DriveWelds`, run in `[StarMapAfterGui] OnAfterUi` after
-   `JobSystems.VehicleSolvers.Wait()`) — it teleports each welded source onto its anchor and self-gates to
+   `JobSystems.VehicleSolver.Wait()`) — it teleports each welded source onto its anchor and self-gates to
    a no-op when no welds exist, so it needs **no** Harmony patch. The `always_render_iva` cheat installs its
    own dynamic `Harmony("gatos.iva")` patches **only while the toggle is on** (removed on disable/unload).
    The **`thug_life` cheat** (`Game/Ksa/ThugLife/`) adds gatOS's only **render-thread draw injection**: a
@@ -465,7 +465,7 @@ host.
    to a no-op while no channel or cached sound exists. Audio teardown rides `Mod.TeardownGameCheats`. A
    **sixth game-thread work site** is the **IVA cabin-physics driver** (`Mod.DriveIvaPhysics` →
    `IvaPhysicsManager.Update`, run in `[StarMapAfterGui] OnAfterUi` right after `DriveWelds`): like the
-   welds driver it calls `JobSystems.VehicleSolvers.Wait()` first so the accelerometer/rates/CoM readings
+   welds driver it calls `JobSystems.VehicleSolver.Wait()` first so the accelerometer/rates/CoM readings
    feeding its forcing field are the settled values for the step, then steps a **gatOS-owned Bepu
    simulation** (single-threaded — `Timestep` is called with no `IThreadDispatcher`, so every Bepu
    callback runs on this thread) and writes each floating object's pose onto its driven **SubPart**. It

@@ -251,7 +251,7 @@ The cheats ported from the sibling `unscience` mod are exposed **only** on gatOS
 - **Welds** (`gatOS.GameMod/Game/Ksa/Welds/`): a registry (`WeldManager`) whose per-frame driver
   teleports each welded source vessel onto its target/part anchor. It runs in `OnAfterUi`
   (`Mod.DriveWelds`, `[StarMapAfterGui]`) **after** the vehicle-solver workers (it calls
-  `JobSystems.VehicleSolvers.Wait()` first) — a **third game-thread mutation site** beside the
+  `JobSystems.VehicleSolver.Wait()` first) — a **third game-thread mutation site** beside the
   Frame-phase command drain (`OnBeforeUi`) and the Solver-phase prefix on
   `Universe.ExecuteNextVehicleSolvers`. It self-gates to a no-op when no welds exist, so it adds zero
   per-frame cost when unused and needs **no** Harmony patch.
@@ -300,7 +300,7 @@ The cheats ported from the sibling `unscience` mod are exposed **only** on gatOS
   (ejected through the hull *and* shoving the spacecraft, since dynamic↔dynamic contacts are allowed
   unconditionally), that sim is not stepped at all for a coasting vessel, and it runs on solver worker
   threads. This adds a **sixth game-thread work site**: `Mod.DriveIvaPhysics` in `OnAfterUi`, right after
-  `DriveWelds` and (like it) after `JobSystems.VehicleSolvers.Wait()`, so the accelerometer/rates/CoM
+  `DriveWelds` and (like it) after `JobSystems.VehicleSolver.Wait()`, so the accelerometer/rates/CoM
   readings feeding the forcing field are settled; `Timestep` runs with no `IThreadDispatcher`, so every
   Bepu callback is on that same thread. **No Harmony patch.** Interior collision geometry is derived
   automatically from the vessel's own interior meshes (`MeshReference.PositionCompare`, classified by

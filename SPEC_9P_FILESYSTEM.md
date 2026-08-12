@@ -272,8 +272,8 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 | `orbit/sma` | S | scalar | Semi-major axis, meters. |
 | `orbit/period` | S | scalar | Orbital period, seconds. |
 | `orbit/true_anomaly` | S | scalar | True anomaly, degrees. |
-| `orbit/time_to_ap` | S | scalar | Seconds to next apoapsis. |
-| `orbit/time_to_pe` | S | scalar | Seconds to next periapsis. |
+| `orbit/time_to_ap` | S | scalar | Seconds to next apoapsis; `0` when the orbit has none (e.g. hyperbolic). |
+| `orbit/time_to_pe` | S | scalar | Seconds to next periapsis; `0` when the orbit has none. |
 | `orbit/next_patch` | S | scalar | Sim time of the next patch transition (SOI change/escape); `0` when none. |
 
 #### 3.4.3 Navball *(detail)* — `…/navball/`

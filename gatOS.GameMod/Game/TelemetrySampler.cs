@@ -154,16 +154,20 @@ internal sealed class TelemetrySampler
             }
     }
 
-    [KsaAnchor("Universe.GetElapsedSimTime().Seconds(); Universe.SimulationSpeed; Universe.GetLastSimStep().DeltaTime; "
+    [KsaAnchor("Universe.GetElapsedSeconds(); Universe.SimulationSpeed; Universe.GetLastSimStep().DeltaTime; "
             + "Program.ControlledVehicle?.Id; Universe.CurrentSystem.All.UnsafeAsList()",
-        SourceFile = "KSA/Universe.cs / KSA/Program.cs / KSA/CelestialSystem.cs", Verified = "2026-06-27",
-        GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Low,
-        Notes = "Sampler-direct time/warp/system reads (the /sim time/* rows + the vessel enumeration). None "
-            + "changed 4680→4750. Anchored (G4) so the census is complete — a rename errors in the sampler, "
-            + "still caught by the build, just outside the actuator/reader anchor set.")]
+        SourceFile = "KSA/Universe.cs / KSA/Program.cs / KSA/CelestialSystem.cs", Verified = "2026-08-11",
+        GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Low,
+        Notes = "Sampler-direct time/warp/system reads (the /sim time/* rows + the vessel enumeration). "
+            + "Anchored (G4) so the census is complete — a rename errors in the sampler, still caught by "
+            + "the build, just outside the actuator/reader anchor set. 5261: rev 5211 replaced SimTime "
+            + "with UniverseTime (Int128 ns) and removed Universe.GetElapsedSimTime(); this now reads the "
+            + "double-valued Universe.GetElapsedSeconds() directly. time/ut is unchanged in unit "
+            + "(seconds) and magnitude — UniverseTime.Seconds() reconstructs whole+fraction from "
+            + "nanoseconds, so /sim gains precision rather than changing meaning.")]
     private void Sample()
     {
-        var ut = Sanitize.Finite(Universe.GetElapsedSimTime().Seconds());
+        var ut = Sanitize.Finite(Universe.GetElapsedSeconds());
         var warp = Sanitize.Finite(Universe.SimulationSpeed);
         var activeId = Program.ControlledVehicle?.Id;
         var detail = _settings.VesselDetail;

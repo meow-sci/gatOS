@@ -51,6 +51,14 @@ update's blast radius is small and discoverable. The procedure:
    `/sim/status/accessors`. They are flagged `High` risk and enumerated in
    [`ksa-runtime-coupling.md`](ksa-runtime-coupling.md).)
 
+   > **⚠️ The first error list is NOT the work list — iterate to green.** Roslyn reports
+   > **declaration-phase** errors (types in method signatures, field/property types) *before* it binds
+   > any method body, and **skips body binding entirely while any declaration error is outstanding**.
+   > So a single bad parameter type can mask every other break in the project. The 5261 pass hit this
+   > exactly: the first build reported **one** error (a `SimTime` parameter on `VesselReader.TimeUntil`)
+   > and hid **nine** more that only appeared after it was fixed. **Fix, rebuild, repeat until the build
+   > is green** — only then is the error list complete.
+
 3. **Diff the decompiled source for silent semantic drift.** A member can keep its name and signature
    but change *meaning* (units, frame, what a value represents) — these compile clean and are the
    dangerous ones. For every changelog hit, open the matching decomp file in **both** trees and compare:
@@ -364,7 +372,7 @@ scheduler** landed in the same window and added **no anchor at all** — it is g
 
 So the only remaining un-anchored KSA touch-points are the two `Mod.Game.cs` Harmony hook targets (the
 `gatos.iva`/`gatos.thug_life`/`gatos.always_render` patch targets and the weld/IVA drivers'
-`VehicleSolvers.Wait()` are themselves anchored; the camera and schedule drivers install **no** patch
+`VehicleSolver.Wait()` are themselves anchored; the camera and schedule drivers install **no** patch
 and their KSA members are anchored inside `Game/Ksa/Camera/`).
 
 ---
@@ -375,7 +383,7 @@ Mirrors `ChurnRisk` in `Game/Ksa/KsaAnchor.cs`:
 
 | Risk | Meaning | Examples |
 |---|---|---|
-| **Low** | Core vehicle/orbit/time/body state + the struct-of-arrays (`ModuleStateful`) pattern. | `Vehicle.Id`, `Orbit` elements, `Celestial.Mass`, `Universe.GetElapsedSimTime`. |
+| **Low** | Core vehicle/orbit/time/body state + the struct-of-arrays (`ModuleStateful`) pattern. | `Vehicle.Id`, `Orbit` elements, `Celestial.Mass`, `Universe.GetElapsedTime`. |
 | **Medium** | FlightComputer, InputEvents-mediated ops, NavBall, per-module controllers, docking. | `FlightComputer.*`, `EngineController.SetIsActive`, `DockingPort.*`, `SequenceList`. |
 | **High** | Template internals + anything reached by **reflection** (no compile-time guard). | `LightModule.Template.*` (clone), `Vehicle._manualControlInputs.EngineThrottle`. |
 

@@ -94,16 +94,22 @@ internal sealed class WeldManager
     ///     Game-thread driver, called once per frame from the after-GUI hook (after the vehicle-solver
     ///     workers have had the render to finish). Drains them, then teleports each source to its anchor.
     /// </summary>
-    [KsaAnchor("JobSystems.VehicleSolvers.Wait()", SourceFile = "KSA/Universe.cs / KSA/JobScheduler.cs",
-        Verified = "2026-06-28", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium,
-        Notes = "Drains in-flight vehicle-solver workers before the weld teleports mutate vehicle state.")]
+    [KsaAnchor("JobSystems.VehicleSolver.Wait()", SourceFile = "KSA/JobSystems.cs / KSA/JobScheduler.cs",
+        Verified = "2026-08-11", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
+        Notes = "Drains in-flight vehicle-solver workers before the weld teleports mutate vehicle state. "
+            + "5261: revs 5208-5216 restructured the vehicle update onto a single orchestrator scheduler "
+            + "plus a DynamicWorkerPool, renaming JobSystems.VehicleSolvers (plural) to VehicleSolver "
+            + "(singular) and adding JobSystems.VehicleWorkerPool. Waiting the orchestrator is still the "
+            + "correct and sufficient drain — the pool is joined inside VehicleUpdateTask via ParallelBatch "
+            + "(a using-scoped fork/join), and KSA's own PrepareFrame drains exactly this way "
+            + "(KSA/Program.cs: OrbitSolvers.Wait(); VehicleSolver.Wait(); Apply*Solvers()).")]
     public void Update(double dt)
     {
         if (_welds.Count == 0)
             return;
 
         // Cheap once the workers (queued in PrepareFrame) have finished, which they have by this point.
-        JobSystems.VehicleSolvers.Wait();
+        JobSystems.VehicleSolver.Wait();
 
         List<WeldEntry>? toRemove = null;
         foreach (var entry in _welds)

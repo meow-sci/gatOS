@@ -290,11 +290,11 @@ internal sealed class IvaPhysicsManager
     ///     inside the physics step, where <c>dt</c> follows time warp. Cabin physics tracks wall-clock
     ///     — it is what the player is looking at, not part of the flight simulation.
     /// </remarks>
-    [KsaAnchor("JobSystems.VehicleSolvers.Wait(); Universe.{CurrentSystem.All.UnsafeAsList,SimulationSpeed}; "
+    [KsaAnchor("JobSystems.VehicleSolver.Wait(); Universe.{CurrentSystem.All.UnsafeAsList,SimulationSpeed}; "
             + "Program.{Editor,MainViewport}; Viewport.Mode; CameraMode.IVA; "
             + "Vehicle.{Id,AccelerationBody,AngularAccelerationBody,BodyRates,CenterOfMassAsmb,Parts.Count}",
-        SourceFile = "KSA/Universe.cs / KSA/Program.cs / KSA/Viewport.cs / KSA/Vehicle.cs",
-        Verified = "2026-07-24", GameVersion = "2026.7.9.5018", Risk = ChurnRisk.Low,
+        SourceFile = "KSA/Universe.cs / KSA/Program.cs / KSA/Viewport.cs / KSA/Vehicle.cs / KSA/JobSystems.cs",
+        Verified = "2026-08-11", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Low,
         Notes = "The IVA cabin driver's forcing-term reads. AccelerationBody is a true accelerometer "
             + "in every flight situation (VehicleUpdateTask: zero in Freefall, GM/r² normal force when "
             + "Landed/Floating, thrust+drag when Maneuvering; normalized to m/s² at the end of the "
@@ -307,7 +307,7 @@ internal sealed class IvaPhysicsManager
 
         // Cheap once the solver workers (queued in PrepareFrame) have finished, which they have by
         // this point in the frame — the same drain the welds driver does before mutating state.
-        JobSystems.VehicleSolvers.Wait();
+        JobSystems.VehicleSolver.Wait();
 
         _parkReason = ParkReason();
         _parked = _parkReason.Length > 0;
@@ -762,7 +762,7 @@ internal sealed class IvaPhysicsManager
     {
         try
         {
-            return Universe.GetElapsedSimTime().Seconds();
+            return Universe.GetElapsedSeconds();
         }
         catch
         {

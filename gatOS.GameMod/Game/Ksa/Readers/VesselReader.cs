@@ -315,8 +315,15 @@ internal static class VesselReader
     }
 
     [KsaAnchor("Orbit.StateVectors.TrueAnomaly.Degrees; LongitudeOfAscendingNode/ArgumentOfPeriapsis (rad); "
-               + "Vehicle.NextApoapsisTime/NextPeriapsisTime/NextPatchEventTime",
-        SourceFile = "KSA/Orbit.cs / KSA/Vehicle.cs", Verified = "2026-06-12", Risk = ChurnRisk.Low)]
+               + "Vehicle.NextApoapsisTime/NextPeriapsisTime/NextPatchEventTime (UniverseTime)",
+        SourceFile = "KSA/Orbit.cs / KSA/Vehicle.cs / KSA/UniverseTime.cs", Verified = "2026-08-11",
+        GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Low,
+        Notes = "SEMANTIC DRIFT at rev 5211 — KSA replaced SimTime (double seconds) with UniverseTime "
+            + "(Int128 nanoseconds). The 'no such event' sentinel changed from SimTime.PositiveInfinity "
+            + "to UniverseTime.EndOfTime (Int128.MaxValue ns), whose .Seconds() is a FINITE ~1.7e29 and "
+            + "so passes Sanitize.Finite unchanged instead of scrubbing to 0. Every apsis/patch time is "
+            + "therefore routed through UtOrZero/TimeUntil, which test IsSaturated() first to preserve "
+            + "the established 0 = 'no such event' /sim contract.")]
     private static OrbitSnapshot? FullOrbit(Vehicle vehicle, IParentBody? parent, double utSeconds)
     {
         if (vehicle.Orbit is not { } o || parent is null)
@@ -334,12 +341,24 @@ internal static class VesselReader
             TrueAnomalyDeg = Sanitize.Finite(o.StateVectors.TrueAnomaly.Degrees),
             TimeToApoapsis = TimeUntil(vehicle.NextApoapsisTime, utSeconds),
             TimeToPeriapsis = TimeUntil(vehicle.NextPeriapsisTime, utSeconds),
-            NextPatchEventUt = Sanitize.Finite(vehicle.NextPatchEventTime.Seconds()),
+            NextPatchEventUt = UtOrZero(vehicle.NextPatchEventTime),
         };
     }
 
-    private static double TimeUntil(SimTime target, double utSeconds)
+    /// <summary>
+    ///     A <see cref="UniverseTime"/> as absolute UT seconds, or 0 when it carries the
+    ///     "no such event" sentinel. KSA saturates missing times to
+    ///     <c>UniverseTime.EndOfTime</c>/<c>BeginningOfTime</c> (Int128 Max/Min nanoseconds); unlike
+    ///     the old <c>SimTime.PositiveInfinity</c> those convert to a finite ~1.7e29 seconds, which
+    ///     <see cref="Sanitize.Finite"/> would happily pass through as a real timestamp.
+    /// </summary>
+    private static double UtOrZero(UniverseTime target)
+        => target.IsSaturated() ? 0 : Sanitize.Finite(target.Seconds());
+
+    private static double TimeUntil(UniverseTime target, double utSeconds)
     {
+        if (target.IsSaturated())
+            return 0; // no such event on this orbit (KSA's EndOfTime sentinel)
         var dt = Sanitize.Finite(target.Seconds()) - utSeconds;
         return dt > 0 ? dt : 0;
     }

@@ -124,7 +124,7 @@ Anchors live in `gatOS.GameMod/Game/Ksa/Readers/VesselReader.cs`. Formats are fr
 
 | Path | A | KSA anchor | Risk |
 |---|---|---|---|
-| `time/{ut,warp}` | S | `Universe.GetElapsedSimTime().Seconds()`, `Universe.SimulationSpeed` | Low |
+| `time/{ut,warp}` | S | `Universe.GetElapsedSeconds()`, `Universe.SimulationSpeed` | Low |
 | `vessels/by-id/<id>/{id,name,situation,parent}` | S | `Vehicle.Id/.Situation`, `Vehicle.Parent.Id` | Low |
 | `…/position/{cci,lat,lon}` | S | `Vehicle.GetPositionCci()`; `IParentBody.GetLlaFromCcf` | Low |
 | `…/velocity/{orbital,surface,inertial}` | S | `Vehicle.OrbitalSpeed/.GetSurfaceSpeed()/.GetInertialSpeed()` | Low |
@@ -185,7 +185,7 @@ core telemetry and the extension dirs vanish (logged once) rather than the sampl
 | `…/position/ecl`, `…/velocity/cci` | S | `Vehicle.GetPositionEcl()`, `Vehicle.GetVelocityCci()` (vectors) | L |
 | `…/navball/{pitch,yaw,roll,twr,deltav,frame,speed}` | S | `Vehicle.NavBallData` (`AttitudeAngles` int3 deg; `DeltaV` — renamed from `DeltaVInVacuum` at rev 5114, and **both `deltav` and `twr` changed meaning**: active-sequence Δv, atmosphere-corrected TWR) | M |
 | `…/environment/{pressure,density,dynamic_pressure,ocean_density,terrain_radius,accel,angular_accel,g_force}` | S | `Vehicle.PhysicsEnvironment`; `PhysicalAtmosphereReference.GetDynamicPressure`; `AccelerationBody`/`AngularAccelerationBody` | L |
-| `…/orbit/{lan,argpe,true_anomaly,time_to_ap,time_to_pe,next_patch}` | S | `Orbit.{LongitudeOfAscendingNode,ArgumentOfPeriapsis,StateVectors.TrueAnomaly}`; `Vehicle.Next{Apoapsis,Periapsis,PatchEvent}Time` | L |
+| `…/orbit/{lan,argpe,true_anomaly,time_to_ap,time_to_pe,next_patch}` | S | `Orbit.{LongitudeOfAscendingNode,ArgumentOfPeriapsis,StateVectors.TrueAnomaly}`; `Vehicle.Next{Apoapsis,Periapsis,PatchEvent}Time` — **`UniverseTime` since rev 5211**, whose "no such event" sentinel (`EndOfTime`) is *finite* (~1.7e29 s), so all three go through `IsSaturated()` guards to keep the `0` contract | L |
 | `…/encounters` | S | `Vehicle.Patch.Encounters` (`Encounter.{Body.Id,GameTime,ClosestDistance}`), NDJSON | M |
 | `…/engines/<n>/{throttle,propellant,min_throttle}` | S/St | `EngineControllerState.{CommandThrottle,IsPropellantAvailable}`; `EngineController.MinimumThrottle` | M |
 | `…/tanks/<r>/fraction` | S | `Mole.FilledFraction(state)` | L |
@@ -328,7 +328,7 @@ touch KSA (the render set below).
 postfix + an editor-only `PartModel.AddInstance` postfix) and bulk-flips
 `PartModelModule.Template.Internal=false` over `PartModel.Instances`; disable restores the flags and
 unpatches. The **welds** registry (`WeldManager`) drives a per-frame `Vehicle.Teleport` of each source
-onto its anchor in `OnAfterUi` (`Mod.DriveWelds`, game thread, after `JobSystems.VehicleSolvers.Wait()`)
+onto its anchor in `OnAfterUi` (`Mod.DriveWelds`, game thread, after `JobSystems.VehicleSolver.Wait()`)
 — a **third game-thread mutation site** beside the Frame and Solver drains; it self-gates to a no-op
 when no welds exist, so it needs **no** Harmony patch. Both tear down on unload
 (`Mod.TeardownGameCheats`). All weld create/remove/enable/clear and the IVA toggle are **Frame-phase**.
@@ -419,7 +419,7 @@ New condition-guarded reference: **`Brutal.Fmod.dll`**.
 |---|---|---|---|
 | `Play` | `GameAudio.System` (public static `FmodSystem`); `GameAudio.GetChannelGroup(ChannelGroupType.{Sfx,Music,Ui})`; `Fmod.TryPlaySound(sound, group, paused, out Channel)`; `Channel.TrySet{Position,Mode,LoopCount,LoopPoints,Volume,Pan,Pitch,Paused}` | L | The game's own anti-pop idiom (play paused → configure → unpause). Group routing puts the channel under the matching in-game volume slider (the groups are *siblings* — the Master slider does not cascade). |
 | `CreateOrGetSound` | `Fmod.TryCreateSound(bytes, Mode.OpenMemory \| _2d \| CreateSample/CreateCompressedSample, in CreateSoundExInfo{Length}, out Sound)`; `Sound.TryGetLength/TryRelease` | L | The in-memory recipe `GameAudio.CreateFmodSound` itself uses — FMOD copies the buffer and sniffs the container (mp3/ogg/wav/flac). ≤ 1 MiB ⇒ `CreateSample` (full decode); larger ⇒ `CreateCompressedSample` (decode during mix — cheap create, ≈ file-size memory, concurrent plays OK). Cached per (clip, version). |
-| `Tick` | `Channel.TryIsPlaying/TryGetPosition/TryStop`; `Sound.TryRelease`; `Universe.GetElapsedSimTime().Seconds()` (event stamps) | L | Per-frame (`Mod.DriveAudio`, `OnBeforeUi` after the drain): prunes finished channels (a recycled FMOD handle answers non-Ok — that *is* the completion signal), enforces `end=`, releases evicted sounds, publishes `/sim/audio/status`, emits `audio.finished`. |
+| `Tick` | `Channel.TryIsPlaying/TryGetPosition/TryStop`; `Sound.TryRelease`; `Universe.GetElapsedSeconds()` (event stamps) | L | Per-frame (`Mod.DriveAudio`, `OnBeforeUi` after the drain): prunes finished channels (a recycled FMOD handle answers non-Ok — that *is* the completion signal), enforces `end=`, releases evicted sounds, publishes `/sim/audio/status`, emits `audio.finished`. |
 
 ## IVA cabin physics (plans/IVA_MOVEMENTS.md — `/sim/debug/iva`)
 
@@ -439,7 +439,7 @@ already loaded in-process).
 
 | Anchor (`Game/Ksa/Iva/`) | KSA / Brutal members | Risk | Notes |
 |---|---|---|---|
-| `IvaPhysicsManager.Update` | `JobSystems.VehicleSolvers.Wait()`; `Universe.{CurrentSystem.All.UnsafeAsList,SimulationSpeed}`; `Program.{Editor,MainViewport}`; `Viewport.Mode`; `CameraMode.IVA`; `Vehicle.{Id,AccelerationBody,AngularAccelerationBody,BodyRates,CenterOfMassAsmb,Parts.Count}` | L | The per-frame driver (`Mod.DriveIvaPhysics`, `OnAfterUi` — the sixth game-thread work site), after the solver workers so the kinematics are settled. **`AccelerationBody` is a true accelerometer in every flight situation** (zero in `Freefall`; the `GM/r²` normal force when `Landed`/`Floating`; thrust+drag with gravity excluded when `Maneuvering`), which is why one formula covers pad, coast, burn and landing. Parks under warp, in the editor (`Program.Editor != null` disables `Part` transform caching), and outside the IVA camera unless `run_outside_iva`. |
+| `IvaPhysicsManager.Update` | `JobSystems.VehicleSolver.Wait()`; `Universe.{CurrentSystem.All.UnsafeAsList,SimulationSpeed}`; `Program.{Editor,MainViewport}`; `Viewport.Mode`; `CameraMode.IVA`; `Vehicle.{Id,AccelerationBody,AngularAccelerationBody,BodyRates,CenterOfMassAsmb,Parts.Count}` | L | The per-frame driver (`Mod.DriveIvaPhysics`, `OnAfterUi` — the sixth game-thread work site), after the solver workers so the kinematics are settled. **`AccelerationBody` is a true accelerometer in every flight situation** (zero in `Freefall`; the `GM/r²` normal force when `Landed`/`Floating`; thrust+drag with gravity excluded when `Maneuvering`), which is why one formula covers pad, coast, burn and landing. Parks under warp, in the editor (`Program.Editor != null` disables `Part` transform caching), and outside the IVA camera unless `run_outside_iva`. |
 | `InteriorGeometry.Build` | `Vehicle.Parts.Parts`; `Part.{SubParts,InstanceId,Modules,MatrixAsmb2VehicleAsmb}`; `ModuleList.Get<PartModelModule>()`; `PartModelModule.PartModel.Template`; `PartModelModule.Template.{Internal,RayTracing,Mesh}`; `MeshReference.PositionCompare`; `IVASeat.PositionAsmb`; `double3.Transform` | M | Builds exact interior collision geometry from the vessel's own IVA meshes. `Template.Internal` **is** "renders only through the IVA camera" (`PartModel`'s gate is `(!Template.Internal \|\| viewport.Mode == CameraMode.IVA)` — the flag `always_render_iva` flips), so it is a free, art-driven classifier for interior surfaces. `PositionCompare` is a de-indexed `double3[]` triangle soup retained forever for KSA's own picking raycasts. Read-only; never mutates a part. Falls back to a synthetic box room around the `IVASeat`s. |
 | `FloatingObject.ApplyPose` | `Part.{PositionParentAsmb(set),Asmb2ParentAsmb(set),PartParent,PositionVehicleAsmb,Asmb2VehicleAsmb,Scale}`; `double3.Transform`; `doubleQuat.{Concatenate,Conjugate,NormalizeOrZero}` | M | The per-frame transform driver. Both setters call `ResetCachedPosMatrixValues` and `PartModelModule.UpdateRenderData` re-reads them every frame, so rendering/lighting/ray-tracing/IVA gating follow for free — this is KSA's **own** idiom (`KeyframeAnimationModule`, `SolarTracker`). **SubParts only, binding:** `Part.GetReferenceWithChildren` serializes a `Transform` for top-level parts but not SubParts, so a displaced object cannot leak into a save. |
 | `FloatingObject.{ReadBodyPose,RestoreRestPose}` | `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb,PositionParentAsmb(set),Asmb2ParentAsmb(set)}` | L | Adopt-time seed pose and exact rest-pose restore. The rest pose is captured into gatOS's own fields, **not** KSA's `PositionParentAsmbSafe`/`Asmb2ParentAsmbSafe` (which belong to the animation system). |
@@ -605,7 +605,7 @@ now-shadowed type name `Camera` — no binding moved.
 **The timed scheduler adds no KSA anchor at all.** `/sim/ctl/timed_batch`, `/sim/ctl/schedules/**` and
 the seven `schedule.*` actions are entirely game-free (`gatOS.SimFs/Commands/`); `KsaCatalog` routes
 the whole family straight to `ScheduleStore.Execute` without touching a game type, and its per-frame
-tick (`Mod.TickSchedules`) reads only the frame delta and `Universe.GetElapsedSimTime()` through the
+tick (`Mod.TickSchedules`) reads only the frame delta and `Universe.GetElapsedTime()` through the
 sampler's already-anchored time read. There is deliberately no row for it — see
 [`scope/non-ksa-surface.md`](../scope/non-ksa-surface.md).
 

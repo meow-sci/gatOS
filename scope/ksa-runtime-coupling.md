@@ -140,6 +140,48 @@ The one required change was nullability: `KSA.Rendering.RenderTarget.ColorImage`
 `Universe.ExecuteNextVehicleSolvers`, `Program.DrawProgramMenusHook`, `Program.MainViewport` and
 `ModLibrary.Find` are all unchanged in shape and still resolve by name.
 
+**Re-verified 2026-08-11 against `2026.8.19.5261`** (revs 5169–5258, 90 commits). **Every Harmony hook
+target is signature-identical**, despite revs 5208–5216 rewriting the whole vehicle-update threading
+model: `Universe.ExecuteNextVehicleSolvers(double, SimStep)` (`Universe.cs:1796`),
+`Program.DrawProgramMenusHook()` (`Program.cs:3669`), `Program.RenderGame(AcquiredFrame, double)`
+(`:4206`), `SuperMeshRenderSystem.RenderMainPass(CommandBuffer)` (`:332`),
+`Vehicle.GetWorldMatrix(Camera)` (`:3516`), `Vehicle.UpdateRenderData(Viewport,int)` (`:3529`),
+`Viewport.OnFrame(double)` (`:141`), `PartModel.AddInstance(PerInstanceData,Viewport,int)` (`:376`),
+`Program.MainViewport` (`:458`), `ModLibrary.Find(string)` (`:177`).
+
+- **Both `/sim/display` transpiler preconditions still hold.** `commandBuffer2.End()` is still the
+  final 1-arg `Brutal.VulkanApi` `End()` in `RenderGame`, and
+  `PipelineBarrier2(_offscreenTarget.ColorImage, SampledReadVfc)` still sits 8 lines above it — the
+  same shape as 5168, so both the injection anchor and the `ShaderReadOnlyOptimal` layout assumption
+  are intact. `MainViewport.OffscreenTarget = _offscreenTarget` moved to `Program.cs:1442`, so
+  `FrameCapture` still reads the object the barrier refers to.
+- **`SuperMeshRenderSystem.cs` changed for the first time since 5018** — but neither change reaches the
+  `thug_life` postfix. Rev 5241 added `Program.SetViewport(commandBuffer)` to the head of four render
+  methods (including `RenderMainPass`, `:359`) to fix a stale viewport in supersampled screenshots;
+  **gatOS already calls `Program.SetViewport(cmd)` itself** before drawing the quad
+  (`ThugLifeQuadRenderer.cs:271`), so this is KSA converging on what the quad already did. Rev 5236
+  flipped the private `DescriptorDynamicOffset` from `ByteSize.Zero` to `null` (a Vulkan-validation
+  fix) — an internal member of the system's own context struct that gatOS does not touch. The
+  postfix still runs inside `OffscreenTarget.BeginRendering(…)`/`EndRendering(…)`
+  (`Program.cs:4308/4350/4357`), and the `UnlitMeshVert`/`UnlitMeshFrag` keys,
+  `RenderingPresets.ReverseZDepthStencil.DepthTestWrite` and
+  `RenderTarget.SetupGraphicsPipeline(ref VkGraphicsPipelineCreateInfo)` are all unchanged.
+- **The solver-drain rename is mechanical, the lifecycle underneath is not.**
+  `JobSystems.VehicleSolvers` (a many-runner `JobScheduler`) became `JobSystems.VehicleSolver` (a
+  single orchestrator) plus a new `DynamicWorkerPool VehicleWorkerPool`; `VehicleUpdateTask` is now the
+  overall orchestrator with `PhysicsBubble`s as parallel islands (rev 5215). `VehicleSolver.Wait()` is
+  still the correct and sufficient drain for `WeldManager.Update`/`IvaPhysicsManager.Update` — the pool
+  is joined inside the task by a `using`-scoped `ParallelBatch`, and KSA's own `PrepareFrame` drains
+  exactly this way. ⚠️ **Live-only risk:** `Vehicle.Teleport` now detaches via the **object-pooled**
+  `PhysicsBubble` (`RemoveFromBubble`; pooling added rev 5220, stale-handle crash fixed rev 5237), so
+  the per-frame weld teleport drives a pooled bubble split/merge every tick.
+- **`Universe.GetElapsedSimTime()` was removed** (rev 5211) — the schedule tick, audio event stamps,
+  `KsaCatalog`, `FxReflect` and the sampler now read `Universe.GetElapsedSeconds()`; `WeldEngine` still
+  stamps with `Universe.GetJobSimStep(dt).NextTime`, whose body is unchanged apart from the
+  `SimTime`→`UniverseTime` type, so the next-tick rationale holds verbatim.
+- **Frames and numerics unchanged**: the whole `Brutal.Numerics` decomp tree is byte-identical across
+  the two builds.
+
 ### Dynamic IVA patches (`gatos.iva`) {#iva-patches}
 
 The `debug/always_render_iva` cheat (`Game/Ksa/Render/IvaForceRender.cs`, ported from `unscience`)
@@ -198,7 +240,7 @@ Torn down by `Mod.TeardownGameCheats`.
 
 The **welds** cheat (`Game/Ksa/Welds/`, ported from `unscience`) needs **no** Harmony patch.
 `WeldManager.Update(dt)` runs from `OnAfterUi` (`Mod.DriveWelds`, `[StarMapAfterGui]`) — the game thread,
-after the per-frame vehicle-solver workers; it calls `JobSystems.VehicleSolvers.Wait()` first (anchored,
+after the per-frame vehicle-solver workers; it calls `JobSystems.VehicleSolver.Wait()` first (anchored,
 `WeldManager.cs`) to ensure those workers have finished, then teleports each welded source onto its anchor
 (`WeldEngine.UpdateWeld` → `Vehicle.Teleport`, stamped with `Universe.GetJobSimStep(…).NextTime`). This is
 the **third game-thread mutation site** (beside the Frame-phase drain in `OnBeforeUi` and the Solver-phase
@@ -216,7 +258,7 @@ IVA toggle are ordinary Frame-phase commands; see [`ksa-write-surface.md#welds`]
 The **IVA cabin-physics** feature (`Game/Ksa/Iva/`, plans/IVA_MOVEMENTS.md) also needs **no** Harmony
 patch. `IvaPhysicsManager.Update(dt)` runs from `OnAfterUi` (`Mod.DriveIvaPhysics`, `[StarMapAfterGui]`) —
 the game thread, after the per-frame vehicle-solver workers; like the welds driver it calls
-`JobSystems.VehicleSolvers.Wait()` first (anchored) so the accelerometer/rates/CoM readings it feeds into
+`JobSystems.VehicleSolver.Wait()` first (anchored) so the accelerometer/rates/CoM readings it feeds into
 the forcing field are the settled values for the step, then writes each floating object's pose onto its
 driven **SubPart** (`Part.PositionParentAsmb` / `Part.Asmb2ParentAsmb`). This is the **sixth game-thread
 work site**. It **self-gates to a single branch** when the master switch is off or nothing is adopted
@@ -240,7 +282,7 @@ frame**. Three facts in the decompiled sources rule out adding bodies to KSA's `
 2. **It is not stepped when we need it.** `VehicleUpdateTask` branches on `ConstraintSim.IsAnyConstrained`;
    a lone vessel in orbit runs `FullPhysicsUnconstrainedStep` and Bepu never ticks — precisely the coasting
    case this feature exists for.
-3. **It runs on worker threads.** The solve executes on `JobSystems.VehicleSolvers`, so every mutation
+3. **It runs on worker threads.** The solve executes on `JobSystems.VehicleSolver`, so every mutation
    would be a data race against the game's solver, violating threading rule 1.
 
 The gatOS-owned world has none of those problems: it cannot perturb the vessel, cannot corrupt a save,
@@ -465,7 +507,7 @@ change *behaviour* without changing a binding: `render` is the frame's `dtPlayer
 `1/MinTargetFrameRate` — so it lags true elapsed time after a hitch and never catches up (correct for
 cinematics, and exactly why the other two exist); `wall` is gatOS's own `Stopwatch`, **stopped while
 the registry is empty** so an idle gap is never banked into the first tick of the next schedule; `ut`
-is the sim-time delta off `Universe.GetElapsedSimTime()` (through the sampler's already-anchored time
+is the sim-time delta off `Universe.GetElapsedTime()` (through the sampler's already-anchored time
 read, wrapped so a pre-first-step throw degrades to `0`), unavoidably discontinuous — a scene load
 rewinds it, warp leaps it forward — so a backwards step is **clamped to zero** rather than rewinding a
 player's timeline.

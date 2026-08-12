@@ -23,7 +23,7 @@ statics (+ `VersionInfo.Current`).
 
 | `/sim` path | gatOS site | KSA member | Decomp file | Unit/format | Risk | 5018 |
 |---|---|---|---|---|---|---|
-| `time/ut` | `TelemetrySampler.cs:92` | `Universe.GetElapsedSimTime().Seconds()` | `KSA/Universe.cs` | seconds, double | Low | ✅ |
+| `time/ut` | `TelemetrySampler.cs:92` | `Universe.GetElapsedSeconds()` | `KSA/Universe.cs` | seconds, double | Low | ✅ |
 | `time/warp` | `:93` | `Universe.SimulationSpeed` | `KSA/Universe.cs` | factor | Low | ✅ |
 | `time/sim_dt` | `:131` | `Universe.GetLastSimStep().DeltaTime` | `KSA/Universe.cs` | seconds | Medium | ✅ |
 | `time/warp_speeds` | `:171` | `Universe.GetSimulationSpeeds()` | `KSA/Universe.cs` | factor list | Medium | ✅ |
@@ -201,7 +201,7 @@ when the reader rebuilds). No KSA coupling of its own, so no row: it breaks only
 
 `gatOS.GameMod/Game/Ksa/Iva/`. Like the thug_life anchor math below, these are **per-frame reads inside a
 driver**, not sampler reads, so they do **not** go through `SimSnapshot` — but unlike thug_life they run on
-the **game thread** in `OnAfterUi` (after `JobSystems.VehicleSolvers.Wait()`), which is what makes the
+the **game thread** in `OnAfterUi` (after `JobSystems.VehicleSolver.Wait()`), which is what makes the
 kinematics settled and the reads race-free. All of it is gated behind the `debug/iva/enabled` master
 switch: while it is off none of these members is touched at all.
 
@@ -433,6 +433,73 @@ report faithfully, none a member drift:
 - **Content value tweak**: `CoreElectricalAGameData.xml` solar cell `SolarPanelB_CellA`
   `<Produced W="50"/>` → `W="100"` — same unit, read at runtime, so `solar/<n>/produced` simply reports
   the new stock value.
+
+---
+
+## ⚠️ 5261 read-surface findings (playbook pass 2026-08-11) {#5261-findings}
+
+Full playbook pass 2026-08-11, `2026.8.5.5168` → `2026.8.19.5261` (revs 5169–5258, 90 commits).
+PREVIOUS was an audited baseline and CURRENT's `fromRevision` is 5168, so the trees chain with no gap.
+**One real semantic break, caught and closed; every other binding verified unchanged.** Build + full
+suite green against the 5261 DLLs (0 warnings, 1317 passed).
+
+### ⚠️ The break: `SimTime` → `UniverseTime` moved the "no such event" sentinel (rev 5211)
+
+KSA replaced `SimTime` (a `double` of seconds) with **`UniverseTime`** (`Int128` nanoseconds) to kill
+precision loss ahead of multiplayer physics. The type migration is compile-visible, **but the sentinel
+change hiding inside it is not**:
+
+| | PREVIOUS (5168) | CURRENT (5261) |
+|---|---|---|
+| "no such event" value | `SimTime.PositiveInfinity` | `UniverseTime.EndOfTime` (`Int128.MaxValue` ns) |
+| `.Seconds()` of that value | `+∞` | **`≈1.7014e29` — finite** |
+| `Sanitize.Finite()` result | `0` ✅ | **passes straight through** ❌ |
+
+`Vehicle.NextApoapsisTime`/`NextPeriapsisTime` are now `Orbit.GetNext*Time(...) ?? UniverseTime.EndOfTime`
+(`Vehicle.cs:2512-2513`) and `_nextPatchEventTime` defaults to `UniverseTime.EndOfTime` (`:226`, was
+`SimTime.PositiveInfinity`). Because gatOS scrubbed the old `+∞` to `0` purely via `Sanitize.Finite`,
+the saturated sentinel would have surfaced as a **real-looking timestamp ~5.4×10²¹ years in the
+future** on `orbit/time_to_ap`, `orbit/time_to_pe` and `orbit/next_patch` — on every hyperbolic /
+escape trajectory and every vessel with no upcoming patch transition. Nothing would have thrown, no
+accessor would have latched degraded, and the build was green for the *other* nine call sites.
+
+**Closed** in `VesselReader.FullOrbit`: the apsis/patch times route through `TimeUntil`/`UtOrZero`,
+which test `UniverseTime.IsSaturated()` first and return `0`. The established `0` = "no such event"
+contract is **preserved**, so `/sim` values and units are unchanged — SPEC §3.4.2 gained only an
+explicit statement of the no-event case for `time_to_ap`/`time_to_pe` (`next_patch` already said it).
+
+> **Playbook note — a green build is *even weaker* than it looks.** Roslyn stops before binding method
+> bodies while any **declaration-phase** error is outstanding, so the first pass reported exactly one
+> error (`TimeUntil`'s `SimTime` *parameter*) and hid the other nine `SimTime`/`GetElapsedSimTime`
+> body-level breaks completely. **Fix and rebuild until green rather than trusting the first error
+> list as the work list.**
+
+### Verified unchanged
+
+- **Time reads keep their unit and magnitude.** `Universe.GetElapsedSimTime()` is gone; `time/ut` now
+  reads `Universe.GetElapsedSeconds()` (still `double` seconds). `UniverseTime.Seconds()` reconstructs
+  whole+fraction from nanoseconds, so `/sim` *gains* precision rather than changing meaning.
+- **Frames and numerics are byte-identical.** The entire `Brutal.Numerics` decomp tree is unchanged
+  across the two builds, so `double3`/`doubleQuat` and every CCI/CCE/CCF/ECL convention are intact.
+  Rev 5242's row-major quaternion↔mat3 fix lands only in `AtmosphereRenderer`/`CloudRenderer` method
+  bodies — neither declares a member gatOS binds.
+- **Battery capacity ×10 (rev 5227) is a value change, not a unit change.** `MaximumCapacity J="1000"`
+  → `J="10000"` (and 3000→30000, 100→1000, 500→5000) in `CoreElectricalAGameData.xml` — same `J=`
+  attribute, same `Joules` struct, same `.Value()` read. `battery/{charge,capacity,fraction}` stay
+  truthful; only the magnitudes a guest sees change. **Worth telling flight programs**: any script with
+  a hard-coded absolute charge threshold is now off by 10× (fraction-based logic is unaffected).
+- **`Vehicle.IsControllable` unchanged** (`=> _overrideIsControllable || Parts.Controls.NumModules > 0`,
+  `Vehicle.cs:580`), so `vessels/<id>/controllable` is still truthful — see
+  [`ksa-write-surface.md#5261-findings`](ksa-write-surface.md#5261-findings) item 2 for the widened
+  UI-only lockout it now reports against.
+- **Reflection accessors structurally intact** (static): `Vehicle._manualControlInputs` (`:236`) with
+  `ManualControlInputs` additive-only (rev 5203 added `GrabHeld`; `EngineThrottle` /
+  `ThrusterCommandFlags` untouched); `VolumetricExhaustRenderer.{_currentAtmosphericPressure,
+  _debugThrottle}` and `PlanetRenderer.{_renderUboMap,_meshUboMap}` unmoved despite rev 5243's exhaust
+  pipeline rework; `CloudRenderer`'s declared member surface identical; the KittenEva avatar-scale
+  chain (`KittenEva : Vehicle` → `_renderable` → `_characterAvatar` → `Core` → `Scale = 0.01f`)
+  unchanged. Live `/sim/status/accessors` check still advised.
+- **NavBall, environment, encounters, parts** — no binding moved.
 
 ---
 

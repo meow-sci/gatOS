@@ -105,15 +105,21 @@ internal static class FlightComputerActuator
     }
 
     [KsaAnchor("FlightComputer.Burn = new BurnTarget{ImpulsiveInstant,DeltaVTargetCci}",
-        SourceFile = "KSA/BurnTarget.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium,
-        Notes = "ut + Δv (CCI); the autopilot executes it.")]
+        SourceFile = "KSA/BurnTarget.cs", Verified = "2026-08-11", GameVersion = "2026.8.19.5261",
+        Risk = ChurnRisk.Medium,
+        Notes = "ut + Δv (CCI); the autopilot executes it. ImpulsiveInstant became UniverseTime at "
+            + "rev 5211. UniverseTime's ctor THROWS ArgumentException on NaN (SimTime silently stored "
+            + "it), so a guest writing a non-finite ut would latch this accessor degraded instead of "
+            + "being rejected — hence the explicit finite check below.")]
     internal static CommandResult SetBurn(Vehicle vehicle, IReadOnlyList<double> burn)
     {
         if (burn.Count != 4)
             return new CommandResult(CommandOutcome.Invalid, "burn expects 'ut dvx dvy dvz'");
+        if (!double.IsFinite(burn[0]))
+            return new CommandResult(CommandOutcome.Invalid, "burn ut must be finite");
         vehicle.FlightComputer.Burn = new BurnTarget
         {
-            ImpulsiveInstant = new SimTime(burn[0]),
+            ImpulsiveInstant = new UniverseTime(burn[0]),
             DeltaVTargetCci = new float3((float)burn[1], (float)burn[2], (float)burn[3]),
         };
         return CommandResult.Ok;

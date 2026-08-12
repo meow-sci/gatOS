@@ -309,7 +309,7 @@ The orientation offset is stored as an authoritative `doubleQuat` (Euler is disp
 captures the current source↔anchor pose (the inverse of the per-frame transform). The teleport math is
 ported verbatim from `unscience` (stamped with `Universe.GetJobSimStep(Program.GetPlayerDeltaTime()).NextTime`
 so the body time aligns with the queued solver tick). The **per-frame weld driver** itself
-(`WeldManager.Update`, anchoring `JobSystems.VehicleSolvers.Wait()`) is **runtime coupling**, not a write
+(`WeldManager.Update`, anchoring `JobSystems.VehicleSolver.Wait()`) is **runtime coupling**, not a write
 command — see [`ksa-runtime-coupling.md#welds-driver`](ksa-runtime-coupling.md#welds-driver). The
 `debug/welds/<source>/{target,part,offset,rotation,lock_rotation}` registry view is a game-free projection
 (`WeldManager.Snapshot()` → `WeldSnapshot`). Welds are **runtime-only** (never persisted); both cheats tear
@@ -458,7 +458,7 @@ but reuses the game's channel groups so the in-game Sfx/Music/UI volume sliders 
 `System.Update()`) prunes finished channels (`Channel.TryIsPlaying`), enforces `end=`
 (`Channel.TryGetPosition`), releases evicted FMOD sounds (`Sound.TryRelease` — deferred: never while
 a channel plays), publishes the `/sim/audio/status` snapshot into the store, and stamps
-`audio.finished` events with `Universe.GetElapsedSimTime().Seconds()`. gatOS never calls
+`audio.finished` events with `Universe.GetElapsedSeconds()`. gatOS never calls
 `System.Update/Close/Release` — the game owns the system lifecycle; gatOS owns only the `Sound`s it
 creates (all released at unload via `Mod.TeardownGameCheats` → `AudioActuator.Shutdown`). The
 uploads/caps/status files themselves are **game-free** (`gatOS.SimFs/Audio/**` — see
@@ -704,6 +704,53 @@ anchors (the two here + `VesselReader.SampleDocking`) were re-verified to `Verif
 
 ---
 
+## ✅ 5261 write-surface findings (playbook pass 2026-08-11) {#5261-findings}
+
+Full playbook pass 2026-08-11, `2026.8.5.5168` → `2026.8.19.5261` (revs 5169–5258, 90 commits).
+**No silent write-surface break.** One compile-visible type migration touched a write path, and the
+control-lockout divergence first recorded at 4939 widened. Build + full suite green (0 warnings,
+1317 passed).
+
+1. **`SimTime` → `UniverseTime` reaches one write path (rev 5211).** `BurnTarget.ImpulsiveInstant`
+   is now `UniverseTime` (Int128 nanoseconds, default `EndOfTime` instead of `PositiveInfinity`), so
+   `ctl/burn`'s `new SimTime(ut)` became `new UniverseTime(ut)`. **This is not a pure rename:**
+   `UniverseTime`'s constructor **throws `ArgumentException` on NaN**, where `SimTime` silently stored
+   it. A guest writing a non-finite `ut` would therefore have thrown inside the actuator and latched it
+   **degraded** (`EOPNOTSUPP` at `/sim/status/accessors`) rather than being rejected. **Closed** —
+   `FlightComputerActuator.SetBurn` now rejects a non-finite `ut` with `Invalid` before constructing
+   the time, matching the finite-component check `debug/teleport` already had.
+2. **Rev 5252/5253 widen the control-module lockout — still UI-only, so `/sim` writes are unaffected
+   and the 4939 divergence grows.** `ControlsLockout` now also gates **engine shutdown (X)** and, via
+   an early `IsLockedOutNoControl` return in **`Vehicle.OnKey`**, *all* keyboard vehicle input on a
+   vessel with no control module. The gate sits in the **player key handler**, which returns before
+   emitting any `InputEvents` — gatOS never calls `OnKey`/`OnAction`, writing instead straight into
+   `Vehicle._manualControlInputs` (reflection), the `InputEvents.*Buffer`s, or module methods. So
+   `/sim` still actuates a control-less vessel where the stock UI now refuses even more than at 4939.
+   `Vehicle.IsControllable => _overrideIsControllable || Parts.Controls.NumModules > 0` is
+   **unchanged**, so `vessels/<id>/controllable` stays truthful and guests can still pre-check.
+   **No code change** — documented behavior, flagged for the live pass.
+3. **Teleport orientation (rev 5226) does not reach `/sim`.** KSA changed the *default* orientation for
+   surface-teleported/launched vehicles ("pitch down is north"). `Vehicle.Teleport(Orbit?, doubleQuat?,
+   double3?)` keeps its signature **and** its null semantics (`body2Cce == null` ⇒ leave attitude
+   unchanged), and `debug/teleport` passes null — so the new default applies to KSA's own launch path
+   only. **No code change.**
+4. **Harmony hook targets intact**: `Universe.ExecuteNextVehicleSolvers(double, SimStep)`
+   (`Universe.cs:1796`, signature unchanged through the whole 5208–5216 threading rework);
+   `Program.DrawProgramMenusHook()` (`Program.cs:3669`); `Program.RenderGame(AcquiredFrame, double)`
+   (`:4206`, the one string-resolved target); `SuperMeshRenderSystem.RenderMainPass(CommandBuffer)`
+   (`:332`); `Vehicle.GetWorldMatrix(Camera)` (`:3516`) / `Vehicle.UpdateRenderData(Viewport,int)`
+   (`:3529`); `Viewport.OnFrame(double)`; `PartModel.AddInstance(PerInstanceData,Viewport,int)`;
+   `ModLibrary.Find`; `Program.MainViewport`. **Every signature is byte-identical across the two builds.**
+5. **`JobSystems.VehicleSolvers` → `VehicleSolver` (revs 5208–5216)** — the vehicle update moved to a
+   single orchestrator scheduler plus a new `DynamicWorkerPool VehicleWorkerPool`. The welds/IVA drain
+   is a **rename, not a rearchitecture**: waiting the orchestrator still covers the pool (joined inside
+   `VehicleUpdateTask` by a `using`-scoped `ParallelBatch`), and KSA's own `PrepareFrame` drains
+   identically. ⚠️ `Vehicle.Teleport` now detaches through the **object-pooled** `PhysicsBubble`
+   (`RemoveFromBubble`, revs 5215/5220/5237) — the per-frame weld teleport therefore drives a pooled
+   bubble split/merge every tick. Compile-clean and logically sound, but **live-only** to confirm.
+
+---
+
 ## ⚠️ 5168 write-surface findings (playbook pass 2026-08-05) {#5168-findings}
 
 Full playbook pass 2026-08-05, `2026.8.3.5117` → `2026.8.5.5168` (revs 5118–5168, 49 commits).
@@ -938,7 +985,7 @@ target is UNCHANGED** — no code change required. Highlights:
   `Vehicle.GetWorldMatrix(Camera)` / `Vehicle.UpdateRenderData(Viewport,int)` untouched (the
   `gatos.always_render` reproduced-body prefixes stay byte-accurate); `PartModel.Instances`/ctor
   untouched (`gatos.iva` — the `PartModelModule.cs` churn is one fuel-flow highlight bit);
-  `JobSystems.VehicleSolvers` untouched.
+  `JobSystems.VehicleSolver` untouched.
 - **Solver-phase rationale unchanged**: `FlightComputer.cs`/`VehicleUpdateData.cs` untouched — the FC
   snapshot/restore window is intact, Solver phase stays mandatory. `VehicleUpdateTask.cs` changes are
   additive (animating vehicles forced off-rails; `Tank.UpdateTransfers` in the module update).

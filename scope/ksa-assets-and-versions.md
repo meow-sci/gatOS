@@ -27,13 +27,56 @@ Two checkouts are kept side by side for diffing:
 
 | Checkout dir | Build | Date | Revisions | Role |
 |---|---|---|---|---|
-| `…/ksa-game-assemblies` | **2026.8.5.5168** | 2026-08-05 | 5117 → 5168 | **current / verified baseline** — full playbook pass 2026-08-05 (see below): **four compile breaks** (all from rev 5154's dynamic-rendering migration) fixed, **three silent semantic breaks** found and closed (`RCSMode` gating manual RCS, the game clearing latched thruster flags, disabled decouplers); `KSAFolder` default resolves here. The checkout is a **git repo whose history holds every prior drop** (`13595c1` = 5056, `3106557` = 5018, `cdb7391` = 4980, `7cf5c0a` = 4892, …) — diff drops with `git diff <old>..<new>` inside it |
-| `…/ksa-game-assemblies_prev` | 2026.8.3.5117 | 2026-08-01 | 5056 → 5117 | prior side-by-side checkout — and, unlike the 5117 pass's `_prev`, a **genuinely audited baseline**, so the 5168 pass diffed the two trees directly (no git-history fallback needed) |
+| `…/ksa-game-assemblies` | **2026.8.19.5261** | 2026-08-11 | 5168 → 5261 | **current / verified baseline** — full playbook pass 2026-08-11 (see below): **ten compile breaks** (all from rev 5211's `SimTime`→`UniverseTime` migration + revs 5208–5216's solver rename) fixed, **one silent semantic break** found and closed (the `EndOfTime` sentinel becoming a finite ~1.7e29 s); `KSAFolder` default resolves here. The checkout is a **git repo whose history holds every prior drop** (`13595c1` = 5056, `3106557` = 5018, `cdb7391` = 4980, `7cf5c0a` = 4892, …) — diff drops with `git diff <old>..<new>` inside it |
+| `…/ksa-game-assemblies_prev` | 2026.8.5.5168 | 2026-08-05 | 5117 → 5168 | prior side-by-side checkout — a **genuinely audited baseline** (the 5168 pass closed its own findings), so the 5261 pass diffed the two trees directly (no git-history fallback needed) |
 
 gatOS was originally built against the 4680-era sources (most `[KsaAnchor]` `Verified` dates span
 2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27; the touched
 anchors carry `GameVersion="2026.6.9.4750"` (see
 [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)).
+
+**The 5168 → 5261 pass (2026-08-11) — ten compile breaks fixed (one type migration), one silent
+semantic break found and closed.** {#5261-pass}
+PREVIOUS (`2026.8.5.5168`) was itself a fully audited baseline and CURRENT's `fromRevision` is 5168,
+so the two trees chain with no gap and were diffed directly (revs 5169–5258, 90 commits).
+
+Rev **5211** replaced `SimTime` (a `double` of seconds) with **`UniverseTime`** (`Int128` nanoseconds,
+a prelude to 64-bit-ns `BubbleTime` and multiplayer physics), and revs **5208–5216** rebuilt the
+vehicle-update threading model (`JobSystems.VehicleSolvers` → `VehicleSolver` + a new
+`DynamicWorkerPool VehicleWorkerPool`; `VehicleUpdateTask` orchestrating `PhysicsBubble` islands).
+Together those produced **ten compile errors** across `VesselReader`, `FlightComputerActuator`,
+`WeldEngine`, `WeldManager`, `IvaPhysicsManager`, `DebugActuator`, `AudioActuator`, `FxReflect`,
+`KsaCatalog`, `Mod.Game` and `TelemetrySampler` — all mechanical once the replacements were identified
+(`GetElapsedSimTime()` → `GetElapsedSeconds()`/`GetElapsedTime()`, `VehicleSolvers` → `VehicleSolver`,
+`SimTime` → `UniverseTime`).
+
+> **⚠️ Playbook correction — "every compile error *is* the work list" is only true after the build goes
+> green.** Roslyn does not bind method bodies while any **declaration-phase** error is outstanding, so
+> the first build reported **exactly one** error (a `SimTime` *parameter* on `VesselReader.TimeUntil`)
+> and silently hid the other nine, which were all inside method bodies. Treating that first list as the
+> work list would have understated the break by 9×. **Fix and rebuild iteratively until green.**
+
+The one break the compiler could *not* have caught is documented in full at
+[read](ksa-read-surface.md#5261-findings): `UniverseTime.EndOfTime` (`Int128.MaxValue` ns) replaced
+`SimTime.PositiveInfinity` as the "no such event" sentinel, and its `.Seconds()` is a **finite**
+~1.7014e29 — so gatOS's `Sanitize.Finite` scrub silently stopped working for `orbit/time_to_ap`,
+`orbit/time_to_pe` and `orbit/next_patch`. Closed with `IsSaturated()` guards that preserve the
+existing `0` = "no such event" contract. A second, smaller trap in the same migration:
+`UniverseTime`'s constructor **throws on NaN** where `SimTime` stored it silently, so `ctl/burn` now
+validates its `ut` up front rather than latching the accessor degraded — see
+[write](ksa-write-surface.md#5261-findings).
+
+Everything else verified unchanged: **all ten Harmony hook targets** are signature-identical (including
+through the threading rework), the **entire `Brutal.Numerics` tree is byte-identical** (frames/numerics
+intact), every **reflection accessor** resolves structurally (`ManualControlInputs` gained only
+`GrabHeld`; the `KittenEva._renderable → _characterAvatar → Core → Scale` chain is untouched), and the
+**`thug_life` render set** holds — `SuperMeshRenderSystem.cs` changed for the first time since 5018 but
+neither change (rev 5241's `Program.SetViewport` at the head of `RenderMainPass`, rev 5236's
+`DescriptorDynamicOffset` → `null`) reaches the postfix; gatOS already called `Program.SetViewport(cmd)`
+itself. Content XML: rev 5227's battery capacities are **×10 in value, identical in unit** (`J=`), so
+the reads stay truthful while absolute thresholds in guest flight programs shift.
+Build + full suite green against 5261 (0 warnings, 1317 passed / 11 skipped). 5261 is now the verified
+baseline. **Still pending: the live in-game pass** — see [`../docs/VALIDATION.md`](../docs/VALIDATION.md).
 
 **The 5117 → 5168 pass (2026-08-05) — four compile breaks fixed (one render refactor), three silent
 semantic breaks found and closed.** {#5168-pass}
