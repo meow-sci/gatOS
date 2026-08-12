@@ -41,4 +41,11 @@ internal sealed class ThugLifeEntry
 
     /// <summary>When false the entry stays in the registry but is skipped while drawing.</summary>
     public bool Visible = true;
+
+    /// <summary>
+    ///     Which render passes the quad is recorded into — a <see cref="gatOS.SimFs.Snapshots.ThugLifeCameraMask"/>
+    ///     bitmask (main view / crew portraits / other viewports). One entry serves every pass; this is
+    ///     a per-pass filter, never a second quad.
+    /// </summary>
+    public int Cameras = gatOS.SimFs.Snapshots.ThugLifeCameraMask.All;
 }

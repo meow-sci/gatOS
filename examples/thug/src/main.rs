@@ -123,6 +123,8 @@ struct Config {
     height: f64,
     /// Anchor part instance id; None = the vessel's root part (`parts/0/instance_id`).
     part: Option<u32>,
+    /// Which render passes draw the quad: `all`, or tokens of main/crew/other. None = leave default.
+    cameras: Option<String>,
     /// Reverse: slide the glasses off and remove the entry.
     off: bool,
     sim: PathBuf,
@@ -141,6 +143,7 @@ impl Config {
             width: DEFAULT_W,
             height: DEFAULT_H,
             part: None,
+            cameras: None,
             off: false,
             sim: std::env::var_os("GATOS_SIM")
                 .map(PathBuf::from)
@@ -173,6 +176,19 @@ impl Config {
                 "--part" => config.part = Some(
                     take("--part")?.parse::<u32>().map_err(|_| "--part needs a part instance id")?,
                 ),
+                "--cameras" | "-c" => {
+                    let value = take("--cameras")?.replace(',', " ");
+                    let ok = !value.trim().is_empty()
+                        && value.split_whitespace().all(|t| {
+                            matches!(t.to_lowercase().as_str(), "all" | "main" | "crew" | "other")
+                        });
+                    if !ok {
+                        return Err(format!(
+                            "--cameras needs 'all' or tokens of main/crew/other, got '{value}'"
+                        ));
+                    }
+                    config.cameras = Some(value.to_lowercase());
+                }
                 "--off" => config.off = true,
                 "--sim" => config.sim = PathBuf::from(take("--sim")?),
                 "--url" => config.url = Some(take("--url")?),
@@ -226,6 +242,9 @@ OPTIONS:
         --width <m>     explicit quad width, metres                     [default: 0.9]
         --height <m>    explicit quad height, metres                    [default: 0.22]
         --part <iid>    anchor part instance id                         [default: root part]
+    -c, --cameras <m>   which render passes draw the quad: all, or tokens
+                        of main/crew/other (e.g. 'crew' = face cams only,
+                        'main crew' = everywhere but extra windows)      [default: all]
         --off           slide the glasses off (reverse) and remove the entry
         --sim <path>    the /sim mount root            [default: /sim, env: GATOS_SIM]
         --url <base>    use HTTP /v1/fs at <base> instead of the mount  [env: GATOS_HTTP]
@@ -296,6 +315,7 @@ fn ensure_entry(source: &dyn Source, vessel: &str, config: &Config) -> Result<u3
             &format!("debug/thug_life/{id}/size"),
             &format!("{} {}", config.width, config.height),
         );
+        apply_cameras(source, id, config);
         return Ok(id);
     }
     if config.off {
@@ -326,11 +346,21 @@ fn ensure_entry(source: &dyn Source, vessel: &str, config: &Config) -> Result<u3
     while Instant::now() < deadline {
         if let Some(id) = find_entry(source, vessel) {
             eprintln!("thug: {vessel}: created entry {id}");
+            apply_cameras(source, id, config);
             return Ok(id);
         }
         sleep(Duration::from_millis(20));
     }
     Err("timed out waiting for the entry to appear after add".into())
+}
+
+/// Writes the entry's camera mask when `--cameras` was given (default = the mod's `all`).
+fn apply_cameras(source: &dyn Source, id: u32, config: &Config) {
+    if let Some(cameras) = &config.cameras {
+        if let Err(e) = source.write(&format!("debug/thug_life/{id}/cameras"), cameras) {
+            eprintln!("thug: entry {id}: cameras write failed: {e}");
+        }
+    }
 }
 
 /// Probes entry ids for one whose `vessel` leaf matches. Works on both sources (no readdir).

@@ -10,6 +10,7 @@ thug Hunter                 # shades on Hunter, all defaults
 thug                        # shades on EVERY kitten currently in the world
 thug Hunter Polaris Banjo   # the whole squad, animated in lockstep
 thug --time 3 --easing linear --scale 1.5 Polaris
+thug --cameras crew Hunter  # visible only in the crew-portrait face cams
 thug --off Hunter           # slide them off and remove the entry
 ```
 
@@ -38,6 +39,7 @@ leaf reads `1`.
 | `-s, --scale <x>` | — | uniform size multiplier (excludes `--width/--height`) |
 | `--width <m>` / `--height <m>` | `0.9` / `0.22` | explicit quad size |
 | `--part <iid>` | root part | anchor part instance id |
+| `-c, --cameras <m>` | `all` | which render passes draw the quad: `all`, or tokens of `main`/`crew`/`other` (`crew` = kitten face cams only; `main crew` = everywhere but extra camera windows) |
 | `--off` | — | reverse the animation and remove the entry |
 | `--sim <path>` | `/sim` (`$GATOS_SIM`) | the mounted 9p filesystem root |
 | `--url <base>` | (`$GATOS_HTTP`) | use the HTTP `/v1/fs` mirror instead of the mount |

@@ -246,6 +246,8 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
                 return thugLife.Remove(c.Ordinal);
             case "debug.thug_life_visible":
                 return thugLife.SetVisible(c.Ordinal, c.Value > 0.5);
+            case "debug.thug_life_cameras":
+                return thugLife.SetCameras(c.Ordinal, (int)c.Value);
             case "debug.thug_life_add":
             {
                 if (ResolveVehicle(c.Token ?? "") is not { } vehicle)

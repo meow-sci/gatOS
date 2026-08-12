@@ -1647,6 +1647,14 @@ public static class SimFsTree
                   echo "1.2 0.24" > thug_life/0/size
               visible   0 | 1             0 hides the quad (entry kept); 1 shows it.
                   echo 0          > thug_life/0/visible
+              cameras   all | main crew other
+                                          which render passes draw the quad: "main" is the
+                                          player's view, "crew" the kitten face-cam portraits,
+                                          "other" any extra camera window. One entry serves
+                                          every pass (it is a filter, not extra quads).
+                                          Default all. Tokens combine, space/comma separated.
+                  echo crew       > thug_life/0/cameras     # portraits only
+                  echo "main crew" > thug_life/0/cameras    # everywhere but extra windows
               spec      (read-only)       the full add-compatible line; echo it to add to clone.
                   cat thug_life/0/spec
 
@@ -1692,6 +1700,12 @@ public static class SimFsTree
                     () => $"{Formats.Scalar(ThugLife(id).Width)} {Formats.Scalar(ThugLife(id).Height)}"),
                 FlagControl($"{q}/visible", "visible", "", "debug.thug_life_visible", id,
                     () => Formats.Flag(ThugLife(id).Visible)),
+                // Which render passes the quad draws in (main view / crew portraits / other viewports).
+                LineControlFile.Create("cameras", Qid($"{q}/cameras"), sink,
+                    () => ThugLife(id).Cameras,
+                    line => ThugLifeCameraMask.TryParse(line, out var mask)
+                        ? new SimCommand("", "debug.thug_life_cameras", id, mask)
+                        : null),
                 new TriggerFile("remove", Qid($"{q}/remove"), sink,
                     new SimCommand("", "debug.thug_life_remove", id, 1)),
                 // The full write-compatible spec line (echo to add to recreate as a new id).

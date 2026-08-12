@@ -626,6 +626,7 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/thug_life/<id>/rotation` | **St** | `pitch yaw roll` | `debug.thug_life_rotation` | Frame | Orientation offset in the part's local frame (deg). |
 | `debug/thug_life/<id>/size` | **St** | `width height` | `debug.thug_life_size` | Frame | Quad size (m). |
 | `debug/thug_life/<id>/visible` | **St** | `0`/`1` | `debug.thug_life_visible` | Frame | Show/hide (keeps the entry). |
+| `debug/thug_life/<id>/cameras` | **St** | `all` or tokens of `main`/`crew`/`other` | `debug.thug_life_cameras` | Frame | Which render passes draw the quad: `main` = the player's view, `crew` = the two crew-portrait (kitten face cam) viewports, `other` = any additional visible viewport (secondary camera windows). Tokens combine (space/comma separated, case-insensitive); an empty selection is EINVAL (hide with `visible`). Default `all`. One entry serves every pass — the mask is a per-pass filter, never a second quad. Read-back is canonical (`all`, else set bits in `main crew other` order). (KSA 2026.8.19.5261.) |
 | `debug/thug_life/<id>/remove` | T | `1` | `debug.thug_life_remove` | Frame | Remove this entry. |
 | `debug/thug_life/<id>/spec` | S | spec line | — | — | The write-compatible 10-token spec (echo to `add` to recreate as a new id). |
 | `debug/fx/help` | S | text | — | — | Console-friendly usage readme + worked examples for the face-FX bursts. `cat` it. |

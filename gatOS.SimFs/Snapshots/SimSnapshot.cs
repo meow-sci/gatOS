@@ -664,7 +664,14 @@ public sealed record WeldSnapshot(
 /// <param name="Visible">false ⇒ the entry is kept but skipped while drawing.</param>
 public sealed record ThugLifeSnapshot(
     int Id, string VesselId, uint PartInstanceId, double3Snap Position, double3Snap Rotation,
-    double Width, double Height, bool Visible);
+    double Width, double Height, bool Visible)
+{
+    /// <summary>
+    ///     Which render passes the quad is recorded into, canonical (<c>all</c>, or set bits in
+    ///     <c>main crew other</c> order) — see <see cref="ThugLifeCameraMask"/>.
+    /// </summary>
+    public string Cameras { get; init; } = "all";
+}
 
 /// <summary>
 ///     The IVA free-floating-object simulation as a whole (<c>/sim/debug/iva</c>): a gatOS-owned

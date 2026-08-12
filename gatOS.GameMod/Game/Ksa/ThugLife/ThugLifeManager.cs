@@ -114,6 +114,13 @@ internal sealed class ThugLifeManager
 
     public CommandResult SetVisible(int id, bool visible) => Edit(id, e => e.Visible = visible);
 
+    /// <summary>Sets which render passes draw the entry (a <see cref="ThugLifeCameraMask"/> bitmask).</summary>
+    public CommandResult SetCameras(int id, int mask)
+        => (mask & ThugLifeCameraMask.All) == 0
+            ? new CommandResult(CommandOutcome.Invalid,
+                "thug_life cameras expects 'all' or any of main/crew/other")
+            : Edit(id, e => e.Cameras = mask & ThugLifeCameraMask.All);
+
     /// <summary>
     ///     Game-thread driver, once per frame (before the scene renders). Drops entries whose vehicle is
     ///     gone and re-resolves each anchor part by InstanceId (robust to staging — a removed anchor part
@@ -152,8 +159,11 @@ internal sealed class ThugLifeManager
     }
 
     /// <summary>
-    ///     Called from the render postfix on the main thread (inside the offscreen pass). Reads the
-    ///     published immutable array and records one draw per entry. Self-disables on the first fault.
+    ///     Called from the render postfix on the main thread (inside the offscreen pass) — once per
+    ///     visible viewport per frame, since <c>RenderMainPass</c> runs for the main view, both
+    ///     crew-portrait viewports and any secondary camera windows. Reads the published immutable
+    ///     array and records one draw per entry whose camera mask includes the pass currently being
+    ///     rendered. Self-disables on the first fault.
     /// </summary>
     public void RecordDraws(CommandBuffer cmd)
     {
@@ -161,8 +171,9 @@ internal sealed class ThugLifeManager
             return;
         try
         {
+            var pass = CurrentPassBit();
             foreach (var entry in _published)
-                if (entry.Vehicle is not null)
+                if (entry.Vehicle is not null && (entry.Cameras & pass) != 0)
                     _quad.RecordDraw(cmd, entry);
         }
         catch (Exception ex)
@@ -188,7 +199,10 @@ internal sealed class ThugLifeManager
                 e.Id, e.VesselId, e.PartInstanceId,
                 new double3Snap(e.Position.X, e.Position.Y, e.Position.Z),
                 new double3Snap(e.Rotation.X, e.Rotation.Y, e.Rotation.Z),
-                e.Width, e.Height, e.Visible));
+                e.Width, e.Height, e.Visible)
+            {
+                Cameras = ThugLifeCameraMask.Format(e.Cameras),
+            });
         return list;
     }
 
@@ -202,6 +216,29 @@ internal sealed class ThugLifeManager
     }
 
     private void Publish() => _published = _entries.ToArray();
+
+    /// <summary>
+    ///     Which pass is being recorded right now, as a <see cref="ThugLifeCameraMask"/> bit: the
+    ///     viewport currently rendering is the main view, one of the two crew-portrait (kitten face
+    ///     cam) viewports, or some other visible viewport (a secondary camera window).
+    /// </summary>
+    [KsaAnchor("Program.RenderedViewport (Viewports[_renderedViewportIndex], set at the top of "
+            + "RenderViewport); Program.MainViewport; Program.GetCrewPortraitViewport(int)",
+        SourceFile = "KSA/Program.cs", Verified = "2026-08-12", GameVersion = "2026.8.19.5261",
+        Risk = ChurnRisk.Medium,
+        Notes = "CrewPortraitPanel owns viewports 4 and 5 (always Visible, IsOffscreen). "
+            + "GetCrewPortraitViewport indexes by portrait slot (0/1). Identity comparison — never "
+            + "by viewport index arithmetic.")]
+    private static int CurrentPassBit()
+    {
+        var rendered = Program.RenderedViewport;
+        if (ReferenceEquals(rendered, Program.MainViewport))
+            return ThugLifeCameraMask.Main;
+        if (ReferenceEquals(rendered, Program.GetCrewPortraitViewport(0))
+            || ReferenceEquals(rendered, Program.GetCrewPortraitViewport(1)))
+            return ThugLifeCameraMask.Crew;
+        return ThugLifeCameraMask.Other;
+    }
 
     /// <summary>
     ///     The smallest non-negative id not currently in use — so ids track the live set and are reused
