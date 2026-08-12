@@ -526,7 +526,9 @@ public sealed partial class Mod
 
     /// <summary>
     ///     Entry from <see cref="CameraViewportPatch"/>. Runs the old BeforeGui trio early enough for
-    ///     camera commands and shared-clock timed cues to affect this render, then applies the camera.
+    ///     camera commands and shared-clock timed cues to affect this render, then lets the director
+    ///     prepare this frame's pose — the write itself happens in-phase, inside KSA's own viewport
+    ///     pass, via the installed <c>CameraPoseController</c>.
     /// </summary>
     internal static void PrepareMainViewportFrame(double dt)
     {

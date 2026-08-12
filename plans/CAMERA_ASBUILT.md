@@ -577,6 +577,47 @@ built the queue, not the emitters.
 > Anchored smoothing filters only the relative component and aim is exact. The historical sections
 > below describe the original landing and are superseded wherever they claim after-render timing or
 > zero Harmony patches.
+>
+> **2026-08-11 re-implementation (the KSArmory follow methodology).** The unfollow-and-write-absolutes
+> driver above still could not hold a subject in live testing (the camera moved but never looked at
+> its target), so the game-side driver was rebuilt on the pattern KSArmory's chase/sight cameras use,
+> verified against KSA `2026.8.19.5261`:
+>
+> 1. **The camera is never unfollowed.** While owned it follows `CameraFollowable` — a mod-supplied
+>    `IFollowable` (the `WreckageMarker` precedent) whose `GetPositionEcl()` re-resolves the live
+>    `pose/anchor` in the *engine's* epoch every call, or holds a fixed point for un-anchored
+>    placements. `MeanRadius = 1`, one stable `OrbitView`, identity `GetBodyFixed2Ecl()` so offsets do
+>    not turn with the anchor. Keeping a live follow also keeps the engine's per-camera bookkeeping
+>    (`NearbyCelestial`, `CurrentAltitudeKm` — the inputs to `ClampCamera`'s surface teleport)
+>    coherent, which raw `PositionEcl` writes silently let go stale.
+> 2. **The pose is applied inside the engine's own viewport pass**, not from the Harmony prefix.
+>    `CameraPoseController` (a `FixedController` subclass, installed into the public writable
+>    `Viewport.FixedController` field; stock instance saved and restored at shutdown) asks the
+>    director for the pose via `ICameraPoseSource.TryPose(followedEcl, dt, …)` at the exact instant
+>    the answer is consumed, and performs the same two writes the stock controller makes, in the same
+>    order: `PositionEcl = followedEcl + offset`, then `LocalRotation`. Its `OnSwitchOn` suppresses
+>    the "Fixed Camera" alert only while gatOS owns the park; with `Pose == null` it is a behavioural
+>    clone of stock.
+> 3. **Every placement is an offset from the followed anchor**, measured against the very
+>    `GetPositionEcl()` sample the engine adds it to. Two absolutes sampled in different frame phases
+>    are never differenced (~600 m/frame at orbital speed). Placement, aim, projection and the time
+>    channel are all resolved in `TryPose`; the prefix half (`Update`) only evaluates the track,
+>    composes channels, points the followable at this frame's anchor, and publishes status.
+> 4. **Ownership loss is a stand-down, not a fight.** The per-frame park re-assert is gone. A mode
+>    change gatOS did not make, a follow swapped behind its back (wreckage follow, another mod), a
+>    replaced `FixedController`, or a faulted pose solve makes the director stop driving, publish
+>    idle and leave the camera where the reclaimer put it (captured sim speed still restored).
+>    `camera/enabled` then reads `0`; take it again to resume.
+> 5. **Removed:** the explicit `ClampCamera()` dance (the engine clamps in `Camera.OnFrame`, right
+>    after the controller, from bookkeeping the live follow keeps current) and the G3 §"per-frame
+>    re-assert". `Take`/`Restore` additionally capture and put back the stock fixed controller's
+>    input fields (`CameraOffset`/`CameraRotation`, docking connector carried over at install), and
+>    the release blend completes in-phase, with the actual restore deferred to the next prefix.
+>
+> Files: `CameraFollowable.cs` + `CameraPoseController.cs` added; `CameraDirector.cs` rebuilt around
+> `ICameraPoseSource`; `CameraFrames`/`CameraTargets`/`CameraReader`/`CameraActuator` and the whole
+> game-free surface unchanged. Sections G3–G5 below are superseded wherever they claim the prefix
+> writes the camera, an ownership unfollow, or the per-frame mode re-assert.
 
 ---
 

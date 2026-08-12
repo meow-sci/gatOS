@@ -10,69 +10,59 @@ namespace gatOS.GameMod.Game.Ksa.Camera;
 
 /// <summary>
 ///     The camera director (plans/CAMERA_CONTROLS_PLAN.md §5): takes ownership of the main viewport's
-///     camera, writes a composed pose onto it once per rendered frame, publishes what it is doing, and
-///     hands the camera back to the game exactly as it found it.
+///     camera, drives it through the engine's own follow-and-controller machinery, publishes what it is
+///     doing, and hands the camera back to the game exactly as it found it.
 /// </summary>
 /// <remarks>
 ///     <para>
-///         <b>The director runs in the main viewport's <c>OnFrame</c> prefix.</b> KSA advances vessel
-///         state before it visits the viewports, then each <c>Viewport.OnFrame</c> runs its controller
-///         and immediately calls <c>Camera.OnFrame</c> to rebuild the matrices. Writing here means the
-///         pose and the subject come from the same simulation frame and the matrices, frustum, celestial
-///         LOD, cursor ray and render all consume that same pose. The old after-render driver was one
-///         simulation frame behind every moving target — hundreds of metres at orbital speed.
+///         <b>Methodology (the KSArmory pattern — 2026-08-11 re-implementation).</b> Ownership is not
+///         "unfollow and write absolute transforms" any more; that pattern left the camera's per-frame
+///         bookkeeping (<c>NearbyCelestial</c>, <c>CurrentAltitudeKm</c> — the inputs to
+///         <c>ClampCamera</c>'s surface teleport) stale and its poses one phase out of register with
+///         the scene. Instead:
+///     </para>
+///     <list type="number">
+///         <item><b>The camera follows a mod-supplied <c>IFollowable</c></b> (<see cref="CameraFollowable"/>)
+///             that re-resolves the live anchor in the engine's own epoch, so the engine's follow
+///             machinery keeps every derived quantity coherent.</item>
+///         <item><b>A <c>FixedController</c> subclass</b> (<see cref="CameraPoseController"/>) is
+///             installed into the public writable <c>Viewport.FixedController</c> field; its
+///             <c>OnFrame</c> runs inside the engine's viewport pass and asks this director for the pose
+///             at the exact instant the answer is used (<see cref="TryPose"/>).</item>
+///         <item><b>Every placement is an offset from the followed anchor</b>, measured against the very
+///             sample the engine adds it to. Two absolute positions taken in different frame phases are
+///             never differenced — that discrepancy is ~600 m per 20 ms frame at orbital speed, and it
+///             is the whole reason the previous implementation could not hold a subject.</item>
+///     </list>
+///     <para>
+///         <b>Division of labour per frame.</b> The viewport <i>prefix</i> (via <c>Mod.DriveCamera</c> →
+///         <see cref="Update"/>) drains state that must precede the pass: track evaluation, channel
+///         composition, pointing the followable at this frame's anchor, ownership-loss detection, status
+///         publishing. The <i>in-phase</i> half (<see cref="TryPose"/>, called back by the controller
+///         inside <c>Viewport.OnFrame</c>) resolves the placement, aim and projection against the
+///         engine's fresh anchor sample and returns the final offset + rotation for the controller to
+///         write. The Harmony viewport prefix/postfix remain for scheduling lockstep and applied-status
+///         publishing; they no longer write the camera.
 ///     </para>
 ///     <para>
-///         <b>Ownership is a mode park, not a fight.</b> <c>Viewport.Mode = CameraMode.Fixed</c> plus
-///         <c>Camera.Unfollow</c> makes <c>FixedController.OnFrame</c> a literal no-op — its entire body
-///         is wrapped in <c>if (Following != null)</c> — so the game's camera solver produces nothing
-///         and gatOS is the only writer. Its <c>OnKey</c>/<c>OnCursorEnter</c>/<c>OnGamepad*</c> all
-///         return false, so player input cannot perturb it either.
+///         <b>Ownership loss is a stand-down, not a fight.</b> A camera mode change gatOS did not make,
+///         a follow target swapped behind its back (vessel destruction → wreckage follow, another mod),
+///         or a faulted pose solve all mean someone else has the camera now. The director stops driving,
+///         publishes idle, and leaves the camera exactly where the reclaimer put it — re-asserting a
+///         park every frame is two writers fighting over one transform, which is the failure mode this
+///         design retires. <c>camera/enabled</c> reads <c>0</c> afterwards; take it again to resume.
 ///     </para>
 ///     <para>
-///         <b>Two things this deliberately does to avoid on-screen text.</b> The mode park assigns
-///         <c>Viewport.Mode</c> <i>directly</i> rather than calling <c>SetCameraMode</c>, because
-///         <c>FixedController.OnSwitchOn</c> fires a <c>TimedAlert("Fixed Camera")</c> that would appear
-///         in the footage; and every <c>SetFollow</c>/<c>Unfollow</c> passes <c>alert: false</c> and
-///         <c>changeControl: false</c> — the latter because the defaults would null
-///         <c>Program.ControlledVehicle</c> and drop the player's vessel mid-flight.
-///     </para>
-///     <para>
-///         <b>The one exception to direct mode assignment is Map.</b> <c>MapController.OnSwitchOn</c>
-///         sets <c>Camera.NoRotation = true</c> (which changes what <c>PositionCce</c>/<c>LocalPosition</c>
-///         even mean) and clears <c>Program.IsControlledVehicleActive</c>; only
-///         <c>MapController.OnSwitchOff</c> undoes both. Leaving Map by direct assignment would strand
-///         the player with an uncontrollable vessel, so that one transition goes through
-///         <c>SetCameraMode</c> and accepts the three-second alert.
-///     </para>
-///     <para>
-///         <b>Fixed is the only mode gatOS can own the camera in without replacing a game controller.</b>
-///         The prefix writes first, then <c>Viewport.OnFrame</c> calls the parked controller followed by
-///         <c>Camera.OnFrame</c>. <c>FixedController.OnFrame</c> wraps its entire body in
-///         <c>if (Following != null)</c>, which the ownership unfollow makes false — that is the whole
-///         trick. It does <b>not</b> generalise:
-///         <list type="bullet">
-///             <item><b>IVA</b> (task C5.1) — <c>IVAController.OnFrame</c> writes
-///                 <c>Camera.PositionEcl</c> from the seat unconditionally and <c>LocalRotation</c> on
-///                 every frame but the switch frame, so a gatOS pose would be overwritten before it was
-///                 ever rendered; and with <c>Following == null</c> its first two lines call
-///                 <c>Program.HoveredViewport.NextCameraMode()</c>, cycling straight back out of IVA.</item>
-///             <item><b>Map</b> (task C5.2) — <c>MapController.OnFrame</c> likewise ends by assigning
-///                 both <c>PositionEcl</c> and <c>LocalRotation</c> from its own scope/orbit solution,
-///                 and with <c>Following == null</c> it calls <c>Program.SetCameraMode(Free)</c>.</item>
-///         </list>
-///         Making either an ownership context therefore needs a Harmony patch to suppress a controller —
-///         which this feature's whole design exists to avoid — so neither is offered. What C5.2 <i>does</i>
-///         ship is <see cref="SetMapScope"/>: the map's own zoom as a first-class control, in the same
-///         "drives the game's camera" family as <c>mode</c>/<c>follow</c>/<c>tidal</c>.
+///         <b>Silent-footage guarantees are kept:</b> the pose controller suppresses the stock
+///         "Fixed Camera" alert only while gatOS owns the park, and every <c>SetFollow</c>/<c>Unfollow</c>
+///         passes <c>alert: false</c> and <c>changeControl: false</c> (the defaults would print on
+///         screen and null <c>Program.ControlledVehicle</c>).
 ///     </para>
 ///     <para>
 ///         <b>⚠ Owning the main camera changes which way a kittenaut walks.</b>
-///         <c>KittenEva.PrepareWorker</c> feeds <c>Program.GetMainCamera().GetForwardEcl()</c> /
-///         <c>GetRightEcl()</c> / <c>GetUpEcl()</c> into EVA locomotion, so while gatOS holds the camera,
-///         "forward" for a kittenaut on EVA is wherever the <i>shot</i> is facing. This is documented
-///         rather than worked around: silently releasing EVA control would be a more surprising side
-///         effect than the one it fixes.
+///         <c>KittenEva.PrepareWorker</c> feeds the main camera's forward/right/up into EVA locomotion,
+///         so while gatOS holds the camera, "forward" for a kittenaut on EVA is wherever the shot is
+///         facing. Documented rather than worked around.
 ///     </para>
 ///     <para>
 ///         <b>Threading:</b> game thread only (threading rule 1). Transport threads only enqueue
@@ -83,9 +73,8 @@ namespace gatOS.GameMod.Game.Ksa.Camera;
 /// <param name="releaseBlendSeconds"><c>[camera] camera_release_blend_s</c> — the eased hand-back.</param>
 /// <param name="playback">
 ///     The track player (task C3), or null when <c>[schedule] schedule_enabled=false</c> left the
-///     registry it lives in unwired — a camera track is a <c>/sim/ctl/schedules</c> entry with
-///     <c>kind = camera-track</c>, so there is nowhere to register one without it. Every L1/L2 channel
-///     still works in that configuration; only <c>camera/play</c> is unavailable.
+///     registry it lives in unwired. Every L1/L2 channel still works in that configuration; only
+///     <c>camera/play</c> is unavailable.
 /// </param>
 /// <param name="debugNamespace"><c>[control] debug_namespace</c> — the first gate on the time channel.</param>
 /// <param name="allowTimeChannel"><c>[camera] camera_allow_time_channel</c> — the second gate.</param>
@@ -94,7 +83,7 @@ internal sealed class CameraDirector(
     double releaseBlendSeconds,
     CameraPlaybackController? playback = null,
     bool debugNamespace = false,
-    bool allowTimeChannel = false)
+    bool allowTimeChannel = false) : ICameraPoseSource
 {
     private const double RadToDeg = 180.0 / Math.PI;
 
@@ -113,9 +102,14 @@ internal sealed class CameraDirector(
 
     private readonly AnchoredPositionSmoother _positionSmoother = new();
     private readonly PoseSmoother _rotationSmoother = new();
+    private readonly CameraFollowable _followable = new();
 
     private Phase _phase = Phase.Idle;
     private bool _publishedIdle = true; // the store starts at CameraStatus.Idle
+
+    // ---- the in-phase seam -------------------------------------------------------------------------
+    private CameraPoseController? _controller;
+    private FixedController? _stockFixedController;
 
     // ---- restore capture (see Take/Restore) --------------------------------------------------------
     private KsaCamera? _restoreCamera;
@@ -128,6 +122,8 @@ internal sealed class CameraDirector(
     private double _restoreFovDeg = 60;
     private bool _restoreOrtho;
     private double3 _restorePositionEcl;
+    private double3 _restoreFixedOffset;
+    private double3 _restoreFixedRotation;
 
     // ---- per-frame carry ---------------------------------------------------------------------------
     private double3 _lastPositionEcl;
@@ -137,6 +133,8 @@ internal sealed class CameraDirector(
     private string _degradeReason = "";
     private CameraPose _statusPose = CameraPose.Default;
     private CameraTarget _statusAnchor;
+    private CameraChannelMask _frameClaims;
+    private bool _frameValid;
 
     // ---- the interpolated time channel (task C4) ---------------------------------------------------
     // The simulation speed is captured LAZILY, the first time a shot actually drives the channel, and
@@ -153,6 +151,7 @@ internal sealed class CameraDirector(
     private double3 _blendStartPosition;
     private doubleQuat _blendStartRotation = doubleQuat.Identity;
     private double _blendStartFovDeg = 60;
+    private bool _blendComplete;
 
     /// <summary>The game-free store this director drives (tracks, compositor, status, events).</summary>
     internal CameraStore Store => store;
@@ -186,29 +185,36 @@ internal sealed class CameraDirector(
     ///     The order matters and each step has a reason:
     ///     <list type="number">
     ///         <item>capture the restore state from the <b>active</b> camera — which is the map camera in
-    ///             Map mode, so the capture must not assume the base camera;</item>
-    ///         <item>park the mode (see the type remarks for why Map is special);</item>
-    ///         <item><c>Unfollow(changeControl: false)</c> so <c>FixedController.OnFrame</c> goes inert;</item>
-    ///         <item>seed the compositor's <b>baseline</b> from the captured values, so an owned-but-unwritten
-    ///             camera sits exactly where the game left it — taking the camera is visually a no-op until
-    ///             something is actually written.</item>
+    ///             Map mode, so the capture must not assume the base camera — including the stock fixed
+    ///             controller's own input fields, which a restore into Fixed mode replays;</item>
+    ///         <item>install the pose controller into <c>Viewport.FixedController</c> (stock instance
+    ///             saved for shutdown) and seed its <c>CameraRotation</c> from the capture <i>before</i>
+    ///             the mode can reach Fixed — a frame drawn by the stock controller with a zero rotation
+    ///             is a process crash (<c>double3.Normalized</c> throws on zero);</item>
+    ///         <item>follow the mod anchor (<see cref="CameraFollowable"/>, held at the captured point),
+    ///             then write the captured transform back over <c>SetFollow</c>'s teleport;</item>
+    ///         <item>park the mode (see <see cref="ParkMode"/> for why Map is special);</item>
+    ///         <item>seed the compositor's <b>baseline</b> from the captured values, so an
+    ///             owned-but-unwritten camera sits exactly where the game left it.</item>
     ///     </list>
     /// </remarks>
-    [KsaAnchor("Program.MainViewport; Viewport.{Mode,GetCamera,SetCameraMode,BaseCamera}; "
+    [KsaAnchor("Program.MainViewport; Viewport.{Mode,GetCamera,SetCameraMode,BaseCamera,FixedController}; "
             + "Camera.{PositionEcl,LocalPosition,LocalRotation,NoRotation,Following,TidalLocking,"
-            + "GetFieldOfView,Orthographic,Unfollow}",
-        SourceFile = "KSA/Program.cs / KSA/Viewport.cs / KSA/Camera.cs", Verified = "2026-08-06",
-        GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
-        Notes = "Program.MainViewport (:437), NOT Program.GetCamera()/GetCameraMode(), which read the "
-            + "FRAME viewport — and never a viewport by index (Program.ViewportCount is 4, including "
-            + "the offscreen thumbnail). Viewport.Mode is a public field so the park can bypass "
-            + "SetCameraMode's TimedAlert. Unfollow(changeControl:false) preserves PositionEcl; the "
-            + "default true would null Program.ControlledVehicle.")]
+            + "GetFieldOfView,Orthographic,SetFollow}",
+        SourceFile = "KSA/Program.cs / KSA/Viewport.cs / KSA/Camera.cs / KSA/FixedController.cs",
+        Verified = "2026-08-11", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
+        Notes = "Program.MainViewport (NOT Program.GetCamera()/GetCameraMode(), which read the FRAME "
+            + "viewport — and never a viewport by index). SetFollow teleports to target + 2.5 × "
+            + "MeanRadius × forward (2.5 m for the 1 m followable), undone by re-writing the captured "
+            + "transform; changeControl:false because the default would null Program.ControlledVehicle. "
+            + "The camera is NOT unfollowed any more: following the mod anchor is what keeps the "
+            + "engine's per-camera bookkeeping (NearbyCelestial, CurrentAltitudeKm → ClampCamera) live.")]
     internal CommandResult Take()
     {
         if (_phase == Phase.Releasing)
         {
             _phase = Phase.Owned;
+            _blendComplete = false;
             ResetSmoothing();
             return CommandResult.Ok;
         }
@@ -218,6 +224,11 @@ internal sealed class CameraDirector(
 
         var viewport = Program.MainViewport;
         var active = viewport.GetCamera();
+
+        var controller = EnsureController(viewport);
+        if (controller is null)
+            return new CommandResult(CommandOutcome.Unsupported,
+                "the fixed-camera controller seam could not be installed");
 
         _restoreCamera = active;
         _restoreMode = viewport.Mode;
@@ -229,14 +240,27 @@ internal sealed class CameraDirector(
         _restoreFovDeg = active.GetFieldOfView() * RadToDeg; // getter is RADIANS, setter is DEGREES
         _restoreOrtho = active.Orthographic;
         _restorePositionEcl = active.PositionEcl;
+        _restoreFixedOffset = controller.CameraOffset;
+        _restoreFixedRotation = controller.CameraRotation;
 
-        ParkMode(viewport);
+        // Crash guard before any path can run the stock OnFrame: a zero CameraRotation is the
+        // documented DivideByZero crash. Seeded from the capture so a fallback holds the player's view.
+        var capturedForward = (-double3.UnitZ).Transform(_restoreLocalRotation);
+        if (capturedForward.IsFinite() && !capturedForward.IsNearlyZero())
+            controller.CameraRotation = capturedForward;
+        controller.CameraOffset = double3.Zero;
+        controller.ClearFault();
+        controller.Pose = this;
+
+        _followable.Hold(_restorePositionEcl);
 
         var owned = viewport.BaseCamera;
-        owned.Unfollow(changeControl: false);
         owned.NoRotation = false; // insurance: a stuck map flag would re-interpret every write below
-        owned.PositionEcl = _restorePositionEcl;
+        owned.SetFollow(_followable, tidalLocking: false, changeControl: false, alert: false);
+        owned.PositionEcl = _restorePositionEcl; // undo SetFollow's 2.5 m teleport
         owned.LocalRotation = _restoreLocalRotation;
+
+        ParkMode(viewport);
 
         store.State.SetBaseline(new CameraPose
         {
@@ -266,6 +290,8 @@ internal sealed class CameraDirector(
         _appliedFovDeg = double.NaN;
         _degradeReason = "";
         _timeWarned = false; // one warning per ownership session, not one per process
+        _frameValid = false; // the controller holds the captured pose until the first prefix runs
+        _blendComplete = false;
         ResetSmoothing();
         _phase = Phase.Owned;
         _publishedIdle = false;
@@ -291,6 +317,7 @@ internal sealed class CameraDirector(
         _blendStartPosition = _lastPositionEcl;
         _blendStartRotation = _lastRotation;
         _blendStartFovDeg = double.IsNaN(_appliedFovDeg) ? _restoreFovDeg : _appliedFovDeg;
+        _blendComplete = false;
         _phase = Phase.Releasing;
         return CommandResult.Ok;
     }
@@ -301,18 +328,20 @@ internal sealed class CameraDirector(
     ///     which is why it does not ease; <c>camera/enabled 0</c> is the one that does.
     /// </summary>
     /// <remarks>
-    ///     <b>Order matters.</b> <c>SetFollow</c> <i>teleports</i> the camera to
-    ///     <c>target + 2.5 × MeanRadius × forward</c>, so the follow target is restored <b>first</b> and
-    ///     the captured transform written over it afterwards. <c>NoRotation</c> goes before the
-    ///     transform because it changes how <c>LocalPosition</c> is interpreted, and the viewport mode
-    ///     goes last so no controller's <c>OnSwitchOn</c> can re-run against a half-restored camera.
-    ///     Safe to call at any time and idempotent; a follow target that despawned while gatOS held the
-    ///     camera degrades to no-follow rather than throwing.
+    ///     <b>Order matters.</b> <c>SetFollow</c> <i>teleports</i> the camera, so the follow target is
+    ///     restored <b>first</b> and the captured transform written over it afterwards.
+    ///     <c>NoRotation</c> goes before the transform because it changes how <c>LocalPosition</c> is
+    ///     interpreted, and the viewport mode goes last so no controller's <c>OnSwitchOn</c> can re-run
+    ///     against a half-restored camera. The stock fixed-controller input fields are put back too, so
+    ///     a player who was <i>in</i> the fixed camera gets their exact view again. Safe to call at any
+    ///     time and idempotent; a follow target that despawned degrades to no-follow rather than
+    ///     throwing. The pose controller stays installed (inert with <c>Pose</c> null) until
+    ///     <see cref="Shutdown"/> puts the stock instance back.
     /// </remarks>
     [KsaAnchor("Camera.{SetFollow,Unfollow,LocalPosition,LocalRotation,NoRotation,SetFieldOfView,"
             + "SetOrthographic}; Viewport.{Mode,SetCameraMode}; Universe.SetSimulationSpeed",
-        SourceFile = "KSA/Camera.cs / KSA/Viewport.cs / KSA/Universe.cs", Verified = "2026-08-06",
-        GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Camera.cs / KSA/Viewport.cs / KSA/Universe.cs", Verified = "2026-08-11",
+        GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
         Notes = "SetFollow(target, tidal, changeControl:false, alert:false) — the defaults would take "
             + "the player's vessel and print 'Following X' on screen. Restoring INTO Map goes through "
             + "SetCameraMode so MapController.OnSwitchOn re-establishes NoRotation and the map's own "
@@ -333,6 +362,14 @@ internal sealed class CameraDirector(
 
             var viewport = Program.MainViewport;
             var camera = _restoreCamera ?? viewport.BaseCamera;
+
+            if (_controller is { } controller)
+            {
+                controller.Pose = null;
+                controller.CameraOffset = _restoreFixedOffset;
+                if (_restoreFixedRotation.IsFinite() && !_restoreFixedRotation.IsNearlyZero())
+                    controller.CameraRotation = _restoreFixedRotation;
+            }
 
             if (CameraTargets.IsLive(_restoreFollowing) && _restoreFollowing is { } following)
                 camera.SetFollow(following, _restoreTidal, changeControl: false, alert: false);
@@ -360,43 +397,127 @@ internal sealed class CameraDirector(
         }
         finally
         {
-            _restoreCamera = null;
-            _restoreFollowing = null;
-            _appliedFovDeg = double.NaN;
-            _timeCaptured = false;
-            _appliedTimeScale = double.NaN;
-            _degradeReason = "";
-            store.State.ClearAll();
-            store.PublishStatus(CameraStatus.Idle);
-            _publishedIdle = true;
-            ResetSmoothing();
+            ClearOwnershipState();
         }
 
         return CommandResult.Ok;
     }
 
     /// <summary>
+    ///     Ownership loss detected: someone else — the player's view menu, a vessel destruction's
+    ///     wreckage follow, another mod — has the camera now. Stop driving and leave the camera exactly
+    ///     where the reclaimer put it; restoring the captured pose over their change would be a second
+    ///     fight, not a hand-back. The captured simulation speed is still restored (that change is
+    ///     invisible to the reclaimer and unambiguously gatOS's).
+    /// </summary>
+    private void StandDown(string reason)
+    {
+        _phase = Phase.Idle;
+        try
+        {
+            if (_timeCaptured)
+                Universe.SetSimulationSpeed(_restoreSimSpeed, alert: false);
+            if (_controller is { } controller)
+                controller.Pose = null;
+            playback?.Execute(new SimCommand("", CameraCommands.StopAction, SimCommand.NoOrdinal, 1));
+            ModLog.Log.Info($"gatOS camera: standing down — {reason}.");
+        }
+        finally
+        {
+            ClearOwnershipState();
+        }
+    }
+
+    /// <summary>The shared tail of <see cref="Restore"/> and <see cref="StandDown"/>.</summary>
+    private void ClearOwnershipState()
+    {
+        _restoreCamera = null;
+        _restoreFollowing = null;
+        _appliedFovDeg = double.NaN;
+        _timeCaptured = false;
+        _appliedTimeScale = double.NaN;
+        _degradeReason = "";
+        _frameValid = false;
+        _blendComplete = false;
+        store.State.ClearAll();
+        store.PublishStatus(CameraStatus.Idle);
+        _publishedIdle = true;
+        ResetSmoothing();
+    }
+
+    /// <summary>
     ///     Unload teardown: gives the camera back (restoring the simulation speed if a shot moved it),
-    ///     stops and unregisters the track player, and drops every uploaded track and parsed-track
-    ///     cache. Unconditional and idempotent — leaving a player's camera parked in <c>fixed</c> and
-    ///     unfollowed after an unload would look exactly like a broken game.
+    ///     puts the stock fixed controller back, stops and unregisters the track player, and drops every
+    ///     uploaded track and parsed-track cache. Unconditional and idempotent.
     /// </summary>
     internal void Shutdown()
     {
         Restore();
+        try
+        {
+            var viewport = Program.MainViewport;
+            if (_stockFixedController is { } stock && ReferenceEquals(viewport.FixedController, _controller))
+                viewport.FixedController = stock;
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS camera: stock controller restore failed — {ex.Message}");
+        }
+
+        _controller = null;
+        _stockFixedController = null;
         store.Clear();
         playback?.Clear();
     }
 
+    /// <summary>
+    ///     Installs the pose controller into <c>Viewport.FixedController</c>, saving the stock instance
+    ///     the first time. Idempotent; a failure degrades to "cannot own the camera" rather than
+    ///     throwing into the command drain. The stock controller's live input fields (including a
+    ///     docking-camera connector) are carried over so a player mid-fixed-view loses nothing.
+    /// </summary>
+    private CameraPoseController? EnsureController(Viewport viewport)
+    {
+        if (_controller is { } installed && ReferenceEquals(viewport.FixedController, installed))
+            return installed;
+
+        try
+        {
+            var current = viewport.FixedController;
+            var controller = new CameraPoseController(viewport.BaseCamera)
+            {
+                CameraOffset = current.CameraOffset,
+                CameraRotation = current.CameraRotation,
+                DockingConnector = current.DockingConnector,
+            };
+            _stockFixedController ??= current;
+            viewport.FixedController = controller;
+            _controller = controller;
+            return controller;
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Error($"gatOS camera: cannot install the fixed-controller seam — {ex.Message}");
+            return null;
+        }
+    }
+
     // ================================================================================================
-    //  Per-frame driver
+    //  Per-frame driver — the out-of-phase half
     // ================================================================================================
 
     /// <summary>
-    ///     The per-frame drive, called by the main viewport prefix after KSA has advanced the
-    ///     simulation and immediately before that viewport rebuilds its camera matrices.
+    ///     The per-frame prefix drive, called after KSA has advanced the simulation and immediately
+    ///     before the main viewport runs its controller (the pose controller) and rebuilds matrices.
+    ///     Prepares this frame's composed pose for <see cref="TryPose"/> and detects ownership loss —
+    ///     it writes nothing to the camera itself.
     /// </summary>
-    /// <param name="dt">The frame's player-clock delta, in seconds.</param>
+    /// <param name="dt">
+    ///     The frame's player-clock delta, in seconds. Unused here: every time-dependent step
+    ///     (smoothing, the release blend) runs in <see cref="TryPose"/> on the engine's own
+    ///     <c>inDeltaTime</c>, so the pose never integrates a different clock than the pass that
+    ///     renders it. Kept in the signature because the prefix hands it to every per-frame driver.
+    /// </param>
     internal void Update(double dt)
     {
         if (_phase == Phase.Idle)
@@ -411,14 +532,39 @@ internal sealed class CameraDirector(
         var viewport = Program.MainViewport;
         var camera = viewport.BaseCamera;
 
-        // Re-assert the park. A camera hotkey (or a script) can move the viewport out of Fixed or give
-        // the camera a follow target behind our back, which would wake FixedController.OnFrame and make
-        // two writers fight over one transform every frame. While gatOS owns the camera it is the sole
-        // writer, full stop — release it to get the player's camera controls back.
+        // Ownership-loss ladder (KSArmory's stand-down doctrine): a state gatOS did not create means
+        // someone else has the camera. Never fight a second writer frame-by-frame.
+        if (_controller is not { } controller || controller.Faulted)
+        {
+            StandDown("the in-phase pose solve faulted");
+            return;
+        }
+
+        if (!ReferenceEquals(viewport.FixedController, controller))
+        {
+            StandDown("another mod replaced the fixed-camera controller");
+            return;
+        }
+
         if (viewport.Mode != CameraMode.Fixed)
-            ParkMode(viewport);
-        if (camera.Following is not null)
-            camera.Unfollow(changeControl: false);
+        {
+            StandDown("the camera mode changed outside gatOS (the view was reclaimed)");
+            return;
+        }
+
+        if (!ReferenceEquals(camera.Following, _followable))
+        {
+            StandDown("the camera's follow target changed outside gatOS");
+            return;
+        }
+
+        // The release blend completed in-phase last frame while holding the exact restore pose; do the
+        // real restore now, from the prefix, where mode and follow changes are safe.
+        if (_phase == Phase.Releasing && _blendComplete)
+        {
+            Restore();
+            return;
+        }
 
         // ---- the track evaluator (task C3) ---------------------------------------------------------
         // TryEvaluateNow, not TryEvaluate(t, …): it samples at the player's OWN PlaybackClock, which is
@@ -439,18 +585,18 @@ internal sealed class CameraDirector(
         CameraTargets.TryResolve(pose.Anchor, out var anchor);
         _statusPose = pose;
         _statusAnchor = anchor;
+        _frameClaims = trackClaims;
+        _frameValid = true;
 
-        if (_phase == Phase.Releasing)
-        {
-            StepRelease(camera, dt);
-            if (_phase == Phase.Idle)
-                return; // Restore() already published the idle status
-        }
+        // Point the followable at this frame's anchor. An anchored pose follows the live object (the
+        // engine re-resolves it in its own pass); an un-anchored one holds the last resolved absolute
+        // point, so the offset the in-phase solve produces is near zero either way.
+        if (pose.Anchor.HasTarget)
+            _followable.Follow(pose.Anchor);
         else
-        {
-            Apply(camera, pose, anchor, trackClaims, dt);
-        }
+            _followable.Hold(_lastResolvedPositionEcl);
 
+        // The requested status; the viewport postfix re-publishes with this frame's applied transform.
         store.PublishStatus(CameraReader.Sample(viewport, camera, owned: true, pose, anchor,
             _lastResolvedPositionEcl, playback?.Current));
         _publishedIdle = false;
@@ -458,7 +604,8 @@ internal sealed class CameraDirector(
 
     /// <summary>
     ///     Re-publishes status after the original <c>Viewport.OnFrame</c> has run, so the applied fields
-    ///     include KSA's own camera clamp and are true render-time read-back rather than requested input.
+    ///     include the in-phase solve and KSA's own camera clamp — true render-time read-back rather
+    ///     than requested input.
     /// </summary>
     internal void PublishAppliedStatus()
     {
@@ -470,9 +617,15 @@ internal sealed class CameraDirector(
         _publishedIdle = false;
     }
 
+    // ================================================================================================
+    //  The in-phase half — called by CameraPoseController inside the engine's viewport pass
+    // ================================================================================================
+
     /// <summary>
-    ///     Writes one composed pose onto the camera: resolve the placement, resolve the orientation,
-    ///     run both through the critically-damped smoother, then set the projection.
+    ///     Resolves this frame's pose against the engine's fresh anchor sample: placement (smoothed on
+    ///     the anchor-relative component only), aim, projection and the time channel. Returns the final
+    ///     camera placement as an offset from <paramref name="followedEcl"/> so the controller's write —
+    ///     <c>followedEcl + offset</c> — carries no cross-phase term at all.
     /// </summary>
     /// <remarks>
     ///     An unresolvable placement or aim <b>holds the last good value</b> rather than moving the
@@ -480,20 +633,32 @@ internal sealed class CameraDirector(
     ///     mid-shot leaves the camera exactly where it was, which is the least surprising failure and
     ///     the only one that can be recovered from by writing a new target.
     /// </remarks>
-    [KsaAnchor("Camera.{PositionEcl,LocalRotation,LookAtRotation,ClampCamera,SetFieldOfView,"
-            + "SetOrthographic,SetOrthoHalfHeight}",
-        SourceFile = "KSA/Camera.cs", Verified = "2026-08-09", GameVersion = "2026.8.5.5168",
-        Risk = ChurnRisk.Medium,
-        Notes = "LocalRotation (a Transform3D public field) is what Camera.OnFrame builds the view "
-            + "matrix from — Ego2View is LocalRotation.Inverse(), NOT WorldRotation — so the pose is "
-            + "written there. LookAtRotation returns NaN for a zero forward vector, hence the guard. "
-            + "SetFieldOfView takes DEGREES and does NOT clamp (which is what makes fisheye/telephoto "
-            + "reachable); it rebuilds and inverts the projection matrix on every call, so it is only "
-            + "called when the value actually changed.")]
-    private void Apply(KsaCamera camera, in CameraPose pose, in CameraTarget anchor,
-        CameraChannelMask trackClaims, double dt)
+    [KsaAnchor("Camera.{LookAtRotation,SetFieldOfView,SetOrthographic,SetOrthoHalfHeight}; "
+            + "FixedController.OnFrame ordering (position, then rotation); Camera.OnFrame calls "
+            + "ClampCamera itself immediately after the controller",
+        SourceFile = "KSA/Camera.cs / KSA/FixedController.cs", Verified = "2026-08-11",
+        GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
+        Notes = "SetFieldOfView takes DEGREES and does NOT clamp (which is what makes "
+            + "fisheye/telephoto reachable); it rebuilds and inverts the projection matrix on every "
+            + "call, so it is only called when the value actually changed. The explicit ClampCamera "
+            + "dance of the previous implementation is gone: the engine clamps in Camera.OnFrame right "
+            + "after this, from bookkeeping the live follow keeps current.")]
+    public bool TryPose(KsaCamera camera, double3 followedEcl, double dt,
+        out double3 offsetFromFollowed, out doubleQuat rotationEcl)
     {
-        // ---- placement -----------------------------------------------------------------------------
+        offsetFromFollowed = default;
+        rotationEcl = _lastRotation;
+
+        if (!_frameValid || _phase == Phase.Idle)
+            return false;
+
+        if (_phase == Phase.Releasing)
+            return StepRelease(camera, followedEcl, dt, out offsetFromFollowed, out rotationEcl);
+
+        var pose = _statusPose;
+        var anchor = _statusAnchor;
+
+        // ---- placement, resolved fresh in the engine's epoch ---------------------------------------
         if (CameraFrames.TryResolvePlacement(pose, anchor, out var placement, out var error))
         {
             _lastResolvedPositionEcl = placement.PositionEcl;
@@ -514,13 +679,6 @@ internal sealed class CameraDirector(
             pose.Smoothing,
             dt);
         _lastPositionEcl = ToKsa(smoothed);
-        camera.PositionEcl = _lastPositionEcl;
-
-        // Camera.OnFrame clamps immediately before constructing the view matrices. Perform that same
-        // public clamp now so look-at is solved from the position KSA will actually render, not from a
-        // potentially below-terrain authored point. Camera.OnFrame repeats this idempotently below us.
-        camera.ClampCamera();
-        _lastPositionEcl = camera.PositionEcl;
 
         // ---- orientation ---------------------------------------------------------------------------
         var targetRotation = ResolveRotation(pose, anchor, _lastPositionEcl);
@@ -528,7 +686,7 @@ internal sealed class CameraDirector(
         {
             // Aim is a constraint, not a loose rotation suggestion: smoothing it makes a moving
             // subject drift out of frame. Smooth the camera's offset, then solve look-at exactly from
-            // that applied point every frame, matching unscience's successful tracking model.
+            // that applied point every frame — the same sample the engine renders from.
             _rotationSmoother.Reset();
             _lastRotation = targetRotation;
         }
@@ -538,10 +696,13 @@ internal sealed class CameraDirector(
                 pose.Smoothing, dt);
             _lastRotation = ToKsaQuat(smoothedRotation);
         }
-        camera.LocalRotation = _lastRotation;
 
-        ApplyProjection(camera, pose, trackClaims);
-        ApplyTimeScale(pose, trackClaims);
+        ApplyProjection(camera, pose, _frameClaims);
+        ApplyTimeScale(pose, _frameClaims);
+
+        offsetFromFollowed = _lastPositionEcl - followedEcl;
+        rotationEcl = _lastRotation;
+        return true;
     }
 
     private void ResetSmoothing()
@@ -580,21 +741,18 @@ internal sealed class CameraDirector(
     ///         the private <c>simspeed</c> terminal command does, and it refuses outright. So a track
     ///         driving the time channel while an auto-warp is running will <i>fight</i> it: auto-warp
     ///         re-computes and re-sets the speed every step of its own update, and whichever wrote last
-    ///         in the frame wins (the auto-warp update runs inside the sim step, this runs after the
-    ///         render, so in practice this one does). No guard is added here because both behaviours are
-    ///         defensible and the game itself does not pick: refusing would make a shot silently ignore
-    ///         its own time curve, and stopping the auto-warp would cancel a manoeuvre the player
-    ///         scheduled. Stop the auto-warp before rolling the shot.
+    ///         in the frame wins. No guard is added here because both behaviours are defensible and the
+    ///         game itself does not pick. Stop the auto-warp before rolling the shot.
     ///     </para>
     /// </remarks>
     [KsaAnchor("Universe.SetSimulationSpeed(double, alert:false); Universe.GetSimulationSpeed(); "
             + "Universe.IsAutoWarpActive",
-        SourceFile = "KSA/Universe.cs", Verified = "2026-08-06", GameVersion = "2026.8.5.5168",
+        SourceFile = "KSA/Universe.cs", Verified = "2026-08-11", GameVersion = "2026.8.19.5261",
         Risk = ChurnRisk.Medium,
-        Notes = "SetSimulationSpeed(:1998) writes _simulationSpeed and draws a TimedAlert unless "
-            + "alert:false — which matters here, the alert would be in the footage. It does NOT check "
-            + "IsAutoWarpActive (:96); only the private SetSimulationSpeedDirect terminal command does. "
-            + "GetSimulationSpeed (:2021) is the plain getter. The same primitive debug.warp binds.")]
+        Notes = "SetSimulationSpeed writes _simulationSpeed and draws a TimedAlert unless alert:false — "
+            + "which matters here, the alert would be in the footage. It does NOT check "
+            + "IsAutoWarpActive; only the private terminal command does. GetSimulationSpeed is the "
+            + "plain getter. The same primitive debug.warp binds.")]
     private void ApplyTimeScale(in CameraPose pose, CameraChannelMask trackClaims)
     {
         // Nothing claims the channel unless a shot declares it: there is no pose/time leaf, by design
@@ -641,7 +799,9 @@ internal sealed class CameraDirector(
     /// <remarks>
     ///     Roll is applied <b>only</b> on the aim path, exactly as the surface documents it ("degrees,
     ///     applied after aim"): an explicit <c>pose/rotation</c> already names a complete orientation,
-    ///     and quietly rolling it further would make the two channels fight over one value.
+    ///     and quietly rolling it further would make the two channels fight over one value. Called from
+    ///     the in-phase solve, so the aim point and the eye come from the same engine epoch — the
+    ///     structural guarantee that the camera actually looks at its subject.
     /// </remarks>
     private doubleQuat ResolveRotation(in CameraPose pose, in CameraTarget anchor, double3 positionEcl)
     {
@@ -740,10 +900,10 @@ internal sealed class CameraDirector(
     /// </summary>
     /// <remarks>
     ///     That asymmetry is forced: <c>Camera</c> exposes <c>SetOrthoHalfHeight</c> but <i>no</i>
-    ///     getter for it in 5168, so there is nothing to capture at ownership take and therefore nothing
-    ///     to put back at release. Writing the composed default every frame would silently clobber a
-    ///     value we could never restore; writing it only on request means gatOS changes it exactly when
-    ///     a guest asked it to — and that one change is, honestly, not restorable.
+    ///     getter for it, so there is nothing to capture at ownership take and therefore nothing to put
+    ///     back at release. Writing the composed default every frame would silently clobber a value we
+    ///     could never restore; writing it only on request means gatOS changes it exactly when a guest
+    ///     asked it to — and that one change is, honestly, not restorable.
     /// </remarks>
     private void ApplyProjection(KsaCamera camera, in CameraPose pose, CameraChannelMask trackClaims)
     {
@@ -764,8 +924,11 @@ internal sealed class CameraDirector(
     }
 
     /// <summary>
-    ///     One frame of the eased hand-back: interpolate from the pose gatOS was holding toward the
-    ///     captured restore pose, then perform the real restore on the completing frame.
+    ///     One frame of the eased hand-back, solved in-phase: interpolate from the pose gatOS was
+    ///     holding toward the captured restore pose, expressed — like everything else — as an offset
+    ///     from the followed anchor's fresh sample. The completing frame holds the restore pose exactly
+    ///     and flags the blend done; the next prefix performs the real restore, where mode and follow
+    ///     changes are safe (swapping controllers from inside the controller's own pass is not).
     /// </summary>
     /// <remarks>
     ///     The restore point is recomputed <i>every</i> frame of the blend rather than baked at its
@@ -773,7 +936,8 @@ internal sealed class CameraDirector(
     ///     used to be. If that target despawned mid-blend, the captured absolute ecliptic point is used
     ///     instead — the blend still completes, it just ends somewhere fixed.
     /// </remarks>
-    private void StepRelease(KsaCamera camera, double dt)
+    private bool StepRelease(KsaCamera camera, double3 followedEcl, double dt,
+        out double3 offsetFromFollowed, out doubleQuat rotationEcl)
     {
         _blendElapsed += double.IsFinite(dt) && dt > 0 ? dt : 0;
         var progress = _blendDuration > 0 ? Math.Clamp(_blendElapsed / _blendDuration, 0, 1) : 1;
@@ -787,16 +951,18 @@ internal sealed class CameraDirector(
         _lastPositionEcl = ToKsa(position);
         _lastRotation = ToKsaQuat(rotation);
         _lastResolvedPositionEcl = _lastPositionEcl;
-        camera.PositionEcl = _lastPositionEcl;
-        camera.LocalRotation = _lastRotation;
         if (double.IsFinite(fov) && fov != _appliedFovDeg)
         {
             camera.SetFieldOfView((float)fov);
             _appliedFovDeg = fov;
         }
 
+        offsetFromFollowed = _lastPositionEcl - followedEcl;
+        rotationEcl = _lastRotation;
+
         if (progress >= 1)
-            Restore();
+            _blendComplete = true;
+        return true;
     }
 
     /// <summary>
@@ -808,10 +974,11 @@ internal sealed class CameraDirector(
     /// </summary>
     [KsaAnchor("Camera.PositionCce composition (LocalPosition ⇄ IFollowable.GetBodyFixed2Ecl unless "
             + "NoRotation); IPosition.GetPositionEcl()",
-        SourceFile = "KSA/Camera.cs", Verified = "2026-08-06", GameVersion = "2026.8.5.5168",
+        SourceFile = "KSA/Camera.cs", Verified = "2026-08-11", GameVersion = "2026.8.19.5261",
         Risk = ChurnRisk.Medium,
-        Notes = "Reproduced rather than called because the camera we are blending is unfollowed at this "
-            + "point, so its own PositionCce would not use the captured target.")]
+        Notes = "Reproduced rather than called because the camera being blended follows the gatOS "
+            + "anchor at this point, so its own PositionCce would not use the captured target. Called "
+            + "from the in-phase solve, so the target's position is the engine's own fresh sample.")]
     private double3 RestorePositionEcl()
     {
         if (!CameraTargets.IsLive(_restoreFollowing) || _restoreFollowing is not { } following)
@@ -824,8 +991,11 @@ internal sealed class CameraDirector(
     }
 
     /// <summary>
-    ///     Parks the viewport in <c>Fixed</c>. Direct field assignment (no <c>TimedAlert</c>) except
-    ///     when leaving Map, which must run <c>MapController.OnSwitchOff</c> — see the type remarks.
+    ///     Parks the viewport in <c>Fixed</c>. Direct field assignment except when leaving Map, which
+    ///     must run <c>MapController.OnSwitchOff</c> (it undoes <c>NoRotation</c> and re-establishes
+    ///     the player's vessel control). Either way no "Fixed Camera" text is drawn:
+    ///     <see cref="CameraPoseController.OnSwitchOn"/> suppresses the stock alert while gatOS owns
+    ///     the park.
     /// </summary>
     private static void ParkMode(Viewport viewport)
     {
@@ -843,12 +1013,13 @@ internal sealed class CameraDirector(
     ///     <c>camera/mode</c>: switches the main viewport's camera mode through the game's own
     ///     <c>SetCameraMode</c>, so each controller's switch-on/off bookkeeping runs (the alert is the
     ///     player's own doing here — they asked for a mode change). Refused while gatOS owns the camera,
-    ///     because ownership <i>is</i> a mode park: honouring it would immediately be undone by the
-    ///     per-frame re-assert.
+    ///     because ownership <i>is</i> a mode park: honouring it would instead be detected as a reclaim
+    ///     by the next frame's stand-down ladder, which is not what a guest writing <c>camera/mode</c>
+    ///     meant.
     /// </summary>
     [KsaAnchor("Program.MainViewport; Viewport.SetCameraMode(CameraMode)",
-        SourceFile = "KSA/Program.cs / KSA/Viewport.cs", Verified = "2026-08-06",
-        GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Program.cs / KSA/Viewport.cs", Verified = "2026-08-11",
+        GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
         Notes = "SetCameraMode also calls Program.ControlledVehicle?.ClearHeldPlayerInput(), which "
             + "drops any latched ctl/translate + ctl/rotate flags (SPEC §3.4.19).")]
     internal CommandResult SetMode(CameraModeKind mode)
@@ -863,26 +1034,26 @@ internal sealed class CameraDirector(
     /// <summary>
     ///     <c>camera/follow</c>: points the game camera at a vessel or body — <b>on both of the
     ///     viewport's cameras</b>, which is the fix for the latent desync described below. Refused while
-    ///     gatOS owns the camera: a follow target would wake <c>FixedController.OnFrame</c> and give the
-    ///     transform a second writer.
+    ///     gatOS owns the camera: the camera is following the gatOS anchor, and swapping that follow is
+    ///     what <c>pose/anchor</c> is for.
     /// </summary>
     /// <remarks>
     ///     A viewport carries two camera instances — <c>BaseCamera</c> and <c>MapCamera</c> — and
     ///     <c>GetCamera()</c> returns whichever the current mode uses. The game's own follow action sets
-    ///     the target on <b>both</b> (<c>KSA/InputEvents.cs:759-760</c>); setting only one leaves the map
+    ///     the target on <b>both</b> (<c>KSA/InputEvents.cs</c>); setting only one leaves the map
     ///     view pointing at the previous target, which is exactly what gatOS's original
     ///     <c>camera.focus</c> did.
     /// </remarks>
     [KsaAnchor("Program.MainViewport.{BaseCamera,MapCamera}; Camera.{SetFollow,Unfollow}",
-        SourceFile = "KSA/Viewport.cs / KSA/Camera.cs / KSA/InputEvents.cs", Verified = "2026-08-06",
-        GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Viewport.cs / KSA/Camera.cs / KSA/InputEvents.cs", Verified = "2026-08-11",
+        GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
         Notes = "SetFollow teleports to target + 2.5×MeanRadius×forward — kept, because that is what "
             + "the game's own follow does and what a viewer expects from 'go look at this'.")]
     internal CommandResult SetFollow(in TargetRef reference)
     {
         if (_phase != Phase.Idle)
             return new CommandResult(CommandOutcome.Unsupported,
-                "gatOS owns the camera and has parked the game's follow; use pose/anchor + "
+                "gatOS owns the camera and it follows the gatOS anchor; use pose/anchor + "
                 + "pose/aim_target, or write 0 to camera/enabled first");
 
         var viewport = Program.MainViewport;
@@ -912,7 +1083,7 @@ internal sealed class CameraDirector(
     ///     the way <c>SetFollow</c>'s teleport otherwise would.
     /// </summary>
     [KsaAnchor("Camera.{Following,TidalLocking,SetFollow,PositionEcl}", SourceFile = "KSA/Camera.cs",
-        Verified = "2026-08-06", GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
+        Verified = "2026-08-11", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
         Notes = "TidalLocking is get-only (`=> _tidalLocking`); SetFollow is the only writer. Its "
             + "unconditional teleport is undone here by re-asserting the captured PositionEcl.")]
     internal CommandResult SetTidal(bool tidal)
@@ -953,12 +1124,12 @@ internal sealed class CameraDirector(
     ///     </para>
     /// </remarks>
     [KsaAnchor("Program.MainViewport.MapController; MapController.Scope",
-        SourceFile = "KSA/Viewport.cs / KSA/MapController.cs", Verified = "2026-08-06",
-        GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
-        Notes = "Scope is a plain public double field (MapController.cs:33) with no setter hook. It is "
-            + "clamped up to Camera.Following.MeanRadius near the end of every MapController.OnFrame "
-            + "and recomputed wholesale by SetDefaults() from OnSwitchOn after a focus change. The "
-            + "viewport's MapController instance is per-viewport, so bind the main one explicitly.")]
+        SourceFile = "KSA/Viewport.cs / KSA/MapController.cs", Verified = "2026-08-11",
+        GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
+        Notes = "Scope is a plain public double field with no setter hook. It is clamped up to "
+            + "Camera.Following.MeanRadius near the end of every MapController.OnFrame and recomputed "
+            + "wholesale by SetDefaults() from OnSwitchOn after a focus change. The viewport's "
+            + "MapController instance is per-viewport, so bind the main one explicitly.")]
     internal CommandResult SetMapScope(double scopeMetres)
     {
         if (!double.IsFinite(scopeMetres) || scopeMetres < 0)
@@ -987,8 +1158,8 @@ internal sealed class CameraDirector(
 
     /// <summary>
     ///     <c>camera/pose/reset</c>: drops every live override so each channel falls back to the
-    ///     baseline captured at ownership take (an active track, once C3 lands, keeps driving — a reset
-    ///     is about <i>your</i> writes, not about stopping playback). The smoother is reset with them:
+    ///     baseline captured at ownership take (an active track keeps driving — a reset is about
+    ///     <i>your</i> writes, not about stopping playback). The smoother is reset with them:
     ///     a reset is a hard cut, and carrying the previous setpoint's momentum into it would sail the
     ///     camera past the baseline before settling back onto it.
     /// </summary>

@@ -5,9 +5,17 @@ using KSA;
 namespace gatOS.GameMod.Game.Ksa.Camera;
 
 /// <summary>
-///     Places gatOS's camera work inside the main viewport's frame, immediately before KSA runs its
-///     active controller and rebuilds the camera matrices.
+///     Places gatOS's per-frame bookkeeping inside the main viewport's frame, immediately before KSA
+///     runs its active controller and rebuilds the camera matrices.
 /// </summary>
+/// <remarks>
+///     Since the KSArmory-pattern re-implementation (2026-08-11) the prefix no longer writes the
+///     camera: it advances shared schedules, drains commands and lets the director <i>prepare</i> this
+///     frame's composed pose. The pose itself is applied by <see cref="CameraPoseController"/> — the
+///     <c>FixedController</c> subclass the director installs — which KSA's own
+///     <c>Viewport.OnFrame</c> runs right after this prefix, in phase with the matrix build. The
+///     postfix still samples KSA's final clamped transform for read-back.
+/// </remarks>
 internal static class CameraViewportPatch
 {
     private static bool _faulted;
