@@ -22,7 +22,7 @@ namespace gatOS.GameMod.Game.Ksa;
 /// </summary>
 internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager welds, ThugLifeManager thugLife,
     IvaPhysicsManager iva, AudioActuator? audio = null, ScheduleStore? schedules = null,
-    CameraDirector? camera = null)
+    CameraDirector? camera = null, FaceFxManager? faceFx = null)
     : ICommandExecutor
 {
     /// <inheritdoc />
@@ -52,6 +52,11 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
             // add), so all of it is handled vessel-agnostically here, before the per-vessel resolution.
             if (command.Action.StartsWith("debug.thug_life", StringComparison.Ordinal))
                 return Finish(accessor, ThugLife(command));
+
+            // Face-anchored particle effects: the target vessel rides Token (resolved inside), so the
+            // family routes vessel-agnostically here like thug_life.
+            if (command.Action.StartsWith("debug.fx_", StringComparison.Ordinal))
+                return Finish(accessor, FaceFx(command));
 
             // IVA free-floating cabin objects: registry-keyed like thug_life (object id in Ordinal,
             // vessel id in Token for adopt), so the whole grammar is handled vessel-agnostically here.
@@ -274,6 +279,39 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
                 if (v.Count != 2)
                     return new CommandResult(CommandOutcome.Invalid, "thug_life size expects 'width height'");
                 return thugLife.SetSize(c.Ordinal, v[0], v[1]);
+            }
+            default:
+                return new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'");
+        }
+    }
+
+    /// <summary>
+    ///     Routes the face-FX actions to the <see cref="FaceFxManager"/>. The target vessel arrives in
+    ///     <see cref="SimCommand.Token"/> and the profile in <see cref="SimCommand.Aux"/>; the game-free
+    ///     parser already validated both shapes, so failures here are live-state ones (despawned vessel,
+    ///     exhausted pool).
+    /// </summary>
+    private CommandResult FaceFx(SimCommand c)
+    {
+        if (faceFx is not { } fx)
+            return new CommandResult(CommandOutcome.Unsupported, "face FX is not wired");
+        switch (c.Action)
+        {
+            case FaceFxRules.ClearAction:
+                return fx.Clear();
+            case FaceFxRules.SpawnAction:
+            {
+                if (ResolveVehicle(c.Token ?? "") is not { } vehicle)
+                    return new CommandResult(CommandOutcome.NotFound, $"vessel '{c.Token}' is gone");
+                var v = c.Values ?? [];
+                if (v.Count != FaceFxRules.SpawnSlots)
+                    return new CommandResult(CommandOutcome.Invalid,
+                        "fx spawn expects [scale, hasOffset, x, y, z]");
+                double3? offset = v[FaceFxRules.SpawnHasOffset] > 0.5
+                    ? new double3(v[FaceFxRules.SpawnOffX], v[FaceFxRules.SpawnOffY],
+                        v[FaceFxRules.SpawnOffZ])
+                    : null;
+                return fx.Spawn(vehicle, c.Aux ?? "", v[FaceFxRules.SpawnScale], offset);
             }
             default:
                 return new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'");

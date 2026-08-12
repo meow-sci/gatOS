@@ -1,0 +1,29 @@
+[package]
+name = "fx"
+version = "0.1.0"
+edition = "2021"
+description = "Drive gatOS face-anchored particle effects (/sim/debug/fx) — bursts of party, sparkle, danger and death on kitten vessels"
+license = "MIT"
+publish = false
+
+[lib]
+name = "fx"
+path = "src/lib.rs"
+
+[[bin]]
+name = "fx"
+path = "src/bin/fx.rs"
+
+[[bin]]
+name = "celebrate"
+path = "src/bin/celebrate.rs"
+
+[dependencies]
+# Tiny blocking HTTP client for the optional --url (HTTP /v1/fs) source; no TLS — the gatOS API is
+# plain http:// over slirp. The default source reads/writes the /sim mount directly with std::fs.
+ureq = { version = "2", default-features = false }
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true

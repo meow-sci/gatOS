@@ -5,6 +5,7 @@ using Brutal.VulkanApi;
 using Brutal.VulkanApi.Abstractions;
 using Core;
 using KSA;
+using KsaCamera = KSA.Camera;
 using RenderCore;
 
 namespace gatOS.GameMod.Game.Ksa.ThugLife;
@@ -242,21 +243,33 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
     ///     Records the draw for a single entry. The caller must already be inside the offscreen render
     ///     pass (invoked from the postfix on <c>SuperMeshRenderSystem.RenderMainPass</c>).
     /// </summary>
-    [KsaAnchor("Program.GetMainCamera().MVP.viewProjection; Program.SetViewport(cmd); "
-            + "Vehicle.GetMatrixAsmb2Ego(Camera); Vehicle.Asmb2Ego; Part.PositionEgo(in double4x4); "
-            + "Part.Asmb2Ego(doubleQuat); double3.Transform",
+    /// <remarks>
+    ///     Matrices come from <c>Program.GetRenderCamera()</c> — the camera of the viewport
+    ///     <i>currently being rendered</i> — not the main camera. <c>RenderMainPass</c> runs once per
+    ///     visible viewport, which since 5261 includes the two 128² crew-portrait viewports (they are
+    ///     always visible), so the glasses appear in the crew cam automatically and in the right place.
+    ///     Ego space is camera-relative and the view-projection is per-camera; using the main camera
+    ///     here would draw portrait-pass quads with the main view's clip transform.
+    /// </remarks>
+    [KsaAnchor("Program.GetRenderCamera() (RenderedViewport.GetCamera()); Camera.MVP.viewProjection; "
+            + "Program.SetViewport(cmd); Vehicle.GetMatrixAsmb2Ego(Camera); Vehicle.Asmb2Ego; "
+            + "Part.PositionEgo(in double4x4); Part.Asmb2Ego(doubleQuat); double3.Transform",
         SourceFile = "KSA/Program.cs / KSA/Camera.cs / KSA/Vehicle.cs / KSA/Part.cs",
-        Verified = "2026-06-28", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.High,
-        Notes = "Per-frame ego-space model matrix + draw for one thug-life quad. Render-internals churn.")]
+        Verified = "2026-08-12", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
+        Notes = "Per-frame ego-space model matrix + draw for one thug-life quad, per rendered viewport "
+            + "(main + the two crew-portrait viewports at indices 4/5 — Program.RenderViewport calls "
+            + "RenderMainPass for every visible viewport, and the portrait targets share the offscreen "
+            + "target's color/depth formats and sample count, so one pipeline serves all passes). "
+            + "Program.SetViewport already sizes to RenderedViewport.Size.")]
     public void RecordDraw(CommandBuffer cmd, ThugLifeEntry entry)
     {
         if (_disposed || !entry.Visible)
             return;
-        if (!TryComputeModelEgo(entry, out var modelEgo))
-            return;
 
-        var camera = Program.GetMainCamera();
+        var camera = Program.GetRenderCamera();
         if (camera == null)
+            return;
+        if (!TryComputeModelEgo(entry, camera, out var modelEgo))
             return;
 
         // Row-vector convention (KSA matches .NET / DirectXMath): MVP = model * viewProjection.
@@ -286,11 +299,10 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
     ///     the sole size control), or, when <see cref="ThugLifeEntry.Part"/> is null (<c>part_iid 0</c>),
     ///     to the vehicle's assembly origin/orientation.
     /// </summary>
-    private static bool TryComputeModelEgo(ThugLifeEntry entry, out float4x4 model)
+    private static bool TryComputeModelEgo(ThugLifeEntry entry, KsaCamera camera, out float4x4 model)
     {
         model = float4x4.Identity;
-        var camera = Program.GetMainCamera();
-        if (camera == null || entry.Vehicle is not { } vehicle)
+        if (entry.Vehicle is not { } vehicle)
             return false;
 
         var vehMat = vehicle.GetMatrixAsmb2Ego(camera);

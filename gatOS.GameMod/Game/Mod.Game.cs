@@ -100,6 +100,10 @@ public sealed partial class Mod
     // render postfix + GPU resources are installed lazily on the first entry and torn down on the last;
     // UpdateThugLife (OnBeforeUi) validates entries each frame and self-gates to nothing when empty.
     private ThugLifeManager? _thugLife;
+
+    // Face-anchored particle FX (Game/Ksa/Fx/FaceFxManager): one-shot bursts from the game's own
+    // particle pool, empty and free until a guest writes /sim/debug/fx/spawn.
+    private FaceFxManager? _faceFx;
     private bool _thugLifeDead;
 
     // The audio playback actuator (GATOS_CUSTOM_AUDIO_PLAN): owns the FMOD Sound cache + channel
@@ -224,7 +228,7 @@ public sealed partial class Mod
             EnsureControlObjects();
             _telemetry ??= new TelemetrySampler(store, _telemetrySettings, _health!, _sampleStats,
                 _sampleAllocStats, _weldManager!, _thugLife!, _ivaPhysics!, _ivaStats, _audioStore,
-                _scheduleStore, _cameraDirector, Config.DebugNamespace);
+                _scheduleStore, _cameraDirector, Config.DebugNamespace, _faceFx);
             // Sample only while something can actually read /sim: the VM is up, or a host-side
             // transport client is connected (9p / HTTP / MQTT). Otherwise the sampler idles for free.
             var state = CurrentVmStatus.State;
@@ -297,8 +301,11 @@ public sealed partial class Mod
             _cameraDirector = new CameraDirector(cameraStore, Config.CameraReleaseBlendS, cameraPlayback,
                 Config.DebugNamespace, Config.CameraAllowTimeChannel);
         }
+        // Constructing the face-FX registry touches no particle type: it holds no emitter until a
+        // guest writes /sim/debug/fx/spawn, and every spawn is a self-retiring burst.
+        _faceFx ??= new FaceFxManager();
         _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels, _weldManager, _thugLife,
-            _ivaPhysics, _audioActuator, _scheduleStore, _cameraDirector);
+            _ivaPhysics, _audioActuator, _scheduleStore, _cameraDirector, _faceFx);
     }
 
     /// <summary>Snapshots the <c>[iva]</c> config section into the cabin simulation's tuning record.</summary>
@@ -677,6 +684,17 @@ public sealed partial class Mod
         catch (Exception ex)
         {
             ModLog.Log.Debug($"gatOS thug-life teardown error: {ex.Message}");
+        }
+
+        try
+        {
+            // Cuts every gatOS particle burst short (ForceSpawningComplete — the graceful stop) so no
+            // pool slot outlives the mod.
+            _faceFx?.Shutdown();
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS face-FX teardown error: {ex.Message}");
         }
 
         try

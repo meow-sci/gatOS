@@ -69,8 +69,8 @@ public sealed class SimFsTreeTests
 
         string[] vesselFiles =
         [
-            "id", "name", "situation", "parent", "controlled", "controllable", "com", "scale",
-            "always_render", "telemetry",
+            "id", "name", "situation", "parent", "controlled", "controllable", "is_kitten", "com",
+            "scale", "always_render", "telemetry",
             "position/cci", "position/ecl", "position/lat", "position/lon",
             "velocity/orbital", "velocity/surface", "velocity/inertial", "velocity/cci",
             "attitude/quat", "attitude/rates",
@@ -225,6 +225,8 @@ public sealed class SimFsTreeTests
             "debug/vessels/test-1/refill_fuel",
             "debug/vessels/test-1/refill_battery", "debug/vessels/test-1/docking/0/pushoff_impulse",
             "debug/time/warp", "debug/focus", "debug/control_vessel",
+            // face FX: the spawn grammar, the profile vocabulary, the live count, the stop-everything
+            "debug/fx/help", "debug/fx/profiles", "debug/fx/spawn", "debug/fx/count", "debug/fx/clear",
             // FX editors: catalog-driven leaves, the per-entity json/reset docs, the family helps
             "debug/engineplume/help", "debug/engineplume/templates/kerolox/core/radius_weight",
             "debug/engineplume/templates/kerolox/emission/color0",

@@ -76,6 +76,13 @@ public sealed record SimSnapshot(
     public IReadOnlyList<ThugLifeSnapshot> ThugLife { get; init; } = [];
 
     /// <summary>
+    ///     Live face-FX particle emitters gatOS currently holds from the game's shared pool
+    ///     (<c>/sim/debug/fx/count</c>). Spawned effects are one-shot bursts that self-retire, so this
+    ///     decays to zero on its own.
+    /// </summary>
+    public int FaceFxLive { get; init; }
+
+    /// <summary>
     ///     The IVA free-floating-object simulation (the <c>/sim/debug/iva</c> cheat): the master
     ///     on/off flag, the live objects, per-vessel interior-geometry diagnostics and step stats.
     ///     Never null — <see cref="IvaSnapshot.Off"/> is the default, so the master flag is readable
@@ -166,6 +173,12 @@ public sealed record VesselSnapshot(
     ///     rev 4699.)
     /// </summary>
     public bool Controllable { get; init; }
+
+    /// <summary>
+    ///     Whether this vessel is an EVA kitten (<c>KittenEva : Vehicle</c>) — the addressable subject
+    ///     of the face-anchored cosmetics (thug-life quads, face FX) and the crew-cam portraits.
+    /// </summary>
+    public bool IsKitten { get; init; }
 
     /// <summary>NavBall-derived attitude/performance; null when unavailable.</summary>
     public NavballSnapshot? Navball { get; init; }

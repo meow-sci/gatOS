@@ -76,6 +76,7 @@ internal static class VesselReader
         public bool Controlled, Controllable, EngineOn, LightsMasterOn;
         public double Scale;
         public bool AlwaysRender;
+        public bool IsKitten;
     }
 
     private static Basics ReadBasics(Vehicle vehicle, string? activeVesselId)
@@ -121,6 +122,8 @@ internal static class VesselReader
             BatteryCapacity = batteryCapacity,
             Controlled = activeVesselId is not null && vehicle.Id == activeVesselId,
             Controllable = ReadControllable(vehicle),
+            // KittenEva : Vehicle — the type test IS the contract (there is no flag on Vehicle).
+            IsKitten = vehicle is KittenEva,
             EngineOn = ReadEngineOn(vehicle),
             LightsMasterOn = vehicle.LightsOn,
             // Rides the always-sampled core (not the gated detail pass): one cheap Part.Scale.X
@@ -162,6 +165,7 @@ internal static class VesselReader
         {
             Controlled = b.Controlled,
             Controllable = b.Controllable,
+            IsKitten = b.IsKitten,
             EngineOn = b.EngineOn,
             Scale = b.Scale,
             AlwaysRender = b.AlwaysRender,
@@ -222,6 +226,7 @@ internal static class VesselReader
         {
             Controlled = b.Controlled,
             Controllable = b.Controllable,
+            IsKitten = b.IsKitten,
             EngineOn = b.EngineOn,
             Scale = b.Scale,
             AlwaysRender = b.AlwaysRender,

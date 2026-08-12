@@ -41,6 +41,7 @@ internal sealed class TelemetrySampler
     private readonly ValueStat _allocStats;
     private readonly WeldManager _welds;
     private readonly ThugLifeManager _thugLife;
+    private readonly FaceFxManager? _faceFx;
     private readonly IvaPhysicsManager _iva;
     private readonly PerfStat _ivaStats;
     private readonly AudioStore? _audio;
@@ -103,8 +104,10 @@ internal sealed class TelemetrySampler
     internal TelemetrySampler(SnapshotStore store, TelemetrySettings settings, KsaHealth health,
         PerfStat sampleStats, ValueStat allocStats, WeldManager welds, ThugLifeManager thugLife,
         IvaPhysicsManager iva, PerfStat ivaStats, AudioStore? audio = null,
-        ScheduleStore? schedules = null, CameraDirector? camera = null, bool debugNamespace = false)
+        ScheduleStore? schedules = null, CameraDirector? camera = null, bool debugNamespace = false,
+        FaceFxManager? faceFx = null)
     {
+        _faceFx = faceFx;
         _debugNamespace = debugNamespace;
         _store = store;
         _settings = settings;
@@ -246,6 +249,8 @@ internal sealed class TelemetrySampler
             Welds = _welds.Snapshot(),
             AlwaysRenderIva = IvaForceRender.Enabled,
             ThugLife = _thugLife.Snapshot(),
+            // Also the per-sample sweep: LiveCount drops handles whose burst self-retired.
+            FaceFxLive = _faceFx?.LiveCount() ?? 0,
             Iva = _iva.Snapshot(_ivaStats),
             // FX editors: gated by the debug namespace and memoized inside the reader — an idle tick
             // republishes the previous instance by reference (no KSA reads, no allocation).

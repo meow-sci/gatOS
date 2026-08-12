@@ -1,0 +1,21 @@
+[package]
+name = "thug"
+version = "0.1.0"
+edition = "2021"
+description = "Slide thug-life glasses onto a kitten vessel over the gatOS /sim filesystem — sensible defaults, tunable size, animation speed and easing"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "thug"
+path = "src/main.rs"
+
+[dependencies]
+# Tiny blocking HTTP client for the optional --url (HTTP /v1/fs) source; no TLS — the gatOS API is
+# plain http:// over slirp. The default source reads/writes the /sim mount directly with std::fs.
+ureq = { version = "2", default-features = false }
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true

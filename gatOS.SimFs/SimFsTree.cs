@@ -724,6 +724,7 @@ public static class SimFsTree
                     Line($"{p}/parent", "parent", () => Vessel(vesselId).ParentBodyName ?? ""),
                     Line($"{p}/controlled", "controlled", () => Formats.Flag(Vessel(vesselId).Controlled)),
                     Line($"{p}/controllable", "controllable", () => Formats.Flag(Vessel(vesselId).Controllable)),
+                    Line($"{p}/is_kitten", "is_kitten", () => Formats.Flag(Vessel(vesselId).IsKitten)),
                     Line($"{p}/com", "com", () => Formats.Vector(Vessel(vesselId).CenterOfMass)),
                     // Model scale factor. Intentionally a first-class vessel node (NOT under
                     // /sim/debug): the first per-vessel control deliberately moved out of the debug
@@ -1298,6 +1299,8 @@ public static class SimFsTree
                 WeldsDir(),
                 // The thug-life sunglasses registry: add/clear/count + one editable entry per quad.
                 ThugLifeDir(),
+                // Face-anchored particle effects: one-shot bursts at a kitten's face (or any vessel).
+                FaceFxDir(),
                 // The IVA free-floating-object simulation: the master on/off, the adopt/release
                 // grammar, diagnostics, and one entry per floating object.
                 IvaDir(),
@@ -1694,6 +1697,63 @@ public static class SimFsTree
                 // The full write-compatible spec line (echo to add to recreate as a new id).
                 Line($"{q}/spec", "spec", () => Formats.ThugLifeSpec(ThugLife(id))));
         }
+
+        // ---- face FX (particle bursts at a kitten's face; gated by debug_namespace) ----------------
+
+        /// <summary>
+        ///     <c>/sim/debug/fx</c>: one-shot particle effects anchored to a vessel — by default at an
+        ///     EVA kitten's face. Spawns are <c>Burst</c> emitters that self-retire, so there is no
+        ///     per-entry registry to edit: the surface is spawn + count + clear.
+        /// </summary>
+        private VfsDirectory FaceFxDir()
+        {
+            const string q = "debug/fx";
+            var sink = _commands!;
+            var spawn = LineControlFile.Create("spawn", Qid($"{q}/spawn"), sink,
+                () => "", FaceFxRules.ParseSpawn);
+            var clear = new TriggerFile("clear", Qid($"{q}/clear"), sink,
+                new SimCommand("", FaceFxRules.ClearAction, SimCommand.NoOrdinal, 1));
+            return DelegateDirectory.Fixed("fx", Qid(q),
+                new StaticTextFile("help", Qid($"{q}/help"), () => FaceFxHelp),
+                Line($"{q}/profiles", "profiles", () => string.Join(",", FaceFxRules.Profiles)),
+                Line($"{q}/count", "count",
+                    () => _store.Current.FaceFxLive.ToString(CultureInfo.InvariantCulture)),
+                spawn, clear);
+        }
+
+        /// <summary>The console-friendly readme behind <c>/sim/debug/fx/help</c>.</summary>
+        private const string FaceFxHelp =
+            """
+            fx — one-shot particle effects on a vessel, anchored at an EVA kitten's face by
+            default. Pure cosmetic cheat riding the game's own particle pool. All paths below
+            are under /sim/debug/fx/ (needs the debug namespace enabled).
+
+            SPAWN
+              echo "<vessel> <profile>" > spawn
+              echo "<vessel> <profile> [scale <s>] [offset <x> <y> <z>]" > spawn
+                profile   party    confetti burst (celebrations)
+                          sparkle  gold glitter (small wins)
+                          danger   fire flash (trouble)
+                          death    slow grey puff (the end)
+                scale     size/velocity multiplier, > 0            (default 1)
+                offset    metres, vessel assembly frame — overrides the face anchor
+                          (kittens default to their face; other vessels to their origin)
+
+            INSPECT / STOP
+              cat profiles     # the profile tokens, comma-separated
+              cat count        # live gatOS emitters (bursts self-retire in seconds)
+              echo 1 > clear   # stop every gatOS effect now
+
+            EXAMPLES  (EVA Kittens: Hunter, Polaris, Banjo)
+              echo "Hunter party" > /sim/debug/fx/spawn
+              echo "Polaris danger scale 1.5" > /sim/debug/fx/spawn
+              for k in Hunter Polaris Banjo; do echo "$k sparkle" > /sim/debug/fx/spawn; done
+
+            Notes: effects are Burst emitters from the game's shared pool (capped; EAGAIN-style
+            'busy' when exhausted) and render only when the graphics Particles setting is on.
+            The same actions work over HTTP /v1 and MQTT.
+
+            """;
 
         /// <summary>
         ///     Parses a thug-life <c>add</c> line — either <c>"&lt;vessel&gt; &lt;part_iid&gt;"</c> (2 tokens,
