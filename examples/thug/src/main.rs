@@ -9,12 +9,20 @@
 //! thug                        # shades on EVERY kitten currently in the world
 //! thug Hunter Polaris Banjo   # the whole squad, animated together
 //! thug --time 3 --easing linear --scale 1.5 Hunter
+//! thug --end-pos 0.25,0.01,-0.30 Hunter          # where they come to rest
+//! thug --start-pos -2,0,0 Hunter                 # where the slide begins
 //! thug --off Hunter           # slide them off and remove the entry
 //! ```
 //!
-//! Defaults are tuned for the EVA kittens: the glasses land at (0.23, 0, -0.33) in the root part's
-//! frame, rotated (90, 180, 90) degrees, sized 0.9 × 0.22 m — the same numbers the original
-//! `examples/thug-life/thug.ts` used. Everything is overridable.
+//! **Poses.** `--end-pos x,y,z` is the resting pose and `--start-pos x,y,z` is where the animation
+//! begins, both in the anchor part's local frame, in metres — the same frame and text format as
+//! the entry's own `position` leaf, so a pose tuned by hand on a live entry pastes straight back
+//! in. Omitted, the start is [`DEFAULT_DROP`] above the end, which is the drop-onto-the-face move
+//! the original `examples/thug-life/thug.ts` hard-coded.
+//!
+//! The defaults — resting at (0.23, 0, -0.33), rotated (90, 180, 90) degrees, sized 0.9 × 0.22 m —
+//! are the thug.ts numbers, tuned for one EVA kitten model. They are a starting point: expect to
+//! dial `--end-pos` in per model.
 //!
 //! **Sources.** The `/sim` mount is the default and the preferred one: run inside the gatOS guest
 //! (or anywhere the 9p export is mounted) and no flags are needed. `--sim <path>` / `$GATOS_SIM`
@@ -31,17 +39,22 @@
 //! `GET /v1/vessels` instead of the `vessels/by-id` listing.
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-// ---- resting pose (the thug.ts numbers, now defaults rather than hard-code) --------------------
+// ---- default poses (the thug.ts numbers — a starting point, not the truth) ---------------------
 
-const FINAL_X: f64 = 0.23;
-const FINAL_Y: f64 = 0.0;
-const FINAL_Z: f64 = -0.33;
+/// Where the glasses come to rest, in the anchor part's local frame. Every kitten model wants its
+/// own number here, so this is only the default for `--end-pos`.
+const DEFAULT_END: Vec3 = Vec3 { x: 0.23, y: 0.0, z: -0.33 };
+
+/// How far above the resting pose the glasses start when `--start-pos` is not given: straight up
+/// the part's +Z, so the shades drop onto the face.
+const DEFAULT_DROP: Vec3 = Vec3 { x: 0.0, y: 0.0, z: 1.5 };
+
 const DEFAULT_ROT: (f64, f64, f64) = (90.0, 180.0, 90.0);
 const DEFAULT_W: f64 = 0.9;
 const DEFAULT_H: f64 = 0.22;
@@ -131,14 +144,82 @@ fn main() {
 }
 
 // ================================================================================================
+//  Poses
+// ================================================================================================
+
+/// A position in the anchor part's local frame, metres.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Vec3 {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+impl Vec3 {
+    /// Parses `x,y,z`. Commas are the documented separator, but spaces are accepted too, so a
+    /// quoted `"0.23 0 -0.33"` — the form the `position` file itself reads back — pastes straight
+    /// into the flag.
+    fn parse(s: &str, name: &str) -> Result<Self, String> {
+        let parts: Vec<&str> = s
+            .split([',', ' ', '\t'])
+            .filter(|p| !p.is_empty())
+            .collect();
+        if parts.len() != 3 {
+            return Err(format!(
+                "{name} needs 'x,y,z' (three numbers, metres), got '{s}'"
+            ));
+        }
+        let mut v = [0.0f64; 3];
+        for (slot, text) in v.iter_mut().zip(parts) {
+            *slot = text
+                .parse::<f64>()
+                .map_err(|_| format!("{name} needs numbers, got '{text}'"))?;
+            if !slot.is_finite() {
+                return Err(format!("{name} needs finite numbers, got '{text}'"));
+            }
+        }
+        Ok(Self { x: v[0], y: v[1], z: v[2] })
+    }
+
+    fn add(self, other: Self) -> Self {
+        Self { x: self.x + other.x, y: self.y + other.y, z: self.z + other.z }
+    }
+
+    /// Linear interpolation, `t` in [0,1]: `self` at 0, `to` at 1.
+    fn lerp(self, to: Self, t: f64) -> Self {
+        Self {
+            x: self.x + (to.x - self.x) * t,
+            y: self.y + (to.y - self.y) * t,
+            z: self.z + (to.z - self.z) * t,
+        }
+    }
+
+    /// The animation-frame wire form: fixed precision, so a frame is never written in exponential
+    /// notation (which the `position` control file would reject).
+    fn frame(self) -> String {
+        format!("{:.6} {:.6} {:.6}", self.x, self.y, self.z)
+    }
+}
+
+/// The `position` file's own format — plain numbers, so the final write lands the exact value the
+/// user typed rather than a rounded one.
+impl fmt::Display for Vec3 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {} {}", self.x, self.y, self.z)
+    }
+}
+
+// ================================================================================================
 //  Config / args
 // ================================================================================================
 
 struct Config {
     help: bool,
     vessels: Vec<String>,
-    /// Drop-in distance above the face, metres (start offset along the part's +Z).
-    meters: f64,
+    /// Where the glasses come to rest (the pose the animation ends on).
+    end: Vec3,
+    /// Where the animation starts; None = [`DEFAULT_DROP`] above `end`.
+    start: Option<Vec3>,
     /// Animation duration, seconds.
     time: f64,
     /// Write rate, Hz.
@@ -160,11 +241,23 @@ struct Config {
 }
 
 impl Config {
+    /// The animation's endpoints, `--off` included: on, the glasses drop from `start` to `end`;
+    /// off, they lift back from `end` to `start`.
+    fn poses(&self) -> (Vec3, Vec3) {
+        let start = self.start.unwrap_or_else(|| self.end.add(DEFAULT_DROP));
+        if self.off {
+            (self.end, start)
+        } else {
+            (start, self.end)
+        }
+    }
+
     fn from_args() -> Result<Self, String> {
         let mut config = Config {
             help: false,
             vessels: Vec::new(),
-            meters: 1.5,
+            end: DEFAULT_END,
+            start: None,
             time: 1.2,
             hz: 60.0,
             easing: Easing::EaseOut,
@@ -186,7 +279,18 @@ impl Config {
             };
             match arg.as_str() {
                 "-h" | "--help" => config.help = true,
-                "--meters" | "-m" => config.meters = parse_f64(&take("--meters")?, "--meters")?,
+                "--end-pos" | "--end" => config.end = Vec3::parse(&take("--end-pos")?, "--end-pos")?,
+                "--start-pos" | "--start" => {
+                    config.start = Some(Vec3::parse(&take("--start-pos")?, "--start-pos")?)
+                }
+                "--meters" | "-m" => {
+                    return Err(
+                        "--meters is gone: the poses are explicit now — --start-pos x,y,z and \
+                         --end-pos x,y,z (the old -m 1.5 is the default start, 1.5 m up the \
+                         part's +Z from --end-pos)"
+                            .into(),
+                    )
+                }
                 "--time" | "-t" => config.time = parse_f64(&take("--time")?, "--time")?,
                 "--hz" => config.hz = parse_f64(&take("--hz")?, "--hz")?,
                 "--easing" | "-e" => config.easing = Easing::parse(&take("--easing")?)?,
@@ -239,9 +343,6 @@ impl Config {
         if !(config.hz.is_finite() && config.hz > 0.0 && config.hz <= 1000.0) {
             return Err("--hz must be in (0, 1000]".into());
         }
-        if !(config.meters.is_finite()) {
-            return Err("--meters must be finite".into());
-        }
         Ok(config)
     }
 }
@@ -259,8 +360,15 @@ USAGE:
 
 With no vessel ids, every kitten in the world gets the treatment (via the is_kitten leaf).
 
+POSES:
+    Both poses are 'x,y,z' in metres, in the anchor part's local frame — the same frame and
+    format as /sim/debug/thug_life/<id>/position, so you can tune a live entry by hand and
+    paste the value straight back in as --end-pos. Defaults suit the EVA kittens; every other
+    model wants its own numbers.
+
 OPTIONS:
-    -m, --meters <m>    drop-in start height above the face, metres     [default: 1.5]
+        --end-pos <x,y,z>   where the glasses come to rest        [default: 0.23,0,-0.33]
+        --start-pos <x,y,z> where the animation starts    [default: 1.5 m up +Z from --end-pos]
     -t, --time <s>      animation duration, seconds (0 = instant)       [default: 1.2]
         --hz <hz>       position write rate, Hz                         [default: 60]
     -e, --easing <fn>   ease-out | ease-in | ease-in-out | linear       [default: ease-out]
@@ -281,6 +389,8 @@ EXAMPLES:
     thug Hunter
     thug                                   # the whole litter
     thug --time 2.5 --easing linear --scale 1.4 Polaris
+    thug --end-pos 0.25,0.01,-0.30 Hunter  # dial in where they sit
+    thug --start-pos -2,0,0 --end-pos 0.23,0,-0.33 Hunter    # slide in from the side
     thug --off Hunter                      # take them off
 "
     );
@@ -353,11 +463,15 @@ fn ensure_entry(source: &dyn Source, vessel: &str, config: &Config) -> Result<u3
 
     let part = resolve_part(source, vessel, config)?;
 
-    let start_z = FINAL_Z + config.meters;
+    // Seed the entry at the pose the animation begins on, so the glasses never flash at the
+    // resting pose for a frame before the first position write lands.
+    let (from, _) = config.poses();
     let (rx, ry, rz) = DEFAULT_ROT;
     let line = format!(
-        "{vessel} {part} {FINAL_X} {FINAL_Y} {start_z:.6} {rx} {ry} {rz} {} {}",
-        config.width, config.height
+        "{vessel} {part} {} {rx} {ry} {rz} {} {}",
+        from.frame(),
+        config.width,
+        config.height
     );
     source
         .write("debug/thug_life/add", &line)
@@ -470,16 +584,12 @@ fn discover_kittens(source: &dyn Source) -> Vec<String> {
 //  Animation
 // ================================================================================================
 
-/// Slides every entry's Z from `FINAL_Z + meters` to `FINAL_Z` (or the reverse for `--off`),
+/// Slides every entry from the start pose to the resting pose (or the reverse for `--off`),
 /// writing positions for the whole squad each frame so they move together. Returns false when the
 /// position writes are failing (control disabled, entry gone) — the first error is reported once
 /// rather than per frame.
 fn animate(source: &dyn Source, entries: &BTreeMap<String, u32>, config: &Config) -> bool {
-    let (from_z, to_z) = if config.off {
-        (FINAL_Z, FINAL_Z + config.meters)
-    } else {
-        (FINAL_Z + config.meters, FINAL_Z)
-    };
+    let (from, to) = config.poses();
 
     let mut failure: Option<String> = None;
     let mut report = |source: &dyn Source, path: &str, value: &str| {
@@ -494,16 +604,14 @@ fn animate(source: &dyn Source, entries: &BTreeMap<String, u32>, config: &Config
     let frames = (config.time * config.hz).round().max(0.0) as u64;
     if frames > 0 {
         eprintln!(
-            "thug: animating {frames} frames over {}s at {}Hz",
+            "thug: animating {frames} frames over {}s at {}Hz, ({from}) -> ({to})",
             config.time, config.hz
         );
         let frame_time = Duration::from_secs_f64(1.0 / config.hz);
         let start = Instant::now();
         for frame in 0..frames {
             let progress = frame as f64 / frames as f64;
-            let z = from_z + (to_z - from_z) * config.easing.apply(progress);
-            let mut position = String::new();
-            let _ = write!(position, "{FINAL_X} {FINAL_Y} {z:.6}");
+            let position = from.lerp(to, config.easing.apply(progress)).frame();
             for id in entries.values() {
                 report(source, &format!("debug/thug_life/{id}/position"), &position);
             }
@@ -517,7 +625,7 @@ fn animate(source: &dyn Source, entries: &BTreeMap<String, u32>, config: &Config
     }
 
     // Exact final pose, always.
-    let position = format!("{FINAL_X} {FINAL_Y} {to_z}");
+    let position = to.to_string();
     for id in entries.values() {
         report(source, &format!("debug/thug_life/{id}/position"), &position);
     }
@@ -718,6 +826,66 @@ mod tests {
     fn json_array_parses_the_vessel_roster() {
         assert_eq!(json_string_array("[\"Hunter\",\"Polaris\"]"), ["Hunter", "Polaris"]);
         assert!(json_string_array("[]").is_empty());
+    }
+
+    #[test]
+    fn pose_parses_csv_and_spaces() {
+        let want = Vec3 { x: 0.23, y: 0.0, z: -0.33 };
+        for text in ["0.23,0,-0.33", "0.23, 0, -0.33", "0.23 0 -0.33"] {
+            assert_eq!(Vec3::parse(text, "--end-pos").unwrap(), want, "text {text}");
+        }
+    }
+
+    #[test]
+    fn pose_rejects_bad_input() {
+        for text in ["1,2", "1,2,3,4", "1,2,three", "", "1,2,inf"] {
+            assert!(Vec3::parse(text, "--end-pos").is_err(), "text {text}");
+        }
+    }
+
+    #[test]
+    fn default_start_is_the_drop_above_the_end() {
+        let config = config_with(Vec3 { x: 1.0, y: 2.0, z: 3.0 }, None, false);
+        let (from, to) = config.poses();
+        assert_eq!(to, Vec3 { x: 1.0, y: 2.0, z: 3.0 });
+        assert_eq!(from, Vec3 { x: 1.0, y: 2.0, z: 4.5 });
+    }
+
+    #[test]
+    fn off_reverses_the_endpoints() {
+        let start = Vec3 { x: -2.0, y: 0.0, z: 0.0 };
+        let end = Vec3 { x: 0.23, y: 0.0, z: -0.33 };
+        assert_eq!(config_with(end, Some(start), false).poses(), (start, end));
+        assert_eq!(config_with(end, Some(start), true).poses(), (end, start));
+    }
+
+    #[test]
+    fn lerp_walks_every_axis() {
+        let a = Vec3 { x: 0.0, y: 1.0, z: -1.0 };
+        let b = Vec3 { x: 2.0, y: -1.0, z: 1.0 };
+        assert_eq!(a.lerp(b, 0.0), a);
+        assert_eq!(a.lerp(b, 1.0), b);
+        assert_eq!(a.lerp(b, 0.5), Vec3 { x: 1.0, y: 0.0, z: 0.0 });
+    }
+
+    /// A config carrying only what [`Config::poses`] reads.
+    fn config_with(end: Vec3, start: Option<Vec3>, off: bool) -> Config {
+        Config {
+            help: false,
+            vessels: Vec::new(),
+            end,
+            start,
+            time: 1.2,
+            hz: 60.0,
+            easing: Easing::EaseOut,
+            width: DEFAULT_W,
+            height: DEFAULT_H,
+            part: None,
+            cameras: None,
+            off,
+            sim: None,
+            url: None,
+        }
     }
 
     #[test]

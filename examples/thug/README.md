@@ -10,6 +10,8 @@ thug Hunter                 # shades on Hunter, all defaults
 thug                        # shades on EVERY kitten currently in the world
 thug Hunter Polaris Banjo   # the whole squad, animated in lockstep
 thug --time 3 --easing linear --scale 1.5 Polaris
+thug --end-pos 0.25,0.01,-0.30 Hunter          # where they come to rest
+thug --start-pos -2,0,0 Hunter                 # where the slide begins
 thug --cameras crew Hunter  # visible only in the crew-portrait face cams
 thug --off Hunter           # slide them off and remove the entry
 ```
@@ -19,21 +21,42 @@ thug --off Hunter           # slide them off and remove the entry
 1. Resolves the vessel's root part (`/sim/vessels/by-id/<id>/parts/0/instance_id`), or uses
    `--part <iid>`. When that leaf is missing because the parts list is not being sampled
    (`telemetry_vessel_parts = false`), it anchors to the vehicle frame (part iid `0`) and says so.
-2. Creates the entry via `/sim/debug/thug_life/add` seeded `--meters` above the resting pose
-   (reuses an existing entry for the vessel if one is live).
-3. Writes `<entry>/position` at `--hz` for `--time` seconds, easing the Z offset down to the
-   resting pose `(0.23, 0, -0.33)` — rotation `(90, 180, 90)`, size `0.9 × 0.22 m` unless
+2. Creates the entry via `/sim/debug/thug_life/add`, seeded at the start pose (reuses an existing
+   entry for the vessel if one is live).
+3. Writes `<entry>/position` at `--hz` for `--time` seconds, easing from `--start-pos` to
+   `--end-pos` on all three axes — rotation `(90, 180, 90)`, size `0.9 × 0.22 m` unless
    overridden. Multiple vessels animate in the same loop, so the squad moves together.
 4. `--off` runs the same animation in reverse, then removes the entry.
 
 With no vessel arguments it targets every vessel whose `/sim/vessels/by-id/<id>/is_kitten`
 leaf reads `1`.
 
+## Poses
+
+`--end-pos x,y,z` is where the glasses come to rest; `--start-pos x,y,z` is where the animation
+begins. Both are metres in the **anchor part's local frame** — the same frame and text format as
+the entry's own `position` leaf, so you can nudge a live entry by hand:
+
+```bash
+echo "0.25 0.01 -0.30" > /sim/debug/thug_life/0/position   # tune it live
+thug --end-pos 0.25,0.01,-0.30 Hunter                      # then keep it
+```
+
+Commas are the documented separator; a quoted `"0.25 0.01 -0.30"` works too, so a value read back
+out of `position` pastes straight in. With `--start-pos` omitted the start is 1.5 m up the part's
+`+Z` from `--end-pos` — the drop-onto-the-face move. Give it explicitly for anything else (a slide
+in from the side, a rise from below).
+
+The defaults (`0.23,0,-0.33`, rotation `(90, 180, 90)`, `0.9 × 0.22 m`) come from `thug.ts` and are
+tuned for one EVA kitten model — treat them as a starting point, not the right answer for every
+model.
+
 ## Options
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-m, --meters <m>` | `1.5` | drop-in start height above the face |
+| `--end-pos <x,y,z>` | `0.23,0,-0.33` | resting pose, metres, anchor part's local frame |
+| `--start-pos <x,y,z>` | 1.5 m up `+Z` from `--end-pos` | pose the animation starts from |
 | `-t, --time <s>` | `1.2` | animation duration (`0` = instant) |
 | `--hz <hz>` | `60` | position write rate |
 | `-e, --easing <fn>` | `ease-out` | `linear` \| `ease-in` \| `ease-out` \| `ease-in-out` |

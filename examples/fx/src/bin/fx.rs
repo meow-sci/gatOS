@@ -12,7 +12,7 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use fx::{discover_kittens, profiles, source_from, spawn};
+use fx::{check_source, discover_kittens, profiles, source_from, spawn};
 
 fn main() {
     let mut args = std::env::args().skip(1).peekable();
@@ -75,6 +75,12 @@ fn main() {
     };
 
     let source = source_from(sim, url);
+    if let Err(lines) = check_source(source.as_ref()) {
+        for line in lines {
+            eprintln!("fx: {line}");
+        }
+        std::process::exit(1);
+    }
 
     match command.as_str() {
         "list" => {
@@ -154,6 +160,7 @@ OPTIONS:
     -i, --interval <s>   seconds between repeats                      [default: 0.35]
         --sim <path>     the /sim mount root        [default: /sim, env: GATOS_SIM]
         --url <base>     use HTTP /v1/fs at <base>              [env: GATOS_HTTP]
+                         (with or without the /v1 suffix; the mount wins when it is up)
     -h, --help           this text
 
 EXAMPLES:
@@ -161,8 +168,8 @@ EXAMPLES:
     fx danger Hunter --bursts 3
     fx death Hunter --scale 2
 
-Requires gatOS with [control] debug_namespace = true, and the game's graphics
-Particles setting on.
+Requires gatOS with debug_namespace = true, and the game's graphics Particles
+setting on.
 "
     );
 }

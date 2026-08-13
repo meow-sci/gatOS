@@ -11,7 +11,7 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use fx::{discover_kittens, source_from, spawn};
+use fx::{check_source, discover_kittens, source_from, spawn};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -73,6 +73,12 @@ party and sparkle profiles, one volley per beat. Defaults: 6 volleys, 0.35 s apa
     }
 
     let source = source_from(sim, url);
+    if let Err(lines) = check_source(source.as_ref()) {
+        for line in lines {
+            eprintln!("celebrate: {line}");
+        }
+        std::process::exit(1);
+    }
 
     if vessels.is_empty() {
         vessels = discover_kittens(source.as_ref());
