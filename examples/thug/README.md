@@ -17,7 +17,8 @@ thug --off Hunter           # slide them off and remove the entry
 ## What it does
 
 1. Resolves the vessel's root part (`/sim/vessels/by-id/<id>/parts/0/instance_id`), or uses
-   `--part <iid>`.
+   `--part <iid>`. When that leaf is missing because the parts list is not being sampled
+   (`telemetry_vessel_parts = false`), it anchors to the vehicle frame (part iid `0`) and says so.
 2. Creates the entry via `/sim/debug/thug_life/add` seeded `--meters` above the resting pose
    (reuses an existing entry for the vessel if one is live).
 3. Writes `<entry>/position` at `--hz` for `--time` seconds, easing the Z offset down to the
@@ -44,12 +45,32 @@ leaf reads `1`.
 | `--sim <path>` | `/sim` (`$GATOS_SIM`) | the mounted 9p filesystem root |
 | `--url <base>` | (`$GATOS_HTTP`) | use the HTTP `/v1/fs` mirror instead of the mount |
 
+## Where it reads and writes
+
+The `/sim` mount is the default and the preferred source; in the guest no flags are needed. The
+order is: `--url` → `--sim` → `$GATOS_SIM` → the `/sim` mount if it is actually serving →
+`$GATOS_HTTP`.
+
+The mount deliberately outranks `$GATOS_HTTP`, because the guest login shell *presets* that
+variable whenever the host serves the HTTP API — treating it as the default would route every
+in-guest run through slirp, and through a transport that may be switched off by the time the
+program runs.
+
+`$GATOS_HTTP` is the `/v1` API base (`http://sim:4242/v1`), so `--url` takes a base with or
+without the `/v1` suffix; both address `/v1/fs/<path>`.
+
+`/v1/fs` serves leaves, not directories, so over HTTP the entry lookup probes `<id>/vessel` by
+number and the vessel roster comes from `GET /v1/vessels`; on the mount both are directory reads.
+
 ## Requirements
 
-- gatOS running with `[control] debug_namespace = true` (the `thug_life` surface lives under
-  `/sim/debug/`).
+- gatOS running with `debug_namespace = true` (the `thug_life` surface lives under `/sim/debug/`)
+  and `control_enabled = true` (every entry write is a control-file write).
 - Either a mounted `/sim` (inside the guest, or any host mount of the 9p export) or the HTTP
-  API (`--url http://localhost:<port>`).
+  API (`--url http://localhost:<port>`, needs `http_enabled` + `http_field_endpoints`).
+
+If neither is reachable the program says which source it tried and why it gave up, rather than
+blaming the vessel.
 
 ## Build
 

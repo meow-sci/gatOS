@@ -1,7 +1,7 @@
 //! thug — slide thug-life glasses onto a kitten vessel, the trivial way.
 //!
 //! The gatOS mod renders the glasses as a part-anchored textured quad (`/sim/debug/thug_life/`,
-//! needs `[control] debug_namespace`). This CLI wraps the whole ceremony — find the vessel's root
+//! needs `debug_namespace = true`). This CLI wraps the whole ceremony — find the vessel's root
 //! part, create (or reuse) the entry, then animate the glasses sliding down onto the face:
 //!
 //! ```text
@@ -16,13 +16,19 @@
 //! frame, rotated (90, 180, 90) degrees, sized 0.9 × 0.22 m — the same numbers the original
 //! `examples/thug-life/thug.ts` used. Everything is overridable.
 //!
-//! **Sources.** By default this talks to the `/sim` mount with plain file I/O (run it inside the
-//! gatOS guest, or anywhere the 9p filesystem is mounted; `--sim <path>` / `$GATOS_SIM` move the
-//! root). `--url <base>` / `$GATOS_HTTP` switches to the mod's HTTP `/v1/fs/<path>` mirror instead —
-//! handy from the host during development. `/v1/fs` has no directory listing, so entry discovery
-//! probes `<id>/vessel` leaves by number rather than reading the directory (works on both sources).
+//! **Sources.** The `/sim` mount is the default and the preferred one: run inside the gatOS guest
+//! (or anywhere the 9p export is mounted) and no flags are needed. `--sim <path>` / `$GATOS_SIM`
+//! move the root; `--url <base>` / `$GATOS_HTTP` switch to the mod's HTTP `/v1/fs/<path>` mirror
+//! instead — the host-side dev path. The guest login shell *presets* `$GATOS_HTTP` whenever the
+//! host serves HTTP, so it is only consulted when no mount is there to use: in the guest the 9p
+//! mount is both faster and always in sync with what the mod is serving.
 //!
-//! Kitten auto-discovery (`thug` with no vessel args) reads each vessel's `is_kitten` leaf.
+//! `$GATOS_HTTP` is the `/v1` base (`http://sim:4242/v1`), so `--url` accepts a base with or
+//! without the `/v1` suffix; both address `/v1/fs/<path>`.
+//!
+//! Directory listings exist only on the mount (`/v1/fs` serves leaves, not directories), so over
+//! HTTP entry discovery probes `<id>/vessel` leaves by number and the vessel roster comes from
+//! `GET /v1/vessels` instead of the `vessels/by-id` listing.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -40,8 +46,12 @@ const DEFAULT_ROT: (f64, f64, f64) = (90.0, 180.0, 90.0);
 const DEFAULT_W: f64 = 0.9;
 const DEFAULT_H: f64 = 0.22;
 
-/// Highest entry id probed when discovering existing entries (ids reuse the lowest free slot, so
-/// live ids are dense near zero; 64 is far beyond anything sane).
+/// Where the 9p export is mounted in the guest.
+const DEFAULT_SIM: &str = "/sim";
+
+/// Highest entry id probed when discovering existing entries over a source with no directory
+/// listing (ids reuse the lowest free slot, so live ids are dense near zero; 64 is far beyond
+/// anything sane).
 const MAX_PROBE_ID: u32 = 64;
 
 fn main() {
@@ -58,13 +68,25 @@ fn main() {
         return;
     }
 
-    let source: Box<dyn Source> = match &config.url {
-        Some(base) => Box::new(HttpSource::new(base.clone())),
-        None => Box::new(FsSource::new(config.sim.clone())),
-    };
+    let source = pick_source(&config);
+    let source = source.as_ref();
+
+    // Fail on the *transport* before blaming a vessel: an unmounted /sim and a missing kitten look
+    // identical one leaf at a time, and the first one is the one that keeps happening.
+    if source.read("time/ut").is_none() {
+        eprintln!("thug: cannot reach the sim through {} (time/ut unreadable).", source.label());
+        eprintln!("      in the guest: is /sim mounted, and is the mod loaded? (mount | grep /sim)");
+        eprintln!("      over HTTP: gatos.toml needs http_enabled + http_field_endpoints = true");
+        std::process::exit(1);
+    }
+    if source.read("debug/thug_life/count").is_none() {
+        eprintln!("thug: {} has no debug/thug_life surface.", source.label());
+        eprintln!("      set debug_namespace = true in gatos.toml and reload the mod.");
+        std::process::exit(1);
+    }
 
     let vessels = if config.vessels.is_empty() {
-        let kittens = discover_kittens(source.as_ref());
+        let kittens = discover_kittens(source);
         if kittens.is_empty() {
             eprintln!("thug: no vessel ids given and no kittens found (is_kitten reads empty).");
             eprintln!("      name a vessel: thug Hunter");
@@ -79,7 +101,7 @@ fn main() {
     // Resolve every vessel to a live entry id first, so the squad animates in lockstep.
     let mut entries: BTreeMap<String, u32> = BTreeMap::new();
     for vessel in &vessels {
-        match ensure_entry(source.as_ref(), vessel, &config) {
+        match ensure_entry(source, vessel, &config) {
             Ok(id) => {
                 entries.insert(vessel.clone(), id);
             }
@@ -90,7 +112,7 @@ fn main() {
         }
     }
 
-    animate(source.as_ref(), &entries, &config);
+    let wrote = animate(source, &entries, &config);
 
     if config.off {
         for (vessel, id) in &entries {
@@ -99,8 +121,12 @@ fn main() {
                 Err(e) => eprintln!("thug: {vessel}: remove failed: {e}"),
             }
         }
-    } else {
+    } else if wrote {
         eprintln!("thug: deal with it.");
+    }
+
+    if !wrote {
+        std::process::exit(1);
     }
 }
 
@@ -127,7 +153,9 @@ struct Config {
     cameras: Option<String>,
     /// Reverse: slide the glasses off and remove the entry.
     off: bool,
-    sim: PathBuf,
+    /// Explicit `--sim` root; None = the env/mount defaults (see [`pick_source`]).
+    sim: Option<PathBuf>,
+    /// Explicit `--url` base; None = the env/mount defaults (see [`pick_source`]).
     url: Option<String>,
 }
 
@@ -145,10 +173,8 @@ impl Config {
             part: None,
             cameras: None,
             off: false,
-            sim: std::env::var_os("GATOS_SIM")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("/sim")),
-            url: std::env::var("GATOS_HTTP").ok().filter(|s| !s.is_empty()),
+            sim: None,
+            url: None,
         };
         let mut scale: Option<f64> = None;
         let mut explicit_size = false;
@@ -190,7 +216,7 @@ impl Config {
                     config.cameras = Some(value.to_lowercase());
                 }
                 "--off" => config.off = true,
-                "--sim" => config.sim = PathBuf::from(take("--sim")?),
+                "--sim" => config.sim = Some(PathBuf::from(take("--sim")?)),
                 "--url" => config.url = Some(take("--url")?),
                 other if other.starts_with('-') => return Err(format!("unknown option {other}")),
                 vessel => config.vessels.push(vessel.to_string()),
@@ -247,7 +273,8 @@ OPTIONS:
                         'main crew' = everywhere but extra windows)      [default: all]
         --off           slide the glasses off (reverse) and remove the entry
         --sim <path>    the /sim mount root            [default: /sim, env: GATOS_SIM]
-        --url <base>    use HTTP /v1/fs at <base> instead of the mount  [env: GATOS_HTTP]
+        --url <base>    use the HTTP /v1/fs mirror instead of the mount  [env: GATOS_HTTP]
+                        (with or without the /v1 suffix; the mount wins when it is up)
     -h, --help          this text
 
 EXAMPLES:
@@ -311,10 +338,12 @@ fn ensure_entry(source: &dyn Source, vessel: &str, config: &Config) -> Result<u3
     if let Some(id) = find_entry(source, vessel) {
         eprintln!("thug: {vessel}: reusing entry {id}");
         // A reused entry may carry an old size; assert the requested one.
-        let _ = source.write(
+        if let Err(e) = source.write(
             &format!("debug/thug_life/{id}/size"),
             &format!("{} {}", config.width, config.height),
-        );
+        ) {
+            eprintln!("thug: entry {id}: size write failed: {e}");
+        }
         apply_cameras(source, id, config);
         return Ok(id);
     }
@@ -322,14 +351,7 @@ fn ensure_entry(source: &dyn Source, vessel: &str, config: &Config) -> Result<u3
         return Err("no glasses to take off".into());
     }
 
-    let part = match config.part {
-        Some(iid) => iid.to_string(),
-        None => source
-            .read(&format!("vessels/by-id/{vessel}/parts/0/instance_id"))
-            .ok_or_else(|| format!("vessel '{vessel}' not found (parts/0/instance_id unreadable)"))?
-            .trim()
-            .to_string(),
-    };
+    let part = resolve_part(source, vessel, config)?;
 
     let start_z = FINAL_Z + config.meters;
     let (rx, ry, rz) = DEFAULT_ROT;
@@ -339,7 +361,7 @@ fn ensure_entry(source: &dyn Source, vessel: &str, config: &Config) -> Result<u3
     );
     source
         .write("debug/thug_life/add", &line)
-        .map_err(|e| format!("add failed: {e} (is [control] debug_namespace enabled?)"))?;
+        .map_err(|e| format!("add failed: {e} (is control_enabled = true in gatos.toml?)"))?;
 
     // The add lands on the next game tick; poll briefly for the entry to materialize.
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -354,6 +376,35 @@ fn ensure_entry(source: &dyn Source, vessel: &str, config: &Config) -> Result<u3
     Err("timed out waiting for the entry to appear after add".into())
 }
 
+/// Picks the anchor part instance id: `--part` wins, else the vessel's root part.
+///
+/// A missing `parts/0/instance_id` has two very different causes, so it is diagnosed rather than
+/// reported as one error: the vessel really is gone (name it), or the parts list simply is not
+/// being sampled (`telemetry_vessel_parts = false`), in which case part iid `0` — the vehicle
+/// frame — is the documented stand-in and lands the quad in the same place on a kitten.
+fn resolve_part(source: &dyn Source, vessel: &str, config: &Config) -> Result<String, String> {
+    if let Some(iid) = config.part {
+        return Ok(iid.to_string());
+    }
+    if let Some(iid) = source.read(&format!("vessels/by-id/{vessel}/parts/0/instance_id")) {
+        return Ok(iid.trim().to_string());
+    }
+    if source.read(&format!("vessels/by-id/{vessel}/id")).is_none() {
+        let roster = source.vessels();
+        let known = if roster.is_empty() {
+            "the world has no vessels right now".to_string()
+        } else {
+            format!("known vessels: {}", roster.join(", "))
+        };
+        return Err(format!("vessel '{vessel}' is not in the world ({known})"));
+    }
+    eprintln!(
+        "thug: {vessel}: parts are not published (telemetry_vessel_parts off) — \
+         anchoring to the vehicle frame"
+    );
+    Ok("0".to_string())
+}
+
 /// Writes the entry's camera mask when `--cameras` was given (default = the mod's `all`).
 fn apply_cameras(source: &dyn Source, id: u32, config: &Config) {
     if let Some(cameras) = &config.cameras {
@@ -363,8 +414,23 @@ fn apply_cameras(source: &dyn Source, id: u32, config: &Config) {
     }
 }
 
-/// Probes entry ids for one whose `vessel` leaf matches. Works on both sources (no readdir).
+/// Finds the entry id whose `vessel` leaf matches. Uses the directory listing where the source has
+/// one (the mount); over HTTP it probes ids, stopping once `count` live entries have been seen.
 fn find_entry(source: &dyn Source, vessel: &str) -> Option<u32> {
+    let matches = |id: u32| {
+        source
+            .read(&format!("debug/thug_life/{id}/vessel"))
+            .filter(|v| v.trim() == vessel)
+            .map(|_| id)
+    };
+
+    if let Some(names) = source.list("debug/thug_life") {
+        // The listing carries `add`/`clear`/`count`/`help` alongside the numbered entry dirs.
+        let mut ids: Vec<u32> = names.iter().filter_map(|n| n.parse::<u32>().ok()).collect();
+        ids.sort_unstable();
+        return ids.into_iter().find_map(matches);
+    }
+
     let count: u32 = source
         .read("debug/thug_life/count")
         .and_then(|s| s.trim().parse().ok())
@@ -387,20 +453,16 @@ fn find_entry(source: &dyn Source, vessel: &str) -> Option<u32> {
     None
 }
 
-/// Auto-discovery: every vessel whose `is_kitten` leaf reads 1. The vessel roster comes from the
-/// `list` leaf (one id per line), so this works over HTTP too (no directory listing there).
+/// Auto-discovery: every vessel whose `is_kitten` leaf reads 1, over the source's vessel roster.
 fn discover_kittens(source: &dyn Source) -> Vec<String> {
-    let roster = source.read("vessels/list").unwrap_or_default();
-    roster
-        .lines()
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
+    source
+        .vessels()
+        .into_iter()
         .filter(|id| {
             source
                 .read(&format!("vessels/by-id/{id}/is_kitten"))
                 .is_some_and(|v| v.trim() == "1")
         })
-        .map(String::from)
         .collect()
 }
 
@@ -409,12 +471,24 @@ fn discover_kittens(source: &dyn Source) -> Vec<String> {
 // ================================================================================================
 
 /// Slides every entry's Z from `FINAL_Z + meters` to `FINAL_Z` (or the reverse for `--off`),
-/// writing positions for the whole squad each frame so they move together.
-fn animate(source: &dyn Source, entries: &BTreeMap<String, u32>, config: &Config) {
+/// writing positions for the whole squad each frame so they move together. Returns false when the
+/// position writes are failing (control disabled, entry gone) — the first error is reported once
+/// rather than per frame.
+fn animate(source: &dyn Source, entries: &BTreeMap<String, u32>, config: &Config) -> bool {
     let (from_z, to_z) = if config.off {
         (FINAL_Z, FINAL_Z + config.meters)
     } else {
         (FINAL_Z + config.meters, FINAL_Z)
+    };
+
+    let mut failure: Option<String> = None;
+    let mut report = |source: &dyn Source, path: &str, value: &str| {
+        if let Err(e) = source.write(path, value) {
+            if failure.is_none() {
+                eprintln!("thug: position write failed: {path}: {e}");
+                failure = Some(e);
+            }
+        }
     };
 
     let frames = (config.time * config.hz).round().max(0.0) as u64;
@@ -431,7 +505,7 @@ fn animate(source: &dyn Source, entries: &BTreeMap<String, u32>, config: &Config
             let mut position = String::new();
             let _ = write!(position, "{FINAL_X} {FINAL_Y} {z:.6}");
             for id in entries.values() {
-                let _ = source.write(&format!("debug/thug_life/{id}/position"), &position);
+                report(source, &format!("debug/thug_life/{id}/position"), &position);
             }
             // Pace against the wall clock, not per-frame sleeps, so write latency doesn't stretch
             // the animation.
@@ -445,8 +519,10 @@ fn animate(source: &dyn Source, entries: &BTreeMap<String, u32>, config: &Config
     // Exact final pose, always.
     let position = format!("{FINAL_X} {FINAL_Y} {to_z}");
     for id in entries.values() {
-        let _ = source.write(&format!("debug/thug_life/{id}/position"), &position);
+        report(source, &format!("debug/thug_life/{id}/position"), &position);
     }
+
+    failure.is_none()
 }
 
 // ================================================================================================
@@ -455,8 +531,45 @@ fn animate(source: &dyn Source, entries: &BTreeMap<String, u32>, config: &Config
 
 /// Read/write one `/sim`-relative leaf (path never starts with a slash).
 trait Source {
+    /// A short description of where this source points, for error messages.
+    fn label(&self) -> String;
+
     fn read(&self, path: &str) -> Option<String>;
+
     fn write(&self, path: &str, value: &str) -> Result<(), String>;
+
+    /// The child names of a `/sim` directory, or None when the transport has no listing (HTTP).
+    fn list(&self, path: &str) -> Option<Vec<String>>;
+
+    /// The vessel roster (ids as they appear under `vessels/by-id`).
+    fn vessels(&self) -> Vec<String>;
+}
+
+/// Picks the source: explicit flags win, then `$GATOS_SIM`, then the mount if it is actually
+/// serving, then `$GATOS_HTTP`.
+///
+/// The mount deliberately outranks `$GATOS_HTTP`: the guest login shell presets that variable
+/// whenever the host serves the HTTP API, so preferring it would silently route every in-guest run
+/// through slirp — and through a transport that may well be disabled by the time the program runs.
+fn pick_source(config: &Config) -> Box<dyn Source> {
+    if let Some(base) = &config.url {
+        return Box::new(HttpSource::new(base.clone()));
+    }
+    if let Some(root) = &config.sim {
+        return Box::new(FsSource::new(root.clone()));
+    }
+    if let Some(root) = std::env::var_os("GATOS_SIM") {
+        return Box::new(FsSource::new(PathBuf::from(root)));
+    }
+    // `/sim` exists as an empty directory even when the 9p mount is down (init creates it), so the
+    // test is "is the tree there", not "does the path exist".
+    if Path::new(DEFAULT_SIM).join("time").is_dir() {
+        return Box::new(FsSource::new(PathBuf::from(DEFAULT_SIM)));
+    }
+    if let Some(base) = std::env::var("GATOS_HTTP").ok().filter(|s| !s.is_empty()) {
+        return Box::new(HttpSource::new(base));
+    }
+    Box::new(FsSource::new(PathBuf::from(DEFAULT_SIM)))
 }
 
 struct FsSource {
@@ -476,6 +589,10 @@ impl FsSource {
 }
 
 impl Source for FsSource {
+    fn label(&self) -> String {
+        format!("the mount at {}", self.root.display())
+    }
+
     fn read(&self, path: &str) -> Option<String> {
         fs::read_to_string(self.resolve(path)).ok()
     }
@@ -483,17 +600,34 @@ impl Source for FsSource {
     fn write(&self, path: &str, value: &str) -> Result<(), String> {
         fs::write(self.resolve(path), value).map_err(|e| e.to_string())
     }
+
+    fn list(&self, path: &str) -> Option<Vec<String>> {
+        let mut names: Vec<String> = fs::read_dir(self.resolve(path))
+            .ok()?
+            .filter_map(|e| Some(e.ok()?.file_name().to_string_lossy().into_owned()))
+            .collect();
+        names.sort();
+        Some(names)
+    }
+
+    fn vessels(&self) -> Vec<String> {
+        self.list("vessels/by-id").unwrap_or_default()
+    }
 }
 
 struct HttpSource {
+    /// The server root *without* the `/v1` suffix — `url()` adds it back.
     base: String,
     agent: ureq::Agent,
 }
 
 impl HttpSource {
-    fn new(mut base: String) -> Self {
-        while base.ends_with('/') {
-            base.pop();
+    fn new(base: String) -> Self {
+        // `$GATOS_HTTP` is the /v1 API base (`http://sim:4242/v1`), but a bare host base is the
+        // natural thing to type on --url. Normalize both to the server root.
+        let mut base = base.trim_end_matches('/').to_string();
+        if let Some(root) = base.strip_suffix("/v1") {
+            base = root.to_string();
         }
         Self {
             base,
@@ -509,6 +643,10 @@ impl HttpSource {
 }
 
 impl Source for HttpSource {
+    fn label(&self) -> String {
+        format!("the HTTP API at {}/v1", self.base)
+    }
+
     fn read(&self, path: &str) -> Option<String> {
         self.agent
             .get(&self.url(path))
@@ -518,11 +656,75 @@ impl Source for HttpSource {
     }
 
     fn write(&self, path: &str, value: &str) -> Result<(), String> {
-        self.agent
+        match self
+            .agent
             .post(&self.url(path))
             .set("Content-Type", "text/plain")
             .send_string(value)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+        {
+            Ok(_) => Ok(()),
+            // The mod answers a rejected field write with a JSON error body ({"error":"EACCES",…});
+            // it says far more than "400 Bad Request" does.
+            Err(ureq::Error::Status(code, response)) => Err(match response.into_string() {
+                Ok(body) if !body.trim().is_empty() => format!("HTTP {code}: {}", body.trim()),
+                _ => format!("HTTP {code}"),
+            }),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    fn list(&self, _path: &str) -> Option<Vec<String>> {
+        None // /v1/fs serves leaves only — callers fall back to probing.
+    }
+
+    fn vessels(&self) -> Vec<String> {
+        // GET /v1/vessels is the roster endpoint: a JSON array of ids, e.g. ["Hunter","Polaris"].
+        let body = self
+            .agent
+            .get(&format!("{}/v1/vessels", self.base))
+            .call()
+            .ok()
+            .and_then(|r| r.into_string().ok())
+            .unwrap_or_default();
+        json_string_array(&body)
+    }
+}
+
+/// Pulls the elements out of a flat JSON array of strings (`["a","b"]`) — the one JSON shape this
+/// program consumes, so it does not carry a parser to read it.
+fn json_string_array(body: &str) -> Vec<String> {
+    body.split('"')
+        .skip(1)
+        .step_by(2)
+        .map(|s| s.replace("\\\"", "\"").replace("\\\\", "\\"))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn http_base_normalizes_with_and_without_v1() {
+        // $GATOS_HTTP carries the /v1 suffix; a hand-typed --url usually does not. Both must
+        // address /v1/fs/<path> exactly once.
+        for base in ["http://sim:4242", "http://sim:4242/", "http://sim:4242/v1", "http://sim:4242/v1/"] {
+            let source = HttpSource::new(base.to_string());
+            assert_eq!(source.url("time/ut"), "http://sim:4242/v1/fs/time/ut", "base {base}");
+        }
+    }
+
+    #[test]
+    fn json_array_parses_the_vessel_roster() {
+        assert_eq!(json_string_array("[\"Hunter\",\"Polaris\"]"), ["Hunter", "Polaris"]);
+        assert!(json_string_array("[]").is_empty());
+    }
+
+    #[test]
+    fn easing_hits_both_ends() {
+        for easing in [Easing::Linear, Easing::EaseIn, Easing::EaseOut, Easing::EaseInOut] {
+            assert_eq!(easing.apply(0.0), 0.0);
+            assert_eq!(easing.apply(1.0), 1.0);
+        }
     }
 }
