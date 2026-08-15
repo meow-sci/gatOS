@@ -37,15 +37,15 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
             var isDebug = command.Action.StartsWith("debug.", StringComparison.Ordinal);
 
             // Vessel-agnostic debug actions (no target vehicle to resolve).
-            if (command.Action == "debug.warp")
+            if (command.Action == SimActions.DebugWarp)
                 return Finish(accessor, DebugActuator.SetWarp(command.Value));
 
             // Global render cheat: force interior (IVA) meshes visible.
-            if (command.Action == "debug.always_render_iva")
+            if (command.Action == SimActions.DebugAlwaysRenderIva)
                 return Finish(accessor, IvaActuator.SetAlwaysRender(command.Value > 0.5));
 
             // Remove every weld (the per-source create/remove resolve vehicles below).
-            if (command.Action == "debug.weld_clear")
+            if (command.Action == SimActions.DebugWeldClear)
                 return Finish(accessor, welds.Clear());
 
             // Thug-life sunglasses cheat: registry-keyed (entry id in Ordinal; anchor vessel in Token for
@@ -104,7 +104,7 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
 
             // control_vessel targets the vehicle named by the token (the one to take control of),
             // not the (sender) VesselId.
-            var targetId = command.Action == "debug.control_vessel" ? command.Token ?? command.VesselId : command.VesselId;
+            var targetId = command.Action == SimActions.DebugControlVessel ? command.Token ?? command.VesselId : command.VesselId;
             var vehicle = ResolveVehicle(targetId);
             if (vehicle is null)
                 return new CommandResult(CommandOutcome.NotFound, $"vessel '{targetId}' is gone");
@@ -133,7 +133,7 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
     ///     sees it.
     /// </summary>
     private static readonly HashSet<string> AnyVesselActions =
-        new(StringComparer.Ordinal) { "vessel.scale", "vessel.always_render" };
+        new(StringComparer.Ordinal) { SimActions.VesselScale, SimActions.VesselAlwaysRender };
 
     private CommandResult Finish(string accessor, CommandResult result)
     {
@@ -145,59 +145,59 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
     private CommandResult Dispatch(Vehicle vehicle, SimCommand c) => c.Action switch
     {
         // Engines / vessel-level (G1)
-        "vessel.ignite" => EngineActuator.Ignite(vehicle),
-        "vessel.shutdown" => EngineActuator.Shutdown(vehicle),
-        "vessel.engine" => EngineActuator.SetEngineOn(vehicle, c.Value > 0.5),
-        "engine.active" => EngineActuator.SetActive(vehicle, c.Ordinal, c.Value > 0.5),
-        "engine.min_throttle" => EngineActuator.SetMinThrottle(vehicle, c.Ordinal, c.Value),
-        "vessel.lights" => LightActuator.SetMaster(vehicle, c.Value > 0.5),
-        "animation.goal" => AnimationActuator.SetGoal(vehicle, c.Ordinal, c.Value),
+        SimActions.VesselIgnite => EngineActuator.Ignite(vehicle),
+        SimActions.VesselShutdown => EngineActuator.Shutdown(vehicle),
+        SimActions.VesselEngine => EngineActuator.SetEngineOn(vehicle, c.Value > 0.5),
+        SimActions.EngineActive => EngineActuator.SetActive(vehicle, c.Ordinal, c.Value > 0.5),
+        SimActions.EngineMinThrottle => EngineActuator.SetMinThrottle(vehicle, c.Ordinal, c.Value),
+        SimActions.VesselLights => LightActuator.SetMaster(vehicle, c.Value > 0.5),
+        SimActions.AnimationGoal => AnimationActuator.SetGoal(vehicle, c.Ordinal, c.Value),
 
         // Vessel control surface (G4)
-        "vessel.throttle" => ThrottleActuator.Set(vehicle, c.Value),
-        "vessel.stage" => StagingActuator.Stage(vehicle),
-        "vessel.rcs" => RcsActuator.SetMaster(vehicle, c.Value > 0.5),
+        SimActions.VesselThrottle => ThrottleActuator.Set(vehicle, c.Value),
+        SimActions.VesselStage => StagingActuator.Stage(vehicle),
+        SimActions.VesselRcs => RcsActuator.SetMaster(vehicle, c.Value > 0.5),
         // Manual RCS translation (body-axis signs; latches until rewritten).
-        "vessel.translate" => TranslateActuator.SetTranslation(vehicle, c.Values ?? []),
+        SimActions.VesselTranslate => TranslateActuator.SetTranslation(vehicle, c.Values ?? []),
         // Manual RCS rotation (body-axis torque signs; latches until rewritten; full authority
         // only in manual attitude mode — auto strips the rotation bits).
-        "vessel.rotate" => RotateActuator.SetRotation(vehicle, c.Values ?? []),
-        "vessel.attitude_mode" => FlightComputerActuator.SetAttitudeMode(vehicle, c.Token ?? ""),
+        SimActions.VesselRotate => RotateActuator.SetRotation(vehicle, c.Values ?? []),
+        SimActions.VesselAttitudeMode => FlightComputerActuator.SetAttitudeMode(vehicle, c.Token ?? ""),
         // The FC's RCS master switch (in-game R). Disabled zeroes the manual thruster flags, so
         // ctl/translate + ctl/rotate go dead until it is re-enabled.
-        "vessel.rcs_mode" => FlightComputerActuator.SetRcsMode(vehicle, c.Token ?? ""),
-        "vessel.attitude_frame" => FlightComputerActuator.SetAttitudeFrame(vehicle, c.Token ?? ""),
-        "vessel.attitude_target" => FlightComputerActuator.SetAttitudeTarget(vehicle, c.Values ?? []),
-        "vessel.burn" => FlightComputerActuator.SetBurn(vehicle, c.Values ?? []),
+        SimActions.VesselRcsMode => FlightComputerActuator.SetRcsMode(vehicle, c.Token ?? ""),
+        SimActions.VesselAttitudeFrame => FlightComputerActuator.SetAttitudeFrame(vehicle, c.Token ?? ""),
+        SimActions.VesselAttitudeTarget => FlightComputerActuator.SetAttitudeTarget(vehicle, c.Values ?? []),
+        SimActions.VesselBurn => FlightComputerActuator.SetBurn(vehicle, c.Values ?? []),
 
         // First-class per-vessel nodes (any-vessel — see AnyVesselActions above).
-        "vessel.scale" => ScaleActuator.Set(vehicle, c.Value),
-        "vessel.always_render" => VesselForceRender.Set(vehicle, c.Value > 0.5),
+        SimActions.VesselScale => ScaleActuator.Set(vehicle, c.Value),
+        SimActions.VesselAlwaysRender => VesselForceRender.Set(vehicle, c.Value > 0.5),
 
         // Per-module (G4)
-        "rcs.active" => RcsActuator.SetActive(vehicle, c.Ordinal, c.Value > 0.5),
-        "light.on" => LightActuator.SetOn(vehicle, c.Ordinal, c.Value > 0.5),
-        "light.brightness" => LightActuator.SetBrightness(vehicle, c.Ordinal, c.Value),
-        "light.color" => LightActuator.SetColor(vehicle, c.Ordinal, c.Values ?? []),
-        "light.outer_angle" => LightActuator.SetOuterAngle(vehicle, c.Ordinal, c.Value),
-        "light.inner_angle" => LightActuator.SetInnerAngle(vehicle, c.Ordinal, c.Value),
-        "decoupler.fire" => DecouplerActuator.Fire(vehicle, c.Ordinal),
-        "docking.undock" => DockingActuator.Undock(vehicle, c.Ordinal),
+        SimActions.RcsActive => RcsActuator.SetActive(vehicle, c.Ordinal, c.Value > 0.5),
+        SimActions.LightOn => LightActuator.SetOn(vehicle, c.Ordinal, c.Value > 0.5),
+        SimActions.LightBrightness => LightActuator.SetBrightness(vehicle, c.Ordinal, c.Value),
+        SimActions.LightColor => LightActuator.SetColor(vehicle, c.Ordinal, c.Values ?? []),
+        SimActions.LightOuterAngle => LightActuator.SetOuterAngle(vehicle, c.Ordinal, c.Value),
+        SimActions.LightInnerAngle => LightActuator.SetInnerAngle(vehicle, c.Ordinal, c.Value),
+        SimActions.DecouplerFire => DecouplerActuator.Fire(vehicle, c.Ordinal),
+        SimActions.DockingUndock => DockingActuator.Undock(vehicle, c.Ordinal),
 
         // Cheat namespace (G4 / G-D2)
-        "debug.control_vessel" => DebugActuator.ControlVessel(vehicle),
-        "debug.teleport" => DebugActuator.Teleport(vehicle, c.Values ?? []),
+        SimActions.DebugControlVessel => DebugActuator.ControlVessel(vehicle),
+        SimActions.DebugTeleport => DebugActuator.Teleport(vehicle, c.Values ?? []),
         // One-shot impulsive kick (frame keyword rides in Token, unit keyword in Aux).
-        "debug.impulse" => DebugActuator.Impulse(vehicle, c.Values ?? [], c.Token, c.Aux),
-        "debug.refill_fuel" => DebugActuator.RefillFuel(vehicle),
-        "debug.refill_battery" => DebugActuator.RefillBattery(vehicle),
-        "debug.docking_pushoff" => DockingActuator.SetPushoffImpulse(vehicle, c.Ordinal, c.Value),
+        SimActions.DebugImpulse => DebugActuator.Impulse(vehicle, c.Values ?? [], c.Token, c.Aux),
+        SimActions.DebugRefillFuel => DebugActuator.RefillFuel(vehicle),
+        SimActions.DebugRefillBattery => DebugActuator.RefillBattery(vehicle),
+        SimActions.DebugDockingPushoff => DockingActuator.SetPushoffImpulse(vehicle, c.Ordinal, c.Value),
 
         // Welds cheat (vehicle = the source; the target rides in Token; part_iid + offsets in Values).
-        "debug.weld_create" => WeldCreate(vehicle, c),
-        "debug.weld_here" => WeldHere(vehicle, c),
-        "debug.weld_remove" => welds.Remove(vehicle.Id),
-        "debug.weld_enable" => welds.SetEnabled(vehicle.Id, c.Value > 0.5),
+        SimActions.DebugWeldCreate => WeldCreate(vehicle, c),
+        SimActions.DebugWeldHere => WeldHere(vehicle, c),
+        SimActions.DebugWeldRemove => welds.Remove(vehicle.Id),
+        SimActions.DebugWeldEnable => welds.SetEnabled(vehicle.Id, c.Value > 0.5),
 
         _ => new CommandResult(CommandOutcome.Unsupported, $"unknown action '{c.Action}'"),
     };
@@ -218,7 +218,7 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
     private CommandResult Camera(SimCommand c)
     {
         // The id rides in Token (debug/focus) or VesselId (the per-vessel and per-body triggers).
-        if (c.Action == "camera.focus")
+        if (c.Action == SimActions.CameraFocus)
         {
             var focusId = c.Token ?? c.VesselId;
             return ResolveAstronomical(focusId) is { } followable
@@ -240,15 +240,15 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
     {
         switch (c.Action)
         {
-            case "debug.thug_life_clear":
+            case SimActions.DebugThugLifeClear:
                 return thugLife.Clear();
-            case "debug.thug_life_remove":
+            case SimActions.DebugThugLifeRemove:
                 return thugLife.Remove(c.Ordinal);
-            case "debug.thug_life_visible":
+            case SimActions.DebugThugLifeVisible:
                 return thugLife.SetVisible(c.Ordinal, c.Value > 0.5);
-            case "debug.thug_life_cameras":
+            case SimActions.DebugThugLifeCameras:
                 return thugLife.SetCameras(c.Ordinal, (int)c.Value);
-            case "debug.thug_life_add":
+            case SimActions.DebugThugLifeAdd:
             {
                 if (ResolveVehicle(c.Token ?? "") is not { } vehicle)
                     return new CommandResult(CommandOutcome.NotFound, $"vessel '{c.Token}' is gone");
@@ -264,18 +264,18 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
                 var height = v.Count == 9 ? v[8] : 0.1875;
                 return thugLife.Add(vehicle, (uint)v[0], pos, rot, width, height);
             }
-            case "debug.thug_life_position":
-            case "debug.thug_life_rotation":
+            case SimActions.DebugThugLifePosition:
+            case SimActions.DebugThugLifeRotation:
             {
                 var v = c.Values ?? [];
                 if (v.Count != 3)
                     return new CommandResult(CommandOutcome.Invalid, $"'{c.Action}' expects 'x y z'");
                 var vec = new double3(v[0], v[1], v[2]);
-                return c.Action == "debug.thug_life_position"
+                return c.Action == SimActions.DebugThugLifePosition
                     ? thugLife.SetPosition(c.Ordinal, vec)
                     : thugLife.SetRotation(c.Ordinal, vec);
             }
-            case "debug.thug_life_size":
+            case SimActions.DebugThugLifeSize:
             {
                 var v = c.Values ?? [];
                 if (v.Count != 2)
@@ -330,15 +330,15 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
     {
         switch (c.Action)
         {
-            case "debug.iva_physics":
+            case SimActions.DebugIvaPhysics:
                 return iva.SetEnabled(c.Value > 0.5);
-            case "debug.iva_run_outside_iva":
+            case SimActions.DebugIvaRunOutsideIva:
                 return iva.SetRunOutsideIva(c.Value > 0.5);
-            case "debug.iva_clear":
+            case SimActions.DebugIvaClear:
                 return iva.Clear();
-            case "debug.iva_release":
+            case SimActions.DebugIvaRelease:
                 return iva.Release(c.Ordinal);
-            case "debug.iva_nudge":
+            case SimActions.DebugIvaNudge:
             {
                 var v = c.Values ?? [];
                 if (v.Count != 3)
@@ -346,7 +346,7 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
                 return iva.Nudge(c.Ordinal, new double3(v[0], v[1], v[2]));
             }
 
-            case "debug.iva_adopt":
+            case SimActions.DebugIvaAdopt:
             {
                 if (ResolveVehicle(c.Token ?? "") is not { } vehicle)
                     return new CommandResult(CommandOutcome.NotFound, $"vessel '{c.Token}' is gone");
@@ -359,7 +359,7 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
                 return iva.Adopt(vehicle, (uint)v[0], velocity);
             }
 
-            case "debug.iva_adopt_all":
+            case SimActions.DebugIvaAdoptAll:
             {
                 if (ResolveVehicle(c.Token ?? "") is not { } vehicle)
                     return new CommandResult(CommandOutcome.NotFound, $"vessel '{c.Token}' is gone");

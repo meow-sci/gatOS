@@ -27,13 +27,13 @@ namespace gatOS.SimFs.Audio;
 public static class AudioCommands
 {
     /// <summary>The play action key.</summary>
-    public const string PlayAction = "audio.play";
+    public const string PlayAction = SimActions.AudioPlay;
 
     /// <summary>The live-adjust action key.</summary>
-    public const string SetAction = "audio.set";
+    public const string SetAction = SimActions.AudioSet;
 
     /// <summary>The stop action key.</summary>
-    public const string StopAction = "audio.stop";
+    public const string StopAction = SimActions.AudioStop;
 
     // audio.play Values slots.
     /// <summary>Play slot 0: start offset in ms (≥ 0).</summary>

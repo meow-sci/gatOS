@@ -39,19 +39,19 @@ public static class CameraCommands
     // ---- action keys -------------------------------------------------------------------------------
 
     /// <summary>Take (1) or release (0) ownership of the camera.</summary>
-    public const string EnabledAction = "camera.enabled";
+    public const string EnabledAction = SimActions.CameraEnabled;
 
     /// <summary>Hard restore to game control (trigger).</summary>
-    public const string ReleaseAction = "camera.release";
+    public const string ReleaseAction = SimActions.CameraRelease;
 
     /// <summary>Set the viewport camera mode (enum token).</summary>
-    public const string ModeAction = "camera.mode";
+    public const string ModeAction = SimActions.CameraMode;
 
     /// <summary>Set what the game camera follows (target reference token).</summary>
-    public const string FollowAction = "camera.follow";
+    public const string FollowAction = SimActions.CameraFollow;
 
     /// <summary>Set the tidal-locking flag of the follow.</summary>
-    public const string TidalAction = "camera.tidal";
+    public const string TidalAction = SimActions.CameraTidal;
 
     /// <summary>
     ///     Set the map view's scope (zoom radius), metres. Like <see cref="ModeAction"/>,
@@ -59,73 +59,73 @@ public static class CameraCommands
     ///     rather than the composed pose, so it is not a <see cref="CameraChannel"/> and has no track
     ///     channel; it only has a visible effect while the viewport is in <c>map</c> mode.
     /// </summary>
-    public const string MapScopeAction = "camera.map_scope";
+    public const string MapScopeAction = SimActions.CameraMapScope;
 
     /// <summary>Place the camera: <c>"x y z [frame]"</c>.</summary>
-    public const string PositionAction = "camera.position";
+    public const string PositionAction = SimActions.CameraPosition;
 
     /// <summary>Set the default frame position writes resolve in (enum token).</summary>
-    public const string FrameAction = "camera.frame";
+    public const string FrameAction = SimActions.CameraFrame;
 
     /// <summary>Set the target frames resolve against (target reference token).</summary>
-    public const string AnchorAction = "camera.anchor";
+    public const string AnchorAction = SimActions.CameraAnchor;
 
     /// <summary>Place the camera geodetically: <c>"lat lon alt [body:&lt;id&gt;]"</c>.</summary>
-    public const string GeoAction = "camera.geo";
+    public const string GeoAction = SimActions.CameraGeo;
 
     /// <summary>Spherical placement about the anchor: radius, metres.</summary>
-    public const string OrbitRadiusAction = "camera.orbit_radius";
+    public const string OrbitRadiusAction = SimActions.CameraOrbitRadius;
 
     /// <summary>Spherical placement about the anchor: azimuth, degrees.</summary>
-    public const string OrbitAzimuthAction = "camera.orbit_azimuth";
+    public const string OrbitAzimuthAction = SimActions.CameraOrbitAzimuth;
 
     /// <summary>Spherical placement about the anchor: elevation, degrees.</summary>
-    public const string OrbitElevationAction = "camera.orbit_elevation";
+    public const string OrbitElevationAction = SimActions.CameraOrbitElevation;
 
     /// <summary>Set the ECL orientation quaternion (<c>x y z w</c>).</summary>
-    public const string RotationAction = "camera.rotation";
+    public const string RotationAction = SimActions.CameraRotation;
 
     /// <summary>The composite aim convenience — target, offset, frame, up and optionally roll at once.</summary>
-    public const string AimAction = "camera.aim";
+    public const string AimAction = SimActions.CameraAim;
 
     /// <summary>Set what the camera looks at (target reference token).</summary>
-    public const string AimTargetAction = "camera.aim_target";
+    public const string AimTargetAction = SimActions.CameraAimTarget;
 
     /// <summary>Set the offset from the aim target (<c>x y z</c>).</summary>
-    public const string AimOffsetAction = "camera.aim_offset";
+    public const string AimOffsetAction = SimActions.CameraAimOffset;
 
     /// <summary>Set the frame the aim offset resolves in (enum token).</summary>
-    public const string AimFrameAction = "camera.aim_frame";
+    public const string AimFrameAction = SimActions.CameraAimFrame;
 
     /// <summary>Set where "up" comes from (enum token).</summary>
-    public const string AimUpAction = "camera.aim_up";
+    public const string AimUpAction = SimActions.CameraAimUp;
 
     /// <summary>Set the roll about the view axis, degrees.</summary>
-    public const string RollAction = "camera.roll";
+    public const string RollAction = SimActions.CameraRoll;
 
     /// <summary>Set the vertical field of view, degrees.</summary>
-    public const string FovAction = "camera.fov";
+    public const string FovAction = SimActions.CameraFov;
 
     /// <summary>Set orthographic projection on/off.</summary>
-    public const string OrthoAction = "camera.ortho";
+    public const string OrthoAction = SimActions.CameraOrtho;
 
     /// <summary>Set the orthographic half-height, metres.</summary>
-    public const string OrthoHeightAction = "camera.ortho_height";
+    public const string OrthoHeightAction = SimActions.CameraOrthoHeight;
 
     /// <summary>Set the critically-damped follow time, seconds (0 = raw).</summary>
-    public const string SmoothingAction = "camera.smoothing";
+    public const string SmoothingAction = SimActions.CameraSmoothing;
 
     /// <summary>Drop every live pose override (trigger).</summary>
-    public const string PoseResetAction = "camera.pose_reset";
+    public const string PoseResetAction = SimActions.CameraPoseReset;
 
     /// <summary>Start playing an uploaded track.</summary>
-    public const string PlayAction = "camera.play";
+    public const string PlayAction = SimActions.CameraPlay;
 
     /// <summary>Adjust the running player (sparse patch).</summary>
-    public const string SetAction = "camera.set";
+    public const string SetAction = SimActions.CameraSet;
 
     /// <summary>Stop playback (trigger).</summary>
-    public const string StopAction = "camera.stop";
+    public const string StopAction = SimActions.CameraStop;
 
     // ---- camera.aim value slots ---------------------------------------------------------------------
 

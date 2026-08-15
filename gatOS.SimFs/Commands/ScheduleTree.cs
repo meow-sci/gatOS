@@ -41,7 +41,7 @@ internal static class ScheduleTree
         var count = new StaticTextFile("count", qid("ctl/schedules/count"),
             () => store.Count.ToString(CultureInfo.InvariantCulture) + "\n");
         var clear = new TriggerFile("clear", qid("ctl/schedules/clear"), sink,
-            new SimCommand("", "schedule.clear", SimCommand.NoOrdinal, 1));
+            new SimCommand("", SimActions.ScheduleClear, SimCommand.NoOrdinal, 1));
 
         return new DelegateDirectory("schedules", qid("ctl/schedules"),
             () =>
@@ -85,20 +85,20 @@ internal static class ScheduleTree
             Status("last_error", p => p.LastError, "-"),
             ControlFile.Flag("pause", qid($"{q}/pause"), sink,
                 () => Player() is { } p && p.Clock.Paused ? "1" : "0",
-                v => new SimCommand("", "schedule.pause", SimCommand.NoOrdinal, v) { Token = id }),
+                v => new SimCommand("", SimActions.SchedulePause, SimCommand.NoOrdinal, v) { Token = id }),
             ControlFile.Number("scrub", qid($"{q}/scrub"), sink,
                 () => Player() is { } p ? p.Clock.PositionMs.ToString("F1", CultureInfo.InvariantCulture) : "0.0",
-                v => new SimCommand("", "schedule.scrub", SimCommand.NoOrdinal, v) { Token = id }),
+                v => new SimCommand("", SimActions.ScheduleScrub, SimCommand.NoOrdinal, v) { Token = id }),
             ControlFile.Number("rate", qid($"{q}/rate"), sink,
                 () => Player() is { } p ? Formats.Scalar(p.Clock.Rate) : "1",
-                v => new SimCommand("", "schedule.rate", SimCommand.NoOrdinal, v) { Token = id }),
+                v => new SimCommand("", SimActions.ScheduleRate, SimCommand.NoOrdinal, v) { Token = id }),
             ControlFile.Flag("loop", qid($"{q}/loop"), sink,
                 () => Player() is { } p && p.Clock.Loop ? "1" : "0",
-                v => new SimCommand("", "schedule.loop", SimCommand.NoOrdinal, v) { Token = id }),
+                v => new SimCommand("", SimActions.ScheduleLoop, SimCommand.NoOrdinal, v) { Token = id }),
             new TriggerFile("stop", qid($"{q}/stop"), sink,
-                new SimCommand("", "schedule.stop", SimCommand.NoOrdinal, 1) { Token = id }),
+                new SimCommand("", SimActions.ScheduleStop, SimCommand.NoOrdinal, 1) { Token = id }),
             new TriggerFile("remove", qid($"{q}/remove"), sink,
-                new SimCommand("", "schedule.remove", SimCommand.NoOrdinal, 1) { Token = id }));
+                new SimCommand("", SimActions.ScheduleRemove, SimCommand.NoOrdinal, 1) { Token = id }));
     }
 
     /// <summary>The console-friendly grammar reference behind <c>/sim/ctl/schedules/help</c>.</summary>

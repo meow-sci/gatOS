@@ -1333,7 +1333,7 @@ public static class SimFsTree
             var adoptAll = LineControlFile.Create("adopt_all", Qid("debug/iva/adopt_all"), sink,
                 () => "", ParseIvaAdoptAll);
             var clear = new TriggerFile("clear", Qid("debug/iva/clear"), sink,
-                new SimCommand("", "debug.iva_clear", SimCommand.NoOrdinal, 1));
+                new SimCommand("", SimActions.DebugIvaClear, SimCommand.NoOrdinal, 1));
             var count = Line("debug/iva/count", "count",
                 () => _store.Current.Iva.Objects.Count.ToString(CultureInfo.InvariantCulture));
             var stats = Line("debug/iva/stats", "stats", () => Formats.IvaStats(_store.Current.Iva.Stats));
@@ -1384,7 +1384,7 @@ public static class SimFsTree
                 VectorControl($"{q}/nudge", "nudge", "", "debug.iva_nudge", id, 3, () => "0 0 0"),
                 // Un-adopt: restore the SubPart's exact rest pose and drop the body.
                 new TriggerFile("release", Qid($"{q}/release"), sink,
-                    new SimCommand("", "debug.iva_release", id, 1)),
+                    new SimCommand("", SimActions.DebugIvaRelease, id, 1)),
                 // The adopt-compatible line (echo it to adopt to re-adopt this SubPart).
                 Line($"{q}/spec", "spec", () => Formats.IvaObjectSpec(IvaObject(id))));
         }
@@ -1417,7 +1417,7 @@ public static class SimFsTree
                     if (!double.TryParse(parts[i + 2], NumberStyles.Float, CultureInfo.InvariantCulture,
                             out values[i + 1]) || !double.IsFinite(values[i + 1]))
                         return null;
-            return new SimCommand("", "debug.iva_adopt", SimCommand.NoOrdinal, 0)
+            return new SimCommand("", SimActions.DebugIvaAdopt, SimCommand.NoOrdinal, 0)
             {
                 Token = parts[0],
                 Values = values,
@@ -1442,7 +1442,7 @@ public static class SimFsTree
                 max = n;
             }
 
-            return new SimCommand("", "debug.iva_adopt_all", SimCommand.NoOrdinal, max)
+            return new SimCommand("", SimActions.DebugIvaAdoptAll, SimCommand.NoOrdinal, max)
             {
                 Token = parts[0],
                 Aux = parts.Length == 3 ? parts[2] : null,
@@ -1534,7 +1534,7 @@ public static class SimFsTree
         {
             var sink = _commands!;
             var clear = new TriggerFile("clear", Qid("debug/welds/clear"), sink,
-                new SimCommand("", "debug.weld_clear", SimCommand.NoOrdinal, 1));
+                new SimCommand("", SimActions.DebugWeldClear, SimCommand.NoOrdinal, 1));
             var count = Line("debug/welds/count", "count",
                 () => _store.Current.Welds.Count.ToString(CultureInfo.InvariantCulture));
             return new DelegateDirectory("welds", Qid("debug/welds"),
@@ -1586,7 +1586,7 @@ public static class SimFsTree
             var add = LineControlFile.Create("add", Qid("debug/thug_life/add"), sink,
                 () => "", ParseThugLifeAdd);
             var clear = new TriggerFile("clear", Qid("debug/thug_life/clear"), sink,
-                new SimCommand("", "debug.thug_life_clear", SimCommand.NoOrdinal, 1));
+                new SimCommand("", SimActions.DebugThugLifeClear, SimCommand.NoOrdinal, 1));
             var count = Line("debug/thug_life/count", "count",
                 () => _store.Current.ThugLife.Count.ToString(CultureInfo.InvariantCulture));
             var help = new StaticTextFile("help", Qid("debug/thug_life/help"), () => ThugLifeHelp);
@@ -1704,10 +1704,10 @@ public static class SimFsTree
                 LineControlFile.Create("cameras", Qid($"{q}/cameras"), sink,
                     () => ThugLife(id).Cameras,
                     line => ThugLifeCameraMask.TryParse(line, out var mask)
-                        ? new SimCommand("", "debug.thug_life_cameras", id, mask)
+                        ? new SimCommand("", SimActions.DebugThugLifeCameras, id, mask)
                         : null),
                 new TriggerFile("remove", Qid($"{q}/remove"), sink,
-                    new SimCommand("", "debug.thug_life_remove", id, 1)),
+                    new SimCommand("", SimActions.DebugThugLifeRemove, id, 1)),
                 // The full write-compatible spec line (echo to add to recreate as a new id).
                 Line($"{q}/spec", "spec", () => Formats.ThugLifeSpec(ThugLife(id))));
         }
@@ -1794,7 +1794,7 @@ public static class SimFsTree
                     if (!double.TryParse(parts[i + 2], NumberStyles.Float, CultureInfo.InvariantCulture,
                             out values[i + 1]) || !double.IsFinite(values[i + 1]))
                         return null;
-            return new SimCommand("", "debug.thug_life_add", SimCommand.NoOrdinal, 0)
+            return new SimCommand("", SimActions.DebugThugLifeAdd, SimCommand.NoOrdinal, 0)
             {
                 Token = parts[0],
                 Values = values,

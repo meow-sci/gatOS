@@ -387,7 +387,7 @@ public sealed class ScheduleStore
     /// <param name="command">The command to apply (id in <see cref="SimCommand.Token"/>).</param>
     public CommandResult Execute(SimCommand command)
     {
-        if (command.Action == "schedule.clear")
+        if (command.Action == SimActions.ScheduleClear)
         {
             Clear();
             return CommandResult.Ok;
@@ -401,25 +401,25 @@ public sealed class ScheduleStore
 
         switch (command.Action)
         {
-            case "schedule.pause":
+            case SimActions.SchedulePause:
                 if (command.Value is not (0 or 1))
                     return new CommandResult(CommandOutcome.Invalid, "schedule.pause takes 0 or 1");
                 runner.Clock.Paused = command.Value != 0;
                 return CommandResult.Ok;
 
-            case "schedule.loop":
+            case SimActions.ScheduleLoop:
                 if (command.Value is not (0 or 1))
                     return new CommandResult(CommandOutcome.Invalid, "schedule.loop takes 0 or 1");
                 runner.Clock.Loop = command.Value != 0;
                 return CommandResult.Ok;
 
-            case "schedule.scrub":
+            case SimActions.ScheduleScrub:
                 if (!double.IsFinite(command.Value) || command.Value < 0)
                     return new CommandResult(CommandOutcome.Invalid, "schedule.scrub takes a non-negative ms offset");
                 runner.Clock.Scrub(command.Value);
                 return CommandResult.Ok;
 
-            case "schedule.rate":
+            case SimActions.ScheduleRate:
                 if (!double.IsFinite(command.Value)
                     || command.Value < PlaybackClock.MinRate || command.Value > PlaybackClock.MaxRate)
                     return new CommandResult(CommandOutcome.Invalid,
@@ -427,11 +427,11 @@ public sealed class ScheduleStore
                 runner.Clock.Rate = command.Value;
                 return CommandResult.Ok;
 
-            case "schedule.stop":
+            case SimActions.ScheduleStop:
                 runner.Stop();
                 return CommandResult.Ok;
 
-            case "schedule.remove":
+            case SimActions.ScheduleRemove:
                 Remove(runner);
                 return CommandResult.Ok;
 

@@ -1,4 +1,5 @@
 using System.Globalization;
+using gatOS.SimFs.Commands;
 
 namespace gatOS.SimFs.Fx;
 
@@ -65,31 +66,31 @@ public sealed record FxFieldMatch(FxFieldSpec Spec, IReadOnlyList<int> Indices);
 public static class FxCatalog
 {
     /// <summary>Action key: set one field of one volumetric-exhaust template.</summary>
-    public const string EnginePlumeSet = "debug.engineplume_set";
+    public const string EnginePlumeSet = SimActions.DebugEnginePlumeSet;
 
     /// <summary>Action key: restore one template's pristine (pre-gatOS) values.</summary>
-    public const string EnginePlumeReset = "debug.engineplume_reset";
+    public const string EnginePlumeReset = SimActions.DebugEnginePlumeReset;
 
     /// <summary>Action key: set one field of the global volumetric-trail renderer.</summary>
-    public const string PlumeTrailSet = "debug.plumetrail_set";
+    public const string PlumeTrailSet = SimActions.DebugPlumeTrailSet;
 
     /// <summary>Action key: restore the trail renderer's pristine values.</summary>
-    public const string PlumeTrailReset = "debug.plumetrail_reset";
+    public const string PlumeTrailReset = SimActions.DebugPlumeTrailReset;
 
     /// <summary>Action key: drop every live plume trail (a one-shot, not a settings change).</summary>
-    public const string PlumeTrailClear = "debug.plumetrail_clear";
+    public const string PlumeTrailClear = SimActions.DebugPlumeTrailClear;
 
     /// <summary>Action key: set one cloud field of one body.</summary>
-    public const string CloudsSet = "debug.clouds_set";
+    public const string CloudsSet = SimActions.DebugCloudsSet;
 
     /// <summary>Action key: restore one body's pristine cloud values.</summary>
-    public const string CloudsReset = "debug.clouds_reset";
+    public const string CloudsReset = SimActions.DebugCloudsReset;
 
     /// <summary>Action key: set one terrain field of one body (token <c>""</c> = the global fields).</summary>
-    public const string TerrainSet = "debug.terrain_set";
+    public const string TerrainSet = SimActions.DebugTerrainSet;
 
     /// <summary>Action key: restore one body's pristine terrain values.</summary>
-    public const string TerrainReset = "debug.terrain_reset";
+    public const string TerrainReset = SimActions.DebugTerrainReset;
 
     /// <summary>
     ///     <c>/sim/debug/engineplume</c> — the volumetric-exhaust template fields. Scope is

@@ -597,6 +597,9 @@ public sealed class SimHttpServer : IAsyncDisposable
         try
         {
             command = ParseCommand(request.Body);
+            var validation = CommandCatalog.Validate(command);
+            if (!validation.IsValid)
+                throw new ArgumentException(validation.Error);
         }
         catch (Exception ex)
         {

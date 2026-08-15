@@ -315,6 +315,9 @@ public sealed class SimMqttBroker : IAsyncDisposable
         try
         {
             var command = ParseCommand(payload);
+            var validation = CommandCatalog.Validate(command);
+            if (!validation.IsValid)
+                throw new ArgumentException(validation.Error);
             if (command.Action.StartsWith("debug.", StringComparison.Ordinal) && !sink.DebugEnabled)
                 resultJson = Result("EACCES", "debug namespace disabled");
             else

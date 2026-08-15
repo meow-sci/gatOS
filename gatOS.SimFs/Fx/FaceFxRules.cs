@@ -19,10 +19,10 @@ public static class FaceFxRules
     public static readonly string[] Profiles = ["party", "sparkle", "danger", "death"];
 
     /// <summary>Action keys (all global addressing, Frame phase — cosmetics are solver-invisible).</summary>
-    public const string SpawnAction = "debug.fx_spawn";
+    public const string SpawnAction = SimActions.DebugFxSpawn;
 
     /// <summary>The clear trigger's action key.</summary>
-    public const string ClearAction = "debug.fx_clear";
+    public const string ClearAction = SimActions.DebugFxClear;
 
     /// <summary>Value-slot indices for <see cref="SpawnAction"/>'s <c>Values</c> array.</summary>
     public const int SpawnScale = 0;
