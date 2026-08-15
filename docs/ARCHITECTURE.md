@@ -86,7 +86,7 @@ cmdline via `QemuCommandBuilder`:
 | 9P `/mnt` server | `gatos.mntport=<port>` (0 = idle) | `mnt-mount` supervisor |
 | HTTP `/v1` server | `gatos.httpport=<port>` | guest env `$GATOS_HTTP` |
 | MQTT broker | `gatos.mqttport=<port>` | guest env `$GATOS_MQTT` |
-| MCP Streamable HTTP server | none (host-loopback only) | `http://127.0.0.1:<port>/mcp` (default preferred port 4243) |
+| MCP Streamable HTTP server | none (host-side listener) | `http://127.0.0.1:<port>/mcp` by default (bind host configurable; preferred port 4243) |
 | virtio-serial bridge | `gatos.serial` chardev (4th port) | `/dev/virtio-ports/gatos.serial` |
 
 ### Slirp networking
@@ -408,9 +408,9 @@ The live file uses flat TOML keys. The shipped comments group them for humans; n
 | Common | `sample_rate_hz`, `disk_size_gb`, `cpu_model` |
 | Telemetry | `telemetry_enabled`, `telemetry_vessel_detail`, `telemetry_vessel_parts`, `telemetry_bodies`, `telemetry_bodies_rate_hz`, `telemetry_events` |
 | Control | `control_enabled`, `control_all_vessels`, `debug_namespace`, `command_timeout_ms`, `max_commands_per_frame` |
-| HTTP | `http_enabled`, `http_preferred_port` (4242), `http_field_endpoints` |
-| MQTT | `mqtt_enabled`, `mqtt_preferred_port` (1883), `mqtt_field_topics`, `field_feed_hz`, `mqtt_publish_hz` |
-| MCP | `mcp_enabled` (on), `mcp_preferred_port` (4243; ephemeral fallback); loopback Streamable HTTP `/mcp`, exact local Host/Origin validation, no bearer token, 24 MiB request-framing safety limit (responses are not size-capped) |
+| HTTP | `http_enabled`, `http_bind_host` (127.0.0.1), `http_preferred_port` (4242), `http_field_endpoints` |
+| MQTT | `mqtt_enabled`, `mqtt_bind_host` (127.0.0.1), `mqtt_preferred_port` (1883), `mqtt_field_topics`, `field_feed_hz`, `mqtt_publish_hz` |
+| MCP | `mcp_enabled` (on), `mcp_bind_host` (127.0.0.1), `mcp_preferred_port` (4243; ephemeral fallback); Streamable HTTP `/mcp`, configured Host/Origin validation, no bearer token, 24 MiB request-framing safety limit (responses are not size-capped) |
 | Serial | `serial_telemetry_port`, `serial_command_port`, `serial_mode`, `serial_interval_ms` |
 | Display | `display_enabled` (off), `display_fps`, `display_width`, `display_height`, `display_encoding` (boot seeds for `/sim/display`) |
 | Audio | `audio_enabled` (on), `audio_max_clip_bytes` (16 MiB), `audio_max_total_bytes` (64 MiB), `audio_max_clips` (64), `audio_max_channels` (16) |

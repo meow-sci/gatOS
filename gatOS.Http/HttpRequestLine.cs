@@ -4,10 +4,10 @@ namespace gatOS.Http;
 
 /// <summary>
 ///     A minimally-parsed HTTP/1.1 request (method, path, decoded query, headers, body). The
-///     server speaks raw HTTP over a loopback <c>TcpListener</c> rather than <c>HttpListener</c>:
+///     server speaks raw HTTP over a <c>TcpListener</c> rather than <c>HttpListener</c>:
 ///     <c>HttpListener</c> rides http.sys on Windows and needs a URL-ACL reservation or admin,
-///     which a game mod cannot assume — and loopback sockets keep the same "no firewall prompt,
-///     slirp routes guest→10.0.2.2→127.0.0.1" property the 9p server relies on.
+///     which a game mod cannot assume. The default loopback bind also avoids a firewall prompt;
+///     users may deliberately select another interface in <c>gatos.toml</c>.
 /// </summary>
 internal sealed class HttpRequestLine
 {

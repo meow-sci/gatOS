@@ -5,9 +5,9 @@ sidebar:
   order: 10
 ---
 
-gatOS can run an embedded MQTT broker on loopback, preferring port `1883`. The Alpine guest reaches it
-at `$GATOS_MQTT`, normally `sim:<port>`. It is handy when your program wants a pub/sub feed instead
-of polling an HTTP endpoint.
+gatOS can run an embedded MQTT broker at `127.0.0.1:1883` by default. The Alpine guest reaches it at
+`$GATOS_MQTT`, normally `sim:<port>`. It is handy when your program wants a pub/sub feed instead of
+polling an HTTP endpoint.
 
 The broker publishes aggregate snapshots and live events, plus an optional field mirror under
 `gatos/sim/<path>`. Send the generic JSON command envelope to `gatos/command`, or raw control text
@@ -24,9 +24,10 @@ The world feed can be paced with `mqtt_publish_hz`; field topics have their own 
 snapshots are useful for a subscriber that arrives after launch, while event topics are for things
 that happened along the way.
 
-:::caution[Local broker]
-The embedded broker binds to loopback. It is not a LAN MQTT service. If you need a networked mission
-control, bridge from a local client with your own authentication and network policy.
+:::caution[Exposing the broker]
+Set `mqtt_bind_host` to a specific host-interface IP or `0.0.0.0` for all IPv4 interfaces when
+networked mission control needs direct access. The embedded broker has no authentication, so every
+reachable client can subscribe and publish commands.
 :::
 
 The [MQTT reference](/gatOS/reference/) has the exact topic families, retained behavior, command

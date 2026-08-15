@@ -15,9 +15,11 @@ The default local endpoint is:
 http://127.0.0.1:4243/mcp
 ```
 
-It is Streamable HTTP on loopback only. There is no guest endpoint, bearer token, CORS policy, or
-legacy SSE transport in MCP v1. Start with `gatos.get_capabilities`, then discover vessels and read a
-fresh snapshot before sending a narrow command.
+It is Streamable HTTP and binds to loopback by default. Set `mcp_bind_host` to another IP or
+`0.0.0.0` for all IPv4 interfaces. There is no guest endpoint, bearer token, CORS policy, or legacy
+SSE transport in MCP v1, so a non-loopback bind exposes the endpoint to reachable clients. Start
+with `gatos.get_capabilities`, then discover vessels and read a fresh snapshot before sending a
+narrow command.
 
 MCP is deliberately **not** a path-for-path `/sim` copy. It uses raw KSA IDs, structured JSON, and
 logical actions. `/sim/display` is intentionally outside MCP v1 because a terminal image stream is a

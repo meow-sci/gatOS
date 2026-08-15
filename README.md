@@ -364,9 +364,9 @@ curl -X POST $GATOS_HTTP/v1/fs/vessels/active/ctl/throttle -d '0.8'  # actuate o
 
 ### 3. MQTT — for pub/sub and home-automation tools (`$GATOS_MQTT`)
 
-An embedded broker, reachable from the guest at `$GATOS_MQTT` and from the host on loopback. Point a
-local MQTT client such as Node-RED, a Grafana plugin, or `mosquitto_sub` at it. A device elsewhere on
-your LAN needs a bridge or an explicit forward; gatOS does not expose the broker to the network.
+An embedded broker, reachable from the guest at `$GATOS_MQTT` and from the host. It binds to
+`127.0.0.1` by default; set `mqtt_bind_host` in `gatos.toml` if clients on another interface should
+reach it. Point an MQTT client such as Node-RED, a Grafana plugin, or `mosquitto_sub` at it.
 
 ```sh
 # Subscribe to everything (retained, so you get the latest value immediately):
@@ -406,9 +406,11 @@ read tools to inspect the live game, and use `gatos.execute_batch` for same-tick
 all resource URIs, tool schemas, error handling, pagination, and caveats, is
 [SPEC_MCP.md](SPEC_MCP.md).
 
-By default the endpoint is `http://127.0.0.1:4243/mcp`. It is loopback-only, has no bearer token,
-and accepts only exact local `Host`/`Origin` values. Set `mcp_preferred_port = 0` to always choose an
-ephemeral port; the gatOS status view reports the bound port.
+By default the endpoint is `http://127.0.0.1:4243/mcp`. Set `mcp_bind_host` to another host IP (or
+`0.0.0.0` for every IPv4 interface) when remote clients need access. There is no bearer token, so a
+non-loopback bind makes the endpoint—including control tools—available to whatever can reach that
+interface. Set `mcp_preferred_port = 0` to always choose an ephemeral port; the gatOS status view
+reports the bound port.
 
 ### 5. Serial — for the full mission-control cosplay
 
@@ -576,16 +578,19 @@ just falls back to defaults without overwriting your work.
 
 gatOS exposes the **same** telemetry and controls over four extra transports, so you can write a
 dashboard or autopilot outside the game. Inside the guest shell, `$GATOS_HTTP` and `$GATOS_MQTT` are
-already set to the right addresses; MCP clients use the loopback MCP endpoint documented in
+already set to the right addresses; host-side clients use the configured endpoints documented in
 [SPEC_MCP.md](SPEC_MCP.md).
 
 | Key | Default | What it does |
 | --- | --- | --- |
 | `http_enabled` | `true` | Serve the HTTP API at `$GATOS_HTTP` — `GET /v1/snapshot`, SSE event streams, `POST /v1/command`, and `GET /v1/openapi.json` to generate a client in any language. |
+| `http_bind_host` | `"127.0.0.1"` | Host IP for HTTP (`0.0.0.0` = all IPv4 interfaces). |
 | `http_preferred_port` | `4242` | Preferred HTTP port (falls back to a random free one on a clash; `0` = always random). |
 | `mqtt_enabled` | `true` | Run an embedded MQTT broker at `$GATOS_MQTT` — subscribe `gatos/#` for retained telemetry topics, publish to `gatos/command`. |
+| `mqtt_bind_host` | `"127.0.0.1"` | Host IP for MQTT (`0.0.0.0` = all IPv4 interfaces). |
 | `mqtt_preferred_port` | `1883` | Preferred MQTT port (same fallback rule). |
-| `mcp_enabled` | `true` | Serve the loopback Streamable HTTP MCP API at `http://127.0.0.1:<port>/mcp`, the logical JSON interface for AI agents. |
+| `mcp_enabled` | `true` | Serve the Streamable HTTP MCP API, the logical JSON interface for AI agents. |
+| `mcp_bind_host` | `"127.0.0.1"` | Host IP for MCP (`0.0.0.0` = all IPv4 interfaces). |
 | `mcp_preferred_port` | `4243` | Preferred MCP port (falls back to a random free port on a clash; `0` = always random). |
 | `http_field_endpoints` | `true` | Mirror every `/sim` file as its own HTTP endpoint (`GET /v1/fs/<path>`, `?stream=1` for live SSE, `POST` to actuate). |
 | `mqtt_field_topics` | `true` | Mirror every `/sim` file as its own retained MQTT topic (`gatos/sim/<path>`, write `…/set` to actuate). |

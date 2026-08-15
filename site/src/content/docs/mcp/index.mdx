@@ -50,10 +50,11 @@ live in [SPEC_MCP.md](https://github.com/meow-sci/gatOS/blob/main/SPEC_MCP.md).
 
 ## Connect locally
 
-MCP uses stateless Streamable HTTP at `http://127.0.0.1:4243/mcp` by default. It binds only to
-loopback, falls back to an ephemeral port if the preferred port is occupied, and accepts no bearer
-token. gatOS validates exact local `Host` and `Origin` values; the status window reports the actual
-bound port. Configure it with `mcp_enabled` and `mcp_preferred_port` in `gatos.toml`.
+MCP uses stateless Streamable HTTP at `http://127.0.0.1:4243/mcp` by default. The preferred port falls
+back to an ephemeral one when occupied. Configure `mcp_enabled`, `mcp_bind_host`, and
+`mcp_preferred_port` in `gatos.toml`; use a specific interface IP or `0.0.0.0` for intentional network
+access. MCP has no bearer token, so non-loopback reachability also exposes its control tools. The
+status window reports the actual bound port.
 
 <Steps>
   1. Connect an MCP client to the bound `/mcp` endpoint. 2. Call

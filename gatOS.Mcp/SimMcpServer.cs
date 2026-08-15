@@ -13,7 +13,7 @@ using ModelContextProtocol.Server;
 namespace gatOS.Mcp;
 
 /// <summary>
-/// Loopback-only, stateless Streamable HTTP host for the official MCP C# SDK. This adapter owns only
+/// Configurably bound, stateless Streamable HTTP host for the official MCP C# SDK. This adapter owns only
 /// HTTP framing and request security; the SDK owns MCP discovery, negotiation, dispatch, and schemas.
 /// </summary>
 public sealed class SimMcpServer : IAsyncDisposable
@@ -40,8 +40,10 @@ public sealed class SimMcpServer : IAsyncDisposable
         _version = version;
     }
 
-    /// <summary>The actual loopback TCP port after startup.</summary>
+    /// <summary>The actual TCP port after startup.</summary>
     public int Port { get; private set; }
+    /// <summary>The IP address the listener is bound to.</summary>
+    public string BindHost { get; private set; } = "127.0.0.1";
     /// <summary>Requests currently executing.</summary>
     public int ActiveRequests => Volatile.Read(ref _activeRequests);
     /// <summary>Accepted TCP connections that have not completed teardown.</summary>
@@ -51,29 +53,34 @@ public sealed class SimMcpServer : IAsyncDisposable
     /// <summary>Total transport/protocol failures.</summary>
     public long ErrorCount => Interlocked.Read(ref _errorCount);
 
-    /// <summary>Bind preferred port first and fall back to an ephemeral loopback port.</summary>
-    public Task StartAsync(int preferredPort = 4243)
+    /// <summary>Bind the configured address and preferred port, falling back to an ephemeral port.</summary>
+    public Task StartAsync(int preferredPort = 4243, string bindHost = "127.0.0.1")
     {
         ObjectDisposedException.ThrowIf(_stop.IsCancellationRequested, this);
-        _listener = Bind(preferredPort);
-        Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
+        var address = IPAddress.TryParse(bindHost, out var parsed)
+            ? parsed
+            : throw new ArgumentException("Bind host must be an IPv4 or IPv6 address.", nameof(bindHost));
+        _listener = Bind(address, preferredPort);
+        var endpoint = (IPEndPoint)_listener.LocalEndpoint;
+        BindHost = endpoint.Address.ToString();
+        Port = endpoint.Port;
         _acceptLoop = Task.Run(() => AcceptLoopAsync(_stop.Token));
         return Task.CompletedTask;
     }
 
-    private static TcpListener Bind(int preferredPort)
+    private static TcpListener Bind(IPAddress address, int preferredPort)
     {
         if (preferredPort > 0)
         {
             try
             {
-                var preferred = new TcpListener(IPAddress.Loopback, preferredPort);
+                var preferred = new TcpListener(address, preferredPort);
                 preferred.Start();
                 return preferred;
             }
             catch (SocketException) { }
         }
-        var ephemeral = new TcpListener(IPAddress.Loopback, 0);
+        var ephemeral = new TcpListener(address, 0);
         ephemeral.Start();
         return ephemeral;
     }
@@ -232,12 +239,33 @@ public sealed class SimMcpServer : IAsyncDisposable
         { status = 406; error = "Accept must allow application/json"; return false; }
         var expectedPort = Port.ToString(CultureInfo.InvariantCulture);
         var host = r.Header("host");
-        if (host != "127.0.0.1:" + expectedPort && host != "localhost:" + expectedPort)
-        { status = 403; error = "Host is not the bound local endpoint"; return false; }
+        if (!IsAllowedAuthority(host, expectedPort))
+        { status = 403; error = "Host is not the configured endpoint"; return false; }
         var origin = r.Header("origin");
-        if (origin is not null && origin != "http://127.0.0.1:" + expectedPort && origin != "http://localhost:" + expectedPort)
-        { status = 403; error = "Origin is not the bound local endpoint"; return false; }
+        if (origin is not null && (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)
+                                   || uri.Scheme != Uri.UriSchemeHttp
+                                   || !IsAllowedHost(uri.Host)
+                                   || uri.Port != Port))
+        { status = 403; error = "Origin is not the configured endpoint"; return false; }
         return true;
+    }
+
+    private bool IsAllowedAuthority(string? authority, string expectedPort)
+    {
+        if (string.IsNullOrWhiteSpace(authority)) return false;
+        return Uri.TryCreate("http://" + authority, UriKind.Absolute, out var uri)
+               && uri.Port.ToString(CultureInfo.InvariantCulture) == expectedPort
+               && IsAllowedHost(uri.Host);
+    }
+
+    private bool IsAllowedHost(string host)
+    {
+        var bound = ((IPEndPoint)_listener!.LocalEndpoint).Address;
+        if (IPAddress.Any.Equals(bound) || IPAddress.IPv6Any.Equals(bound))
+            return true;
+        if (string.Equals(host, bound.ToString(), StringComparison.OrdinalIgnoreCase))
+            return true;
+        return IPAddress.IsLoopback(bound) && string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? ExtractName(JsonNode? body, string? method) => method switch

@@ -34,6 +34,10 @@ public sealed class McpProtocolTests
     }
 
     [Test]
+    public void DefaultBind_IsLoopback() =>
+        Assert.That(_server.BindHost, Is.EqualTo("127.0.0.1"));
+
+    [Test]
     public async Task CurrentDiscover_IsStateless_AndListsTools()
     {
         var discover = await PostCurrentAsync("server/discover", new { });
@@ -117,6 +121,23 @@ public sealed class McpProtocolTests
 
         using var resources = await PostCurrentAsync("resources/list", new { });
         Assert.That(await resources.Content.ReadAsStringAsync(), Does.Not.Contain("display"));
+    }
+
+    [Test]
+    public async Task ConfiguredWildcardBind_AcceptsTheAddressUsedByTheClient()
+    {
+        _client.Dispose();
+        await _server.DisposeAsync();
+        _server = new SimMcpServer(new McpRegistry(new SnapshotStore()), "test");
+        await _server.StartAsync(0, "0.0.0.0");
+        _client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{_server.Port}/") };
+
+        using var response = await PostCurrentAsync("tools/list", new { });
+        Assert.Multiple(() =>
+        {
+            Assert.That(_server.BindHost, Is.EqualTo("0.0.0.0"));
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        });
     }
 
     [Test]

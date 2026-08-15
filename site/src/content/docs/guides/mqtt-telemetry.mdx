@@ -43,10 +43,11 @@ mosquitto_pub -h sim -p 1883 -t gatos/command -m \
 Use the exact vessel id and action key. Commands report results on the command-result topic described
 in the MQTT reference.
 
-:::caution[Local really means local]
+:::caution[Network clients]
 
-The embedded broker binds to loopback. A Raspberry Pi or ESP32 elsewhere on your network cannot
-connect directly. Bridge or forward it deliberately if that is what you want.
+The embedded broker defaults to loopback. Set `mqtt_bind_host` to the host-interface IP (or
+`0.0.0.0` for all IPv4 interfaces) for a Raspberry Pi or ESP32 to connect directly. There is no
+broker authentication, so every client that can reach the address can also publish commands.
 
 :::
 

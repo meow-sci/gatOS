@@ -7,8 +7,7 @@ sidebar:
 
 import { Steps } from "@astrojs/starlight/components";
 
-gatOS hosts MCP inside the C# game mod. There is no stdio proxy, guest endpoint, bearer token, or
-remote listener in v1.
+gatOS hosts MCP inside the C# game mod. There is no stdio proxy, guest endpoint, or bearer token.
 
 ## Endpoint and configuration
 
@@ -22,21 +21,27 @@ The listener is enabled by default. In `gatos.toml`:
 
 ```toml
 mcp_enabled = true
+mcp_bind_host = "127.0.0.1"
 mcp_preferred_port = 4243
 ```
 
-Set the preferred port to `0` to request an ephemeral port. A nonzero port is clamped to
+Set `mcp_bind_host` to a specific host-interface IP or `0.0.0.0` for all IPv4 interfaces. Set the
+preferred port to `0` to request an ephemeral port. A nonzero port is clamped to
 `1024..65535`; if it is occupied, gatOS falls back to an ephemeral port. Read the actual port from
 the gatOS status window or transport status surfaces.
 
 ## Transport behavior
 
-- Streamable HTTP at `POST /mcp` on `127.0.0.1` only.
+- Streamable HTTP at `POST /mcp`; the bind host defaults to `127.0.0.1`.
 - Stateless request handling: no `Mcp-Session-Id`, GET event stream, DELETE, legacy `/sse`, or `/message` endpoint.
-- Exact local `Host` validation. `Origin` may be absent for native clients; when present it must be an exact local origin.
+- A specific-address bind validates the configured `Host`. `Origin` may be absent for native clients;
+  when present it must match. A wildcard bind accepts the authority used by the client.
 - No CORS response headers and no bearer token.
 - Each POST stays open until its handler completes, so command and wait calls preserve request-level backpressure.
 - Current discovery and compatible initialize-capable clients are handled by the official C# MCP SDK.
+
+A non-loopback bind exposes MCP reads and control tools without authentication. Limit reachability
+with the selected interface and the host firewall.
 
 ## First agent sequence
 

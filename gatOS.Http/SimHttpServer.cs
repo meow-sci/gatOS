@@ -15,11 +15,11 @@ using gatOS.SimFs.Snapshots;
 namespace gatOS.Http;
 
 /// <summary>
-///     The "magic" HTTP transport (KSA_GAME_INTEGRATION_PLAN Part 6 T2 / G5): a loopback REST + SSE
+///     The "magic" HTTP transport (KSA_GAME_INTEGRATION_PLAN Part 6 T2 / G5): a REST + SSE
 ///     server over the <b>same</b> game-free domain the 9p tree uses — <see cref="SnapshotStore"/>
 ///     for reads and the <see cref="ICommandSink"/> command pipeline for writes. No KSA coupling,
 ///     no third-party HTTP dependency (raw <c>TcpListener</c>, see <see cref="HttpRequestLine"/>).
-///     The guest reaches it via slirp at <c>10.0.2.2:&lt;port&gt;</c>; the host binds 127.0.0.1.
+///     The guest reaches it via slirp at <c>10.0.2.2:&lt;port&gt;</c>; the bind address is configurable.
 /// </summary>
 /// <remarks>
 ///     <para>Reads are a JSON projection of the published snapshot (atomicity is the headline
@@ -68,6 +68,9 @@ public sealed class SimHttpServer : IAsyncDisposable
     /// <summary>The bound TCP port (valid after <see cref="StartAsync"/>).</summary>
     public int Port { get; private set; }
 
+    /// <summary>The IP address the listener is bound to (valid after <see cref="StartAsync"/>).</summary>
+    public string BindHost { get; private set; } = "127.0.0.1";
+
     /// <summary>Open HTTP connections being served right now (for the sampler idle gate).</summary>
     public int ActiveSessions => Volatile.Read(ref _activeSessions);
 
@@ -75,21 +78,26 @@ public sealed class SimHttpServer : IAsyncDisposable
     ///     Binds the server. Tries <paramref name="preferredPort"/> first (the conventional 4242)
     ///     and falls back to an ephemeral port on a clash; <c>0</c> goes straight to ephemeral.
     /// </summary>
-    public Task StartAsync(int preferredPort = 0)
+    public Task StartAsync(int preferredPort = 0, string bindHost = "127.0.0.1")
     {
-        _listener = BindAndStart(preferredPort);
-        Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
+        var address = IPAddress.TryParse(bindHost, out var parsed)
+            ? parsed
+            : throw new ArgumentException("Bind host must be an IPv4 or IPv6 address.", nameof(bindHost));
+        _listener = BindAndStart(address, preferredPort);
+        var endpoint = (IPEndPoint)_listener.LocalEndpoint;
+        BindHost = endpoint.Address.ToString();
+        Port = endpoint.Port;
         _acceptLoop = Task.Run(() => AcceptLoopAsync(_cts.Token));
         return Task.CompletedTask;
     }
 
-    private static TcpListener BindAndStart(int preferredPort)
+    private static TcpListener BindAndStart(IPAddress address, int preferredPort)
     {
         if (preferredPort > 0)
         {
             try
             {
-                var preferred = new TcpListener(IPAddress.Loopback, preferredPort);
+                var preferred = new TcpListener(address, preferredPort);
                 preferred.Start();
                 return preferred;
             }
@@ -99,7 +107,7 @@ public sealed class SimHttpServer : IAsyncDisposable
             }
         }
 
-        var ephemeral = new TcpListener(IPAddress.Loopback, 0);
+        var ephemeral = new TcpListener(address, 0);
         ephemeral.Start();
         return ephemeral;
     }

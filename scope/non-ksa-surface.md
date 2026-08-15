@@ -24,10 +24,10 @@ headlessly testable, and what confines KSA-update breakage to `Game/Ksa/**` (see
 | VM state machine | `VmHost.cs` | boot/shutdown ladder (QGA→QMP→kill), one `SemaphoreSlim`, status events | QEMU |
 | QEMU cmdline | `QemuCommandBuilder.cs` | builds `-netdev`/hostfwd, injects `gatos.*port=` kernel cmdline, serial chardev | QEMU |
 | Disks | `DiskManager.cs` | qcow2 base + per-profile overlay, PID locks, overlay delete (reset) | `qemu-img` |
-| Ports | `PortAllocator.cs` | ephemeral loopback ports for ssh/sim/mnt/http/mqtt/serial | — |
+| Ports | `PortAllocator.cs` | ephemeral loopback ports for QEMU's SSH/QGA/QMP channels and optional serial bridge | — |
 | Guest agent / readiness | `QgaClient.cs`, `ReadinessProbe.cs`, `QemuLocator.cs` | QGA comms, SSH readiness, QEMU discovery (incl. bundled `vendor/qemu/win-x64`) | QEMU |
 | Paths | `GatOsPaths.cs` | the **single** source of all filesystem locations (mod dir, data dir, disks, logs, config) | — |
-| Config | `Configuration/GatOsConfig*` (in GameMod) + Tomlyn | TOML load/seed/save; sections `[common]/[telemetry]/[control]/[http]/[mqtt]/[mcp]/[serial]/[display]/[audio]/[iva]/[camera]/[schedule]/[[mounts]]` | Tomlyn |
+| Config | `Configuration/GatOsConfig*` (in GameMod) + Tomlyn | TOML load/seed/save; flat keys grouped for HTTP/MQTT/MCP with consistent `*_bind_host` + `*_preferred_port` listener settings (loopback defaults), plus telemetry/control/serial/display/audio/IVA/camera/schedule and `[[mounts]]` | Tomlyn |
 
 Ports + disk layout table: [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md#port-allocation).
 
@@ -124,16 +124,19 @@ pending ([`../docs/VALIDATION.md`](../docs/VALIDATION.md)).
 ## HTTP `/v1` — `gatOS.Http`
 `SimHttpServer.cs` (raw `TcpListener`, no HTTP lib), `HttpRequestLine.cs`, `OpenApi.cs`. Serves
 `/v1/{snapshot,system,bodies,vessels/<id>[/telemetry|/stream|/events],status,command}` + the field-level
-`/v1/fs/<path>` mirror (SSE via `?stream=1`). Projects the same `SimSnapshot`/`SimCommand`.
+`/v1/fs/<path>` mirror (SSE via `?stream=1`). Projects the same `SimSnapshot`/`SimCommand`. Binds
+`http_bind_host` / `http_preferred_port` (`127.0.0.1:4242` by default).
 
 ## MQTT — `gatOS.Mqtt`
-`SimMqttBroker.cs` — embedded MQTTnet broker (loopback). Retained `gatos/{snapshot,system,bodies,time,status,events}`
+`SimMqttBroker.cs` — embedded MQTTnet broker, bound through `mqtt_bind_host` / `mqtt_preferred_port`
+(`127.0.0.1:1883` by default). Retained `gatos/{snapshot,system,bodies,time,status,events}`
 + `gatos/vessels/<id>/{telemetry,snapshot,stream}`; `gatos/command` in, `gatos/command/result` out;
 `gatos/sim/<path>` field mirror. Changed-only publisher (the one eager pusher). Dep: MQTTnet.
 
 ## MCP — `gatOS.Mcp`
 `SimMcpServer.cs`, `McpRegistry.cs`, `McpPresenters.cs`, and `McpToolHandlers.cs` implement a
-loopback-only, stateless Streamable HTTP server at `/mcp` using the official C# SDK. Reads use only
+stateless Streamable HTTP server at `/mcp` using the official C# SDK, bound through `mcp_bind_host` /
+`mcp_preferred_port` (`127.0.0.1:4243` by default). Reads use only
 `SnapshotStore` and existing game-free stores; writes compile through `CommandCatalog` into
 `SimCommand`/`ICommandSink`, with shared atomic-batch and schedule builders. Resources and tools group
 state by world, celestial, vessel, kitten, and runtime feature rather than mirroring VFS leaves.

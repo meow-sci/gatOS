@@ -11,9 +11,9 @@ filesystem. Choose the shape that makes the job pleasant.
 | Interface     | Best for                                       | Where it runs           | Start here                                          |
 | ------------- | ---------------------------------------------- | ----------------------- | --------------------------------------------------- |
 | `/sim`        | shell work, guest programs, discovery          | Alpine guest            | [Filesystem overview](/gatOS/intro/sim-filesystem/) |
-| HTTP `/v1`    | dashboards, browser tools, simple host scripts | loopback host and guest | [HTTP overview](/gatOS/intro/http/)                 |
-| MQTT          | pub/sub telemetry and automation tooling       | loopback host and guest | [MQTT overview](/gatOS/intro/mqtt/)                 |
-| MCP           | AI agents and structured tool clients          | loopback host           | [MCP overview](/gatOS/intro/mcp/)                   |
+| HTTP `/v1`    | dashboards, browser tools, simple host scripts | host and guest | [HTTP overview](/gatOS/intro/http/)                 |
+| MQTT          | pub/sub telemetry and automation tooling       | host and guest | [MQTT overview](/gatOS/intro/mqtt/)                 |
+| MCP           | AI agents and structured tool clients          | host           | [MCP overview](/gatOS/intro/mcp/)                   |
 | Virtio serial | hardware-style telemetry and SCPI              | Alpine guest device     | [Serial overview](/gatOS/intro/serial/)             |
 
 `/sim` is the richest human exploration surface. HTTP and MQTT project the same snapshot and command
@@ -21,6 +21,6 @@ pipeline, including an optional per-field mirror. MCP deliberately groups the mo
 resources and tools instead of reproducing thousands of paths. Serial is a focused bridge, not a full
 transport twin.
 
-Every host listener is loopback-only by design. If you want another machine involved, put an
-appropriate authenticated bridge in front of it yourself. Do not casually turn the flight computer
-into the neighborhood's public Wi-Fi appliance.
+HTTP, MQTT, and MCP bind to `127.0.0.1` by default. Their `*_bind_host` settings accept a specific
+host-interface IP or a wildcard such as `0.0.0.0` when another machine needs direct access. Those
+services do not gain authentication when exposed, so choose the reachable interface deliberately.

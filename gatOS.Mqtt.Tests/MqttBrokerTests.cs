@@ -328,11 +328,38 @@ public sealed class MqttBrokerTests
     }
 
     [Test]
+    public void DefaultBind_IsLoopback() =>
+        Assert.That(_broker.BindHost, Is.EqualTo("127.0.0.1"));
+
+    [Test]
     public async Task Command_MalformedJson_ReturnsEinval()
     {
         await _client.PublishStringAsync(SimMqttBroker.CommandTopic, "{ not json");
         var result = await WaitForAsync(t => t == SimMqttBroker.CommandResultTopic);
         Assert.That(result, Does.Contain("EINVAL"));
+    }
+
+    [Test]
+    public async Task ConfiguredWildcardBind_IsReachableThroughLoopback()
+    {
+        await using var broker = new SimMqttBroker(new SnapshotStore());
+        await broker.StartAsync(0, "0.0.0.0");
+        var client = new MqttFactory().CreateMqttClient();
+        try
+        {
+            await client.ConnectAsync(new MqttClientOptionsBuilder()
+                .WithTcpServer("127.0.0.1", broker.Port).Build());
+            Assert.Multiple(() =>
+            {
+                Assert.That(broker.BindHost, Is.EqualTo("0.0.0.0"));
+                Assert.That(client.IsConnected, Is.True);
+            });
+        }
+        finally
+        {
+            if (client.IsConnected) await client.DisconnectAsync();
+            client.Dispose();
+        }
     }
 
     [Test]

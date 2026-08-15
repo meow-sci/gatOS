@@ -80,20 +80,29 @@ max_commands_per_frame = 64
 # Serve the magic HTTP API (guest reaches it at $GATOS_HTTP / 10.0.2.2).
 http_enabled = true
 
+# Host IP to bind the HTTP API to (127.0.0.1 = host-local; 0.0.0.0 = all IPv4 interfaces).
+http_bind_host = '127.0.0.1'
+
 # Preferred HTTP port (4242); 0 = ephemeral only; falls back on a clash.
 http_preferred_port = 4242
 
 # Serve the per-field /v1/fs/<path> filesystem mirror (reads + SSE + writes).
 http_field_endpoints = true
 
-# Serve the host-side MCP API for AI agents at http://127.0.0.1:<port>/mcp.
+# Serve the host-side MCP API for AI agents.
 mcp_enabled = true
+
+# Host IP to bind the MCP API to (127.0.0.1 = host-local; 0.0.0.0 = all IPv4 interfaces).
+mcp_bind_host = '127.0.0.1'
 
 # Preferred MCP port (4243); 0 = ephemeral only; falls back on a clash.
 mcp_preferred_port = 4243
 
 # Run the embedded MQTT broker (guest reaches it at $GATOS_MQTT / 10.0.2.2).
 mqtt_enabled = true
+
+# Host IP to bind MQTT to (127.0.0.1 = host-local; 0.0.0.0 = all IPv4 interfaces).
+mqtt_bind_host = '127.0.0.1'
 
 # Preferred MQTT port (1883); 0 = ephemeral only; falls back on a clash.
 mqtt_preferred_port = 1883

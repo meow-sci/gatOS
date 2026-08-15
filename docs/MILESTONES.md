@@ -457,7 +457,7 @@ actuates; `echo bogus` → nonzero EINVAL).
 
 ## G5 — HTTP transport: DONE
 
-**`gatOS.Http`**: a raw loopback-`TcpListener` HTTP/1.1 server (not `HttpListener` — that needs
+**`gatOS.Http`**: a raw configurable-`TcpListener` HTTP/1.1 server (not `HttpListener` — that needs
 http.sys URL-ACL/admin on Windows; not GenHTTP — avoids a heavy dependency tree in the mod ALC)
 serving `/v1`:
 - JSON snapshot projections: `snapshot`/`time`/`status`/`system`/`bodies[/{id}]`/
@@ -471,7 +471,8 @@ serving `/v1`:
   resolved by walking the same `/sim` VFS tree via `VfsScan`
 
 All reads use the shared `SimJson` projection layer (transport parity). Config:
-`[http] enabled`/`preferred_port`=4242 ephemeral-fallback, `http_field_endpoints`. `VmHost`/
+`http_enabled`, `http_bind_host`=127.0.0.1, `http_preferred_port`=4242 ephemeral-fallback,
+`http_field_endpoints`. `VmHost`/
 `QemuCommandBuilder` inject `gatos.httpport` on the cmdline.
 
 Tests: 37 (HttpClient over the live socket, incl. `/v1/system`, `/v1/vessels/{id}` +
@@ -515,8 +516,9 @@ line rejected (`ERR EINVAL`). See `docs/VALIDATION.md`.
 
 ## MQTT transport: DONE
 
-**`gatOS.Mqtt`** (MQTTnet): an **embedded MQTTnet broker** (`SimMqttBroker`) in the host process
-on a loopback port (guest reaches it at `10.0.2.2:<port>`, like the others — no external broker)
+**`gatOS.Mqtt`** (MQTTnet): an **embedded MQTTnet broker** (`SimMqttBroker`) in the host process,
+bound to `127.0.0.1` by default and configurable with `mqtt_bind_host` (the guest reaches it at
+`10.0.2.2:<port>`, like the others — no external broker)
 over the same `SnapshotStore` + `CommandQueue` (and the same `SimJson` projection layer HTTP uses):
 
 **Topics published:**
@@ -556,10 +558,11 @@ via wget. See `docs/VALIDATION.md`.
 
 **`gatOS.Mcp`** is the first-class, AI-oriented transport. It uses the official
 `ModelContextProtocol.Core` 2.2.0 SDK for discovery, protocol negotiation, resource/tool schemas,
-and dispatch; `SimMcpServer` supplies the deliberately small loopback-only, stateless Streamable
-HTTP host. It binds `http://127.0.0.1:<port>/mcp`, prefers port 4243, and falls back to an ephemeral
+and dispatch; `SimMcpServer` supplies the deliberately small, stateless Streamable HTTP host. It
+binds `http://127.0.0.1:<port>/mcp` by default, prefers port 4243, and falls back to an ephemeral
 port when needed (or immediately when `mcp_preferred_port = 0`). The server has no bearer-token
-scheme; its loopback bind and exact local `Host`/`Origin` checks are the v1 boundary. It rejects
+scheme; a specific bind validates its configured `Host`/`Origin`, while a wildcard bind accepts the
+authority used by the client. It rejects
 sessionful MCP requests, has bounded request concurrency, and exposes its bound port/request/error
 status in the gatOS status window.
 
@@ -570,7 +573,8 @@ entity lookup, sectioned vessel documents, 50-default/1,000-maximum cursor lists
 discovery, and the common snapshot envelope. `McpToolHandlers` maps concise controls, the canonical
 command envelope, same-tick batches, and timed batches back to the existing command catalog.
 
-Config: `mcp_enabled = true` and `mcp_preferred_port = 4243` in `gatos.toml`. Responses have no
+Config: `mcp_enabled = true`, `mcp_bind_host = "127.0.0.1"`, and `mcp_preferred_port = 4243` in
+`gatos.toml`. Responses have no
 JSON result-size cap or inspection; HTTP request framing is capped at 24 MiB, and audio/camera-track
 uploads are chunked. `/sim/display` remains deliberately outside the MCP contract. The complete
 public resource, tool, schema, error, and maintenance contract is [`SPEC_MCP.md`](../SPEC_MCP.md).

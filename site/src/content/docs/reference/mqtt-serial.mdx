@@ -7,8 +7,10 @@ sidebar:
 
 ## MQTT
 
-The embedded broker exists with `mqtt_enabled=true`, defaults to port 1883, and binds loopback only. The
-guest reaches it at `$GATOS_MQTT` through `10.0.2.2`; it is not a LAN broker waiting to happen.
+The embedded broker exists with `mqtt_enabled=true` and defaults to `127.0.0.1:1883`. Set
+`mqtt_bind_host` to a specific host-interface IP or `0.0.0.0` for all IPv4 interfaces. The guest
+reaches it at `$GATOS_MQTT` through `10.0.2.2`. The broker has no authentication, so a non-loopback
+bind exposes telemetry and command topics to reachable clients.
 
 | Topic                  | Direction         | Meaning                             |
 | ---------------------- | ----------------- | ----------------------------------- |

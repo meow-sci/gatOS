@@ -7,7 +7,9 @@ sidebar:
 
 gatOS serves HTTP/1.1 on loopback by default. The preferred host port is `4242`; the listener falls
 back to an ephemeral port if it is occupied, so read the status window when a fixed URL does not work.
-Inside the guest, `$GATOS_HTTP` already points at the service.
+Inside the guest, `$GATOS_HTTP` already points at the service. Set `http_bind_host` to a specific
+host-interface IP or `0.0.0.0` for all IPv4 interfaces when another machine needs direct access.
+HTTP has no authentication, so that also exposes its control routes to reachable clients.
 
 ```sh
 # Host

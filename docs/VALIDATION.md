@@ -36,7 +36,7 @@ connected to the QEMU `gatos.serial` chardev:
 
 ### MCP transport — live mod pass pending
 
-The MCP host is loopback-only and needs no guest-image change. Run this during the next live KSA
+The MCP host defaults to loopback, has a configurable bind host, and needs no guest-image change. Run this during the next live KSA
 flight with an MCP client that supports Streamable HTTP; its static/schema coverage belongs in
 `gatOS.Mcp.Tests`, while this table verifies lifecycle wiring and the game-thread boundary.
 
@@ -46,7 +46,7 @@ flight with an MCP client that supports Streamable HTTP; its static/schema cover
 | 2 | `gatos.get_world`, a resource read, and `gatos.get_vessel` return a common envelope with matching `snapshot_sequence` / `ut`; a vessel id containing path-hostile characters remains its raw KSA id | ☐ | proves the logical JSON projection, not the `/sim` name sanitizer |
 | 3 | List pagination defaults to 50 and accepts 1,000; `gatos.get_world(detail:"full")` and `gatos.get_vessel(include:["all"])` return complete response documents rather than a measured/truncated result | ☐ | request framing remains 24 MiB; use chunked clip/track upload for large inputs |
 | 4 | `gatos.ignite_engines`/`gatos.vessel_control` or `gatos.command` visibly execute through the normal game-thread command queue, then read back on a later snapshot; `gatos.execute_batch` rejects mixed phases and `gatos.schedule_batch` advances on its selected clock | ☐ | run only on a safe test vessel; existing control/debug gates still apply |
-| 5 | An invalid `Host` or `Origin`, a session id, or a non-JSON/non-POST request is rejected; normal loopback clients work without a bearer token | ☐ | loopback Host/Origin validation is the v1 network boundary |
+| 5 | On the default specific-address bind, an invalid `Host` or `Origin`, a session id, or a non-JSON/non-POST request is rejected; normal loopback clients work without a bearer token | ☐ | a wildcard bind intentionally accepts the client-used authority and exposes the unauthenticated endpoint |
 | 6 | `/sim/display` is absent from MCP discovery/resources/tools; `gatos.get_capabilities` reports that deliberate exclusion | ☐ | terminal-video stream must not be reintroduced as an MCP JSON interface |
 | 7 | Set `mcp_enabled = false`, restart the mod, and confirm the MCP status row says `disabled` with no bound port while `/sim`, HTTP, MQTT, serial, and the VM remain usable | ☐ | optional transport failure/disable must not affect the game |
 

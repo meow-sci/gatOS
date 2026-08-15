@@ -30,7 +30,7 @@ HTTP `/v1` (and MQTT), so the identical program logic runs two places:
 | **inside the guest** | `cat /sim/<path>` (a plain `read()`) | `echo v > /sim/<path>` (a plain `write()`) | teaching the filesystem-as-API idea; shell one-liners; Python/Rust/Bun shipped into Alpine |
 | **on the host** | `GET $GATOS_HTTP/fs/<path>` or an aggregate `GET /v1/…` | `POST /v1/command` (JSON) or `POST /v1/fs/<path>` (raw) | dev/iteration from the player's workstation; language SDKs; dashboards |
 
-- **Host base URL:** `http://127.0.0.1:4242/v1` (default `http_preferred_port`).
+- **Host base URL:** `http://127.0.0.1:4242/v1` (defaults from `http_bind_host` and `http_preferred_port`).
 - **Guest base URL:** the env var `$GATOS_HTTP` (≈ `http://10.0.2.2:4242/v1`) — or just read `/sim`.
 
 The dual presentation is a **deliberate tutorial requirement**: every tutorial that actuates the game

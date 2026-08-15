@@ -44,6 +44,10 @@ public sealed class HttpServerTests
     }
 
     [Test]
+    public void DefaultBind_IsLoopback() =>
+        Assert.That(_server.BindHost, Is.EqualTo("127.0.0.1"));
+
+    [Test]
     public async Task KeepAlive_ServesMultipleRequestsOnOneConnection()
     {
         // GP7: HTTP/1.1 keep-alive — a raw connection serves several requests without closing.
@@ -66,6 +70,21 @@ public sealed class HttpServerTests
             await http.ReadBlockAsync(body, 0, contentLength);
             Assert.That(new string(body), Does.Contain("ut"));
         }
+    }
+
+    [Test]
+    public async Task ConfiguredWildcardBind_IsReachableThroughLoopback()
+    {
+        await using var server = new SimHttpServer(new SnapshotStore());
+        await server.StartAsync(0, "0.0.0.0");
+        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{server.Port}/") };
+
+        using var response = await client.GetAsync("v1/time");
+        Assert.Multiple(() =>
+        {
+            Assert.That(server.BindHost, Is.EqualTo("0.0.0.0"));
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        });
     }
 
     [Test]

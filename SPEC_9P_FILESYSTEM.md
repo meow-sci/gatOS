@@ -131,11 +131,11 @@ their upload surfaces (thrown by the write itself, mid-stream — not by a comma
 | `debug_namespace` | `true` | exposes `/sim/debug/**` and the `debug.*` actions; `false` ⇒ those vanish / `EACCES` |
 | `sample_rate_hz` | `10` | master cadence (1..120) |
 | `telemetry_bodies_rate_hz` | `0` | bodies resample cadence (0 = every tick); lower ⇒ `/sim/bodies` + `system` update at that cadence (values between are the previous sample) |
-| `http_enabled` / `http_preferred_port` | `true` / `4242` | HTTP `/v1` server (falls back to ephemeral on clash) |
+| `http_enabled` / `http_bind_host` / `http_preferred_port` | `true` / `127.0.0.1` / `4242` | HTTP `/v1` server (falls back to ephemeral on clash; bind host is configurable) |
 | `http_field_endpoints` | `true` | the `/v1/fs/<path>` mirror (off ⇒ those routes `ENOENT`) |
-| `mqtt_enabled` / `mqtt_preferred_port` | `true` / `1883` | embedded MQTT broker |
+| `mqtt_enabled` / `mqtt_bind_host` / `mqtt_preferred_port` | `true` / `127.0.0.1` / `1883` | embedded MQTT broker (bind host is configurable) |
 | `mqtt_publish_hz` | `0` | cap on the MQTT world-topic cadence (0 = every snapshot; below the sample rate the broker coalesces to the newest snapshot). MQTT topics are also **subscription-gated**: a topic no live filter matches is not published (a new subscription forces its retained baseline within a cycle), and a vanished vessel's retained topics are cleared with an empty payload |
-| `mcp_enabled` / `mcp_preferred_port` | `true` / `4243` | loopback Streamable HTTP MCP server at `/mcp`; falls back to an ephemeral port on clash (`0` = ephemeral). MCP groups the same model for AI agents; requests are framed at 24 MiB while responses are not size-capped; see `SPEC_MCP.md`. |
+| `mcp_enabled` / `mcp_bind_host` / `mcp_preferred_port` | `true` / `127.0.0.1` / `4243` | Streamable HTTP MCP server at `/mcp`; falls back to an ephemeral port on clash (`0` = ephemeral; bind host is configurable). MCP groups the same model for AI agents; requests are framed at 24 MiB while responses are not size-capped; see `SPEC_MCP.md`. |
 | `command_timeout_ms` | `2000` | how long a write waits for the game thread before `ETIMEDOUT` |
 | `display_enabled` | `false` | boot seed for `/sim/display/enabled` — the screen stream (§3.8); **off by default** |
 | `display_fps` / `display_width` / `display_height` | `15` / `320` / `180` | boot seeds for the stream cadence + downscale size (runtime control is the `/sim/display/*` files) |
@@ -1583,8 +1583,9 @@ the **velocity**, and re-teleports at the same position — so everything above 
 
 ## 7. HTTP `/v1` endpoint reference (`gatOS.Http/SimHttpServer.cs`)
 
-Base URL: `$GATOS_HTTP` (guest) or `http://127.0.0.1:<http_preferred_port>/v1` (host, default `4242`).
-Loopback only, no auth. Aggregate reads serialize the snapshot via `SimJson`. Connections are
+Base URL: `$GATOS_HTTP` (guest) or `http://<http_bind_host>:<http_preferred_port>/v1` (host; defaults
+to `127.0.0.1:4242`). There is no authentication; binding beyond loopback exposes reads and controls
+to clients that can reach the address. Aggregate reads serialize the snapshot via `SimJson`. Connections are
 HTTP/1.1 **keep-alive** (idle timeout ~30 s; `Connection: close` honored; SSE responses stream until
 the client disconnects) — polling clients can and should reuse one connection.
 

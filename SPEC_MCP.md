@@ -14,11 +14,13 @@
 
 ## 1. Purpose and shared model
 
-MCP runs as a loopback-only Streamable HTTP server in the gatOS mod process at
-`http://127.0.0.1:<bound-port>/mcp`. `mcp_enabled` defaults to `true`; `mcp_preferred_port`
-defaults to `4243`, falls back to an ephemeral port when occupied, and accepts
-`0` to choose ephemeral directly. The server accepts no bearer token: loopback-only binding plus
-exact local `Host`/`Origin` validation are its v1 boundary. It is optional: a failure to start it
+MCP runs as a Streamable HTTP server in the gatOS mod process. `mcp_bind_host` defaults to
+`127.0.0.1`, so the default endpoint is `http://127.0.0.1:<bound-port>/mcp`; it accepts another IP
+address or a wildcard such as `0.0.0.0` for intentional network access. `mcp_enabled` defaults to
+`true`; `mcp_preferred_port` defaults to `4243`, falls back to an ephemeral port when occupied, and
+accepts `0` to choose ephemeral directly. The server accepts no bearer token. It validates an exact
+configured Host/Origin for a specific-address bind; a wildcard bind accepts the authority used by
+the client. It is optional: a failure to start it
 leaves the game, `/sim`, HTTP, MQTT, serial, and the VM usable. It reads only published, immutable
 telemetry snapshots on its request threads. Every game mutation is converted to the existing immutable
 `SimCommand` and sent through `ICommandSink`/`CommandQueue`; KSA remains game-thread-only.

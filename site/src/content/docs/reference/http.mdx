@@ -1,13 +1,15 @@
 ---
 title: HTTP API
-description: The loopback /v1 service, aggregate JSON, field mirroring, SSE, commands, and uploads.
+description: The configurable /v1 service, aggregate JSON, field mirroring, SSE, commands, and uploads.
 sidebar:
   order: 13
 ---
 
-HTTP exists when `http_enabled=true`, on host loopback at `http://127.0.0.1:<port>/v1` and in the guest
-as `$GATOS_HTTP` (normally `http://10.0.2.2:4242/v1`). It has no authentication because it deliberately
-binds only to loopback. The preferred port may fall back to an ephemeral one; inspect `status/transports`.
+HTTP exists when `http_enabled=true`, at `http://127.0.0.1:<port>/v1` by default and in the guest as
+`$GATOS_HTTP` (normally `http://10.0.2.2:4242/v1`). Set `http_bind_host` to a specific host-interface
+IP or `0.0.0.0` for all IPv4 interfaces. It has no authentication, so exposing a non-loopback
+interface also exposes telemetry and controls. The preferred port may fall back to an ephemeral one;
+inspect `status/transports`.
 
 ## Reads and streams
 

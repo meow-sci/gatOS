@@ -38,7 +38,8 @@ The precise test cards, conditions, and historical upgrade notes live in
 - HTTP, MQTT, and 9P share snapshot/command semantics, but not every byte-oriented feature has parity:
   display is guest 9P only; audio upload has HTTP binary routes and no MQTT upload.
 - MCP is a deliberate logical JSON API, not a leaf-for-leaf /sim mirror, and excludes display.
-- The MQTT and HTTP services bind loopback. Exposing them to a network is not a configuration toggle.
+- HTTP, MQTT, and MCP default to `127.0.0.1`; their `*_bind_host` settings can expose them to another
+  interface. These services do not add authentication when you do so.
 - Camera ownership cannot take IVA or map cameras. Camera tracks also require the scheduler gate.
 - A disabled RCS mode causes manual translate/rotate to do nothing; focus changes, ImGui keyboard focus,
   and high warp clear their latched flags.

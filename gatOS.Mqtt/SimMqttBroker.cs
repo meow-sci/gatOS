@@ -20,8 +20,8 @@ namespace gatOS.Mqtt;
 ///     MQTTnet broker over the <b>same</b> <see cref="SnapshotStore"/> + command pipeline. Telemetry
 ///     is published as retained topics under <c>gatos/…</c>; a command topic is subscribed and routed
 ///     into the <see cref="ICommandSink"/>. Guest MQTT clients reach the broker at
-///     <c>10.0.2.2:&lt;port&gt;</c> (slirp), exactly like the 9p and HTTP servers — loopback only, no
-///     firewall prompt, no external broker required.
+///     <c>10.0.2.2:&lt;port&gt;</c> (slirp), exactly like the 9p and HTTP servers. The host bind address
+///     is configurable; no external broker is required.
 /// </summary>
 /// <remarks>
 ///     Topics (retained unless noted) — the same data the HTTP <c>/v1</c> reads serve, projected
@@ -129,6 +129,9 @@ public sealed class SimMqttBroker : IAsyncDisposable
     /// <summary>The bound TCP port (valid after <see cref="StartAsync"/>).</summary>
     public int Port { get; private set; }
 
+    /// <summary>The IP address the broker is bound to (valid after <see cref="StartAsync"/>).</summary>
+    public string BindHost { get; private set; } = "127.0.0.1";
+
     /// <summary>
     ///     MQTT clients connected right now (for the sampler idle gate and the publish-when-consumed
     ///     optimization). Zero ⇒ the publish pumps do no serialization work.
@@ -147,20 +150,24 @@ public sealed class SimMqttBroker : IAsyncDisposable
     ///     Starts the broker. Tries <paramref name="preferredPort"/> (the conventional 1883) and
     ///     falls back to an ephemeral port on a clash; <c>0</c> goes straight to ephemeral.
     /// </summary>
-    public async Task StartAsync(int preferredPort = 1883)
+    public async Task StartAsync(int preferredPort = 1883, string bindHost = "127.0.0.1")
     {
-        Port = await TryStartOnAsync(preferredPort).ConfigureAwait(false);
+        var address = IPAddress.TryParse(bindHost, out var parsed)
+            ? parsed
+            : throw new ArgumentException("Bind host must be an IPv4 or IPv6 address.", nameof(bindHost));
+        BindHost = address.ToString();
+        Port = await TryStartOnAsync(address, preferredPort).ConfigureAwait(false);
         _pump = Task.Run(() => PublishPumpAsync(_cts.Token));
         if (_simRoot is not null)
             _fieldPump = Task.Run(() => FieldPumpAsync(_cts.Token));
     }
 
-    private async Task<int> TryStartOnAsync(int preferredPort)
+    private async Task<int> TryStartOnAsync(IPAddress address, int preferredPort)
     {
-        var port = preferredPort > 0 ? preferredPort : FreePort();
+        var port = preferredPort > 0 ? preferredPort : FreePort(address);
         try
         {
-            _server = BuildServer(port);
+            _server = BuildServer(address, port);
             await _server.StartAsync().ConfigureAwait(false);
             return port;
         }
@@ -168,18 +175,18 @@ public sealed class SimMqttBroker : IAsyncDisposable
         {
             // Preferred port in use — retry once on a probed free port.
             _server?.Dispose();
-            port = FreePort();
-            _server = BuildServer(port);
+            port = FreePort(address);
+            _server = BuildServer(address, port);
             await _server.StartAsync().ConfigureAwait(false);
             return port;
         }
     }
 
-    private MqttServer BuildServer(int port)
+    private MqttServer BuildServer(IPAddress address, int port)
     {
         var options = new MqttServerOptionsBuilder()
             .WithDefaultEndpoint()
-            .WithDefaultEndpointBoundIPAddress(IPAddress.Loopback)
+            .WithDefaultEndpointBoundIPAddress(address)
             .WithDefaultEndpointPort(port)
             .Build();
         var server = new MqttFactory().CreateMqttServer(options);
@@ -264,9 +271,9 @@ public sealed class SimMqttBroker : IAsyncDisposable
         return false;
     }
 
-    private static int FreePort()
+    private static int FreePort(IPAddress address)
     {
-        var probe = new TcpListener(IPAddress.Loopback, 0);
+        var probe = new TcpListener(address, 0);
         probe.Start();
         var port = ((IPEndPoint)probe.LocalEndpoint).Port;
         probe.Stop();

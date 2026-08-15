@@ -126,16 +126,16 @@ public sealed partial class Mod
     // so the status window and /sim/debug/iva/stats can read it whether or not the feature is on.
     private readonly PerfStat _ivaStats = new();
 
-    // The magic HTTP transport (G5): same SnapshotStore + command pipeline as the 9p tree, on a
-    // loopback port the guest reaches at 10.0.2.2. Volatile — read by the render thread (status)
-    // and the VM boot's HttpPortProvider on their own threads.
+    // The magic HTTP transport (G5): same SnapshotStore + command pipeline as the 9p tree, on the
+    // configured host/port; the guest reaches it at 10.0.2.2. Volatile — read by the render thread
+    // (status) and the VM boot's HttpPortProvider on their own threads.
     private volatile SimHttpServer? _httpServer;
 
     // First-class host-side MCP transport for AI agents. It consumes the same immutable snapshots,
     // command sink, and feature stores as 9P/HTTP/MQTT and deliberately has no DisplaySurface.
     private volatile SimMcpServer? _mcpServer;
 
-    // The embedded MQTT broker (additional bridge): same store + command pipeline, loopback port,
+    // The embedded MQTT broker (additional bridge): same store + command pipeline, configured host/port,
     // guest reaches it at 10.0.2.2. Volatile for the same reasons as the HTTP server.
     private volatile SimMqttBroker? _mqttBroker;
 
@@ -661,9 +661,9 @@ public sealed partial class Mod
         {
             var server = new SimHttpServer(store, _commandQueue, SimTransportsStatus,
                 _config.HttpFieldEndpoints ? _simRoot : null, _audioStore);
-            server.StartAsync(_config.HttpPreferredPort).GetAwaiter().GetResult();
+            server.StartAsync(_config.HttpPreferredPort, _config.HttpBindHost).GetAwaiter().GetResult();
             _httpServer = server;
-            ModLog.Log.Info($"gatOS HTTP API listening on 127.0.0.1:{server.Port} "
+            ModLog.Log.Info($"gatOS HTTP API listening on {FormatEndpoint(server.BindHost, server.Port)} "
                             + "(guest: $GATOS_HTTP / http://sim:<port>/v1).");
         }
         catch (Exception ex)
@@ -680,7 +680,7 @@ public sealed partial class Mod
         var server = _httpServer;
         return server is null
             ? (_config.HttpEnabled ? "not running" : "disabled")
-            : $"port {server.Port}, {server.ActiveSessions} connection(s)";
+            : $"{FormatEndpoint(server.BindHost, server.Port)}, {server.ActiveSessions} connection(s)";
     }
 
     private void StartMqttBroker()
@@ -691,9 +691,9 @@ public sealed partial class Mod
         {
             var broker = new SimMqttBroker(store, _commandQueue, SimTransportsStatus,
                 _config.MqttFieldTopics ? _simRoot : null, _config.FieldFeedHz, _config.MqttPublishHz);
-            broker.StartAsync(_config.MqttPreferredPort).GetAwaiter().GetResult();
+            broker.StartAsync(_config.MqttPreferredPort, _config.MqttBindHost).GetAwaiter().GetResult();
             _mqttBroker = broker;
-            ModLog.Log.Info($"gatOS MQTT broker listening on 127.0.0.1:{broker.Port} "
+            ModLog.Log.Info($"gatOS MQTT broker listening on {FormatEndpoint(broker.BindHost, broker.Port)} "
                             + "(guest: $GATOS_MQTT / 10.0.2.2; topics under gatos/).");
         }
         catch (Exception ex)
@@ -709,7 +709,7 @@ public sealed partial class Mod
         var broker = _mqttBroker;
         return broker is null
             ? (_config.MqttEnabled ? "not running" : "disabled")
-            : $"port {broker.Port}";
+            : FormatEndpoint(broker.BindHost, broker.Port);
     }
 
     private void StartMcpServer()
@@ -722,9 +722,9 @@ public sealed partial class Mod
                 _audioStore, _cameraStore, _scheduleStore, _paintStore);
             var version = typeof(Mod).Assembly.GetName().Version?.ToString() ?? "1.0.0";
             var server = new SimMcpServer(registry, version);
-            server.StartAsync(_config.McpPreferredPort).GetAwaiter().GetResult();
+            server.StartAsync(_config.McpPreferredPort, _config.McpBindHost).GetAwaiter().GetResult();
             _mcpServer = server;
-            ModLog.Log.Info($"gatOS MCP listening on http://127.0.0.1:{server.Port}/mcp.");
+            ModLog.Log.Info($"gatOS MCP listening on http://{FormatEndpoint(server.BindHost, server.Port)}/mcp.");
         }
         catch (Exception ex)
         {
@@ -739,8 +739,11 @@ public sealed partial class Mod
         var server = _mcpServer;
         return server is null
             ? (_config.McpEnabled ? "not running" : "disabled")
-            : $"port {server.Port}, {server.ActiveConnections} connection(s), {server.ActiveRequests} request(s), {server.ErrorCount} error(s)";
+            : $"{FormatEndpoint(server.BindHost, server.Port)}, {server.ActiveConnections} connection(s), {server.ActiveRequests} request(s), {server.ErrorCount} error(s)";
     }
+
+    private static string FormatEndpoint(string host, int port) =>
+        new System.Net.IPEndPoint(System.Net.IPAddress.Parse(host), port).ToString();
 
     /// <summary>
     ///     Starts the host-folder mounts 9p server when <c>[[mounts]]</c> entries are configured: a
