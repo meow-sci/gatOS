@@ -1,0 +1,49 @@
+---
+title: Status and known limitations
+description: Implementation state, live-flight validation, supported contexts, and deliberate exclusions.
+sidebar:
+  order: 16
+---
+
+## Current baseline
+
+gatOS is code-complete through the major telemetry, control, HTTP, MQTT, serial, MCP, camera, audio,
+display, scheduler, visual/debug, and example surfaces. The audited KSA baseline is
+`2026.8.5.5168`; later game builds require the repository's upgrade check before their bindings can be
+called verified.
+
+Many features still need an in-game flight pass even though their code, host tests, and transport tests are
+complete. This is not a missing interface. It is an honest distinction between “compiled and exercised
+outside a flight” and “a kitten has actually pushed the button in orbit.”
+
+## Live-validation backlog
+
+| Surface | State |
+| --- | --- |
+| core VM, telemetry, controls, module integration | code complete; live checklists pending |
+| display | working informally after performance/stability fixes; formal check pending |
+| audio, IVA, FX, timed scheduler, camera | code complete; dedicated in-game checks pending |
+| camera | first pass found a driver bug; fix landed, recheck pending |
+| welds, always-render, scale, thug-life, impulse, manual RCS | code complete; flight checks pending |
+| AGC mission cards and cinematic examples | host/wire checked; mission/playback cards pending |
+
+The precise test cards, conditions, and historical upgrade notes live in
+[`docs/VALIDATION.md`](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md).
+
+## Important limitations
+
+- Linux uses a system QEMU installation. The Windows release includes its QEMU bundle. macOS is for
+  development, not a supported player target.
+- Persistence currently has one `default` guest disk, not an automatic disk per KSA save.
+- HTTP, MQTT, and 9P share snapshot/command semantics, but not every byte-oriented feature has parity:
+  display is guest 9P only; audio upload has HTTP binary routes and no MQTT upload.
+- MCP is a deliberate logical JSON API, not a leaf-for-leaf /sim mirror, and excludes display.
+- The MQTT and HTTP services bind loopback. Exposing them to a network is not a configuration toggle.
+- Camera ownership cannot take IVA or map cameras. Camera tracks also require the scheduler gate.
+- A disabled RCS mode causes manual translate/rotate to do nothing; focus changes, ImGui keyboard focus,
+  and high warp clear their latched flags.
+- A disabled decoupler reports `EOPNOTSUPP` instead of pretending to fire.
+- SRB propellant is not a liquid tank. Read `srb/` for booster grain state.
+
+Use `status/accessors` when a feature that should exist returns `EOPNOTSUPP`; it reports the degraded
+integration capability instead of leaving you to divine it from the vacuum.

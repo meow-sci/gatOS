@@ -1,0 +1,67 @@
+---
+title: Conventions
+description: Value formats, sanitized IDs, file archetypes, errors, gates, and command timing.
+sidebar:
+  order: 2
+---
+
+## Values
+
+Reads end in one newline. Scalars use invariant `G9` formatting, booleans are `0` or `1`, vectors are
+`x y z`, and quaternions are `x y z w`. Strings are verbatim. Lists are newline-separated. Event and
+telemetry streams are newline-delimited JSON.
+
+| Kind | Example | Notes |
+| --- | --- | --- |
+| scalar | `120000.001` | doubles unless a row says otherwise |
+| vector | `6578100 0 0` | components use the path's stated frame and unit |
+| quaternion | `0 0 0 1` | unit `x y z w`, usually Body to CCI |
+| flag | `1` | exactly `0` or `1` |
+| JSON | `{"ut":123}` | compact documents are atomic snapshots |
+
+Writes are line-buffered. A newline submits a command and lets `echo` report its errno. A close without
+a newline is best effort, which is a rather poor time to discover that a decoupler is gone.
+
+## IDs and aliases
+
+Filesystem IDs replace characters outside `A-Za-z0-9._-` with `_`; collisions gain `~2`, `~3`, and so
+on. Empty, `.` and `..` also become safe names. `vessels/active/` is a live alias for the controlled
+vessel, while `vessels/by-id/<id>/` addresses any listed vessel. Aggregate HTTP routes use raw KSA IDs;
+the filesystem and MQTT mirror use sanitized IDs.
+
+## File archetypes
+
+| Mark | Reads | Writes |
+| --- | --- | --- |
+| Sensor | current sampled value | never, `EACCES` |
+| State | current setpoint | idempotent token, number, flag, or vector |
+| Trigger | usually `0` | exact fire token, normally `1` |
+| Batch | usage hint | command lines followed by `commit` |
+| Stream | growing NDJSON log | read only |
+| Binary stream | continuous bytes, never EOF | read only |
+
+## Gates and phases
+
+`telemetry_enabled=false` freezes sampled data. Detail, bodies, parts, events, debug, camera, audio,
+and scheduling each have their own gates in [Configuration](/gatOS/reference/configuration-and-mounts/).
+`control_enabled=false` rejects controls. With `control_all_vessels=false`, only the controlled vessel
+accepts ordinary vessel control; camera focus, scale, always-render, and debug are intentionally exempt.
+
+Commands are executed on KSA's game thread. Most controls are Frame phase; attitude, burn, and RCS-mode
+are Solver phase. A normal write waits for the game thread, so separate writes cannot land in the same
+tick. Use [a batch](/gatOS/reference/batches-and-schedules/) when that distinction matters.
+
+## Errors
+
+| errno | HTTP | Meaning |
+| --- | --- | --- |
+| `EINVAL` | 400 | malformed, non-finite, wrong arity, or out of range |
+| `ENOENT` | 404 | path, vessel, or fitted module vanished |
+| `EACCES` | 403 | read-only leaf, disabled control/debug, or authority failure |
+| `EBUSY` | 409 | action cannot happen now, such as a fired trigger |
+| `EIO` | 500 | KSA call threw |
+| `ETIMEDOUT` | 504 | game thread did not drain before `command_timeout_ms` |
+| `EOPNOTSUPP` | 501 | integration accessor has degraded after a fault |
+
+Clip and camera-track stores can additionally return `EFBIG` for per-file caps, `ENOSPC` for store caps,
+`EEXIST` for a duplicate create, and `EPERM` for unsupported directory operations.

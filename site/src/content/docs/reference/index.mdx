@@ -1,0 +1,31 @@
+---
+title: Reference
+description: Exact gatOS contracts for /sim, transports, configuration, and feature behavior.
+sidebar:
+  order: 1
+---
+
+gatOS has a friendly face, but its interfaces are proper contracts. This section is where paths,
+formats, units, gates, command timing, and sharp edges live.
+
+## Pick the right book
+
+| Need | Start here |
+| --- | --- |
+| Read or write `/sim` | [Conventions](/gatOS/reference/conventions/), then [Vessels](/gatOS/reference/vessels/) and [Controls](/gatOS/reference/controls/) |
+| Query from another program | [HTTP](/gatOS/reference/http/) or [MQTT and serial](/gatOS/reference/mqtt-serial/) |
+| Automate a sequence | [Batches and schedules](/gatOS/reference/batches-and-schedules/) |
+| Compose a shot or play a clip | [Camera](/gatOS/reference/camera/) or [Audio and display](/gatOS/reference/audio-and-display/) |
+| Change runtime behavior | [Configuration and mounts](/gatOS/reference/configuration-and-mounts/) |
+| Check what is ready for a flight | [Status and limitations](/gatOS/reference/status-and-limitations/) |
+
+## Canonical sources
+
+These pages are the player-readable projection of the contract. The root
+[`SPEC_9P_FILESYSTEM.md`](https://github.com/meow-sci/gatOS/blob/main/SPEC_9P_FILESYSTEM.md)
+is the exhaustive path-by-path source of truth; the MCP surface is separately documented in the
+[MCP reference](/gatOS/mcp/). MCP deliberately groups the model into logical resources and tools,
+so it is not a filesystem mirror.
+
+Every `/sim` path is relative to the guest mount. Thus `vessels/active/id` below means
+`/sim/vessels/active/id` in a terminal and `/v1/fs/vessels/active/id` through the HTTP field mirror.

@@ -1,0 +1,39 @@
+---
+title: Vessel modules
+description: Engines, SRBs, tanks, RCS, solar, lights, docking, decouplers, animations, and encounters.
+sidebar:
+  order: 5
+---
+
+Module directories appear only when fitted and use zero-based indexes, except tanks whose `<resource>` name
+is sanitized. Controls are described in [Controls](/gatOS/reference/controls/).
+
+| Directory | Important leaves | Notes |
+| --- | --- | --- |
+| `engines/<n>` | `active`, `vac_thrust`, `isp`, `throttle`, `propellant`, `min_throttle` | N, seconds, 0..1; active and min-throttle are writable |
+| `tanks/<r>` | `amount`, `capacity`, `fraction` | liquid store values in kg |
+| `rcs/<n>` | `active`, `propellant`, `map` | active writable; map is axis flags |
+| `solar/<n>` | `produced`, `occluded`, `sun_aoa`, `efficiency`, `tracker_angle`, `goal`, `current`, `state` | W, degrees, fractions; animation leaves exist only when fitted |
+| `generators/<n>` | `active`, `produced` | read-only producing state and W |
+| `lights/<n>` | `on`, `brightness`, `color`, `outer_angle`, `inner_angle`, animation leaves | writable lighting; RGB is three 0..1 values, angles are degrees |
+| `docking/<n>` | `docked`, `docked_to`, `pushoff_impulse`, `undock` | N·s; `undock` is trigger `1` |
+| `decouplers/<n>` | `fired`, `enabled`, `fire` | `fire` is irreversible trigger `1` |
+| `animations/<n>` | `goal`, `current`, `state` | goal is writable 0..1 |
+| `encounters` | NDJSON `{body,ut,distance}` | detail telemetry; UT seconds and distance m |
+
+## Solid rocket motors
+
+`srb/<n>/` is read-only, because a KSA solid is either lit or not and cannot be throttled or stopped.
+Use the linked engine named by `srb/<n>/engine`, staging, or `ctl/ignite` to start it. A burning solid runs
+until depletion. `tanks/` intentionally does not include its grain.
+
+The useful booster gauge set is `active`, `propellant`, `mass`, `mass_initial`, `mass_unburnable`,
+`mass_burnable`, `fraction`, `mass_flow`, and `burn_time`. Mass is kg, flow kg/s, burn time seconds;
+`burn_time` is zero before ignition, so use `fraction` to inspect an unlit booster. Thermal and nozzle
+leaves add `burning_area` in m², chamber/exit pressure in Pa, temperature in K, and `area_ratio`.
+`segments/<m>/` breaks the grain stack into individual part, geometry, mass, fraction, radius, length,
+volume, and burn-depth values.
+
+`decouplers/<n>/fire` returns `EOPNOTSUPP` when the player has disabled the decoupler module, and `EBUSY`
+when it already fired. An encounter list may now include small moons; an empty list is not proof that a
+transfer is impossible.

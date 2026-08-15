@@ -1,0 +1,52 @@
+---
+title: Configuration and host mounts
+description: gatos.toml defaults, live versus restart settings, capability gates, and /mnt sharing.
+sidebar:
+  order: 14
+---
+
+gatOS ships `gatos.default.toml` and seeds a persistent `gatos.toml` on first launch. Delete the live file
+to restore defaults. Out-of-range values are clamped and logged, not rejected. The TOML keys are flat.
+
+## Primary settings
+
+| Keys | Default | Meaning |
+| --- | --- | --- |
+| `memory_mb`, `cpus`, `disk_size_gb` | 256, 2, 8 | guest resources; disk is grow-only, 1..128 GiB |
+| `restrict_network`, `accel_override`, `cpu_model`, `boot_timeout_seconds` | false, auto, auto, auto | VM networking, acceleration, CPU, boot timeout |
+| `sample_rate_hz`, `telemetry_enabled` | 10, true | sampling rate 1..120 and master telemetry gate |
+| `telemetry_vessel_detail`, `telemetry_vessel_parts`, `telemetry_bodies`, `telemetry_events` | true | optional sampled surfaces |
+| `control_enabled`, `control_all_vessels`, `debug_namespace` | true | control and authority gates |
+| `command_timeout_ms`, `max_commands_per_frame` | 2000, 64 | command back-pressure |
+
+## Transport and feature gates
+
+| Keys | Default | Effect |
+| --- | --- | --- |
+| `http_enabled`, `http_preferred_port`, `http_field_endpoints` | true, 4242, true | HTTP and field mirror |
+| `mcp_enabled`, `mcp_preferred_port` | true, 4243 | loopback MCP endpoint |
+| `mqtt_enabled`, `mqtt_preferred_port`, `mqtt_field_topics`, `mqtt_publish_hz`, `field_feed_hz` | true, 1883, true, 0, 4 | broker and pacing |
+| `serial_telemetry_port`, `serial_command_port`, `serial_mode`, `serial_interval_ms` | false, false, ndjson, 500 | virtio serial bridge |
+| `display_*` | false, 15 fps, 320×180, `rgba-zlib` | display boot seed; runtime leaves take over |
+| `audio_*` | enabled, 16 MiB clip, 64 MiB total, 64 clips, 16 channels | audio service and caps |
+| `camera_*` | enabled, 32 tracks, 1 MiB track, 8 MiB total, 4096 keys | camera service, caps, lens range, hand-back |
+| `schedule_*` | enabled, 16 live, 8192 entries, 1 MiB | timeline service, caps, default clock |
+| `iva_*` | disabled | cabin-physics boot seed and tuning |
+
+Some telemetry/display/IVA values are tunable in-game through their documented leaves. VM resources,
+host mounts, ports, and service availability should be set before launch and take effect on the next one.
+
+## Host mounts
+
+Each `[[mounts]]` entry creates `/mnt/<name>` in the guest:
+
+```toml
+[[mounts]]
+name = "scripts"
+path = "C:/Users/you/ksa"
+read_only = true
+```
+
+`name` is the guest directory name. The host path is real. `read_only=true` is the safe default;
+`false` lets guest programs create, edit, rename, and delete host files. Treat read-write mounts as
+direct access to that folder, because that is exactly what they are. Changes are launch-time only.

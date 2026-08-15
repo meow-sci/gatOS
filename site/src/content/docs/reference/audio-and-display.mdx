@@ -1,0 +1,41 @@
+---
+title: Audio and display
+description: Upload and play FMOD clips, or stream KSA's screen into a terminal.
+sidebar:
+  order: 10
+---
+
+## Audio
+
+`audio/` exists with `audio_enabled=true`. Create or overwrite a clip with a binary write to
+`audio/file/<name>`; in the guest, `cat clip.ogg > /sim/audio/file/clip.ogg` commits it on close.
+Supported game-decoded formats include mp3, ogg, wav, and flac. The file store is in memory, not a
+durable music library.
+
+| Leaf | Grammar |
+| --- | --- |
+| `audio/play` | `clip [start=ms] [end=ms] [vol=0..1] [loop=0-or-1] [group=sfx/music/ui] [id=name] [pan=-1..1] [pitch=n]` |
+| `audio/set` | `id [vol=...] [pause=1] [resume=1] [seek=ms] [pan=...] [pitch=...]` |
+| `audio/stop` | `id` or `all` |
+| `audio/status` | current channels and handles |
+| `audio/info` | store limits and formats |
+
+Channels keep playing during time warp by design. Completion emits `audio.finished` on `events`.
+`audio_max_clip_bytes`, total bytes, clip count, and channel count produce `EFBIG`, `ENOSPC`, or `EBUSY`
+at their limits.
+
+HTTP has deliberate binary routes: `PUT` or `POST /v1/audio/file/<name>` accepts a raw upload, including
+ordered chunks with `offset` and `complete=0|1`; requests are at most 1 MiB, so chunk larger clips.
+`DELETE /v1/audio/file/<name>` evicts one. MQTT has no clip-upload equivalent; retained text topics are
+not a good place to hide an ogg file.
+
+## Display
+
+`display/` is off by default. It exposes writable `enabled`, `fps` (1..60), `width` and `height`
+(16..1920), and `encoding` (`rgba-zlib` or `rgba`), plus read-only `format`, `seq`, and binary `stream`.
+The image is captured in-band from the game render flow, downscaled on GPU, and emitted as Kitty graphics
+frames for purrTTY. Read `stream` continuously: it blocks for the next item and never reaches EOF.
+
+The default `rgba-zlib` requires purrTTY's 2026-07-02-or-newer native. The raw `rgba` fallback is useful
+only when the terminal side is old or suspicious. Display controls mirror over HTTP and MQTT, but the
+binary stream deliberately has no HTTP/MQTT media route and is outside MCP v1.

@@ -1,0 +1,45 @@
+---
+title: Programmable camera
+description: Ownership, pose controls, frames, targets, and JSON camera tracks.
+sidebar:
+  order: 9
+---
+
+The `camera/` tree exists when `camera_enabled=true`. `camera/enabled 1` captures the main viewport,
+parks the game controller, and makes gatOS the camera writer. `camera/enabled 0` returns it with the
+configured eased hand-back; `camera/release 1` cuts straight back. IVA and Map camera ownership are not
+supported. `camera/map/scope` is still available as the map-view scope control.
+
+## Pose controls
+
+| Path | Value |
+| --- | --- |
+| `pose/anchor` | `none`, `vessel:<id>`, `body:<id>`, or `part:<vessel>/<instance_id>` |
+| `pose/frame` | `ecl`, `cce`, `bodyfixed`, `enu`, `lvlh`, or `chase` |
+| `pose/position` | three frame-relative meters |
+| `pose/geo` | `lat lon altitude [body:<id>]`; degrees, degrees, terrain-relative m |
+| `pose/orbit/{radius,azimuth,elevation}` | m, degrees, degrees; nonzero radius wins |
+| `pose/rotation` | quaternion `x y z w` |
+| `pose/aim` | target plus optional `off x y z`, `frame <f>`, `up`, and `roll` |
+| `pose/{fov,ortho,ortho_height,roll,smoothing,reset}` | degrees, flag, m, degrees, seconds, trigger |
+
+`aim` is normally the safer orientation control. Its target and offset re-resolve every frame, so an
+offset stays stuck to a moving subject. `smoothing` filters only camera-relative-to-anchor placement;
+the anchor translation and aim constraint remain exact. The camera cannot descend below terrain plus
+0.5 m. `ortho_height` is the one viewport setting gatOS cannot restore later.
+
+## Tracks
+
+Upload a JSON document to `camera/track/<name>`, then `camera/play` with `name [at seconds] [rate n]
+[loop 0|1]`. A track is a timeline player, so it also needs `schedule_enabled=true`; `camera/set`,
+`camera/stop`, `camera/playback`, and the common schedule semantics control it.
+
+Tracks contain a versioned shot object with `duration` in seconds and named animated channels. Each
+channel is an ordered key list with `t` in seconds, a value matching its `pose/` counterpart, and optional
+easing. Position, aim, lens, anchor, frame, and the optional time channel all map to ordinary pose leaves,
+so track JSON is convenience rather than a secret second API. The effective channel value is
+**track, otherwise live override, otherwise ownership baseline**.
+
+Track uploads obey `camera_max_tracks`, `camera_max_track_bytes`, `camera_max_total_bytes`, and
+`camera_max_keys`. `EFBIG`, `ENOSPC`, and `EINVAL` name cap and schema failures. The `time` channel is
+ignored, with a warning, unless both `camera_allow_time_channel` and `debug_namespace` are enabled.

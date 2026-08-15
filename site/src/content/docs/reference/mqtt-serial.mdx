@@ -1,0 +1,33 @@
+---
+title: MQTT and serial
+description: Retained topic mirrors, command messages, virtio serial telemetry, and SCPI input.
+sidebar:
+  order: 13
+---
+
+## MQTT
+
+The embedded broker exists with `mqtt_enabled=true`, defaults to port 1883, and binds loopback only. The
+guest reaches it at `$GATOS_MQTT` through `10.0.2.2`; it is not a LAN broker waiting to happen.
+
+| Topic | Direction | Meaning |
+| --- | --- | --- |
+| `gatos/sim/<path>` | retained outbound | field mirror value |
+| `gatos/sim/<path>/set` | inbound | raw control-field value |
+| `gatos/command` | inbound | generic logical command JSON |
+| world/event topics | outbound | aggregate snapshots and live events |
+
+Field topics need `mqtt_field_topics=true`. Aggregate world cadence uses `mqtt_publish_hz`; field cadence
+uses `field_feed_hz`. Publication is subscription-gated: an unmatched topic is not produced, a new
+subscription gets its retained baseline within a cycle, and a despawn clears retained vessel topics with an
+empty payload. MQTT mirrors text controls, not binary display frames or audio uploads.
+
+## Virtio serial
+
+`serial_telemetry_port=true` exposes the guest `gatos.serial` device for outbound telemetry.
+`serial_command_port=true` accepts SCPI command lines on it. `serial_mode` selects `ndjson`, `nmea`, or
+`ccsds`; `serial_interval_ms` is clamped 50..60000 ms. The serial bridge is intentionally an alternate
+wire format, not a `/sim` leaf mirror.
+
+`bus_ccsds` and `bus_1553` are reserved configuration switches. They do not currently expose a standalone
+CCSDS or MIL-STD-1553 bus service. The serial CCSDS option remains the implemented way to emit packets.

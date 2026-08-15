@@ -1,0 +1,37 @@
+---
+title: Time, system, and bodies
+description: The simulation clock and the celestial catalog behind orbital calculations.
+sidebar:
+  order: 3
+---
+
+## Time
+
+| Path | Format | Meaning |
+| --- | --- | --- |
+| `time/ut` | seconds | universal simulation time |
+| `time/warp` | scalar | current warp factor; `1` is realtime |
+| `time/sim_dt` | seconds | last simulation advance; `0` is effectively paused |
+| `time/warp_speeds` | `f f …` | discrete game warp factors |
+| `time/auto_warp` | `0` or `1 target-ut` | automatic warp state and target |
+| `time/alarm` | seconds | write a target UT; its read blocks until that time |
+
+`time/alarm` is the simulation-clock sleep primitive. It is warp-correct, unlike sleeping for wall time.
+HTTP offers the same wait as `GET /v1/time/wait?until=<ut>`.
+
+## System and bodies
+
+`system/{name,home,sun}` and `bodies/<id>/` exist when `telemetry_bodies=true`. Body catalogs update
+at `telemetry_bodies_rate_hz`, or every sample when it is zero.
+
+| Group | Leaves | Units / caveat |
+| --- | --- | --- |
+| identity | `id`, `class`, `parent`, `children` | children is a newline list |
+| physical | `mass`, `radius`, `mu`, `soi`, `rotation_rate` | kg, m, m³/s², m, rad/s |
+| motion | `position/ecl`, `velocity/ecl` | ECL m and m/s |
+| orbit | `apoapsis`, `periapsis`, `ecc`, `inc`, `lan`, `argpe`, `sma`, `period` | apses are altitude in m; angles are degrees |
+| atmosphere | `present`, `height`, `scale_height`, `sea_level_pressure`, `sea_level_density` | absent for airless bodies |
+| ocean | `present`, `density` | absent without an ocean |
+
+`bodies/<id>/focus` is a trigger: write `1` to move the main camera to the body. It is view-only and
+does not require vessel-control authority. For coordinate meanings, use [Frames and units](/gatOS/reference/frames-and-units/).

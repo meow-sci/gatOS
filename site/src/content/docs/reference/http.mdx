@@ -1,0 +1,47 @@
+---
+title: HTTP API
+description: The loopback /v1 service, aggregate JSON, field mirroring, SSE, commands, and uploads.
+sidebar:
+  order: 12
+---
+
+HTTP exists when `http_enabled=true`, on host loopback at `http://127.0.0.1:<port>/v1` and in the guest
+as `$GATOS_HTTP` (normally `http://10.0.2.2:4242/v1`). It has no authentication because it deliberately
+binds only to loopback. The preferred port may fall back to an ephemeral one; inspect `status/transports`.
+
+## Reads and streams
+
+| Method | Route | Result |
+| --- | --- | --- |
+| GET | `/snapshot` | whole atomic `SimSnapshot` |
+| GET | `/openapi.json` | OpenAPI 3.1 description |
+| GET | `/time`, `/status`, `/system` | aggregate JSON views |
+| GET | `/bodies`, `/bodies/{id}` | body list or raw-ID body |
+| GET | `/vessels`, `/vessels/{id}`, `/vessels/{id}/telemetry` | roster, raw-ID vessel, compact coherent telemetry |
+| GET | `/fs/<path>` | raw text field with trailing newline |
+| GET | `/fs/<path>?stream=1` | field changes as SSE |
+| GET | `/events`, `/vessels/{id}/stream` | SSE events or NDJSON-equivalent telemetry |
+| GET | `/time/wait?until=<ut>` | long poll until UT reaches target |
+
+The field mirror needs `http_field_endpoints=true`. It uses `/sim`-relative paths with no `sim/` segment.
+The binary display stream is intentionally excluded.
+
+## Writes
+
+`POST /fs/<path>` sends the raw text exactly as a filesystem write and returns `{"outcome":"ok"}`.
+`POST /command` takes the generic JSON envelope:
+
+```json
+{"vessel_id":"Hunter","action":"vessel.throttle","value":0.5}
+```
+
+The envelope also accepts `ordinal`, `values`, and `token` for action shapes that need them. See
+[Controls](/gatOS/reference/controls/) for family names. HTTP errors map to the Linux errno vocabulary in
+[Conventions](/gatOS/reference/conventions/).
+
+Audio is the exception: `GET /audio/files`, `PUT|POST /audio/file/{name}`, and `DELETE /audio/file/{name}`
+handle binary clips. Camera tracks and schedules are ordinary field uploads: post JSON to
+`/fs/camera/track/<name>` or batch text to `/fs/ctl/timed_batch`.
+
+The server keeps HTTP/1.1 connections alive for roughly 30 seconds of idle time. Reuse a connection for
+polling; SSE remains open until the caller disconnects.

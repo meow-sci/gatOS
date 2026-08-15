@@ -1,0 +1,37 @@
+---
+title: Events, streams, and status
+description: Subscribe to changes, consume logs correctly, and inspect integration health.
+sidebar:
+  order: 7
+---
+
+## Events and streams
+
+`events` is a blocking NDJSON event stream when `telemetry_events=true`. Each line is
+`{"ut":...,"type":"...","vessel":"...","detail":"..."}`. It carries telemetry diffs plus host-side
+events such as `audio.finished`, `schedule.*`, camera playback, and IVA impact/release events. Use a
+long-running reader, not a loop opening and closing the file.
+
+`vessels/<id>/stream` is a growing telemetry log suitable for `tail -f`; `display/stream` is a binary
+stream that does not end and must be decoded as the Kitty terminal protocol. Both are 9P-native stream
+interfaces. HTTP provides SSE equivalents for events and vessel streams, but not display frames.
+
+## Health paths
+
+| Path | What it tells you |
+| --- | --- |
+| `status/game_version` | current KSA build identifier |
+| `status/sampler` | telemetry sampler health and sample rate |
+| `status/accessors` | reflection/accessor health; a degraded entry explains `EOPNOTSUPP` |
+| `status/transports` | enabled transport addresses and ports |
+
+The status trees exist when the command sink is attached. `GET /v1/status` is the aggregate HTTP view.
+An accessor that faults is deliberately latched degraded instead of repeatedly poking a broken game API.
+That makes failure visible and lets unrelated leaves continue working.
+
+## SSE and wait behavior
+
+`GET /v1/fs/<path>?stream=1` emits SSE whenever a field changes. `GET /v1/events` and
+`GET /v1/vessels/{id}/stream` are also SSE. Connections are HTTP/1.1 keep-alive and stream until the
+client disconnects. A vanished vessel clears its MQTT retained fields and returns `ENOENT` from later
+filesystem reads.

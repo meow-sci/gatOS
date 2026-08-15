@@ -1,0 +1,49 @@
+---
+title: Batches and schedules
+description: Same-tick command groups and host-owned timelines for deterministic sequences.
+sidebar:
+  order: 8
+---
+
+## Same-tick batch
+
+Write lines of `<path> <value>` followed by `commit` to `ctl/batch`. All entries validate first, execute
+in order during one game tick, and must share one command phase. The cap is `max_commands_per_frame`
+(default 64). A bad line rejects the whole batch with `EINVAL`, `ENOENT`, `EACCES`, or the relevant
+command error.
+
+```text title="launch.batch"
+vessels/active/ctl/throttle 1
+vessels/active/ctl/ignite 1
+commit
+```
+
+## Timed batch
+
+`ctl/timed_batch` needs `schedule_enabled=true`. It uses the same paths and values, prefixed by absolute
+millisecond offsets. Directives come before entries. Commit is non-blocking and all-or-nothing.
+
+```text title="launch.tb"
+@id launch
+@clock render
+@rate 1
+0 vessels/active/ctl/throttle 1
+1200 vessels/active/ctl/ignite 1
+commit
+```
+
+Offsets are never deltas. `render` accumulates clamped game-frame time, `wall` is host elapsed time, and
+`ut` follows simulation time and therefore warp. Timed batches may mix Frame and Solver commands. On a
+catch-up, triggers fire in order but state writes coalesce to the latest value per path; `dropped` counts
+the discarded state writes.
+
+## Schedule registry
+
+`ctl/schedules/{count,clear,help,<id>/...}` lists live players. A player exposes `kind`, `group`,
+`state` (`pending`, `running`, `paused`, `done`, `failed`), `t`, `duration`, `pending`, `dropped`,
+`clock`, and `last_error`. State leaves are `pause`, `scrub` (milliseconds), `rate` (0..100), `loop`,
+`stop`, and `remove`.
+
+Finished players are evicted oldest-first when `schedule_max_live` needs room. `schedule.clear` removes
+all regular schedules; a camera track is also a registry player, but is controlled through camera paths.
+The schedule cap, entry cap, and byte cap are in [Configuration](/gatOS/reference/configuration-and-mounts/).

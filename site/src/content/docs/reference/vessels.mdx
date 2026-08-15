@@ -1,0 +1,51 @@
+---
+title: Vessels
+description: Core vessel telemetry, orbital state, environment, power, parts, and atomic documents.
+sidebar:
+  order: 4
+---
+
+All leaves here are under `vessels/by-id/<id>/`; substitute `vessels/active/` for the controlled vessel.
+Core data is always sampled. Orbit, navball, environment, and modules require `telemetry_vessel_detail=true`.
+
+## Core telemetry
+
+| Group | Leaves | Unit / meaning |
+| --- | --- | --- |
+| identity | `id`, `name`, `situation`, `parent`, `controlled`, `controllable`, `is_kitten` | situation can be a comma-separated flag combination; parent names the CCI center |
+| placement | `position/cci`, `position/ecl`, `position/lat`, `position/lon`, `com` | m except latitude/longitude in degrees; `com` is assembly frame |
+| motion | `velocity/{orbital,surface,inertial,cci}` | m/s; `cci` is the vector behind orbital speed |
+| attitude | `attitude/quat`, `attitude/rates` | Body to CCI quaternion; rad/s |
+| altitude | `altitude/{barometric,radar}` | m above mean radius / terrain-or-ocean |
+| mass | `mass/{total,dry,propellant}` | kg; propellant includes SRB grain mass |
+| visual | `scale`, `always_render` | writable state; see [Debug and visual tools](/gatOS/reference/debug-and-visual-tools/) |
+
+`controllable=0` means KSA ignores flight controls and flight-computer commands. gatOS does not turn that
+silent game lockout into a new error, so check it before assuming your cat-shaped rocket is listening.
+
+## Orbit, navball, and environment
+
+`orbit/{apoapsis,periapsis,ecc,inc,lan,argpe,sma,period,true_anomaly,time_to_ap,time_to_pe,next_patch}`
+reports apoapsis and periapsis as altitude in m; `sma` is m; time leaves are seconds; angles are degrees.
+Time-to-apse is `0` when no such apsis exists.
+
+`navball/{pitch,yaw,roll,twr,deltav,frame,speed}` reports integer angles in degrees, TWR, remaining
+active-sequence Δv in m/s, reference-frame name, and displayed speed. Treat the current Δv field as the
+game's active staging calculation, not a promise of whole-stack vacuum rocket-equation Δv.
+
+`environment/{pressure,density,dynamic_pressure,ocean_density,terrain_radius,accel,angular_accel,g_force}`
+uses Pa, kg/m³, m, m/s², rad/s², and g as appropriate. `accel` and `angular_accel` are body-frame vectors.
+
+Power appears as `power/{produced,consumed}` in W and, when fitted,
+`battery/{charge,fraction,capacity}` as 0..1, 0..1, and joules.
+
+## Parts and coherent reads
+
+`parts/json` is the one-read part tree. It contains each top-level part and nested subparts with their
+runtime `instance_id`, display name, template, and assembly position. `parts/<n>/...` exposes the same
+tree leaf-by-leaf. Indexes are not stable across edits; use `instance_id` for weld anchors. This whole
+subtree requires `telemetry_vessel_parts=true`.
+
+`telemetry` is the atomic compact JSON document for a control loop. One read is self-consistent, unlike
+a handful of scalar reads taken across different samples. `stream` is an NDJSON growing log for `tail -f`,
+with `{seq,ut,sit,alt,vel,att,mass}`.
