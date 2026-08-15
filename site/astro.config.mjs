@@ -28,6 +28,10 @@ export default defineConfig({
           items: [{ autogenerate: { directory: "guides" } }],
         },
         {
+          label: "MCP",
+          items: [{ autogenerate: { directory: "mcp" } }],
+        },
+        {
           label: "Reference",
           items: [{ autogenerate: { directory: "reference" } }],
         },

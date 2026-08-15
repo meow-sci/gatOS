@@ -1,0 +1,33 @@
+---
+title: Resource directory
+description: All fixed gatOS MCP JSON resources and RFC 6570 resource templates.
+sidebar:
+  order: 5
+  label: Resources
+---
+
+gatOS resources use `application/json` and the same immutable presenters as their equivalent read
+tools. They do not advertise subscriptions, list-changed notifications, or a positive cache
+lifetime.
+
+## Fixed resources
+
+| Resource | Document |
+|---|---|
+| [`gatos://world`](/gatOS/mcp/resources/world/) | Current simulation summary |
+| [`gatos://celestials`](/gatOS/mcp/resources/celestials/) | Celestial summary collection |
+| [`gatos://vessels`](/gatOS/mcp/resources/vessels/) | Vessel summary collection |
+| [`gatos://kittens`](/gatOS/mcp/resources/kittens/) | EVA kitten summary collection |
+| [`gatos://capabilities`](/gatOS/mcp/resources/capabilities/) | Current action, gate, phase, and limit catalog |
+
+## Resource templates
+
+| Template | Document |
+|---|---|
+| [`gatos://celestials/{id}`](/gatOS/mcp/resources/celestial/) | One complete celestial by raw id |
+| [`gatos://vessels/{id}`](/gatOS/mcp/resources/vessel/) | One complete vessel by raw id or `active` |
+| [`gatos://kittens/{id}`](/gatOS/mcp/resources/kitten/) | One complete kitten-validated vessel |
+| [`gatos://runtime/{feature}`](/gatOS/mcp/resources/runtime/) | Complete state for one runtime feature |
+
+Use the equivalent list tool when filters, a custom page size, or explicit cursor handling matter.
+See [shared conventions](/gatOS/mcp/conventions/) for freshness and errors.

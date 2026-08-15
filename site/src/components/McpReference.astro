@@ -1,0 +1,85 @@
+---
+import { mcpReference } from "../data/mcp-reference";
+
+interface Props { entry: string }
+const { entry } = Astro.props;
+const item = mcpReference[entry];
+if (!item) throw new Error(`Unknown MCP reference entry: ${entry}`);
+---
+
+<p class="reference-kind"><span>{item.kind}</span> <span>{item.category}</span></p>
+
+<p class="summary">{item.summary}</p>
+
+<dl class="facts">
+  <div><dt>Use when</dt><dd>{item.useWhen}</dd></div>
+  <div><dt>Availability</dt><dd>{item.gate}</dd></div>
+  {item.equivalent && <div><dt>Equivalent interface</dt><dd><code>{item.equivalent}</code></dd></div>}
+</dl>
+
+{item.fields && item.fields.length > 0 && (
+  <section>
+    <h2>Input</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Requirement</th><th>Description</th></tr></thead>
+        <tbody>{item.fields.map((field) => <tr>
+          <td><code>{field.name}</code></td><td><code>{field.type}</code></td>
+          <td>{field.required ? "Required" : `Optional${field.default ? ` · ${field.default}` : ""}`}</td>
+          <td>{field.description}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </section>
+)}
+
+{item.operations && item.operations.length > 0 && (
+  <section>
+    <h2>Operations</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Operation</th><th>Canonical action</th><th>Meaning</th></tr></thead>
+        <tbody>{item.operations.map((operation) => <tr>
+          <td><code>{operation.name}</code></td><td>{operation.action ? <code>{operation.action}</code> : "—"}</td><td>{operation.description}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </section>
+)}
+
+<section>
+  <h2>{item.kind === "tool" ? "Call example" : "Resource URI example"}</h2>
+  <pre><code>{item.kind === "tool" ? `${item.name}(${item.example})` : item.example}</code></pre>
+</section>
+
+<section>
+  <h2>Result</h2>
+  <p>{item.returns}</p>
+</section>
+
+{item.errors && item.errors.length > 0 && <section><h2>Errors</h2><ul>{item.errors.map((error) => <li>{error}</li>)}</ul></section>}
+{item.notes && item.notes.length > 0 && <section><h2>Operational notes</h2><ul>{item.notes.map((note) => <li>{note}</li>)}</ul></section>}
+
+<p class="footer-links">
+  <a href="/gatOS/mcp/conventions/">Shared conventions</a>
+  <span aria-hidden="true">·</span>
+  <a href={item.kind === "tool" ? "/gatOS/mcp/tools/" : "/gatOS/mcp/resources/"}>All {item.kind}s</a>
+  <span aria-hidden="true">·</span>
+  <a href="https://github.com/meow-sci/gatOS/blob/main/SPEC_MCP.md">Versioned contract</a>
+</p>
+
+<style>
+  .reference-kind { display: flex; gap: .5rem; margin: 0 0 1rem; }
+  .reference-kind span { border: 1px solid var(--sl-color-gray-5); border-radius: 999px; color: var(--sl-color-gray-2); font-size: .78rem; padding: .18rem .62rem; }
+  .summary { color: var(--sl-color-white); font-size: 1.16rem; line-height: 1.55; }
+  .facts { border: 1px solid var(--sl-color-gray-5); border-radius: .65rem; overflow: hidden; }
+  .facts div { display: grid; gap: .4rem 1rem; grid-template-columns: minmax(8rem, 10rem) 1fr; padding: .75rem 1rem; }
+  .facts div + div { border-top: 1px solid var(--sl-color-gray-5); }
+  .facts dt { color: var(--sl-color-white); font-weight: 650; }
+  .facts dd { margin: 0; }
+  .table-wrap { overflow-x: auto; }
+  table { display: table; width: 100%; }
+  th { white-space: nowrap; }
+  .footer-links { border-top: 1px solid var(--sl-color-gray-5); display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 2.5rem; padding-top: 1rem; }
+  @media (max-width: 34rem) { .facts div { grid-template-columns: 1fr; } }
+</style>

@@ -1,0 +1,118 @@
+---
+title: MCP for AI agents
+description: Inspect and control Kitten Space Agency through gatOS's logical JSON interface.
+sidebar:
+  order: 1
+  label: Overview
+---
+
+import { Card, CardGrid, LinkCard, Steps } from '@astrojs/starlight/components';
+
+The gatOS [Model Context Protocol](https://modelcontextprotocol.io/) server is the first-class
+interface for an AI agent operating Kitten Space Agency. It reads the same immutable telemetry
+snapshots and submits the same game-thread commands as `/sim`, HTTP, MQTT, and serial, but presents
+them as logical JSON documents and agent-sized operations.
+
+It is deliberately not a one-tool-per-`/sim`-file mirror. An agent asks for a vessel, celestial,
+kitten, world, or runtime feature as a coherent document. It then acts through explicit tools such
+as `gatos.ignite_engines`, `gatos.vessel_control`, `gatos.execute_batch`, and
+`gatos.schedule_batch`.
+
+<CardGrid>
+  <LinkCard title="Connect and make a first call" description="Endpoint, discovery flow, configuration, and a short first-session sequence." href="/gatOS/mcp/getting-started/" />
+  <LinkCard title="Understand the wire contract" description="Freshness, pagination, envelopes, errors, identifiers, phases, and limits." href="/gatOS/mcp/conventions/" />
+  <LinkCard title="Browse all 25 tools" description="Read, control, media, debug, atomic batch, and timed schedule tools." href="/gatOS/mcp/tools/" />
+  <LinkCard title="Browse all 9 resources" description="Fixed JSON resources and RFC 6570 templates for the same presenters." href="/gatOS/mcp/resources/" />
+</CardGrid>
+
+:::note[The versioned contract]
+
+This section is the task-oriented reference. The exhaustive public contract and maintenance rules
+live in [SPEC_MCP.md](https://github.com/meow-sci/gatOS/blob/main/SPEC_MCP.md).
+
+:::
+
+## Connect locally
+
+MCP uses stateless Streamable HTTP at `http://127.0.0.1:4243/mcp` by default. It binds only to
+loopback, falls back to an ephemeral port if the preferred port is occupied, and accepts no bearer
+token. gatOS validates exact local `Host` and `Origin` values; the status window reports the actual
+bound port. Configure it with `mcp_enabled` and `mcp_preferred_port` in `gatos.toml`.
+
+<Steps>
+1. Connect an MCP client to the bound `/mcp` endpoint.
+2. Call [`gatos.get_capabilities`](/gatOS/mcp/tools/get-capabilities/) to learn which optional systems and actions are currently available.
+3. Read [`gatos.get_world`](/gatOS/mcp/tools/get-world/) and the vessel or celestial documents needed for the task.
+4. Use the narrowest logical control tool that expresses the user's intent.
+5. Use [`gatos.wait`](/gatOS/mcp/tools/wait/) to synchronize the next planning turn with the simulation.
+</Steps>
+
+## Choose the right interface
+
+| Intent | Best starting point |
+|---|---|
+| Understand the current simulation | [`gatos.get_world`](/gatOS/mcp/tools/get-world/) |
+| Discover ids | [`gatos.list_vessels`](/gatOS/mcp/tools/list-vessels/), [`gatos.list_celestials`](/gatOS/mcp/tools/list-celestials/), or [`gatos.list_kittens`](/gatOS/mcp/tools/list-kittens/) |
+| Inspect one entity | [`gatos.get_vessel`](/gatOS/mcp/tools/get-vessel/), [`gatos.get_celestial`](/gatOS/mcp/tools/get-celestial/), or [`gatos.get_kitten`](/gatOS/mcp/tools/get-kitten/) |
+| Inspect feature-owned state | [`gatos.get_runtime_state`](/gatOS/mcp/tools/get-runtime-state/) |
+| Perform one ordinary flight action | [Common vessel actions](/gatOS/mcp/tools/#common-vessel-actions) or [`gatos.vessel_control`](/gatOS/mcp/tools/vessel-control/) |
+| Change one fitted module | [`gatos.module_control`](/gatOS/mcp/tools/module-control/) |
+| Coordinate same-tick changes | [`gatos.execute_batch`](/gatOS/mcp/tools/execute-batch/) |
+| Run a timed sequence | [`gatos.schedule_batch`](/gatOS/mcp/tools/schedule-batch/) and [`gatos.schedule_control`](/gatOS/mcp/tools/schedule-control/) |
+| Use a known URI through resources/read | [Resource directory](/gatOS/mcp/resources/) |
+
+## Read coherent JSON
+
+Pass `detail:"full"` to `gatos.get_world` for the complete current snapshot. A vessel read can
+select `flight`, `orbit`, `environment`, `propulsion`, `resources`, `power`, `control`, `modules`,
+`encounters`, `parts`, or `all`. Selected sections include every matching nested object.
+
+Lists return 50 entities by default and accept at most 1,000 per page. Follow `next_cursor` for the
+rest. gatOS never measures, caps, or truncates MCP JSON results. Each snapshot-derived result carries
+`snapshot_sequence` and `ut`, so the caller can judge freshness even when the simulation advances
+between pages.
+
+## Control with intent
+
+Use explicit triggers when they exactly match the request:
+
+```text
+gatos.ignite_engines({ vessel_id: "Hunter" })
+gatos.shutdown_engines({ vessel_id: "Hunter" })
+gatos.activate_stage({ vessel_id: "Hunter" })
+```
+
+The logical families cover vessel and module controls, the programmable camera, camera tracks,
+audio, schedules, debug/game manipulation, and runtime render FX. The advanced
+[`gatos.command`](/gatOS/mcp/tools/command/) envelope remains the complete-coverage backstop for
+every canonical gatOS action.
+
+## Coordinate commands
+
+[`gatos.execute_batch`](/gatOS/mcp/tools/execute-batch/) validates up to 64 commands and submits
+them once as an ordered, same-phase, same-tick group. [`gatos.schedule_batch`](/gatOS/mcp/tools/schedule-batch/)
+is the JSON timed-batch counterpart: entries use absolute `at_ms` offsets on the existing `render`,
+`wall`, or `ut` clock and may mix command phases.
+
+:::caution[Milliseconds and seconds]
+
+Batch schedule offsets and schedule-player positions are milliseconds. Camera-track authoring uses
+seconds. The MCP tools preserve this distinction.
+
+:::
+
+## Important game caveats
+
+- Read `controllable` before ordinary flight control. KSA can ignore a vessel without a control module.
+- CCI state, burns, teleport, and default impulses are relative to the vessel's current parent body.
+- RCS translation and rotation are body-axis bang-bang commands. They are inert while RCS mode is disabled, and focus/UI/large warp can clear their latches.
+- Solver-phase flight-computer commands take effect on the next solver step. Same-tick batches cannot mix them with Frame commands.
+- Optional control, debug, camera, audio, schedule, IVA, and FX gates remain authoritative.
+- `/sim/display` is intentionally absent. It is an infinite Kitty terminal-video stream for visual TTY sessions, not a logical JSON agent interface.
+
+## Complete directories
+
+<CardGrid>
+  <Card title="Tools"><p>Every callable operation has its own schema, example, operation mapping, result, gate, error, and safety reference.</p><p><a href="/gatOS/mcp/tools/">Open the tool directory →</a></p></Card>
+  <Card title="Resources"><p>Every fixed resource and URI template has a dedicated page describing parameters, document shape, freshness, and equivalent tool.</p><p><a href="/gatOS/mcp/resources/">Open the resource directory →</a></p></Card>
+</CardGrid>

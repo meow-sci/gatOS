@@ -1,0 +1,124 @@
+---
+title: Shared conventions
+description: MCP result envelopes, freshness, identifiers, pagination, phases, errors, and limits.
+sidebar:
+  order: 3
+---
+
+Every gatOS MCP tool and resource is a projection over the same immutable snapshots, command
+catalog, game-thread command sink, and feature stores used by the other transports.
+
+## Structured tool results
+
+Ordinary success uses a structured envelope:
+
+```json
+{
+  "ok": true,
+  "data": {},
+  "snapshot_sequence": 123,
+  "ut": 456.7
+}
+```
+
+Domain failures use the same public data shape and set MCP `isError`:
+
+```json
+{
+  "ok": false,
+  "data": null,
+  "snapshot_sequence": 123,
+  "ut": 456.7,
+  "outcome": "invalid",
+  "errno": "EINVAL",
+  "message": "…",
+  "retryable": false
+}
+```
+
+Malformed tool arguments and unknown MCP operations are protocol-level `InvalidParams`. Expected
+game, gate, lookup, scheduling, and store failures are domain envelopes. Unexpected exceptions are
+sanitized and do not expose game or mod internals.
+
+## Freshness
+
+Every snapshot-derived response includes:
+
+- `snapshot_sequence`: monotonically increasing publication sequence.
+- `ut`: KSA universal time in seconds for that snapshot.
+
+Store-only runtime reads include the nearest feature version/status and current simulation sequence
+for correlation. A response is internally coherent because it came from one immutable snapshot, but
+the game can advance immediately afterward. Compare sequence numbers and use
+[`gatos.wait`](/gatOS/mcp/tools/wait/) rather than assuming state is still current.
+
+## Identifiers
+
+MCP uses raw KSA celestial and vessel ids. It does not use `/sim`'s filesystem-safe path names.
+Parts and subparts use their published stable `instance_id`; module arrays use their explicit
+zero-based ordinals. The alias `active` is accepted where the vessel reference documents it.
+
+## Pagination
+
+Application-level list tools default to 50 entities and accept `limit` from 1 through 1,000. When a
+page is incomplete, `next_cursor` is an opaque continuation token; it is `null` on the last page.
+
+Cursors identify their collection and continuation position. A cursor is not rejected just because
+the simulation advanced. Each page reports its own sequence and UT so the caller can decide whether
+cross-page freshness is acceptable.
+
+## JSON and request limits
+
+gatOS does not measure, cap, truncate, or pre-serialize MCP JSON results to enforce a response-size
+policy. A selected object includes all nested data in play. Pagination limits entity count, not JSON
+bytes.
+
+The raw HTTP adapter applies a 24 MiB request-framing limit. This is an input safety boundary, not a
+result cap. Camera tracks and audio clips support chunked upload through their stores.
+
+## Commands, units, and phases
+
+All writes compile into canonical `SimCommand` values or call an existing game-free camera/audio
+store. [`gatos.get_capabilities`](/gatOS/mcp/tools/get-capabilities/) is the machine-readable source
+for each action's argument shape, units, Frame/Solver phase, trigger/state classification, gates,
+idempotence, and safety notes.
+
+The client never chooses execution phase:
+
+- Frame actions execute during the game-frame drain.
+- Solver actions enter the flight-computer/physics path and take effect on a solver step.
+- [`gatos.execute_batch`](/gatOS/mcp/tools/execute-batch/) requires one homogeneous phase.
+- [`gatos.schedule_batch`](/gatOS/mcp/tools/schedule-batch/) may mix phases because entries execute independently at their scheduled offsets.
+
+## Coordinate frames
+
+KSA telemetry and motion commands use the documented current-parent CCI and vessel body frames.
+Never infer a global inertial frame from a vessel vector. Teleport and default impulse values are
+interpreted relative to the vessel's current parent; inspect the vessel and capability metadata
+before constructing them.
+
+## Error vocabulary
+
+| Errno | Typical meaning |
+|---|---|
+| `EINVAL` | Invalid shape, value, enum, cursor, clock, or action |
+| `ENOENT` | Vessel, body, module, clip, track, or player not found |
+| `EACCES` | Control, debug, or authority gate denied the operation |
+| `EBUSY` | Runtime ownership or current game state conflicts with the request |
+| `EIO` | Game-side execution or accessor failure |
+| `ETIMEDOUT` | A bounded wait or command submission timed out |
+| `EOPNOTSUPP` | Feature or game capability is disabled/unsupported |
+| `EFBIG`, `ENOSPC`, `EEXIST`, `EPERM` | Audio, track, schedule, or store-specific constraints |
+
+Use `retryable` and the current capability/runtime state rather than retrying every error.
+
+## Resources
+
+Resources use `application/json` and the same presenters as their equivalent read tools. Fixed URIs
+appear under `resources/list`; parameterized URIs are RFC 6570 templates under
+`resources/templates/list`. Live reads advertise neither subscriptions nor a positive cache lifetime.
+
+## Deliberate exclusion
+
+There is no MCP tool, resource, capability, dependency, or coverage mapping for `/sim/display`.
+That surface is an infinite Kitty graphics stream intended for visual TTY sessions.
