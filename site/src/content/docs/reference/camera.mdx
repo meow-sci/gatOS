@@ -12,16 +12,16 @@ supported. `camera/map/scope` is still available as the map-view scope control.
 
 ## Pose controls
 
-| Path | Value |
-| --- | --- |
-| `pose/anchor` | `none`, `vessel:<id>`, `body:<id>`, or `part:<vessel>/<instance_id>` |
-| `pose/frame` | `ecl`, `cce`, `bodyfixed`, `enu`, `lvlh`, or `chase` |
-| `pose/position` | three frame-relative meters |
-| `pose/geo` | `lat lon altitude [body:<id>]`; degrees, degrees, terrain-relative m |
-| `pose/orbit/{radius,azimuth,elevation}` | m, degrees, degrees; nonzero radius wins |
-| `pose/rotation` | quaternion `x y z w` |
-| `pose/aim` | target plus optional `off x y z`, `frame <f>`, `up`, and `roll` |
-| `pose/{fov,ortho,ortho_height,roll,smoothing,reset}` | degrees, flag, m, degrees, seconds, trigger |
+| Path                                                 | Value                                                                |
+| ---------------------------------------------------- | -------------------------------------------------------------------- |
+| `pose/anchor`                                        | `none`, `vessel:<id>`, `body:<id>`, or `part:<vessel>/<instance_id>` |
+| `pose/frame`                                         | `ecl`, `cce`, `bodyfixed`, `enu`, `lvlh`, or `chase`                 |
+| `pose/position`                                      | three frame-relative meters                                          |
+| `pose/geo`                                           | `lat lon altitude [body:<id>]`; degrees, degrees, terrain-relative m |
+| `pose/orbit/{radius,azimuth,elevation}`              | m, degrees, degrees; nonzero radius wins                             |
+| `pose/rotation`                                      | quaternion `x y z w`                                                 |
+| `pose/aim`                                           | target plus optional `off x y z`, `frame <f>`, `up`, and `roll`      |
+| `pose/{fov,ortho,ortho_height,roll,smoothing,reset}` | degrees, flag, m, degrees, seconds, trigger                          |
 
 `aim` is normally the safer orientation control. Its target and offset re-resolve every frame, so an
 offset stays stuck to a moving subject. `smoothing` filters only camera-relative-to-anchor placement;

@@ -7,33 +7,33 @@ sidebar:
 
 ## Units
 
-| Quantity | Unit |
-| --- | --- |
-| position, length, altitude, radius, SMA | m |
-| velocity and speed | m/s |
-| mass | kg |
-| thrust, impulse | N, N·s |
-| time, UT, period | seconds |
-| /sim schedule offsets and registry times | milliseconds |
-| most angles | degrees |
-| angular rate / acceleration | rad/s, rad/s² |
-| pressure, density, power, energy | Pa, kg/m³, W, J |
-| attitude quaternion | unit `x y z w`, Body to CCI |
+| Quantity                                 | Unit                        |
+| ---------------------------------------- | --------------------------- |
+| position, length, altitude, radius, SMA  | m                           |
+| velocity and speed                       | m/s                         |
+| mass                                     | kg                          |
+| thrust, impulse                          | N, N·s                      |
+| time, UT, period                         | seconds                     |
+| /sim schedule offsets and registry times | milliseconds                |
+| most angles                              | degrees                     |
+| angular rate / acceleration              | rad/s, rad/s²               |
+| pressure, density, power, energy         | Pa, kg/m³, W, J             |
+| attitude quaternion                      | unit `x y z w`, Body to CCI |
 
 Track authoring times are seconds even though live schedule registry times are milliseconds. Camera lengths
 are meters and camera angles degrees. FX fields state their own unit in the field name or help output.
 
 ## Working frames
 
-| Frame | Meaning | Typical use |
-| --- | --- | --- |
-| ECL | system ecliptic frame | body motion |
-| CCE | celestial-centered ecliptic | body-local inertial data |
-| CCI | celestial-centered inertial about vessel parent | vessel position, velocity, attitude target, burns |
-| CCF / bodyfixed | rotating body frame | ground-relative placement |
-| ENU | east, north, up at a surface point | local ground operations |
-| LVLH | local vertical/local horizontal | orbital-relative guidance |
-| body / assembly | vessel axes and CoM | manual RCS, body-frame impulse |
+| Frame           | Meaning                                         | Typical use                                       |
+| --------------- | ----------------------------------------------- | ------------------------------------------------- |
+| ECL             | system ecliptic frame                           | body motion                                       |
+| CCE             | celestial-centered ecliptic                     | body-local inertial data                          |
+| CCI             | celestial-centered inertial about vessel parent | vessel position, velocity, attitude target, burns |
+| CCF / bodyfixed | rotating body frame                             | ground-relative placement                         |
+| ENU             | east, north, up at a surface point              | local ground operations                           |
+| LVLH            | local vertical/local horizontal                 | orbital-relative guidance                         |
+| body / assembly | vessel axes and CoM                             | manual RCS, body-frame impulse                    |
 
 `position/cci`, `velocity/cci`, `attitude/quat`, `ctl/burn`, teleport state, and default debug impulse all
 use CCI. CCI has +Z along the parent north pole, +X at the vernal direction, and an equatorial X-Y plane.

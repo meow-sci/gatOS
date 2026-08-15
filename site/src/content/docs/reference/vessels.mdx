@@ -10,15 +10,15 @@ Core data is always sampled. Orbit, navball, environment, and modules require `t
 
 ## Core telemetry
 
-| Group | Leaves | Unit / meaning |
-| --- | --- | --- |
-| identity | `id`, `name`, `situation`, `parent`, `controlled`, `controllable`, `is_kitten` | situation can be a comma-separated flag combination; parent names the CCI center |
-| placement | `position/cci`, `position/ecl`, `position/lat`, `position/lon`, `com` | m except latitude/longitude in degrees; `com` is assembly frame |
-| motion | `velocity/{orbital,surface,inertial,cci}` | m/s; `cci` is the vector behind orbital speed |
-| attitude | `attitude/quat`, `attitude/rates` | Body to CCI quaternion; rad/s |
-| altitude | `altitude/{barometric,radar}` | m above mean radius / terrain-or-ocean |
-| mass | `mass/{total,dry,propellant}` | kg; propellant includes SRB grain mass |
-| visual | `scale`, `always_render` | writable state; see [Debug and visual tools](/gatOS/reference/debug-and-visual-tools/) |
+| Group     | Leaves                                                                         | Unit / meaning                                                                         |
+| --------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| identity  | `id`, `name`, `situation`, `parent`, `controlled`, `controllable`, `is_kitten` | situation can be a comma-separated flag combination; parent names the CCI center       |
+| placement | `position/cci`, `position/ecl`, `position/lat`, `position/lon`, `com`          | m except latitude/longitude in degrees; `com` is assembly frame                        |
+| motion    | `velocity/{orbital,surface,inertial,cci}`                                      | m/s; `cci` is the vector behind orbital speed                                          |
+| attitude  | `attitude/quat`, `attitude/rates`                                              | Body to CCI quaternion; rad/s                                                          |
+| altitude  | `altitude/{barometric,radar}`                                                  | m above mean radius / terrain-or-ocean                                                 |
+| mass      | `mass/{total,dry,propellant}`                                                  | kg; propellant includes SRB grain mass                                                 |
+| visual    | `scale`, `always_render`                                                       | writable state; see [Debug and visual tools](/gatOS/reference/debug-and-visual-tools/) |
 
 `controllable=0` means KSA ignores flight controls and flight-computer commands. gatOS does not turn that
 silent game lockout into a new error, so check it before assuming your cat-shaped rocket is listening.

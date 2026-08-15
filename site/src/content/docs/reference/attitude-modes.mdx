@@ -10,22 +10,22 @@ computer steer. Tokens are case-insensitive. `manual` drops to manual attitude; 
 token selects an automatic KSA track target. These targets operate in the selected
 `ctl/attitude_frame`, not as an extra gatOS guidance law.
 
-| Token | Meaning |
-| --- | --- |
-| `manual` | no automatic attitude target; player/manual RCS authority |
-| `None` | no named directional target, the KSA rate/hold-neutral target |
-| `Prograde`, `Retrograde` | along / against current velocity |
-| `Normal`, `AntiNormal` | along / against orbital angular momentum |
-| `RadialOut`, `RadialIn` | away from / toward the parent center in the orbital plane |
-| `Toward`, `Away` | toward / away from the current tracked target |
-| `Antivel` | anti-velocity target |
-| `Align` | align with the tracked dock/target orientation |
-| `Forward`, `Backward` | vessel-forward / vessel-backward target |
-| `Up`, `Down` | frame-up / frame-down target |
-| `Ahead`, `Behind` | along / against target-relative travel direction |
-| `Outward`, `Inward` | away from / toward the local frame origin |
-| `PositiveDv`, `NegativeDv` | along / against the planned burn Δv |
-| `Custom` | custom attitude target; normally set by writing `ctl/attitude_target` |
+| Token                      | Meaning                                                               |
+| -------------------------- | --------------------------------------------------------------------- |
+| `manual`                   | no automatic attitude target; player/manual RCS authority             |
+| `None`                     | no named directional target, the KSA rate/hold-neutral target         |
+| `Prograde`, `Retrograde`   | along / against current velocity                                      |
+| `Normal`, `AntiNormal`     | along / against orbital angular momentum                              |
+| `RadialOut`, `RadialIn`    | away from / toward the parent center in the orbital plane             |
+| `Toward`, `Away`           | toward / away from the current tracked target                         |
+| `Antivel`                  | anti-velocity target                                                  |
+| `Align`                    | align with the tracked dock/target orientation                        |
+| `Forward`, `Backward`      | vessel-forward / vessel-backward target                               |
+| `Up`, `Down`               | frame-up / frame-down target                                          |
+| `Ahead`, `Behind`          | along / against target-relative travel direction                      |
+| `Outward`, `Inward`        | away from / toward the local frame origin                             |
+| `PositiveDv`, `NegativeDv` | along / against the planned burn Δv                                   |
+| `Custom`                   | custom attitude target; normally set by writing `ctl/attitude_target` |
 
 The exact KSA track semantics depend on the selected reference frame and whether a target/docking context
 exists. A target that cannot resolve will not become a useful magic vector, so preflight your context.

@@ -8,18 +8,18 @@ sidebar:
 Module directories appear only when fitted and use zero-based indexes, except tanks whose `<resource>` name
 is sanitized. Controls are described in [Controls](/gatOS/reference/controls/).
 
-| Directory | Important leaves | Notes |
-| --- | --- | --- |
-| `engines/<n>` | `active`, `vac_thrust`, `isp`, `throttle`, `propellant`, `min_throttle` | N, seconds, 0..1; active and min-throttle are writable |
-| `tanks/<r>` | `amount`, `capacity`, `fraction` | liquid store values in kg |
-| `rcs/<n>` | `active`, `propellant`, `map` | active writable; map is axis flags |
-| `solar/<n>` | `produced`, `occluded`, `sun_aoa`, `efficiency`, `tracker_angle`, `goal`, `current`, `state` | W, degrees, fractions; animation leaves exist only when fitted |
-| `generators/<n>` | `active`, `produced` | read-only producing state and W |
-| `lights/<n>` | `on`, `brightness`, `color`, `outer_angle`, `inner_angle`, animation leaves | writable lighting; RGB is three 0..1 values, angles are degrees |
-| `docking/<n>` | `docked`, `docked_to`, `pushoff_impulse`, `undock` | N·s; `undock` is trigger `1` |
-| `decouplers/<n>` | `fired`, `enabled`, `fire` | `fire` is irreversible trigger `1` |
-| `animations/<n>` | `goal`, `current`, `state` | goal is writable 0..1 |
-| `encounters` | NDJSON `{body,ut,distance}` | detail telemetry; UT seconds and distance m |
+| Directory        | Important leaves                                                                             | Notes                                                           |
+| ---------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `engines/<n>`    | `active`, `vac_thrust`, `isp`, `throttle`, `propellant`, `min_throttle`                      | N, seconds, 0..1; active and min-throttle are writable          |
+| `tanks/<r>`      | `amount`, `capacity`, `fraction`                                                             | liquid store values in kg                                       |
+| `rcs/<n>`        | `active`, `propellant`, `map`                                                                | active writable; map is axis flags                              |
+| `solar/<n>`      | `produced`, `occluded`, `sun_aoa`, `efficiency`, `tracker_angle`, `goal`, `current`, `state` | W, degrees, fractions; animation leaves exist only when fitted  |
+| `generators/<n>` | `active`, `produced`                                                                         | read-only producing state and W                                 |
+| `lights/<n>`     | `on`, `brightness`, `color`, `outer_angle`, `inner_angle`, animation leaves                  | writable lighting; RGB is three 0..1 values, angles are degrees |
+| `docking/<n>`    | `docked`, `docked_to`, `pushoff_impulse`, `undock`                                           | N·s; `undock` is trigger `1`                                    |
+| `decouplers/<n>` | `fired`, `enabled`, `fire`                                                                   | `fire` is irreversible trigger `1`                              |
+| `animations/<n>` | `goal`, `current`, `state`                                                                   | goal is writable 0..1                                           |
+| `encounters`     | NDJSON `{body,ut,distance}`                                                                  | detail telemetry; UT seconds and distance m                     |
 
 ## Solid rocket motors
 

@@ -12,13 +12,13 @@ sidebar:
 Supported game-decoded formats include mp3, ogg, wav, and flac. The file store is in memory, not a
 durable music library.
 
-| Leaf | Grammar |
-| --- | --- |
-| `audio/play` | `clip [start=ms] [end=ms] [vol=0..1] [loop=0-or-1] [group=sfx/music/ui] [id=name] [pan=-1..1] [pitch=n]` |
-| `audio/set` | `id [vol=...] [pause=1] [resume=1] [seek=ms] [pan=...] [pitch=...]` |
-| `audio/stop` | `id` or `all` |
-| `audio/status` | current channels and handles |
-| `audio/info` | store limits and formats |
+| Leaf           | Grammar                                                                                                  |
+| -------------- | -------------------------------------------------------------------------------------------------------- |
+| `audio/play`   | `clip [start=ms] [end=ms] [vol=0..1] [loop=0-or-1] [group=sfx/music/ui] [id=name] [pan=-1..1] [pitch=n]` |
+| `audio/set`    | `id [vol=...] [pause=1] [resume=1] [seek=ms] [pan=...] [pitch=...]`                                      |
+| `audio/stop`   | `id` or `all`                                                                                            |
+| `audio/status` | current channels and handles                                                                             |
+| `audio/info`   | store limits and formats                                                                                 |
 
 Channels keep playing during time warp by design. Completion emits `audio.finished` on `events`.
 `audio_max_clip_bytes`, total bytes, clip count, and channel count produce `EFBIG`, `ENOSPC`, or `EBUSY`

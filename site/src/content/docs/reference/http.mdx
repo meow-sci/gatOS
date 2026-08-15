@@ -11,17 +11,17 @@ binds only to loopback. The preferred port may fall back to an ephemeral one; in
 
 ## Reads and streams
 
-| Method | Route | Result |
-| --- | --- | --- |
-| GET | `/snapshot` | whole atomic `SimSnapshot` |
-| GET | `/openapi.json` | OpenAPI 3.1 description |
-| GET | `/time`, `/status`, `/system` | aggregate JSON views |
-| GET | `/bodies`, `/bodies/{id}` | body list or raw-ID body |
-| GET | `/vessels`, `/vessels/{id}`, `/vessels/{id}/telemetry` | roster, raw-ID vessel, compact coherent telemetry |
-| GET | `/fs/<path>` | raw text field with trailing newline |
-| GET | `/fs/<path>?stream=1` | field changes as SSE |
-| GET | `/events`, `/vessels/{id}/stream` | SSE events or NDJSON-equivalent telemetry |
-| GET | `/time/wait?until=<ut>` | long poll until UT reaches target |
+| Method | Route                                                  | Result                                            |
+| ------ | ------------------------------------------------------ | ------------------------------------------------- |
+| GET    | `/snapshot`                                            | whole atomic `SimSnapshot`                        |
+| GET    | `/openapi.json`                                        | OpenAPI 3.1 description                           |
+| GET    | `/time`, `/status`, `/system`                          | aggregate JSON views                              |
+| GET    | `/bodies`, `/bodies/{id}`                              | body list or raw-ID body                          |
+| GET    | `/vessels`, `/vessels/{id}`, `/vessels/{id}/telemetry` | roster, raw-ID vessel, compact coherent telemetry |
+| GET    | `/fs/<path>`                                           | raw text field with trailing newline              |
+| GET    | `/fs/<path>?stream=1`                                  | field changes as SSE                              |
+| GET    | `/events`, `/vessels/{id}/stream`                      | SSE events or NDJSON-equivalent telemetry         |
+| GET    | `/time/wait?until=<ut>`                                | long poll until UT reaches target                 |
 
 The field mirror needs `http_field_endpoints=true`. It uses `/sim`-relative paths with no `sim/` segment.
 The binary display stream is intentionally excluded.
@@ -32,7 +32,7 @@ The binary display stream is intentionally excluded.
 `POST /command` takes the generic JSON envelope:
 
 ```json
-{"vessel_id":"Hunter","action":"vessel.throttle","value":0.5}
+{ "vessel_id": "Hunter", "action": "vessel.throttle", "value": 0.5 }
 ```
 
 The envelope also accepts `ordinal`, `values`, and `token` for action shapes that need them. See

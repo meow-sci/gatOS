@@ -99,16 +99,16 @@ before constructing them.
 
 ## Error vocabulary
 
-| Errno | Typical meaning |
-|---|---|
-| `EINVAL` | Invalid shape, value, enum, cursor, clock, or action |
-| `ENOENT` | Vessel, body, module, clip, track, or player not found |
-| `EACCES` | Control, debug, or authority gate denied the operation |
-| `EBUSY` | Runtime ownership or current game state conflicts with the request |
-| `EIO` | Game-side execution or accessor failure |
-| `ETIMEDOUT` | A bounded wait or command submission timed out |
-| `EOPNOTSUPP` | Feature or game capability is disabled/unsupported |
-| `EFBIG`, `ENOSPC`, `EEXIST`, `EPERM` | Audio, track, schedule, or store-specific constraints |
+| Errno                                | Typical meaning                                                    |
+| ------------------------------------ | ------------------------------------------------------------------ |
+| `EINVAL`                             | Invalid shape, value, enum, cursor, clock, or action               |
+| `ENOENT`                             | Vessel, body, module, clip, track, or player not found             |
+| `EACCES`                             | Control, debug, or authority gate denied the operation             |
+| `EBUSY`                              | Runtime ownership or current game state conflicts with the request |
+| `EIO`                                | Game-side execution or accessor failure                            |
+| `ETIMEDOUT`                          | A bounded wait or command submission timed out                     |
+| `EOPNOTSUPP`                         | Feature or game capability is disabled/unsupported                 |
+| `EFBIG`, `ENOSPC`, `EEXIST`, `EPERM` | Audio, track, schedule, or store-specific constraints              |
 
 Use `retryable` and the current capability/runtime state rather than retrying every error.
 

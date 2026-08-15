@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import { Steps } from '@astrojs/starlight/components';
+import { Steps } from "@astrojs/starlight/components";
 
 gatOS hosts MCP inside the C# game mod. There is no stdio proxy, guest endpoint, bearer token, or
 remote listener in v1.
@@ -41,13 +41,17 @@ the gatOS status window or transport status surfaces.
 ## First agent sequence
 
 <Steps>
-1. Connect your Streamable HTTP MCP client to the actual bound endpoint.
-2. Call [`gatos.get_capabilities`](/gatOS/mcp/tools/get-capabilities/) and retain its gates, limits, phases, and action metadata.
-3. Call [`gatos.get_world`](/gatOS/mcp/tools/get-world/) with `detail:"summary"`.
-4. Discover a target with [`gatos.list_vessels`](/gatOS/mcp/tools/list-vessels/) and read it with [`gatos.get_vessel`](/gatOS/mcp/tools/get-vessel/).
-5. Confirm `controllable`, the target raw id, its current parent, and any relevant feature gates.
-6. Submit one narrow logical action, such as [`gatos.ignite_engines`](/gatOS/mcp/tools/ignite-engines/) or [`gatos.vessel_control`](/gatOS/mcp/tools/vessel-control/).
-7. Call [`gatos.wait`](/gatOS/mcp/tools/wait/) with the previous `snapshot_sequence`, then re-read state before planning again.
+  1. Connect your Streamable HTTP MCP client to the actual bound endpoint. 2. Call
+  [`gatos.get_capabilities`](/gatOS/mcp/tools/get-capabilities/) and retain its gates, limits,
+  phases, and action metadata. 3. Call [`gatos.get_world`](/gatOS/mcp/tools/get-world/) with
+  `detail:"summary"`. 4. Discover a target with
+  [`gatos.list_vessels`](/gatOS/mcp/tools/list-vessels/) and read it with
+  [`gatos.get_vessel`](/gatOS/mcp/tools/get-vessel/). 5. Confirm `controllable`, the target raw id,
+  its current parent, and any relevant feature gates. 6. Submit one narrow logical action, such as
+  [`gatos.ignite_engines`](/gatOS/mcp/tools/ignite-engines/) or
+  [`gatos.vessel_control`](/gatOS/mcp/tools/vessel-control/). 7. Call
+  [`gatos.wait`](/gatOS/mcp/tools/wait/) with the previous `snapshot_sequence`, then re-read state
+  before planning again.
 </Steps>
 
 ## A minimal interaction

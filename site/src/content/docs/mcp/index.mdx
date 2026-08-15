@@ -6,7 +6,7 @@ sidebar:
   label: Overview
 ---
 
-import { Card, CardGrid, LinkCard, Steps } from '@astrojs/starlight/components';
+import { Card, CardGrid, LinkCard, Steps } from "@astrojs/starlight/components";
 
 The gatOS [Model Context Protocol](https://modelcontextprotocol.io/) server is the first-class
 interface for an AI agent operating Kitten Space Agency. It reads the same immutable telemetry
@@ -19,10 +19,26 @@ as `gatos.ignite_engines`, `gatos.vessel_control`, `gatos.execute_batch`, and
 `gatos.schedule_batch`.
 
 <CardGrid>
-  <LinkCard title="Connect and make a first call" description="Endpoint, discovery flow, configuration, and a short first-session sequence." href="/gatOS/mcp/getting-started/" />
-  <LinkCard title="Understand the wire contract" description="Freshness, pagination, envelopes, errors, identifiers, phases, and limits." href="/gatOS/mcp/conventions/" />
-  <LinkCard title="Browse all 25 tools" description="Read, control, media, debug, atomic batch, and timed schedule tools." href="/gatOS/mcp/tools/" />
-  <LinkCard title="Browse all 9 resources" description="Fixed JSON resources and RFC 6570 templates for the same presenters." href="/gatOS/mcp/resources/" />
+  <LinkCard
+    title="Connect and make a first call"
+    description="Endpoint, discovery flow, configuration, and a short first-session sequence."
+    href="/gatOS/mcp/getting-started/"
+  />
+  <LinkCard
+    title="Understand the wire contract"
+    description="Freshness, pagination, envelopes, errors, identifiers, phases, and limits."
+    href="/gatOS/mcp/conventions/"
+  />
+  <LinkCard
+    title="Browse all 25 tools"
+    description="Read, control, media, debug, atomic batch, and timed schedule tools."
+    href="/gatOS/mcp/tools/"
+  />
+  <LinkCard
+    title="Browse all 9 resources"
+    description="Fixed JSON resources and RFC 6570 templates for the same presenters."
+    href="/gatOS/mcp/resources/"
+  />
 </CardGrid>
 
 :::note[The versioned contract]
@@ -40,26 +56,27 @@ token. gatOS validates exact local `Host` and `Origin` values; the status window
 bound port. Configure it with `mcp_enabled` and `mcp_preferred_port` in `gatos.toml`.
 
 <Steps>
-1. Connect an MCP client to the bound `/mcp` endpoint.
-2. Call [`gatos.get_capabilities`](/gatOS/mcp/tools/get-capabilities/) to learn which optional systems and actions are currently available.
-3. Read [`gatos.get_world`](/gatOS/mcp/tools/get-world/) and the vessel or celestial documents needed for the task.
-4. Use the narrowest logical control tool that expresses the user's intent.
-5. Use [`gatos.wait`](/gatOS/mcp/tools/wait/) to synchronize the next planning turn with the simulation.
+  1. Connect an MCP client to the bound `/mcp` endpoint. 2. Call
+  [`gatos.get_capabilities`](/gatOS/mcp/tools/get-capabilities/) to learn which optional systems and
+  actions are currently available. 3. Read [`gatos.get_world`](/gatOS/mcp/tools/get-world/) and the
+  vessel or celestial documents needed for the task. 4. Use the narrowest logical control tool that
+  expresses the user's intent. 5. Use [`gatos.wait`](/gatOS/mcp/tools/wait/) to synchronize the next
+  planning turn with the simulation.
 </Steps>
 
 ## Choose the right interface
 
-| Intent | Best starting point |
-|---|---|
-| Understand the current simulation | [`gatos.get_world`](/gatOS/mcp/tools/get-world/) |
-| Discover ids | [`gatos.list_vessels`](/gatOS/mcp/tools/list-vessels/), [`gatos.list_celestials`](/gatOS/mcp/tools/list-celestials/), or [`gatos.list_kittens`](/gatOS/mcp/tools/list-kittens/) |
-| Inspect one entity | [`gatos.get_vessel`](/gatOS/mcp/tools/get-vessel/), [`gatos.get_celestial`](/gatOS/mcp/tools/get-celestial/), or [`gatos.get_kitten`](/gatOS/mcp/tools/get-kitten/) |
-| Inspect feature-owned state | [`gatos.get_runtime_state`](/gatOS/mcp/tools/get-runtime-state/) |
-| Perform one ordinary flight action | [Common vessel actions](/gatOS/mcp/tools/#common-vessel-actions) or [`gatos.vessel_control`](/gatOS/mcp/tools/vessel-control/) |
-| Change one fitted module | [`gatos.module_control`](/gatOS/mcp/tools/module-control/) |
-| Coordinate same-tick changes | [`gatos.execute_batch`](/gatOS/mcp/tools/execute-batch/) |
-| Run a timed sequence | [`gatos.schedule_batch`](/gatOS/mcp/tools/schedule-batch/) and [`gatos.schedule_control`](/gatOS/mcp/tools/schedule-control/) |
-| Use a known URI through resources/read | [Resource directory](/gatOS/mcp/resources/) |
+| Intent                                 | Best starting point                                                                                                                                                             |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Understand the current simulation      | [`gatos.get_world`](/gatOS/mcp/tools/get-world/)                                                                                                                                |
+| Discover ids                           | [`gatos.list_vessels`](/gatOS/mcp/tools/list-vessels/), [`gatos.list_celestials`](/gatOS/mcp/tools/list-celestials/), or [`gatos.list_kittens`](/gatOS/mcp/tools/list-kittens/) |
+| Inspect one entity                     | [`gatos.get_vessel`](/gatOS/mcp/tools/get-vessel/), [`gatos.get_celestial`](/gatOS/mcp/tools/get-celestial/), or [`gatos.get_kitten`](/gatOS/mcp/tools/get-kitten/)             |
+| Inspect feature-owned state            | [`gatos.get_runtime_state`](/gatOS/mcp/tools/get-runtime-state/)                                                                                                                |
+| Perform one ordinary flight action     | [Common vessel actions](/gatOS/mcp/tools/#common-vessel-actions) or [`gatos.vessel_control`](/gatOS/mcp/tools/vessel-control/)                                                  |
+| Change one fitted module               | [`gatos.module_control`](/gatOS/mcp/tools/module-control/)                                                                                                                      |
+| Coordinate same-tick changes           | [`gatos.execute_batch`](/gatOS/mcp/tools/execute-batch/)                                                                                                                        |
+| Run a timed sequence                   | [`gatos.schedule_batch`](/gatOS/mcp/tools/schedule-batch/) and [`gatos.schedule_control`](/gatOS/mcp/tools/schedule-control/)                                                   |
+| Use a known URI through resources/read | [Resource directory](/gatOS/mcp/resources/)                                                                                                                                     |
 
 ## Read coherent JSON
 
@@ -113,6 +130,22 @@ seconds. The MCP tools preserve this distinction.
 ## Complete directories
 
 <CardGrid>
-  <Card title="Tools"><p>Every callable operation has its own schema, example, operation mapping, result, gate, error, and safety reference.</p><p><a href="/gatOS/mcp/tools/">Open the tool directory →</a></p></Card>
-  <Card title="Resources"><p>Every fixed resource and URI template has a dedicated page describing parameters, document shape, freshness, and equivalent tool.</p><p><a href="/gatOS/mcp/resources/">Open the resource directory →</a></p></Card>
+  <Card title="Tools">
+    <p>
+      Every callable operation has its own schema, example, operation mapping, result, gate, error,
+      and safety reference.
+    </p>
+    <p>
+      <a href="/gatOS/mcp/tools/">Open the tool directory →</a>
+    </p>
+  </Card>
+  <Card title="Resources">
+    <p>
+      Every fixed resource and URI template has a dedicated page describing parameters, document
+      shape, freshness, and equivalent tool.
+    </p>
+    <p>
+      <a href="/gatOS/mcp/resources/">Open the resource directory →</a>
+    </p>
+  </Card>
 </CardGrid>

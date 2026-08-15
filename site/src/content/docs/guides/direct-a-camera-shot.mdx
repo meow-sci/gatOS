@@ -1,8 +1,8 @@
 ---
-title: Direct a Shot — Take the Camera and Fly It
+title: "Direct a Shot: Take the Camera and Fly It"
 description: >-
   Borrow the game camera, park it beside a vessel, aim it at a point on the hull, fly a short move
-  along a timeline, and hand it back cleanly — first as plain file writes, then as a JSON track.
+  along a timeline, and hand it back cleanly. Start with plain file writes, then use a JSON track.
 sidebar:
   label: Direct a Shot
   order: 40
@@ -13,19 +13,19 @@ import { Steps, Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/compon
 
 This is the one where you get to be the cinematographer.
 
-Everything so far has been about making a ship *do* something. This time we're going to make the
+Everything so far has been about making a ship _do_ something. This time we're going to make the
 **camera** do something: take it away from the game, put it 40 metres off the nose of a vessel, aim
 it at a point on the hull, glide it in over six seconds, and then give it politely back.
 
-And — this is the good bit — there is no camera API to learn. The camera is a folder of files under
+And: this is the good bit: there is no camera API to learn. The camera is a folder of files under
 `/sim/camera`. `echo` a number into one and the view changes. Everything below is `cat` and `echo`.
 
 ## Before you start
 
 <Steps>
 
-1. **[Reference Frames](/gatOS/guides/reference-frames/)** — the camera is placed *relative to
-   something, in some frame*, so the vocabulary matters. You don't need any math from that page,
+1. **[Reference Frames](/gatOS/guides/reference-frames/)**: the camera is placed _relative to
+   something, in some frame_, so the vocabulary matters. You don't need any math from that page,
    just the idea.
 
 2. **A vessel to point at.** [Teleport a Fleet into Orbit](/gatOS/guides/teleport-into-orbit/)
@@ -33,7 +33,7 @@ And — this is the good bit — there is no camera API to learn. The camera is 
 
 </Steps>
 
-If `/sim/camera` doesn't exist, the `[camera] camera_enabled` config gate is off — it's on by
+If `/sim/camera` doesn't exist, the `camera_enabled` config gate is off: it's on by
 default. `cat /sim/camera/info` prints the caps and the exact token vocabularies your build accepts.
 
 ## The idea in one picture: anchor, frame, offset
@@ -52,7 +52,7 @@ numbers mean a different direction. The camera is re-resolved **every rendered f
 anchor is a moving vessel, the camera moves with it for free.
 
 The six frame tokens are `ecl`, `cce`, `bodyfixed`, `enu`, `lvlh` and `chase`. We'll use
-**`bodyfixed`** — the ship's own axes, laid out aircraft-style exactly like the RCS controls:
+**`bodyfixed`**: the ship's own axes, laid out aircraft-style exactly like the RCS controls:
 
 ```
         +X  nose
@@ -66,7 +66,7 @@ The six frame tokens are `ecl`, `cce`, `bodyfixed`, `enu`, `lvlh` and `chase`. W
    third axis, through the belly:   +Z = down ,  −Z = up
 ```
 
-So `-40 0 -6` is *40 metres behind the nose and 6 metres above the hull* — and, as ever, "up" is
+So `-40 0 -6` is _40 metres behind the nose and 6 metres above the hull_: and, as ever, "up" is
 negative Z.
 
 ### Aim is a target, not a rotation
@@ -76,25 +76,25 @@ name a **target and an offset**, and gatOS re-resolves it every frame:
 
 > `camera/pose/aim` ← `<target> [off <x> <y> <z>] [frame <frame>] [up <up>] [roll <deg>]`
 
-The offset is measured *on the subject*, in the subject's own frame — which is what makes
+The offset is measured _on the subject_, in the subject's own frame: which is what makes
 `off 0 0 -1.2` stay glued 1.2 m above a moving ship's origin instead of drifting off into space.
 
 ### Borrowing, not owning
 
 One more idea and we can fly. `camera/enabled 1` **takes** the camera: gatOS snapshots where the
 game had it, unfollows it, and becomes the only writer. `camera/enabled 0` gives it back, eased,
-exactly where it was. Everything you write in between is an *override* layered on that snapshot —
+exactly where it was. Everything you write in between is an _override_ layered on that snapshot :
 so an override you never set simply falls through to how the game had it.
 
 <Aside type="caution" title="While gatOS holds the camera, your camera keys do nothing">
-Ownership parks the game's own camera controller. That's the point — two writers fighting over one
-transform looks terrible — but it means the player's camera hotkeys are inert until you release.
+Ownership parks the game's own camera controller. That's the point: two writers fighting over one
+transform looks terrible: but it means the player's camera hotkeys are inert until you release.
 For the same reason `camera/mode`, `camera/follow` and `camera/tidal` are **refused while owned**
 (`EOPNOTSUPP`): use `camera/pose/anchor` and `camera/pose/aim_target`, which do everything a follow
 does and more. Always have a way to run `echo 1 > /sim/camera/release`.
 </Aside>
 
-## Step 1 — take it, place it, aim it
+## Step 1: take it, place it, aim it
 
 Six writes. Pick a transport and the rest of the page follows your choice.
 
@@ -110,7 +110,7 @@ Six writes. Pick a transport and the rest of the page follows your choice.
     echo "vessel:apollo11 off 0 0 -1.2 up world" > /sim/camera/pose/aim
     ```
 
-    Read it back — every leaf reports the **composed effective value**, not the last thing you
+    Read it back: every leaf reports the **composed effective value**, not the last thing you
     wrote, so a read-then-write-it-straight-back is a no-op:
 
     ```sh
@@ -121,7 +121,7 @@ Six writes. Pick a transport and the rest of the page follows your choice.
   </TabItem>
   <TabItem label="HTTP (host)">
 
-    Every `/sim` leaf is mirrored field-by-field at `/v1/fs/<path>` — the path after `/v1/fs/` is
+    Every `/sim` leaf is mirrored field-by-field at `/v1/fs/<path>`: the path after `/v1/fs/` is
     exactly the `/sim`-relative path, and a `POST` body is exactly the text you'd have `echo`ed:
 
     ```sh
@@ -134,7 +134,7 @@ Six writes. Pick a transport and the rest of the page follows your choice.
     curl -X POST --data 'vessel:apollo11 off 0 0 -1.2 up world' $H/camera/pose/aim
     ```
 
-    Read it back with a plain `GET` — same paths, raw text out:
+    Read it back with a plain `GET`: same paths, raw text out:
 
     ```sh
     curl -s $H/camera/status
@@ -147,17 +147,17 @@ Six writes. Pick a transport and the rest of the page follows your choice.
 <Aside type="tip" title="Orbit around it instead">
 Rather than naming a point, you can hang the camera on a sphere about the anchor with
 `camera/pose/orbit/{radius,azimuth,elevation}` (metres and degrees; azimuth sweeps the frame's XY
-plane from +X toward +Y, elevation rises toward +Z — so in `bodyfixed`, where +Z is *down*, a
+plane from +X toward +Y, elevation rises toward +Z: so in `bodyfixed`, where +Z is *down*, a
 negative elevation puts the camera overhead). Placement precedence is **orbit → geodetic →
 cartesian**, so a non-zero radius wins over `pose/position`; write `0` to the radius to hand
 placement back.
 </Aside>
 
-## Step 2 — fly it, route A: a timed batch
+## Step 2: fly it, route A: a timed batch
 
-A static shot is a screenshot. To make it a *move*, we drive those same leaves along a timeline.
-`/sim/ctl/timed_batch` takes a little script of `<offsetMs> <path> <payload>` lines — offsets are
-absolute milliseconds from the schedule's start — followed by `commit`:
+A static shot is a screenshot. To make it a _move_, we drive those same leaves along a timeline.
+`/sim/ctl/timed_batch` takes a little script of `<offsetMs> <path> <payload>` lines: offsets are
+absolute milliseconds from the schedule's start: followed by `commit`:
 
 <Tabs syncKey="transport">
   <TabItem label="/sim (in guest)">
@@ -199,17 +199,17 @@ absolute milliseconds from the schedule's start — followed by `commit`:
   </TabItem>
 </Tabs>
 
-Five keyframes at 1.5-second intervals is coarse — it will step rather than glide. Two things fix
+Five keyframes at 1.5-second intervals is coarse: it will step rather than glide. Two things fix
 that, and neither costs you anything:
 
-- **Write more lines.** The scheduler coalesces to the *last* write per leaf per tick, so a 20 Hz
+- **Write more lines.** The scheduler coalesces to the _last_ write per leaf per tick, so a 20 Hz
   script costs one write per leaf per frame no matter how finely you sample it. Generating those
   lines is exactly what [`examples/shotbuilder`](https://github.com/meow-sci/gatOS/tree/main/examples/shotbuilder)
   does.
 - **Ask for smoothing.** `echo 0.35 > /sim/camera/pose/smoothing` (seconds, 0–10) puts a critically
   damped filter on the pose, which turns coarse steps into a glide.
 
-## Step 3 — fly it, route B: a JSON track
+## Step 3: fly it, route B: a JSON track
 
 The same move can be handed over as a **track**: a small JSON document of shots and keys that gatOS
 interpolates itself, at render rate, with real easing and splines. Upload it as a file under
@@ -233,13 +233,18 @@ interpolates itself, at render rate, with real easing and splines. Upload it as 
         ]
       },
       "aim": { "target": "vessel:apollo11", "offset": [0, 0, -1.2], "up": "world" },
-      "fov": { "keys": [{ "t": 0, "v": 42, "ease": "out" }, { "t": 6, "v": 24 }] }
+      "fov": {
+        "keys": [
+          { "t": 0, "v": 42, "ease": "out" },
+          { "t": 6, "v": 24 }
+        ]
+      }
     }
   ]
 }
 ```
 
-Two keys and an ease replace the whole ladder of batch lines — and notice that every channel name in
+Two keys and an ease replace the whole ladder of batch lines: and notice that every channel name in
 there (`position`, `frame`, `aim`, `fov`) is the same channel you wrote by hand in step 1. It really
 is one surface.
 
@@ -282,30 +287,30 @@ is one surface.
 </Tabs>
 
 <Aside type="caution" title="A track is a schedule">
-A playing track is a player in the same registry a timed batch joins — which is why it shows up at
-`/sim/ctl/schedules/camera/` and answers the same `pause`/`scrub`/`rate`/`loop`/`stop` leaves. It
-also means `camera/play` needs `[schedule] schedule_enabled` (on by default); with scheduling off it
-answers `EOPNOTSUPP` and points you back at route A. A malformed track is rejected the moment the
-file is closed, so a bad key never reaches playback.
+  A playing track is a player in the same registry a timed batch joins: which is why it shows up at
+  `/sim/ctl/schedules/camera/` and answers the same `pause`/`scrub`/`rate`/`loop`/`stop` leaves. It
+  also means `camera/play` needs `schedule_enabled` (on by default); with scheduling off it answers
+  `EOPNOTSUPP` and points you back at route A. A malformed track is rejected the moment the file is
+  closed, so a bad key never reaches playback.
 </Aside>
 
 <Aside type="note" title="Your writes and a track coexist">
-The camera composites three layers per channel: **the track, then your leaf writes, then the
-snapshot taken at ownership**. A track only claims the channels its shot actually declares, so a
-track animating `position` and `fov` leaves `aim` free — you can pull focus by hand, mid-shot, with
-one `echo` into `camera/pose/aim_target`, and it sticks.
+  The camera composites three layers per channel: **the track, then your leaf writes, then the
+  snapshot taken at ownership**. A track only claims the channels its shot actually declares, so a
+  track animating `position` and `fov` leaves `aim` free: you can pull focus by hand, mid-shot, with
+  one `echo` into `camera/pose/aim_target`, and it sticks.
 </Aside>
 
-## Step 4 — hand it back
+## Step 4: hand it back
 
-Two verbs, and the difference is the *approach*, not the result:
+Two verbs, and the difference is the _approach_, not the result:
 
 <Tabs syncKey="transport">
   <TabItem label="/sim (in guest)">
 
     ```sh
     echo 0 > /sim/camera/enabled     # eased blend back to where the game had it (~0.6 s)
-    echo 1 > /sim/camera/release     # hard cut — the "give it back NOW" button
+    echo 1 > /sim/camera/release     # hard cut: the "give it back NOW" button
     ```
 
     And if you just want to undo *your own* writes without giving up the camera:
@@ -328,7 +333,7 @@ Two verbs, and the difference is the *approach*, not the result:
 </Tabs>
 
 Either way the camera lands back on its original mode, follow target, position, rotation and field
-of view — and the blend recomputes its destination every frame, so handing back onto a *moving*
+of view: and the blend recomputes its destination every frame, so handing back onto a _moving_
 follow target lands on the target, not on where it used to be.
 
 ## Run it
@@ -353,22 +358,22 @@ echo 0 > /sim/camera/enabled
 
 You should see the view snap to a quarter-behind, slightly-high shot of the ship, hold its aim as
 the ship rotates, tighten to a 24° telephoto, then swing around to the side as you write the orbit
-channels — and finally glide back to whatever the game was showing before you started.
+channels: and finally glide back to whatever the game was showing before you started.
 
 <Aside type="tip" title="One description, both routes">
-Writing 400 batch lines by hand is nobody's idea of fun.
-[`examples/shotbuilder`](https://github.com/meow-sci/gatOS/tree/main/examples/shotbuilder) is a tiny
-Bun/TypeScript generator that takes one declarative shot description and emits **both** a
-`timed_batch` script and a JSON track for it — which is also the clearest way to see that the two
-routes really are the same surface.
+  Writing 400 batch lines by hand is nobody's idea of fun.
+  [`examples/shotbuilder`](https://github.com/meow-sci/gatOS/tree/main/examples/shotbuilder) is a
+  tiny Bun/TypeScript generator that takes one declarative shot description and emits **both** a
+  `timed_batch` script and a JSON track for it: which is also the clearest way to see that the two
+  routes really are the same surface.
 </Aside>
 
 <Aside type="note" title="Two things you can't put back">
-`camera/pose/ortho_height` is the one camera change gatOS cannot undo — the game exposes a setter
-but no getter, so there's nothing to capture at ownership and nothing to restore at release. And
-taking the camera *out of map view* prints one three-second "Fixed Camera" alert on screen, because
-leaving map mode has to go through the game's own mode switch to avoid stranding you with an
-uncontrollable vessel. Every other entry mode is silent.
+  `camera/pose/ortho_height` is the one camera change gatOS cannot undo: the game exposes a setter
+  but no getter, so there's nothing to capture at ownership and nothing to restore at release. And
+  taking the camera *out of map view* prints one three-second "Fixed Camera" alert on screen,
+  because leaving map mode has to go through the game's own mode switch to avoid stranding you with
+  an uncontrollable vessel. Every other entry mode is silent.
 </Aside>
 
 ## What's next
@@ -377,7 +382,7 @@ You now have the third kind of thing gatOS lets you drive: not the ship, not the
 **view**. The natural follow-ons:
 
 - **Cut between subjects.** `camera/pose/anchor` and `camera/pose/aim_target` both take
-  `vessel:<id>`, `body:<id>` *and* `part:<vessel-id>/<instance-id>` — so you can aim at a specific
+  `vessel:<id>`, `body:<id>` _and_ `part:<vessel-id>/<instance-id>`: so you can aim at a specific
   engine bell, or at an EVA kitten's head, and the offset stays glued to it as it moves.
 - **Cue a shot off a maneuver.** A timed batch is just a schedule; start one at the same moment you
   fire an [impulse](/gatOS/guides/punch-it/) or a burn and you have a cut, on the beat.
@@ -386,7 +391,7 @@ You now have the third kind of thing gatOS lets you drive: not the ship, not the
   the outside.
 
 <LinkCard
-  title="Searchlight — Track a Vessel"
+  title="Searchlight: Track a Vessel"
   href="/gatOS/guides/searchlight-track-a-vessel/"
-  description="The control loop that keeps one ship pointed at another — a good subject for your first shot."
+  description="The control loop that keeps one ship pointed at another: a good subject for your first shot."
 />

@@ -11,21 +11,21 @@ through `/v1/fs/<path>` or publish to the MQTT `/set` topic.
 
 ## Vessel control leaves
 
-| Path | Value | Phase / action |
-| --- | --- | --- |
-| `ctl/throttle` | 0..1 | Frame, `vessel.throttle` |
-| `ctl/ignite`, `ctl/shutdown`, `ctl/stage` | `1` trigger, optional engine index for ignite/shutdown | Frame |
-| `ctl/engine` | `index 0 or 1` | Frame, `engine.active` |
-| `ctl/lights` | `0 or 1` | Frame, `vessel.lights` |
-| `ctl/rcs` | `0 or 1` | Frame, `vessel.rcs` |
-| `ctl/rcs_mode` | `Enabled` or `Disabled` | Solver, `vessel.rcs_mode` |
-| `ctl/translate` | body-axis signs `x y z` | Solver; latches until `0 0 0` |
-| `ctl/rotate` | body-axis signs `x y z` | Solver; latches until zero |
-| `ctl/attitude_mode` | [attitude token](/gatOS/reference/attitude-modes/) | Solver |
-| `ctl/attitude_frame` | `EclBody`, `EnuBody`, `Lvlh`, `VlfBody`, `BurnBody`, `Dock` | Solver |
-| `ctl/attitude_target` | Body to CCI `x y z w` | Solver, selects `Custom` |
-| `ctl/burn` | `ut dvx dvy dvz` | Solver; UT seconds, CCI Δv m/s |
-| `ctl/focus` | `1` | Frame, camera focus |
+| Path                                      | Value                                                       | Phase / action                 |
+| ----------------------------------------- | ----------------------------------------------------------- | ------------------------------ |
+| `ctl/throttle`                            | 0..1                                                        | Frame, `vessel.throttle`       |
+| `ctl/ignite`, `ctl/shutdown`, `ctl/stage` | `1` trigger, optional engine index for ignite/shutdown      | Frame                          |
+| `ctl/engine`                              | `index 0 or 1`                                              | Frame, `engine.active`         |
+| `ctl/lights`                              | `0 or 1`                                                    | Frame, `vessel.lights`         |
+| `ctl/rcs`                                 | `0 or 1`                                                    | Frame, `vessel.rcs`            |
+| `ctl/rcs_mode`                            | `Enabled` or `Disabled`                                     | Solver, `vessel.rcs_mode`      |
+| `ctl/translate`                           | body-axis signs `x y z`                                     | Solver; latches until `0 0 0`  |
+| `ctl/rotate`                              | body-axis signs `x y z`                                     | Solver; latches until zero     |
+| `ctl/attitude_mode`                       | [attitude token](/gatOS/reference/attitude-modes/)          | Solver                         |
+| `ctl/attitude_frame`                      | `EclBody`, `EnuBody`, `Lvlh`, `VlfBody`, `BurnBody`, `Dock` | Solver                         |
+| `ctl/attitude_target`                     | Body to CCI `x y z w`                                       | Solver, selects `Custom`       |
+| `ctl/burn`                                | `ut dvx dvy dvz`                                            | Solver; UT seconds, CCI Δv m/s |
+| `ctl/focus`                               | `1`                                                         | Frame, camera focus            |
 
 Manual translation maps `+x` to thrust along the nose. Manual rotation maps `+x` roll-right, `+y`
 pitch-up, `+z` yaw-right. Both require RCS mode `Enabled`; KSA clears their latched flags on focus loss,
@@ -36,31 +36,31 @@ needs manual attitude mode because automatic attitude strips those bits.
 
 `POST /v1/command` and MQTT `gatos/command` use logical action keys. The key families are:
 
-| Family | Keys |
-| --- | --- |
-| vessel | `vessel.throttle`, `vessel.ignite`, `vessel.shutdown`, `vessel.stage`, `vessel.lights`, `vessel.rcs`, `vessel.rcs_mode`, `vessel.translate`, `vessel.rotate`, `vessel.attitude_mode`, `vessel.attitude_frame`, `vessel.attitude_target`, `vessel.burn`, `vessel.focus`, `vessel.scale`, `vessel.always_render` |
-| modules | `engine.active`, `engine.min_throttle`, `rcs.active`, `light.on`, `light.brightness`, `light.color`, `light.outer_angle`, `light.inner_angle`, `animation.goal`, `docking.undock`, `decoupler.fire` |
-| debug | `debug.teleport`, `debug.impulse`, `debug.refill_fuel`, `debug.refill_battery`, `debug.warp`, `debug.focus`, `debug.control_vessel`, weld, IVA, thug-life, and FX actions |
-| media | `audio.play`, `audio.set`, `audio.stop`, all `camera.*` actions |
-| scheduling | `schedule.pause`, `schedule.scrub`, `schedule.rate`, `schedule.loop`, `schedule.stop`, `schedule.remove`, `schedule.clear` |
+| Family     | Keys                                                                                                                                                                                                                                                                                                           |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| vessel     | `vessel.throttle`, `vessel.ignite`, `vessel.shutdown`, `vessel.stage`, `vessel.lights`, `vessel.rcs`, `vessel.rcs_mode`, `vessel.translate`, `vessel.rotate`, `vessel.attitude_mode`, `vessel.attitude_frame`, `vessel.attitude_target`, `vessel.burn`, `vessel.focus`, `vessel.scale`, `vessel.always_render` |
+| modules    | `engine.active`, `engine.min_throttle`, `rcs.active`, `light.on`, `light.brightness`, `light.color`, `light.outer_angle`, `light.inner_angle`, `animation.goal`, `docking.undock`, `decoupler.fire`                                                                                                            |
+| debug      | `debug.teleport`, `debug.impulse`, `debug.refill_fuel`, `debug.refill_battery`, `debug.warp`, `debug.focus`, `debug.control_vessel`, weld, IVA, thug-life, and FX actions                                                                                                                                      |
+| media      | `audio.play`, `audio.set`, `audio.stop`, all `camera.*` actions                                                                                                                                                                                                                                                |
+| scheduling | `schedule.pause`, `schedule.scrub`, `schedule.rate`, `schedule.loop`, `schedule.stop`, `schedule.remove`, `schedule.clear`                                                                                                                                                                                     |
 
 ### Full debug, media, and playback names
 
 For an HTTP/MQTT client, these are the remaining exact action keys. Their leaf-shaped grammar is documented
 on the linked feature pages; `ordinal` selects a module/object where the table says `n` or `id`.
 
-| Family | Exact keys |
-| --- | --- |
-| debug world | `debug.control_vessel`, `debug.teleport`, `debug.impulse`, `debug.refill_fuel`, `debug.refill_battery`, `debug.docking_pushoff`, `debug.warp`, `debug.always_render_iva` |
-| debug welds | `debug.weld_create`, `debug.weld_here`, `debug.weld_remove`, `debug.weld_enable`, `debug.weld_clear` |
-| debug cosmetics | `debug.thug_life_add`, `debug.thug_life_remove`, `debug.thug_life_clear`, `debug.thug_life_position`, `debug.thug_life_rotation`, `debug.thug_life_size`, `debug.thug_life_visible` |
-| debug IVA | `debug.iva_physics`, `debug.iva_run_outside_iva`, `debug.iva_adopt`, `debug.iva_adopt_all`, `debug.iva_release`, `debug.iva_clear`, `debug.iva_nudge` |
-| debug FX | `debug.engineplume_set`, `debug.engineplume_reset`, `debug.plumetrail_set`, `debug.plumetrail_reset`, `debug.plumetrail_clear`, `debug.clouds_set`, `debug.clouds_reset`, `debug.terrain_set`, `debug.terrain_reset` |
-| audio | `audio.play`, `audio.set`, `audio.stop` |
-| schedule | `schedule.pause`, `schedule.scrub`, `schedule.rate`, `schedule.loop`, `schedule.stop`, `schedule.remove`, `schedule.clear` |
-| camera ownership | `camera.enabled`, `camera.release`, `camera.mode`, `camera.follow`, `camera.tidal`, `camera.map_scope` |
-| camera pose | `camera.position`, `camera.frame`, `camera.anchor`, `camera.geo`, `camera.orbit_radius`, `camera.orbit_azimuth`, `camera.orbit_elevation`, `camera.rotation`, `camera.aim`, `camera.aim_target`, `camera.aim_offset`, `camera.aim_frame`, `camera.aim_up`, `camera.roll`, `camera.fov`, `camera.ortho`, `camera.ortho_height`, `camera.smoothing`, `camera.pose_reset` |
-| camera playback | `camera.play`, `camera.set`, `camera.stop` |
+| Family           | Exact keys                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| debug world      | `debug.control_vessel`, `debug.teleport`, `debug.impulse`, `debug.refill_fuel`, `debug.refill_battery`, `debug.docking_pushoff`, `debug.warp`, `debug.always_render_iva`                                                                                                                                                                                               |
+| debug welds      | `debug.weld_create`, `debug.weld_here`, `debug.weld_remove`, `debug.weld_enable`, `debug.weld_clear`                                                                                                                                                                                                                                                                   |
+| debug cosmetics  | `debug.thug_life_add`, `debug.thug_life_remove`, `debug.thug_life_clear`, `debug.thug_life_position`, `debug.thug_life_rotation`, `debug.thug_life_size`, `debug.thug_life_visible`                                                                                                                                                                                    |
+| debug IVA        | `debug.iva_physics`, `debug.iva_run_outside_iva`, `debug.iva_adopt`, `debug.iva_adopt_all`, `debug.iva_release`, `debug.iva_clear`, `debug.iva_nudge`                                                                                                                                                                                                                  |
+| debug FX         | `debug.engineplume_set`, `debug.engineplume_reset`, `debug.plumetrail_set`, `debug.plumetrail_reset`, `debug.plumetrail_clear`, `debug.clouds_set`, `debug.clouds_reset`, `debug.terrain_set`, `debug.terrain_reset`                                                                                                                                                   |
+| audio            | `audio.play`, `audio.set`, `audio.stop`                                                                                                                                                                                                                                                                                                                                |
+| schedule         | `schedule.pause`, `schedule.scrub`, `schedule.rate`, `schedule.loop`, `schedule.stop`, `schedule.remove`, `schedule.clear`                                                                                                                                                                                                                                             |
+| camera ownership | `camera.enabled`, `camera.release`, `camera.mode`, `camera.follow`, `camera.tidal`, `camera.map_scope`                                                                                                                                                                                                                                                                 |
+| camera pose      | `camera.position`, `camera.frame`, `camera.anchor`, `camera.geo`, `camera.orbit_radius`, `camera.orbit_azimuth`, `camera.orbit_elevation`, `camera.rotation`, `camera.aim`, `camera.aim_target`, `camera.aim_offset`, `camera.aim_frame`, `camera.aim_up`, `camera.roll`, `camera.fov`, `camera.ortho`, `camera.ortho_height`, `camera.smoothing`, `camera.pose_reset` |
+| camera playback  | `camera.play`, `camera.set`, `camera.stop`                                                                                                                                                                                                                                                                                                                             |
 
 `debug.impulse` accepts a `cci` or `body` frame token and `ns` or `dv` unit selector. `debug.weld_create`
 takes target ID plus part ID, offset, Euler rotation, and lock flag; `debug.weld_here` takes target, part,

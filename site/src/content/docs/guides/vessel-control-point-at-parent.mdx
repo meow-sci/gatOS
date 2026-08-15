@@ -1,6 +1,6 @@
 ---
 title: Point at Parent
-description: Your first flight program — use the toolkit you built to aim a vessel's nose at the body it's orbiting, with nothing but file I/O on /sim.
+description: Your first flight program uses the toolkit you built to aim a vessel's nose at the body it's orbiting, with nothing but file I/O on /sim.
 sidebar:
   label: Point at Parent
   order: 9
@@ -26,25 +26,24 @@ a lot of head-scratching:
 
 <Steps>
 
-1. **[Reference Frames](/gatOS/guides/reference-frames/)** — the no-math tour of how gatOS describes
+1. **[Reference Frames](/gatOS/guides/reference-frames/)**: the no-math tour of how gatOS describes
    "where" and "which way." We lean hard on one idea from it (the **CCI** frame), and it's much nicer
    to have met that idea already.
 
-2. **[Basic gatOS I/O Toolkit](/gatOS/guides/gatos-io/)** — the two Python modules (`gatos_io.py` and
+2. **[Basic gatOS I/O Toolkit](/gatOS/guides/gatos-io/)**: the two Python modules (`gatos_io.py` and
    `gatos_frames.py`) this program imports. We built them there so this page could be short; make sure
    they're sitting in your `~/tutorials` folder.
 
 </Steps>
 
-
 ## The big idea
 
-To aim at the parent body, we need to know which way the body _is_ — and gatOS gives us that almost
+To aim at the parent body, we need to know which way the body _is_: and gatOS gives us that almost
 for free, because of the reference frame the numbers are already in.
 
 `/sim/vessels/by-id/<id>/position/cci` is the vessel's position in **CCI**, the parent body's own frame.
 Its origin sits _at the body's center_. So that position vector is literally the arrow pointing **from
-the center of the body out to the ship**. 
+the center of the body out to the ship**.
 
 So, if we flip it around (negate it) and you've got the arrow pointing **from the ship back to the body**.
 
@@ -57,12 +56,13 @@ This is the exact "flip the arrow" trick from the [Reference Frames](/gatOS/guid
 page.
 
 If it feels like cheating, that's because the CCI frame has already done all the work for us.
+
 </Aside>
 
 The last step is turning that direction into an orientation the flight computer accepts.
 
-A vessel's main axis (its thrust axis) is **body +X**. To "point at the body" therefore means: find the rotation that carries body +X onto our aim direction, 
-and hand it over as a quaternion. 
+A vessel's main axis (its thrust axis) is **body +X**. To "point at the body" therefore means: find the rotation that carries body +X onto our aim direction,
+and hand it over as a quaternion.
 
 And that's precisely what `body_to_cci` in our toolkit does!
 
@@ -95,8 +95,8 @@ write_vec(f"{base}/ctl/attitude_target", aimQ)
 print(f"{vessel}: flight computer now pointing at parent body", file=sys.stderr)
 ```
 
-That's the entire program. Four meaningful lines — read, flip, convert, write — because all the
-plumbing and the fiddly quaternion math are tucked away in the toolkit. 
+That's the entire program. Four meaningful lines: read, flip, convert, write: because all the
+plumbing and the fiddly quaternion math are tucked away in the toolkit.
 
 ## The final write, both ways
 
@@ -128,7 +128,7 @@ Let's unpack what those four lines are really doing:
 
 - **Read** the position in CCI. Because of where CCI's origin sits, this vector already _is_ the
   body-to-ship arrow.
-- **Flip** it with `neg`. Now it points ship-to-body — the way we want the nose to face.
+- **Flip** it with `neg`. Now it points ship-to-body: the way we want the nose to face.
 - **Convert** with `body_to_cci`. We hand it the aim direction plus a roll reference. Since we're
   pointing straight down the radial line, the ship's spin _about_ that line doesn't matter, so the
   roll reference is arbitrary and we just reuse `pos`. The function hands back the `[x, y, z, w]`
@@ -153,30 +153,31 @@ You just read live simulation state, did a bit of geometry, and issued a command
 nothing but a bit of file i/o.
 
 <Aside type="note" title="This is a one-shot, attitude goes stale">
-  The program computes the aim direction _once_ and leaves. As the vessel coasts along its orbit, the
-  true direction to the body keeps changing, so that fixed target slowly drifts out of date — great
-  for a first look, useless for holding a lock. To actually _track_ the body, you'd wrap the read →
-  flip → convert → write steps in a loop that recomputes every tick (and pace it in simulation time so it
-  behaves under warp). That's a later thing.
+  The program computes the aim direction _once_ and leaves. As the vessel coasts along its orbit,
+  the true direction to the body keeps changing, so that fixed target slowly drifts out of date:
+  great for a first look, useless for holding a lock. To actually _track_ the body, you'd wrap the
+  read → flip → convert → write steps in a loop that recomputes every tick (and pace it in
+  simulation time so it behaves under warp). That's a later thing.
 </Aside>
 
 <Aside type="tip" title="Shortcut: let the autopilot handle it">
   Pointing at the parent is common enough that the flight computer has built-in targets,
   so for common scenarios you can skip the custom math:
 
-  ```sh
-  echo RadialIn > /sim/vessels/by-id/Hunter/ctl/attitude_mode
-  ```
+```sh
+echo RadialIn > /sim/vessels/by-id/Hunter/ctl/attitude_mode
+```
 
-  See [Attitude Modes](/gatOS/reference/attitude-modes/) for a complete list
+See [Attitude Modes](/gatOS/reference/attitude-modes/) for a complete list
 
-  `RadialIn` keeps tracking the parent body as you orbit. We built the quaternion by hand here to
-  show how CCI, the body +X thrust axis, and `ctl/attitude_target` fit together — the same machinery
-  you'll reuse for a _custom_ direction that no built-in mode covers.
+`RadialIn` keeps tracking the parent body as you orbit. We built the quaternion by hand here to
+show how CCI, the body +X thrust axis, and `ctl/attitude_target` fit together: the same machinery
+you'll reuse for a _custom_ direction that no built-in mode covers.
+
 </Aside>
 
 ## What's next
 
-You've aimed a ship at a fixed point. The natural next step is to make it _keep_ aiming — to turn this
+You've aimed a ship at a fixed point. The natural next step is to make it _keep_ aiming: to turn this
 one-shot into a loop that re-reads and re-points every tick without drifting or misbehaving under
 warp. That's where the toolkit really starts paying dividends.

@@ -11,13 +11,13 @@ Reads end in one newline. Scalars use invariant `G9` formatting, booleans are `0
 `x y z`, and quaternions are `x y z w`. Strings are verbatim. Lists are newline-separated. Event and
 telemetry streams are newline-delimited JSON.
 
-| Kind | Example | Notes |
-| --- | --- | --- |
-| scalar | `120000.001` | doubles unless a row says otherwise |
-| vector | `6578100 0 0` | components use the path's stated frame and unit |
-| quaternion | `0 0 0 1` | unit `x y z w`, usually Body to CCI |
-| flag | `1` | exactly `0` or `1` |
-| JSON | `{"ut":123}` | compact documents are atomic snapshots |
+| Kind       | Example       | Notes                                           |
+| ---------- | ------------- | ----------------------------------------------- |
+| scalar     | `120000.001`  | doubles unless a row says otherwise             |
+| vector     | `6578100 0 0` | components use the path's stated frame and unit |
+| quaternion | `0 0 0 1`     | unit `x y z w`, usually Body to CCI             |
+| flag       | `1`           | exactly `0` or `1`                              |
+| JSON       | `{"ut":123}`  | compact documents are atomic snapshots          |
 
 Writes are line-buffered. A newline submits a command and lets `echo` report its errno. A close without
 a newline is best effort, which is a rather poor time to discover that a decoupler is gone.
@@ -31,14 +31,14 @@ the filesystem and MQTT mirror use sanitized IDs.
 
 ## File archetypes
 
-| Mark | Reads | Writes |
-| --- | --- | --- |
-| Sensor | current sampled value | never, `EACCES` |
-| State | current setpoint | idempotent token, number, flag, or vector |
-| Trigger | usually `0` | exact fire token, normally `1` |
-| Batch | usage hint | command lines followed by `commit` |
-| Stream | growing NDJSON log | read only |
-| Binary stream | continuous bytes, never EOF | read only |
+| Mark          | Reads                       | Writes                                    |
+| ------------- | --------------------------- | ----------------------------------------- |
+| Sensor        | current sampled value       | never, `EACCES`                           |
+| State         | current setpoint            | idempotent token, number, flag, or vector |
+| Trigger       | usually `0`                 | exact fire token, normally `1`            |
+| Batch         | usage hint                  | command lines followed by `commit`        |
+| Stream        | growing NDJSON log          | read only                                 |
+| Binary stream | continuous bytes, never EOF | read only                                 |
 
 ## Gates and phases
 
@@ -53,15 +53,15 @@ tick. Use [a batch](/gatOS/reference/batches-and-schedules/) when that distincti
 
 ## Errors
 
-| errno | HTTP | Meaning |
-| --- | --- | --- |
-| `EINVAL` | 400 | malformed, non-finite, wrong arity, or out of range |
-| `ENOENT` | 404 | path, vessel, or fitted module vanished |
-| `EACCES` | 403 | read-only leaf, disabled control/debug, or authority failure |
-| `EBUSY` | 409 | action cannot happen now, such as a fired trigger |
-| `EIO` | 500 | KSA call threw |
-| `ETIMEDOUT` | 504 | game thread did not drain before `command_timeout_ms` |
-| `EOPNOTSUPP` | 501 | integration accessor has degraded after a fault |
+| errno        | HTTP | Meaning                                                      |
+| ------------ | ---- | ------------------------------------------------------------ |
+| `EINVAL`     | 400  | malformed, non-finite, wrong arity, or out of range          |
+| `ENOENT`     | 404  | path, vessel, or fitted module vanished                      |
+| `EACCES`     | 403  | read-only leaf, disabled control/debug, or authority failure |
+| `EBUSY`      | 409  | action cannot happen now, such as a fired trigger            |
+| `EIO`        | 500  | KSA call threw                                               |
+| `ETIMEDOUT`  | 504  | game thread did not drain before `command_timeout_ms`        |
+| `EOPNOTSUPP` | 501  | integration accessor has degraded after a fault              |
 
 Clip and camera-track stores can additionally return `EFBIG` for per-file caps, `ENOSPC` for store caps,
 `EEXIST` for a duplicate create, and `EPERM` for unsupported directory operations.

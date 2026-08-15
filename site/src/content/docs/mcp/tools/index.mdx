@@ -11,50 +11,50 @@ freshness, envelopes, pagination, phases, and errors.
 
 ## World and discovery
 
-| Tool | Purpose |
-|---|---|
-| [`gatos.get_world`](/gatOS/mcp/tools/get-world/) | Current world summary or complete snapshot |
-| [`gatos.get_runtime_state`](/gatOS/mcp/tools/get-runtime-state/) | Complete state for one feature store/runtime |
-| [`gatos.get_capabilities`](/gatOS/mcp/tools/get-capabilities/) | Actions, schemas, units, phases, gates, limits, and safety |
-| [`gatos.wait`](/gatOS/mcp/tools/wait/) | Wait for snapshot, event, or UT progress |
+| Tool                                                             | Purpose                                                    |
+| ---------------------------------------------------------------- | ---------------------------------------------------------- |
+| [`gatos.get_world`](/gatOS/mcp/tools/get-world/)                 | Current world summary or complete snapshot                 |
+| [`gatos.get_runtime_state`](/gatOS/mcp/tools/get-runtime-state/) | Complete state for one feature store/runtime               |
+| [`gatos.get_capabilities`](/gatOS/mcp/tools/get-capabilities/)   | Actions, schemas, units, phases, gates, limits, and safety |
+| [`gatos.wait`](/gatOS/mcp/tools/wait/)                           | Wait for snapshot, event, or UT progress                   |
 
 ## Celestials, vessels, and kittens
 
-| Tool | Purpose |
-|---|---|
-| [`gatos.list_celestials`](/gatOS/mcp/tools/list-celestials/) | Paginated body discovery |
-| [`gatos.get_celestial`](/gatOS/mcp/tools/get-celestial/) | Complete body document |
-| [`gatos.list_vessels`](/gatOS/mcp/tools/list-vessels/) | Filtered, paginated vessel discovery |
-| [`gatos.get_vessel`](/gatOS/mcp/tools/get-vessel/) | Selected complete vessel sections |
-| [`gatos.list_kittens`](/gatOS/mcp/tools/list-kittens/) | EVA kitten discovery |
-| [`gatos.get_kitten`](/gatOS/mcp/tools/get-kitten/) | Kitten-validated vessel document |
+| Tool                                                         | Purpose                              |
+| ------------------------------------------------------------ | ------------------------------------ |
+| [`gatos.list_celestials`](/gatOS/mcp/tools/list-celestials/) | Paginated body discovery             |
+| [`gatos.get_celestial`](/gatOS/mcp/tools/get-celestial/)     | Complete body document               |
+| [`gatos.list_vessels`](/gatOS/mcp/tools/list-vessels/)       | Filtered, paginated vessel discovery |
+| [`gatos.get_vessel`](/gatOS/mcp/tools/get-vessel/)           | Selected complete vessel sections    |
+| [`gatos.list_kittens`](/gatOS/mcp/tools/list-kittens/)       | EVA kitten discovery                 |
+| [`gatos.get_kitten`](/gatOS/mcp/tools/get-kitten/)           | Kitten-validated vessel document     |
 
 ## Common vessel actions
 
-| Tool | Purpose |
-|---|---|
-| [`gatos.ignite_engines`](/gatOS/mcp/tools/ignite-engines/) | Ignite all ignitable vessel engines |
-| [`gatos.shutdown_engines`](/gatOS/mcp/tools/shutdown-engines/) | Shut down vessel engines |
-| [`gatos.activate_stage`](/gatOS/mcp/tools/activate-stage/) | Trigger the next vessel stage |
+| Tool                                                           | Purpose                             |
+| -------------------------------------------------------------- | ----------------------------------- |
+| [`gatos.ignite_engines`](/gatOS/mcp/tools/ignite-engines/)     | Ignite all ignitable vessel engines |
+| [`gatos.shutdown_engines`](/gatOS/mcp/tools/shutdown-engines/) | Shut down vessel engines            |
+| [`gatos.activate_stage`](/gatOS/mcp/tools/activate-stage/)     | Trigger the next vessel stage       |
 
 ## Logical controls
 
-| Tool | Purpose |
-|---|---|
-| [`gatos.vessel_control`](/gatOS/mcp/tools/vessel-control/) | Whole-vessel flight, focus, and visual state |
-| [`gatos.module_control`](/gatOS/mcp/tools/module-control/) | Indexed engine, RCS, light, animation, docking, and decoupler state |
-| [`gatos.camera_control`](/gatOS/mcp/tools/camera-control/) | Programmable camera ownership, placement, aim, and lens |
-| [`gatos.camera_track`](/gatOS/mcp/tools/camera-track/) | Camera-track store and player |
-| [`gatos.audio_control`](/gatOS/mcp/tools/audio-control/) | Named audio playback channels |
-| [`gatos.audio_clip`](/gatOS/mcp/tools/audio-clip/) | Audio clip store and MCP media retrieval |
-| [`gatos.schedule_control`](/gatOS/mcp/tools/schedule-control/) | Schedule and camera player lifecycle |
-| [`gatos.debug_control`](/gatOS/mcp/tools/debug-control/) | Warp, motion cheats, refills, welds, cosmetics, and IVA |
-| [`gatos.render_fx_control`](/gatOS/mcp/tools/render-fx-control/) | Engine plume, trail, cloud, and terrain editors |
+| Tool                                                             | Purpose                                                             |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------- |
+| [`gatos.vessel_control`](/gatOS/mcp/tools/vessel-control/)       | Whole-vessel flight, focus, and visual state                        |
+| [`gatos.module_control`](/gatOS/mcp/tools/module-control/)       | Indexed engine, RCS, light, animation, docking, and decoupler state |
+| [`gatos.camera_control`](/gatOS/mcp/tools/camera-control/)       | Programmable camera ownership, placement, aim, and lens             |
+| [`gatos.camera_track`](/gatOS/mcp/tools/camera-track/)           | Camera-track store and player                                       |
+| [`gatos.audio_control`](/gatOS/mcp/tools/audio-control/)         | Named audio playback channels                                       |
+| [`gatos.audio_clip`](/gatOS/mcp/tools/audio-clip/)               | Audio clip store and MCP media retrieval                            |
+| [`gatos.schedule_control`](/gatOS/mcp/tools/schedule-control/)   | Schedule and camera player lifecycle                                |
+| [`gatos.debug_control`](/gatOS/mcp/tools/debug-control/)         | Warp, motion cheats, refills, welds, cosmetics, and IVA             |
+| [`gatos.render_fx_control`](/gatOS/mcp/tools/render-fx-control/) | Engine plume, trail, cloud, and terrain editors                     |
 
 ## Advanced commands and coordination
 
-| Tool | Purpose |
-|---|---|
-| [`gatos.command`](/gatOS/mcp/tools/command/) | Complete canonical action envelope |
-| [`gatos.execute_batch`](/gatOS/mcp/tools/execute-batch/) | Ordered same-phase, same-tick batch |
+| Tool                                                       | Purpose                               |
+| ---------------------------------------------------------- | ------------------------------------- |
+| [`gatos.command`](/gatOS/mcp/tools/command/)               | Complete canonical action envelope    |
+| [`gatos.execute_batch`](/gatOS/mcp/tools/execute-batch/)   | Ordered same-phase, same-tick batch   |
 | [`gatos.schedule_batch`](/gatOS/mcp/tools/schedule-batch/) | Timed render/wall/UT command sequence |

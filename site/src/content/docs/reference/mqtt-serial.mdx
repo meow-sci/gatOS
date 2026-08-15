@@ -10,12 +10,12 @@ sidebar:
 The embedded broker exists with `mqtt_enabled=true`, defaults to port 1883, and binds loopback only. The
 guest reaches it at `$GATOS_MQTT` through `10.0.2.2`; it is not a LAN broker waiting to happen.
 
-| Topic | Direction | Meaning |
-| --- | --- | --- |
-| `gatos/sim/<path>` | retained outbound | field mirror value |
-| `gatos/sim/<path>/set` | inbound | raw control-field value |
-| `gatos/command` | inbound | generic logical command JSON |
-| world/event topics | outbound | aggregate snapshots and live events |
+| Topic                  | Direction         | Meaning                             |
+| ---------------------- | ----------------- | ----------------------------------- |
+| `gatos/sim/<path>`     | retained outbound | field mirror value                  |
+| `gatos/sim/<path>/set` | inbound           | raw control-field value             |
+| `gatos/command`        | inbound           | generic logical command JSON        |
+| world/event topics     | outbound          | aggregate snapshots and live events |
 
 Field topics need `mqtt_field_topics=true`. Aggregate world cadence uses `mqtt_publish_hz`; field cadence
 uses `field_feed_hz`. Publication is subscription-gated: an unmatched topic is not produced, a new

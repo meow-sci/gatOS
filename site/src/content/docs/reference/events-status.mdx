@@ -18,12 +18,12 @@ interfaces. HTTP provides SSE equivalents for events and vessel streams, but not
 
 ## Health paths
 
-| Path | What it tells you |
-| --- | --- |
-| `status/game_version` | current KSA build identifier |
-| `status/sampler` | telemetry sampler health and sample rate |
-| `status/accessors` | reflection/accessor health; a degraded entry explains `EOPNOTSUPP` |
-| `status/transports` | enabled transport addresses and ports |
+| Path                  | What it tells you                                                  |
+| --------------------- | ------------------------------------------------------------------ |
+| `status/game_version` | current KSA build identifier                                       |
+| `status/sampler`      | telemetry sampler health and sample rate                           |
+| `status/accessors`    | reflection/accessor health; a degraded entry explains `EOPNOTSUPP` |
+| `status/transports`   | enabled transport addresses and ports                              |
 
 The status trees exist when the command sink is attached. `GET /v1/status` is the aggregate HTTP view.
 An accessor that faults is deliberately latched degraded instead of repeatedly poking a broken game API.

@@ -10,14 +10,14 @@ which is a nicer way of saying that a 50 km/s impulse will faithfully do exactly
 
 ## Vessel and world cheats
 
-| Path family | Value / behavior |
-| --- | --- |
-| `vessels/<id>/teleport` | six CCI values: position m then velocity m/s; one-tick, nonphysical reposition |
-| `vessels/<id>/impulse` | `x y z [body|cci] [dv]`; default is N·s, `dv` makes it direct m/s |
-| `vessels/<id>/refill_fuel`, `refill_battery` | trigger `1`; fuel includes SRB grain |
-| `time/warp` | game warp factor |
-| `focus`, `control_vessel` | view or control a named vessel |
-| `always_render_iva` | `0|1`; force IVA meshes visible outside IVA |
+| Path family                                  | Value / behavior                                                               |
+| -------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| `vessels/<id>/teleport`                      | six CCI values: position m then velocity m/s; one-tick, nonphysical reposition |
+| `vessels/<id>/impulse`                       | `x y z [body                                                                   | cci] [dv]`; default is N·s, `dv` makes it direct m/s |
+| `vessels/<id>/refill_fuel`, `refill_battery` | trigger `1`; fuel includes SRB grain                                           |
+| `time/warp`                                  | game warp factor                                                               |
+| `focus`, `control_vessel`                    | view or control a named vessel                                                 |
+| `always_render_iva`                          | `0                                                                             | 1`; force IVA meshes visible outside IVA             |
 
 Teleport and impulse require a live parent body. Impulse is instantaneous, spends no propellant, and
 accepts zero as a no-op. A body-frame impulse follows the vessel's current body axes.

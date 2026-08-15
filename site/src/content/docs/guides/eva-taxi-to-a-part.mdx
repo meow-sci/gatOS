@@ -1,6 +1,6 @@
 ---
-title: EVA Taxi — Fly a Kitten to a Part
-description: Fly an EVA kitten around a ship's exterior on its backpack jets — compute any part's position in the world, then let a tiny guidance loop point, thrust, flip, and brake its way to a standoff point beside it.
+title: "EVA Taxi: Fly a Kitten to a Part"
+description: Fly an EVA kitten around a ship's exterior on its backpack jets. Compute any part's position in the world, then let a tiny guidance loop point, thrust, flip, and brake its way to a standoff point beside it.
 sidebar:
   label: EVA Part Taxi
   order: 22
@@ -10,11 +10,11 @@ import { Steps, Aside } from "@astrojs/starlight/components";
 
 This is the one where a kitten commutes.
 
-An EVA kitten has no main engine — no `ctl/throttle`, no `ctl/ignite`, nothing to stage. What it
-*does* have is a backpack: ten little hypergolic jets, six of which push it around (forward, back,
+An EVA kitten has no main engine: no `ctl/throttle`, no `ctl/ignite`, nothing to stage. What it
+_does_ have is a backpack: ten little hypergolic jets, six of which push it around (forward, back,
 left, right, up, down) and four of which spin it. In the game you fly it by hand with the
-translation keys. In this tutorial we fly it **by program**: give it a target vessel and the *name
-of a part* on that vessel, and the kitten points itself, thrusts, flips around halfway to brake,
+translation keys. In this tutorial we fly it **by program**: give it a target vessel and the _name
+of a part_ on that vessel, and the kitten points itself, thrusts, flips around halfway to brake,
 and pulls up at a polite standoff distance beside that exact part. Run it again with a different
 part and it hops across the hull. A space taxi, fare: one fish.
 
@@ -25,11 +25,11 @@ Two new ideas power it, and they're both keepers: how to find **a part's positio
 
 <Steps>
 
-1. **[Searchlight — Track a Vessel](/gatOS/guides/searchlight-track-a-vessel/)** — this page reuses
+1. **[Searchlight: Track a Vessel](/gatOS/guides/searchlight-track-a-vessel/)**: this page reuses
    its whole skeleton (the continuous loop, sim-time pacing, the hold-when-paused gate, Ctrl-C
    cleanup) without re-explaining it.
 
-2. **[Basic gatOS I/O Toolkit](/gatOS/guides/gatos-io/)** — we import from both modules, including
+2. **[Basic gatOS I/O Toolkit](/gatOS/guides/gatos-io/)**: we import from both modules, including
    the newest addition to `gatos_frames.py`: **`transform`** (rotate a vector by a quaternion). If
    your copy predates it, grab the latest version of that file from the toolkit page.
 
@@ -41,20 +41,20 @@ Two new ideas power it, and they're both keepers: how to find **a part's positio
 
 ## Big idea #1: where is a part, exactly?
 
-You already know where a *vessel* is — `position/cci`. But a vessel is a whole assembly of parts,
+You already know where a _vessel_ is: `position/cci`. But a vessel is a whole assembly of parts,
 and "fly to the solar panel" needs the panel, not the ship's average.
 
-gatOS publishes each top-level part under `parts/`, and the key file is `parts/<n>/position` — the
+gatOS publishes each top-level part under `parts/`, and the key file is `parts/<n>/position`: the
 part's position in the vessel's **assembly frame**. Think of the assembly frame as the ship's
-*blueprint*: a fixed coordinate grid bolted to the hull, in which every part has a permanent seat.
+_blueprint_: a fixed coordinate grid bolted to the hull, in which every part has a permanent seat.
 The blueprint doesn't know or care how the ship is tumbling through space.
 
 Three published facts turn a blueprint seat into a world position:
 
-- `parts/<n>/position` — the part's seat in the blueprint (meters).
-- `com` — the ship's center of mass, *also in the blueprint*. This matters because the vessel's
+- `parts/<n>/position`: the part's seat in the blueprint (meters).
+- `com`: the ship's center of mass, _also in the blueprint_. This matters because the vessel's
   `position/cci` tracks the **center of mass**, not the blueprint's origin.
-- `attitude/quat` — the Body→CCI quaternion: the rotation that carries blueprint directions into
+- `attitude/quat`: the Body→CCI quaternion: the rotation that carries blueprint directions into
   world directions. (The body frame and the blueprint share axes; they differ only by where the
   origin sits.)
 
@@ -63,11 +63,11 @@ world with the attitude quaternion, and add the ship's position:
 
 $$\vec{p}_{part} = \vec{p}_{vessel} + \operatorname{transform}(\vec{p}_{blueprint} - \vec{com},\; q_{attitude})$$
 
-One subtraction, one `transform`, one add — and it stays correct while the target tumbles, because
+One subtraction, one `transform`, one add: and it stays correct while the target tumbles, because
 the attitude quaternion is live. (This is, line for line, the same math the game itself uses to
 place things relative to parts.)
 
-We don't fly *to* the part — face-planting into a solar panel is rude — we fly to a **standoff
+We don't fly _to_ the part: face-planting into a solar panel is rude: we fly to a **standoff
 point** a few meters outside it, along the line from the ship's center out through the part:
 
 $$\vec{g} = \vec{p}_{part} + s\,\hat{n}, \qquad \hat{n} = \widehat{\vec{p}_{part} - \vec{p}_{vessel}}$$
@@ -78,26 +78,26 @@ $$\vec{g} = \vec{p}_{part} + s\,\hat{n}, \qquad \hat{n} = \widehat{\vec{p}_{part
 
 The backpack jets are RCS thrusters, and gatOS gives you the player's translation keys as a file:
 
-> `ctl/translate` ← `x y z` — the **signs** command thrust along the kitten's own body axes
+> `ctl/translate` ← `x y z`: the **signs** command thrust along the kitten's own body axes
 > (`+x` = forward along the nose, `+y` = right, `+z` = down). `1 0 0` thrusts forward. `0 0 0`
-> stops. It's **bang-bang** (full thrust or nothing — magnitudes are ignored) and it **latches**
+> stops. It's **bang-bang** (full thrust or nothing: magnitudes are ignored) and it **latches**
 > like a held key: the jets keep firing until you write `0 0 0`.
 
 Bang-bang thrust plus a steerable nose is all a taxi needs. The guidance law fits in three lines:
 
-1. **Decide how fast you *want* to move toward the goal** — proportional to distance, capped:
+1. **Decide how fast you _want_ to move toward the goal**: proportional to distance, capped:
    $\vec{v}_{des} = \hat{e}\cdot\min(v_{max},\, k\,d)$ where $\vec{e}$ is the arrow to the goal.
    Far away → cruise at $v_{max}$; close in → slow down; there → zero.
-2. **Compare with how you *are* moving** (relative to the target ship):
+2. **Compare with how you _are_ moving** (relative to the target ship):
    $\Delta\vec{v} = \vec{v}_{des} - \vec{v}_{rel}$. This one subtraction handles approach,
-   braking, and drift correction identically — whatever velocity you have that you shouldn't,
+   braking, and drift correction identically: whatever velocity you have that you shouldn't,
    $\Delta\vec{v}$ points the fix.
-3. **Point the nose along $\Delta\vec{v}$ and thrust `1 0 0` — but only once actually aligned.**
+3. **Point the nose along $\Delta\vec{v}$ and thrust `1 0 0`: but only once actually aligned.**
    The flight computer swings the kitten (its rotation jets); we check the live nose direction
    with `transform((1,0,0), attitude)` and hold fire until it agrees with where we want to push.
 
-The emergent behavior is the classic *flip-and-burn*: accelerate nose-first at the goal, and as
-the desired speed drops below the actual speed, $\Delta\vec{v}$ swings behind you — the kitten
+The emergent behavior is the classic _flip-and-burn_: accelerate nose-first at the goal, and as
+the desired speed drops below the actual speed, $\Delta\vec{v}$ swings behind you: the kitten
 flips 180° and brakes tail-fir… nose-first the other way. Nobody programmed "flip"; it falls out
 of the subtraction.
 
@@ -231,15 +231,15 @@ finally:
 
 Walking the loop body, the shape is the searchlight skeleton with a smarter middle:
 
-- **The part math is three toolkit calls** — `sub` (re-origin on the center of mass), `transform`
+- **The part math is three toolkit calls**: `sub` (re-origin on the center of mass), `transform`
   (blueprint → world through the live attitude), `add` (onto the ship's position). Re-read every
   tick, so a tumbling target just works: the goal point rides the hull.
 - **One subtraction is the whole autopilot.** `dv = v_des − v_rel` doesn't distinguish "speed up,"
-  "slow down," or "cancel sideways drift" — they're all just velocity you have that you shouldn't.
+  "slow down," or "cancel sideways drift": they're all just velocity you have that you shouldn't.
   Point the nose at the fix, push. That it produces a graceful flip-and-burn is geometry, not
   cleverness.
-- **Thrust is gated on the *live* nose**, not the setpoint. We command an attitude and separately
-  verify it — `transform((1,0,0), attitude)` is the direction the kitten actually faces right now.
+- **Thrust is gated on the _live_ nose**, not the setpoint. We command an attitude and separately
+  verify it: `transform((1,0,0), attitude)` is the direction the kitten actually faces right now.
   While the flight computer is still swinging, the jets stay cold; no thrusting sideways because
   the turn isn't finished. (This is why `transform` earned its place in the toolkit.)
 - **`jets()` writes only on change**, because `ctl/translate` latches. The `finally` block is not
@@ -248,7 +248,7 @@ Walking the loop body, the shape is the searchlight skeleton with a smarter midd
 
 <Aside type="caution" title="The command that doesn't let go">
 `ctl/translate` behaves like a **held key**, and nobody releases it for you. Every exit path of
-your program — success, Ctrl-C, a crash — must write `0 0 0`. That's what the `try/finally` is
+your program: success, Ctrl-C, a crash: must write `0 0 0`. That's what the `try/finally` is
 for; copy that structure into anything you build on this control. (If you ever do strand a kitten
 under thrust: `echo "0 0 0" > /sim/vessels/by-id/<id>/ctl/translate` from any shell stops it.)
 </Aside>
@@ -279,36 +279,37 @@ arrived - station-keeping 3 m off the part
 ```
 
 Watch the kitten swing its nose at the panel, puff forward, coast, pirouette halfway there, brake,
-and settle a few meters off the hull — then hold station, giving the occasional correcting puff.
+and settle a few meters off the hull: then hold station, giving the occasional correcting puff.
 Ctrl-C hands the controls back and shuts the jets off.
 
 <Aside type="note" title="Tuning the ride">
-`--gain` and `--speed` are the taxi's personality. The defaults (cruise 1 m/s, slow inside ~4 m)
-suit a cautious kitten. Raising `--speed` gets you there faster but the flip happens harder and
-later; raising `--gain` tightens the final approach. If it overshoots and oscillates around the
-goal, your jets are strong relative to the pace — lower `--gain` first. There's no propellant
-math here: the tank is small, and an aggressive tuning genuinely can run it dry mid-hop.
+  `--gain` and `--speed` are the taxi's personality. The defaults (cruise 1 m/s, slow inside ~4 m)
+  suit a cautious kitten. Raising `--speed` gets you there faster but the flip happens harder and
+  later; raising `--gain` tightens the final approach. If it overshoots and oscillates around the
+  goal, your jets are strong relative to the pace: lower `--gain` first. There's no propellant math
+  here: the tank is small, and an aggressive tuning genuinely can run it dry mid-hop.
 </Aside>
 
 <Aside type="caution" title="It flies the straight line, hull be damned">
-The taxi aims at the standoff point and flies straight there. If the straight line passes *through*
-the target vessel — hopping from one side of a big station to the other — the kitten will
-cheerfully attempt the shortcut. For cross-ship hops, raise `--standoff` (the goal sits farther off
-the hull) or make two hops via a part on the ship's edge. Teaching it to route around the hull
-(pop out radially, arc over, drop back in) is a lovely exercise: you have every ingredient already.
+  The taxi aims at the standoff point and flies straight there. If the straight line passes
+  *through* the target vessel: hopping from one side of a big station to the other: the kitten will
+  cheerfully attempt the shortcut. For cross-ship hops, raise `--standoff` (the goal sits farther
+  off the hull) or make two hops via a part on the ship's edge. Teaching it to route around the hull
+  (pop out radially, arc over, drop back in) is a lovely exercise: you have every ingredient
+  already.
 </Aside>
 
 <Aside type="note" title="Part indices move; names mostly don't">
-`parts/<n>/` indices are **not stable** across staging or docking — the list is rebuilt as the
+`parts/<n>/` indices are **not stable** across staging or docking: the list is rebuilt as the
 vehicle changes. That's why `--part` prefers a display-name fragment and why `--list` exists.
 (For a permanently stable handle there's `parts/<n>/instance_id`, but names are friendlier here.)
 The parts list needs the `telemetry_vessel_parts` gate, which is on by default.
 </Aside>
 
 <Aside type="tip" title="The same taxi from your host machine">
-Every read has its `GET /v1/fs/...` twin and both writes go through `POST /v1/command` —
+Every read has its `GET /v1/fs/...` twin and both writes go through `POST /v1/command` :
 `{"vessel_id":"Hunter","action":"vessel.translate","values":[1,0,0]}` and
-`{"action":"vessel.attitude_target","values":[x,y,z,w]}` — or one call each with the TypeScript
+`{"action":"vessel.attitude_target","values":[x,y,z,w]}`: or one call each with the TypeScript
 SDK (`vessel("Hunter").setTranslate([1,0,0])`). Same law, same numbers, different doorway.
 </Aside>
 
@@ -318,5 +319,5 @@ You now have the two halves of close-quarters flight: **world-space part geometr
 **velocity-matching controller** on bang-bang jets. Everything harder is a composition of them:
 route around a hull with via-points, face the hull while station-keeping (aim the nose at the part
 instead of along `dv`, and thrust on whichever body axis matches), or chain hops into a full
-exterior inspection tour. And when the vessel being inspected is the one *you're* flying — that's
+exterior inspection tour. And when the vessel being inspected is the one _you're_ flying: that's
 what docking is, seen from the other seat.
