@@ -1,0 +1,35 @@
+---
+title: The /sim filesystem
+description: Learn the simple file model behind gatOS telemetry, streams, controls, and Linux errors.
+sidebar:
+  order: 8
+---
+
+Inside the guest, `/sim` is a 9P mount backed by the live game. It is the native human interface:
+directories describe the world and files carry values.
+
+```text
+/sim/time/ut
+/sim/bodies/<id>/mu
+/sim/vessels/active/telemetry
+/sim/vessels/active/ctl/throttle
+/sim/events
+```
+
+Read a scalar with `cat`. Read a coherent vessel document with `cat telemetry | jq`. Follow a growing
+stream with `tail -f`. Write a text value followed by a newline to a control file. The write blocks
+until the game thread executes it, then succeeds or returns a useful errno.
+
+```sh
+cat /sim/vessels/active/mass/total
+tail -f /sim/events
+echo 0.65 > /sim/vessels/active/ctl/throttle
+```
+
+`active` is an alias for the currently controlled vessel. `by-id/<id>` targets a particular vessel.
+Paths use sanitized IDs, so discover them with `ls` rather than guessing from a display name with
+spaces or punctuation.
+
+The tree is dynamic. A vessel without RCS has no RCS directory; turning off a telemetry or feature
+gate can remove a subtree entirely. For exact paths, units, read/write grammar, command phases, and
+errno behavior, use the [filesystem reference](/gatOS/reference/).

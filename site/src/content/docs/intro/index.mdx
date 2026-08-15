@@ -1,0 +1,35 @@
+---
+title: Start here
+description: Meet gatOS, choose an interface, and find the first useful thing to do with it.
+sidebar:
+  order: 1
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+gatOS is a real Alpine Linux machine tucked into Kitten Space Agency. It runs beside the game, opens
+inside purrTTY, and sees the simulation as `/sim`. You can poke at it with shell tools, write a
+flight computer, run a dashboard, or hand a local AI agent a properly shaped API.
+
+<CardGrid>
+  <Card title="New here" icon="rocket">
+    [Install gatOS](/gatOS/intro/install/), then spend [five minutes in the
+    terminal](/gatOS/intro/first-five-minutes/).
+  </Card>
+  <Card title="What can it do?" icon="star">
+    Take the [feature tour](/gatOS/intro/feature-tour/) for the broad, slightly alarming list.
+  </Card>
+  <Card title="Already building" icon="puzzle">
+    Pick an interface, then head to the [Guides](/gatOS/guides/).
+  </Card>
+</CardGrid>
+
+## The short version
+
+The game publishes live snapshots. `/sim`, HTTP, MQTT, serial, and MCP project that shared model in
+different forms. Control requests go back through one game-thread command path. That is why a shell
+script and a host dashboard can agree about the same vessel instead of getting into a small custody
+dispute.
+
+The rest of Intro explains the friendly mental model. The [Reference](/gatOS/reference/) is where
+the exact paths, units, limits, command phases, and error codes live.

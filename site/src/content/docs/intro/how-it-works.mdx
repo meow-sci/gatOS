@@ -1,0 +1,29 @@
+---
+title: How gatOS works
+description: The small stack that connects a KSA flight to a real Linux guest.
+sidebar:
+  order: 5
+---
+
+gatOS runs one Alpine microVM beside the KSA process. purrTTY opens SSH sessions into it. The guest
+mounts the host's 9P server at `/sim`, so your terminal sees game data as ordinary files.
+
+```text
+KSA game thread → immutable snapshot → /sim, HTTP, MQTT, serial, MCP
+                                              ↓
+                                      guest Linux and your programs
+                                              ↓
+                               command queue → KSA game thread
+```
+
+The game samples live KSA state into immutable snapshots. Readers never reach into the game directly.
+Writes become commands, wait for the game thread, and report an ordinary result. That keeps the game
+thread the sole owner of KSA objects while letting your tools live wherever they are happiest.
+
+The guest disk is persistent, so packages and scripts survive game restarts. Today gatOS manages one
+active `default` disk, not a disk per KSA save. Use the status window's **Reset Disk** control if you
+want a factory-fresh guest.
+
+The details matter for fast flight programs: a normal write waits for execution, atomic groups use
+`/sim/ctl/batch`, and scheduled groups use `/sim/ctl/timed_batch`. The [Reference](/gatOS/reference/)
+covers the command phases, consistency model, and error behavior.

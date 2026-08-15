@@ -1,0 +1,41 @@
+---
+title: Feature tour
+description: A quick lap around the Linux, flight-control, creative, and delightfully odd corners of gatOS.
+sidebar:
+  order: 6
+---
+
+gatOS starts as an onboard Linux computer. Then it keeps going.
+
+## Read and fly
+
+- Inspect celestial bodies, vessels, orbit, propulsion, resources, parts, encounters, and events.
+- Write throttle, staging, engines, lights, docking, attitude, RCS translation, rotation, and burns.
+- Use atomic batches for same-tick groups and timed batches for launch sequences, cues, and scripts.
+- Run the same model from `/sim`, HTTP, MQTT, serial, or the agent-friendly MCP API.
+
+## Build a tiny mission control
+
+- Install real Alpine packages with `apk`, then write shell, Python, Node, Bun, Rust, or whatever fits.
+- Share host directories under `/mnt/<name>` for scripts and artifacts.
+- Build dashboards, landing guidance, cockpit displays, and even an Apollo Guidance Computer example.
+- Stream KSA's view into a Kitty-capable terminal through `/sim/display`.
+
+## Direct the show
+
+- Take the programmable camera, compose a shot, and play JSON camera tracks.
+- Upload audio clips and play them through KSA's mixer.
+- Repaint plumes, trails, clouds, and terrain through the live FX editor files.
+- Run timed light shows, camera cues, and other appropriately overcommitted launch sequences.
+
+## Enter the debug toybox
+
+- Teleport or impulse a vessel, refuel it, change warp, and switch focus.
+- Weld vessels together, force distant rendering, scale a ship to irresponsible proportions, or give a
+  part the classic sunglasses treatment.
+- Let small IVA props float, bounce, and react to thrust inside a cabin. The cabin physics master
+  switch is off by default, because a toothbrush with an orbital velocity deserves consent.
+
+Most of this is implemented and tested outside a live KSA flight. Some render and game-bound features
+still have open in-game validation checklists. Read [feature status](/gatOS/intro/status/) before
+building a mission around a freshly added toy.

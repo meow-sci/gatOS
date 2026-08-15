@@ -1,9 +1,50 @@
 ---
-title: ""
-description: Get started with gatOS
-template: doc
+title: gatOS
+description: A real Alpine Linux computer for your spacecraft in Kitten Space Agency.
+template: splash
 tableOfContents: false
-
 ---
 
+import { Card, CardGrid, LinkButton } from "@astrojs/starlight/components";
+
 ![gatOS](../../assets/gatos-banner.png)
+
+Real Alpine Linux lives inside your KSA game. Open it through purrTTY, then read and control the
+simulation through ordinary files under `/sim`. `cat` is a sensor. `echo` is a switch. Your rocket
+now has a shell prompt, which is either a splendid idea or a terrible one. Probably both.
+
+```sh
+cat /sim/vessels/active/altitude/radar
+echo 0.4 > /sim/vessels/active/ctl/throttle
+```
+
+<div class="hero-actions">
+  <LinkButton href="/gatOS/intro/install/" icon="rocket">
+    Install gatOS
+  </LinkButton>
+  <LinkButton href="/gatOS/intro/first-five-minutes/" variant="secondary">
+    Take the first five minutes
+  </LinkButton>
+</div>
+
+## Pick your hatch
+
+<CardGrid>
+  <Card title="Open a terminal" icon="terminal">
+    Learn the little Linux computer, explore `/sim`, and fly something with a write to a file.
+  </Card>
+  <Card title="Build something" icon="puzzle">
+    Write scripts, dashboards, flight programs, timed shows, cameras, and perhaps a very serious
+    soundboard.
+  </Card>
+  <Card title="Connect an agent" icon="robot">
+    Give an AI client the concise local MCP API instead of making it spelunk through a filesystem.
+  </Card>
+</CardGrid>
+
+## More than a terminal gag
+
+gatOS has live vessel and celestial telemetry, atomic controls, HTTP, MQTT, serial, host mounts,
+terminal video, camera tracks, audio playback, FX editors, cabin physics, welds, and a few bits of
+excellent nonsense. Start with the [feature tour](/gatOS/intro/feature-tour/), then choose a guide
+when you have a mission in mind.

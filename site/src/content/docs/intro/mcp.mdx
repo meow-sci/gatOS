@@ -1,0 +1,27 @@
+---
+title: MCP for AI agents
+description: Give a local AI client a concise, logical JSON API for the current KSA world.
+sidebar:
+  order: 11
+---
+
+MCP is gatOS's agent interface. It exposes the same snapshots and command queue as the other
+transports, but groups them into logical resources and tools such as world, celestial, vessel, kitten,
+runtime, controls, batches, schedules, camera, audio, and FX.
+
+The default local endpoint is:
+
+```text
+http://127.0.0.1:4243/mcp
+```
+
+It is Streamable HTTP on loopback only. There is no guest endpoint, bearer token, CORS policy, or
+legacy SSE transport in MCP v1. Start with `gatos.get_capabilities`, then discover vessels and read a
+fresh snapshot before sending a narrow command.
+
+MCP is deliberately **not** a path-for-path `/sim` copy. It uses raw KSA IDs, structured JSON, and
+logical actions. `/sim/display` is intentionally outside MCP v1 because a terminal image stream is a
+poor substitute for an agent-readable world model.
+
+Continue with [Connect and get started](/gatOS/mcp/getting-started/) or browse the
+[MCP documentation](/gatOS/mcp/).

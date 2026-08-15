@@ -1,0 +1,49 @@
+---
+title: Feature and validation status
+description: What is implemented, what has been checked in a live KSA flight, and what remains reserved.
+sidebar:
+  order: 14
+---
+
+import FeatureStatus from "../../../components/FeatureStatus.astro";
+import { featureStatus } from "../../../data/feature-status";
+
+gatOS has a large implemented surface. It also has an unusually honest validation record: code and
+game-free tests can be complete while a feature still needs its first real KSA flight. This page keeps
+those two facts separate.
+
+The current audited KSA baseline is **2026.8.5.5168**. A later **2026.8.19.5261** upgrade has green
+build and test coverage, but its game-bound re-verification checklist remains open. The full record is
+maintained in [docs/VALIDATION.md](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md).
+
+{featureStatus.map((feature) => <FeatureStatus feature={feature} />)}
+
+## What the labels mean
+
+- **Available** means the feature is shipped and has its intended validation evidence.
+- **Experimental** means the code and contract are present, but some live KSA behavior still needs a
+  checklist pass. It is fine to explore, just do not make an untested render hook your only landing plan.
+- **Reserved** means a configuration name or design placeholder exists without a usable player feature.
+
+## Exact open checklists
+
+The following are the live-flight passes still called out by the maintained record:
+
+| Area                               | What remains to prove                                                                   | Checklist                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Core terminal and game integration | purrTTY session lifecycle, mount, telemetry, control, and KSA hooks                     | [T6.6](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#t66--in-game-validation-pass-1-the-m6-exit--not-yet-run), [T9.3 and G1-G4](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#t93--in-game-validation-pass-2-the-m9-exit--not-yet-run)                                                                                                                                         |
+| MCP                                | listener lifecycle, local client discovery, game-thread commands, and boundaries        | [MCP transport](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#mcp-transport--live-mod-pass-pending)                                                                                                                                                                                                                                                                                             |
+| Terminal video                     | capture, terminal display, resizing, multi-reader behavior, and cleanup                 | [Screen stream](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#screen-stream-simdisplay--in-game-validation-pass--not-yet-run)                                                                                                                                                                                                                                                                   |
+| New KSA build                      | accessor health, orbit sentinels, physics-bubble welds, render paths, and IVA           | [5261 re-verification](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#ksa-20268195261-upgrade-re-verification--not-yet-run)                                                                                                                                                                                                                                                                      |
+| Creative and debug surfaces        | welds, parts, force render, scale, RCS, impulse, audio, IVA, FX, scheduling, and camera | [Welds](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#welds--always_render_iva--parts--validation-pass--not-yet-run), [audio](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#simaudio-userland-audio-playback--validation-pass--not-yet-run), [IVA](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#iva-cabin-physics-simdebugiva--validation-pass--not-yet-run) |
+
+The checklists include prerequisites, expected values, cleanup behavior, and KSA-specific risks.
+Treat them as the detailed answer to “is this ready for my extremely ambitious mission?”
+
+That is a status note, not a warning label on the whole project. The integration suite and game-free
+tests cover the transport, filesystem, parser, scheduler, and model layers. The remaining work is the
+part only a real spaceflight full of tiny astronauts can settle.
+
+For the authoritative current record, use [Validation](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md),
+[milestones](https://github.com/meow-sci/gatOS/blob/main/docs/MILESTONES.md), and the
+[full `/sim` specification](https://github.com/meow-sci/gatOS/blob/main/SPEC_9P_FILESYSTEM.md).

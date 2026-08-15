@@ -1,0 +1,54 @@
+---
+title: Install gatOS
+description: Install gatOS and purrTTY, then open your spacecraft's Linux terminal.
+sidebar:
+  order: 3
+---
+
+gatOS and [purrTTY](https://github.com/meow-sci/purrtty) are companion KSA mods. purrTTY supplies
+the terminal window. gatOS supplies the small Linux computer behind its `gatOS` shell entry. Install
+both through your usual KSA mod workflow, using matching current releases.
+
+## Choose the right archive
+
+- **Windows:** install `gatOS-windows-*.zip`. It includes the Alpine guest and a trimmed Windows
+  QEMU bundle. No separate Linux install is needed.
+- **Linux:** install `gatOS-linux-*.zip`. It includes the guest but deliberately uses your system
+  `qemu-system-x86_64`.
+- **macOS:** useful for development, not a supported player release target.
+
+On Linux, install QEMU before launching KSA:
+
+```sh
+# Debian / Ubuntu
+sudo apt install qemu-system-x86
+
+# Fedora
+sudo dnf install qemu-system-x86
+
+# Arch
+sudo pacman -S qemu-system-x86_64
+```
+
+KVM is used automatically when your account can access `/dev/kvm`; otherwise gatOS falls back to
+software emulation. On Windows, the Windows Hypervisor Platform makes boot much quicker, but the
+software fallback works too. The [project README](https://github.com/meow-sci/gatOS#performance--hardware-acceleration)
+has the full WHPX setup and troubleshooting notes.
+
+## First launch
+
+1. Start KSA.
+2. Open purrTTY's **New Tab** or **New Window** menu.
+3. Choose **gatOS**.
+4. Wait for the first boot, then try `ls /sim`.
+
+The VM remains running after you close a terminal tab and stops when the game exits. If you use
+ModMenu, gatOS also offers a status window for VM state, accelerator, bound ports, and the data folder.
+
+:::note[Configuration]
+On first launch, gatOS copies its shipped `gatos.default.toml` to `gatos.toml` in the mod folder.
+That live file survives mod updates. Delete it to reseed the defaults. Settings are flat TOML keys,
+not nested `[sections]`.
+:::
+
+Next: [your first five minutes](/gatOS/intro/first-five-minutes/).

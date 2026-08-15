@@ -1,0 +1,35 @@
+---
+title: HTTP
+description: Read gatOS snapshots and send commands from a local dashboard or host-side script.
+sidebar:
+  order: 9
+---
+
+gatOS serves HTTP/1.1 on loopback by default. The preferred host port is `4242`; the listener falls
+back to an ephemeral port if it is occupied, so read the status window when a fixed URL does not work.
+Inside the guest, `$GATOS_HTTP` already points at the service.
+
+```sh
+# Host
+curl http://127.0.0.1:4242/v1/time
+curl http://127.0.0.1:4242/v1/vessels/active/telemetry
+
+# Guest
+wget -qO- "$GATOS_HTTP/time"
+```
+
+The aggregate endpoints return JSON snapshots. `/v1/fs/<path>` mirrors ordinary `/sim` field files
+as text and accepts raw writes. It can also emit Server-Sent Events for fields that change. `/v1/events`
+and `/v1/vessels/<id>/stream` are SSE feeds.
+
+```sh
+curl -X POST --data '0.5' \
+  http://127.0.0.1:4242/v1/fs/vessels/active/ctl/throttle
+```
+
+`POST /v1/command` is the generic JSON command form. It always requires `vessel_id`, including an
+empty string for global actions such as camera, schedules, and audio. HTTP has dedicated binary upload
+routes for audio clips; camera tracks remain ordinary field writes.
+
+See the [HTTP reference](/gatOS/reference/) for every route, response, limit, SSE behavior, and the
+important exceptions around audio upload and terminal video.

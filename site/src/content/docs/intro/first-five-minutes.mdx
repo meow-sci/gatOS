@@ -1,0 +1,42 @@
+---
+title: Your first five minutes
+description: Open the shell, inspect the universe, and make one safe command from Linux.
+sidebar:
+  order: 4
+---
+
+Open a **gatOS** tab in purrTTY. You are at a real root shell inside the guest, with the live game
+already mounted at `/sim`.
+
+```sh
+ls /sim
+cat /sim/time/ut
+ls /sim/vessels/active
+cat /sim/vessels/active/telemetry | jq .
+```
+
+`active` follows the vessel you currently control. `telemetry` is one coherent JSON snapshot, which
+makes it a better starting point for programs than collecting individual leaves between physics ticks.
+
+Now try a harmless control. Lights are nicer to nearby cats than a surprise stage event:
+
+```sh
+ls /sim/vessels/active/lights
+echo 1 > /sim/vessels/active/lights/0/on
+echo 0 > /sim/vessels/active/lights/0/on
+```
+
+If that vessel has no lights, `ls` will simply show no light directory. Module directories exist only
+when the fitted vessel has that module.
+
+You can make the same read from the host with HTTP. The default host listener is local only:
+
+```sh
+curl http://127.0.0.1:4242/v1/vessels/active/telemetry
+```
+
+The actual port is shown in the gatOS status window when ModMenu is installed. In the guest,
+`$GATOS_HTTP` already points at the host service.
+
+Next: learn the [filesystem mental model](/gatOS/intro/sim-filesystem/) or start a
+[guide](/gatOS/guides/).

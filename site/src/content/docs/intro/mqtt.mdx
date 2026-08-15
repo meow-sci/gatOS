@@ -1,0 +1,33 @@
+---
+title: MQTT
+description: Publish and subscribe to gatOS telemetry with the embedded local broker.
+sidebar:
+  order: 10
+---
+
+gatOS can run an embedded MQTT broker on loopback, preferring port `1883`. The Alpine guest reaches it
+at `$GATOS_MQTT`, normally `sim:<port>`. It is handy when your program wants a pub/sub feed instead
+of polling an HTTP endpoint.
+
+The broker publishes aggregate snapshots and live events, plus an optional field mirror under
+`gatos/sim/<path>`. Send the generic JSON command envelope to `gatos/command`, or raw control text
+to `gatos/sim/<path>/set` where the field mirror is enabled.
+
+```text
+gatos/snapshot
+gatos/events
+gatos/sim/vessels/active/altitude/radar
+gatos/command
+```
+
+The world feed can be paced with `mqtt_publish_hz`; field topics have their own cadence. Retained
+snapshots are useful for a subscriber that arrives after launch, while event topics are for things
+that happened along the way.
+
+:::caution[Local broker]
+The embedded broker binds to loopback. It is not a LAN MQTT service. If you need a networked mission
+control, bridge from a local client with your own authentication and network policy.
+:::
+
+The [MQTT reference](/gatOS/reference/) has the exact topic families, retained behavior, command
+payloads, and cadence rules.

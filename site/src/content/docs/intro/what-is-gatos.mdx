@@ -1,0 +1,27 @@
+---
+title: What is gatOS?
+description: A real Linux computer, a KSA simulation feed, and no pretend terminal commands.
+sidebar:
+  order: 2
+---
+
+Most game terminals are a text box with a short list of party tricks. gatOS does the opposite. It
+starts a small Alpine Linux guest in QEMU and lets purrTTY open SSH sessions into it. The guest has a
+real shell, `apk`, editors, pipes, jobs, and the usual ways to get yourself into trouble.
+
+The special bit is `/sim`. gatOS mounts the live KSA simulation there as a filesystem. A value is a
+file. A stream is a file. A control is a writable file. Normal Linux errors still matter, so a bad
+command can fail with `EINVAL`, a disabled control surface with `EACCES`, and a feature gate with
+`EOPNOTSUPP`.
+
+```sh
+watch -n1 cat /sim/vessels/active/altitude/radar
+tail -f /sim/vessels/active/stream | jq .vel.surface
+echo 1 > /sim/vessels/active/ctl/ignite
+```
+
+You do not need to be a programmer to enjoy this. You only need enough curiosity to type `ls /sim`.
+If you are a programmer, gatOS also gives you HTTP, MQTT, serial, and MCP when a shell pipeline is
+not the right cockpit instrument.
+
+Next: [install it](/gatOS/intro/install/) or see [how it works](/gatOS/intro/how-it-works/).

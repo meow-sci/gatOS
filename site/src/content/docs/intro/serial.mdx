@@ -1,0 +1,25 @@
+---
+title: Serial and hardware-style links
+description: Use the optional virtio serial port for telemetry output and small SCPI command lines.
+sidebar:
+  order: 12
+---
+
+Enable `serial_telemetry_port` to stream telemetry through the guest's `gatos.serial` virtio device.
+Enable `serial_command_port` to accept the small SCPI control vocabulary on that same link. In the
+guest, the device is available at `/dev/virtio-ports/gatos.serial`.
+
+Telemetry can use `ndjson`, `nmea`, or `ccsds` framing. Configure the cadence with
+`serial_interval_ms`. This is a focused bus-style connection for a cockpit toy, external program, or
+protocol experiment. It does not reproduce all `/sim` files.
+
+```sh
+head -n1 /dev/virtio-ports/gatos.serial
+printf 'CTL:IGNITE\n' > /dev/virtio-ports/gatos.serial
+```
+
+The live serial bridge has guest integration coverage, but the full KSA flight validation pass is
+still open. CCSDS and MIL-STD-1553 configuration switches are reserved for future dedicated bus
+transports. They do not expose a bus today.
+
+See the [serial reference](/gatOS/reference/) for framing details, SCPI commands, and configuration.

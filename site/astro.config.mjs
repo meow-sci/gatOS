@@ -24,6 +24,10 @@ export default defineConfig({
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/meow-sci/gatOS" }],
       sidebar: [
         {
+          label: "Intro",
+          items: [{ autogenerate: { directory: "intro" } }],
+        },
+        {
           label: "Guides",
           items: [{ autogenerate: { directory: "guides" } }],
         },

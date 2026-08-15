@@ -1,0 +1,33 @@
+---
+title: Living in the guest
+description: Use Alpine packages, storage, networking, and host mounts inside gatOS.
+sidebar:
+  order: 13
+---
+
+The guest is Alpine Linux, not a custom command toy. Install software with `apk`, write scripts in
+your home directory, and use the shell tools you already know.
+
+```sh
+apk add jq htop
+apk add python3
+apk add nodejs
+```
+
+Alpine keeps the base image lean. Documentation often lives in a companion `-doc` package:
+
+```sh
+apk add htop htop-doc
+```
+
+The guest disk persists across game restarts. Its size begins at `disk_size_gb` and can grow on a
+later boot, but cannot shrink in place. Reset the disk from the gatOS status window when you truly
+want to start over.
+
+By default, the guest has normal slirp-backed network access. Set `restrict_network = true` in the
+live `gatos.toml` when you want an isolated little flight computer that still has gatOS channels.
+
+Host folders can be shared under `/mnt/<name>`. They are useful for scripts, screenshots, projects,
+and taking a file out of the guest without inventing a transfer ritual. Mounts are configured in
+`gatos.toml`; the [Reference](/gatOS/reference/) explains their names, modes, lifecycle, and the
+important security consequences of giving guest-root access to a host directory.

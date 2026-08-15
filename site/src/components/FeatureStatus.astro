@@ -1,0 +1,20 @@
+---
+import type { FeatureStatus as FeatureStatusModel } from "../data/feature-status";
+
+interface Props {
+  feature: FeatureStatusModel;
+}
+
+const { feature } = Astro.props;
+const variant = feature.state === "Available" ? "success" : feature.state === "Experimental" ? "caution" : "note";
+---
+
+<article class="feature-status">
+  <header>
+    <h3>{feature.title}</h3>
+    <span class:list={["feature-status__badge", `feature-status__badge--${variant}`]}>{feature.state}</span>
+  </header>
+  <p>{feature.details}</p>
+  {feature.gate && <p><strong>Gate:</strong> <code>{feature.gate}</code></p>}
+  <p><strong>Validation:</strong> {feature.validation}</p>
+</article>
