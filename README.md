@@ -38,8 +38,9 @@ echo 1 > /sim/vessels/active/ctl/ignite
 ```
 
 If you'd rather build a dashboard or an autopilot in your favorite language, the **same** telemetry
-and controls are also served over **HTTP** and **MQTT** — same data, same buttons, your choice of
-plumbing. (See [Talking to the game](#talking-to-the-game-the-data-interfaces).)
+and controls are also served over **HTTP** and **MQTT**. AI agents also get a purpose-built **MCP**
+interface that groups that model into logical JSON reads and actions rather than copying every file.
+(See [Talking to the game](#talking-to-the-game-the-data-interfaces).)
 
 ---
 
@@ -258,9 +259,9 @@ you shouldn't have).
 ## Talking to the game: the data interfaces
 
 Here's the trick that makes gatOS more than a novelty terminal: your spacecraft's live state is
-exposed through **four interchangeable interfaces**, and they all show the **same** data and accept
-the **same** commands. Read your altitude from a shell file, an HTTP endpoint, or an MQTT topic —
-it's the same number, sampled from the same place. Pick whatever fits the job.
+exposed through **five interchangeable interfaces**, and they all project the same data and command
+pipeline. Read your altitude from a shell file, an HTTP endpoint, an MQTT topic, or an MCP resource —
+it's the same published snapshot. Pick whatever fits the job.
 
 > Every reading is a live snapshot. Telemetry files update as the game does; control points act the
 > instant you write them. IDs in paths below (`<id>`) are vehicle ids; `active` is always an alias
@@ -389,7 +390,26 @@ mosquitto_sub -h sim -t 'gatos/sim/vessels/by-id/+/altitude/radar' -v
 mosquitto_pub -h sim -t gatos/sim/vessels/active/ctl/ignite/set -m 1
 ```
 
-### 4. Serial — for the full mission-control cosplay
+### 4. MCP — for AI agents
+
+The built-in [Model Context Protocol](https://modelcontextprotocol.io/) server is the first-class
+interface for an AI agent acting in KSA. It deliberately groups the simulation into JSON world,
+celestial, vessel, kitten, and runtime reads, plus clear control tools such as `gatos.ignite_engines`,
+`gatos.vessel_control`, `gatos.execute_batch`, and `gatos.schedule_batch`. It is **not** a one-file-per-tool copy of
+`/sim`; the filesystem remains the better interface for a human exploring from a terminal.
+
+MCP reads the same immutable telemetry snapshots and sends the same game-thread command actions as
+the other transports. Ask `gatos.get_capabilities` before controlling a feature, use the logical
+read tools to inspect the live game, and use `gatos.execute_batch` for same-tick coordination or
+`gatos.schedule_batch` for an absolute-millisecond timeline. The complete client-facing contract, including
+all resource URIs, tool schemas, error handling, pagination, and caveats, is
+[SPEC_MCP.md](SPEC_MCP.md).
+
+By default the endpoint is `http://127.0.0.1:4243/mcp`. It is loopback-only, has no bearer token,
+and accepts only exact local `Host`/`Origin` values. Set `mcp_preferred_port = 0` to always choose an
+ephemeral port; the gatOS status view reports the bound port.
+
+### 5. Serial — for the full mission-control cosplay
 
 Off by default. Flip on `serial_telemetry_port` / `serial_command_port` in `gatos.toml` and gatOS
 exposes a virtual serial port inside the guest at `/dev/virtio-ports/gatos.serial`. Telemetry streams
@@ -404,12 +424,14 @@ cat /dev/virtio-ports/gatos.serial
 echo 'CTL:ENG0:ACT 1' > /dev/virtio-ports/gatos.serial
 ```
 
-### The golden rule: one data model, four windows
+### The golden rule: one data model, five windows
 
 Every reading projects from a single telemetry snapshot; every command funnels through a single
-pipeline. So a control you can reach in `/sim` you can reach over HTTP, MQTT, and serial too — and
-the `/sim/debug` cheats (teleport, refuel, time warp) are reachable everywhere as well, when enabled.
-Add nothing, learn one model, use any door.
+pipeline. `/sim`, HTTP, MQTT, serial, and MCP therefore reach the same game capability in interfaces
+suited to their users. MCP intentionally groups that capability into logical JSON resources/tools
+rather than mirroring `/sim` leaves. The `/sim/debug` cheats (teleport, refuel, time warp) stay
+available through their corresponding MCP debug tools when enabled. Learn one model, use the door
+that fits.
 
 Each interface can be turned on or off independently in `gatos.toml` (see the appendix). The action
 keys (`vessel.ignite`, `engine.active`, `vessel.attitude_mode`, `debug.refill_fuel`, …) are the same
@@ -548,11 +570,12 @@ just falls back to defaults without overwriting your work.
 | `command_timeout_ms` | `2000` | How long a control write waits on the game thread before giving up (`ETIMEDOUT`). |
 | `max_commands_per_frame` | `64` | Cap on control commands processed per frame, so a runaway script can't stall the game. |
 
-### The other ways in (HTTP / MQTT / serial)
+### The other ways in (HTTP / MQTT / MCP / serial)
 
-gatOS exposes the **same** telemetry and controls over three extra transports, so you can write a
+gatOS exposes the **same** telemetry and controls over four extra transports, so you can write a
 dashboard or autopilot outside the game. Inside the guest shell, `$GATOS_HTTP` and `$GATOS_MQTT` are
-already set to the right addresses.
+already set to the right addresses; MCP clients use the loopback MCP endpoint documented in
+[SPEC_MCP.md](SPEC_MCP.md).
 
 | Key | Default | What it does |
 | --- | --- | --- |
@@ -560,6 +583,8 @@ already set to the right addresses.
 | `http_preferred_port` | `4242` | Preferred HTTP port (falls back to a random free one on a clash; `0` = always random). |
 | `mqtt_enabled` | `true` | Run an embedded MQTT broker at `$GATOS_MQTT` — subscribe `gatos/#` for retained telemetry topics, publish to `gatos/command`. |
 | `mqtt_preferred_port` | `1883` | Preferred MQTT port (same fallback rule). |
+| `mcp_enabled` | `true` | Serve the loopback Streamable HTTP MCP API at `http://127.0.0.1:<port>/mcp`, the logical JSON interface for AI agents. |
+| `mcp_preferred_port` | `4243` | Preferred MCP port (falls back to a random free port on a clash; `0` = always random). |
 | `http_field_endpoints` | `true` | Mirror every `/sim` file as its own HTTP endpoint (`GET /v1/fs/<path>`, `?stream=1` for live SSE, `POST` to actuate). |
 | `mqtt_field_topics` | `true` | Mirror every `/sim` file as its own retained MQTT topic (`gatos/sim/<path>`, write `…/set` to actuate). |
 | `field_feed_hz` | `4` | How often (Hz) the MQTT field mirror refreshes (1–30). |

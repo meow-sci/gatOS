@@ -14,8 +14,10 @@ real shells, real pipes/jobs/pagers/editors, zero custom guest binaries.
 
 Live KSA vehicle telemetry is exposed to the guest **as a filesystem**: a C#-implemented
 **9P2000.L server** that the guest mounts at `/sim`, so the entire unix toolbox (`cat`, `watch`,
-`tail -f`, `jq`, awk pipelines) becomes the game API surface. Persistence is qcow2 overlays, one
-per save profile, on top of a pristine shipped base image.
+`tail -f`, `jq`, awk pipelines) becomes the game API surface. HTTP, MQTT, serial, and the first-class
+MCP server project the same snapshot/command model for their respective clients; MCP is the concise,
+logical JSON interface for AI agents, deliberately not a filesystem mirror. Persistence is qcow2
+overlays, one per save profile, on top of a pristine shipped base image.
 
 > **`/sim` is a published API. Its complete catalog is [`SPEC_9P_FILESYSTEM.md`](SPEC_9P_FILESYSTEM.md)**
 > — every path, value format, unit, read/write semantic, command action key, errno, and HTTP `/v1` /
@@ -171,6 +173,7 @@ cut.
 | G6 — TypeScript SDK | DONE | `examples/sdk-ts/` |
 | G7 — serial/bus | DONE | `gatOS.Bus/` |
 | MQTT transport | DONE | `gatOS.Mqtt/` |
+| MCP transport | DONE | `gatOS.Mcp/`, `SimMcpServer`, `SPEC_MCP.md` |
 | Host folder mounts | DONE | `NineP/Vfs/HostDirectory.cs`, `HostFile.cs` |
 | Welds + `always_render_iva` + parts (ex-`unscience`) | Code DONE; in-game pending | `Game/Ksa/Welds/`, `Game/Ksa/Render/IvaForceRender.cs`, `Game/Ksa/Readers/PartsReader.cs` |
 | Per-vessel `scale` + `always_render` nodes (ex-`unscience` garrys-torch scaling / i-feel-seen) | Code DONE; in-game pending | `Game/Ksa/Actuators/ScaleActuator.cs`, `Game/Ksa/Render/VesselForceRender.cs` — first-class vessel nodes outside `/sim/debug`, authority-gate-exempt (`KsaCatalog.AnyVesselActions`) |
@@ -206,8 +209,8 @@ so container runtimes work: in-guest `apk add podman` runs rootful containers ou
 ## Build and Test Commands
 
 ```bash
-dotnet build gatos.slnx                          # build the whole solution
-dotnet test  gatos.slnx --nologo -v quiet        # full suite (5 test projects)
+dotnet build                                     # build the whole solution
+dotnet test  gatos.slnx --nologo -v quiet        # full suite (9 test projects)
 dotnet build gatOS.Vm                            # one project
 dotnet build gatOS.GameMod                       # also deploys the mod folder (see below)
 ```
@@ -237,7 +240,7 @@ prerequisites are hard failures, not skips (see `gatOS.Vm.Tests/TestEnv.cs`); te
 ## Repository layout & project map
 
 ```
-gatos.slnx                      XML solution (17 projects: 9 libs/mod + 8 test projects)
+gatos.slnx                      XML solution (19 projects: 10 libs/mod + 9 test projects)
 Directory.Build.props           shared build config + KSA/dist path resolution
 AGENTS.md / README.md           this file; user-facing readme
 AGENTS.md                       the /sim schema-change constitution: the step-by-step playbook for
@@ -252,6 +255,10 @@ SPEC_9P_FILESYSTEM.md           THE catalog of the /sim 9p API surface: every pa
                                 mirror. The reference for writing programs against /sim; kept in
                                 lockstep with the code (its own constitution). The gatos skill
                                 (.agents/skills/gatos/) references it.
+SPEC_MCP.md                     THE MCP v1 contract: AI-oriented logical JSON resources/tools,
+                                canonical command envelope, batch/timed-batch semantics, list
+                                pagination, explicit /sim/display exclusion, and MCP coverage
+                                maintenance. Kept in lockstep with the shared model and code.
 docs/MILESTONES.md              full per-milestone build detail (class names, as-built notes)
 docs/ARCHITECTURE.md            runtime architecture, port allocation, telemetry pipeline/tuning
 docs/KSA_INTEGRATION_MATRIX.md per-point KSA API reference (G1–G4 + documented deferrals)
@@ -349,9 +356,12 @@ gatOS.Http     → SimFs, Logging                       magic HTTP /v1 server (r
 gatOS.Bus      → SimFs, Logging                       serial/bus framing CCSDS/NMEA/SCPI + the gatos.serial
                                                       SerialBridge/Connector over QEMU virtio-serial (G7, built)
 gatOS.Mqtt     → SimFs, Logging, MQTTnet              embedded MQTT broker over the same store+sink (built)
+gatOS.Mcp      → SimFs, Logging, ModelContextProtocol.Core
+                                                      loopback Streamable HTTP MCP resources/tools over the
+                                                      shared snapshots, command queue, and stores (built)
 gatOS.Vm       → Logging, Tomlyn                      QEMU lifecycle, disks, ports, GatOsPaths (M3, built)
 gatOS.Ssh      → Vm, Logging, vendor/purrTTY, SSH.NET SshShellSession : ICustomShell (M4, built)
-gatOS.GameMod  → Ssh, SimFs, Http, Mqtt, Bus, Vm, Logging, vendor/purrTTY,
+gatOS.GameMod  → Ssh, SimFs, Http, Mqtt, Mcp, Bus, Vm, Logging, vendor/purrTTY,
                   KSA DLLs, StarMap.API, Lib.Harmony, ModMenu.Attributes, Tomlyn   the KSA mod (M6, built)
                   (+ the Brutal.Vulkan(.Abstractions/.Vma) + Planet.Render.Core + Brutal.Core.Memory game
                    DLLs and AllowUnsafeBlocks, for the Game/Ksa/ThugLife GPU quad renderer and the
@@ -581,6 +591,8 @@ avg/max/last, command-drain avg/max, MQTT publish avg/max) recorded allocation-f
 9p path, value format and unit, read/write archetype, command action key (`ordinal`/`value`/`values`/
 `token` + Frame/Solver phase), errno mapping, and the HTTP `/v1` + MQTT mirrors. It is a **published,
 user-facing API surface** — guests, modders and the `gatos` skill script against it.
+`SPEC_MCP.md` is the companion public contract for the MCP server's intentionally non-1:1 logical
+JSON resources and tools. It shares the same model but not the filesystem's per-leaf design.
 
 **MUST — keep the SPEC in lockstep with the code.** In the *same change* that you add, remove, rename,
 or alter the format/units/phase/semantics of any of the following, you MUST update
@@ -590,13 +602,14 @@ or alter the format/units/phase/semantics of any of the following, you MUST upda
 - a value **format** or **unit** (`Formats.cs`, `SimSnapshot` field semantics);
 - a `ctl/…` control, a `debug/…` action, or a command **action key** / its argument shape / its
   **phase** (`KsaCatalog.cs`, `SimCommand.SolverActions`, the actuators);
-- an HTTP `/v1` route or MQTT topic, or a config gate that changes availability;
+- an HTTP `/v1` route, MQTT topic, MCP resource/tool/schema, or a config gate that changes availability;
 - the errno mapping (`CommandResult.cs`) or a file's archetype.
 
-The code wins; the SPEC mirrors it — they must never disagree. This is structural, not optional: the
-transport-parity rule already keeps one read surface (`SimJson`/`Formats`) and one write surface
-(`SimCommand`/`CommandQueue`), so a `/sim` change is a single place in code **and** a single place in
-the SPEC. The `gatos` skill (`.agents/skills/gatos/`) and its sidecars (`coordinate-frames.md`,
+The code wins; the specifications mirror it — they must never disagree. This is structural, not
+optional: the transport-parity rule already keeps one read surface (`SimJson`/`Formats`) and one
+write surface (`SimCommand`/`CommandQueue`). The MCP capability registry maps that shared model to its
+logical resources/tools; update `SPEC_MCP.md` whenever a changed read/action affects that map.
+`/sim/display` is the explicit MCP-v1 exclusion. The `gatos` skill (`.agents/skills/gatos/`) and its sidecars (`coordinate-frames.md`,
 `flight-programs.md`, `recipes.md`) point at the SPEC; refresh them when a change affects how programs
 are written.
 
@@ -605,13 +618,13 @@ are written.
 The constitution above says when the contract must change. This operational playbook retains the archived implementation safeguards for anyone touching `gatOS.SimFs/SimFsTree.cs`, `gatOS.SimFs/Commands/`, `gatOS.GameMod/Game/Ksa/`, `SPEC_9P_FILESYSTEM.md`, or integration/scope docs.
 
 - Paths and action keys are lower snake_case; collections are plural; a qid is the unique, stable `/sim`-relative path. Prefer one writable knob per leaf over a settings blob.
-- Never add a second read or write path. Transport threads enqueue immutable `SimCommand`s through `ICommandSink`/`CommandQueue`; the game thread dispatches through `KsaCatalog`. Reads project immutable snapshots or a volatile-published dedicated store. Derive phase only from `SimCommand.SolverActions`; never set it at construction.
+- Never add a second read or write path. Transport threads enqueue immutable `SimCommand`s through `ICommandSink`/`CommandQueue`; the game thread dispatches through `KsaCatalog`. Reads project immutable snapshots or a volatile-published dedicated store. Derive phase only from `SimCommand.SolverActions`; never set it at construction. MCP is a logical projection of this seam, never a `/sim` path mirror or a second actuator router.
 - Choose controls deliberately: `FlagControl` for booleans, `FractionControl` for `[0,1]`, `NumberControl` for finite scalars, `VectorControl` for exact arity, `EnumControl` for fixed tokens, `TokenControlFile` for free tokens, `LineControlFile` for mixed grammars, `TriggerFile` for impulses, and the global `/sim/ctl/batch` for atomic groups. Invalid 9p input must fail with `EINVAL` before enqueue; repeat the validation game-side because `/v1/command` bypasses the file parser. Put shared validation in a game-free `<Feature>Rules` class.
 - Use one addressing model: global (empty `VesselId`), registry-keyed (`Ordinal` plus `Token`/`Aux`), or path-implied per-vessel (`VesselId`, with module index in `Ordinal`). Non-debug actions intended for an addressed inactive vessel must be explicitly added to `KsaCatalog.AnyVesselActions`.
 - Actuators are game-thread-only `internal static` `CommandResult` methods in `Game/Ksa/` with complete `[KsaAnchor]` metadata. Dynamic Harmony patches install lazily and are removed on final use, despawn prune, and unload. Restore pristine mutable values on reset where applicable; map bad input/missing/degraded/faulted work to `Invalid`/`NotFound`/`Unsupported`/`Fault` and latch health on faults.
 - Read back small globals via `SimSnapshot`, registries via `IReadOnlyList<TSnapshot>`, per-vessel state through `VesselSnapshot`, and host-side/off-cadence/bulk state through a dedicated store. Use `Line(...)` for snapshot values and `LiveLine(...)` for values that can change between publishes. Animation-rate leaves must tolerate 10-60 Hz fire-and-forget writes, provide live resync and reset behavior, and use `/sim/ctl/batch` for atomic multi-knob changes.
 - A new config key requires a documented `GatOsConfig` property, `Sections` entry, clamp-and-warn load behavior, and a synchronized `gatOS.GameMod/Configuration/gatos.default.toml` block. Debug features normally use `[control] debug_namespace` unless they introduce their own cost/capability boundary.
-- In the same change, update the SPEC, KSA integration matrix as applicable, `scope/FULL_SCOPE.md` plus relevant scope pages, `docs/VALIDATION.md` for game-coupled validation, `docs/MILESTONES.md`, and this file if status/guidance changes. Refresh `.agents/skills/gatos/` and `docs/TUTORIAL_DATA_REFERENCE.md` when program-authoring behavior changes.
+- In the same change, update the applicable specifications (`SPEC_9P_FILESYSTEM.md` and/or `SPEC_MCP.md`), KSA integration matrix as applicable, `scope/FULL_SCOPE.md` plus relevant scope pages, `docs/VALIDATION.md` for game-coupled validation, `docs/MILESTONES.md`, and this file if status/guidance changes. Refresh `.agents/skills/gatos/` and `docs/TUTORIAL_DATA_REFERENCE.md` when program-authoring behavior changes. For MCP, extend the capability-coverage tests whenever a shared logical read, action, store feature, or intentional exclusion changes.
 - In `gatOS.SimFs.Tests`, cover read-back, write-to-the-exact `SimCommand` (including phase), invalid-input `EINVAL` with no submitted command, and table-driven rules validation. Extend `SimFsTreeTests.ControlEnabledTree_ExposesEveryModuleControlStatusAndDebugPath` for every new path. Finish with the full build and test commands green with zero warnings.
 
 ## Instruction Maintenance Mandate (MUST)
@@ -624,7 +637,9 @@ binding (update the matching `scope/` page — see below)**, or **milestone/feat
 As each milestone lands, update the status table above and add full detail to
 [`docs/MILESTONES.md`](docs/MILESTONES.md) — prefer verified code paths over the plan when
 documenting behavior. Update [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) when the runtime
-shape, port allocation, or telemetry pipeline changes. Remove defunct guidance immediately. Do not
+shape, port allocation, or telemetry pipeline changes. Keep [`SPEC_MCP.md`](SPEC_MCP.md) in lockstep
+when an MCP resource/tool/schema, its shared read/write coverage, config gate, or deliberate
+exclusion changes. Remove defunct guidance immediately. Do not
 document planned-but-unbuilt code as if it exists.
 
 **`scope/` is binding (MUST).** [`scope/`](scope/FULL_SCOPE.md) is the catalog of every gatOS feature

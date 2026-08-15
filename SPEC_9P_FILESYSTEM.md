@@ -5,11 +5,14 @@
 > formats, the units, and the read/write semantics are cataloged here. The `gatos` skill
 > (`.agents/skills/gatos/SKILL.md`) and any program written against gatOS reference this document.
 >
-> **⚠️ CONSTITUTION — keep this in sync.** The `/sim` tree, the HTTP/MQTT mirrors and the command
+> **⚠️ CONSTITUTION — keep this in sync.** The `/sim` tree, the HTTP/MQTT mirrors, the MCP logical
+> projection, and the command
 > set are a frozen, user-facing API. **Whenever you add, remove, rename, or change the format/units
 > of any `/sim` node, control file, debug action, command action key, or HTTP/MQTT endpoint, you
 > MUST update this file in the same change** (and `docs/KSA_INTEGRATION_MATRIX.md` when the KSA
-> binding changes). The code is authoritative; this file mirrors it — they must never disagree. See
+> binding changes). Update [`SPEC_MCP.md`](SPEC_MCP.md) whenever the change affects MCP resources,
+> tools, schemas, coverage, or an intentional exclusion. The code is authoritative; these
+> specifications mirror it — they must never disagree. See
 > the maintenance mandate at the end.
 >
 > **Source of truth in code:**
@@ -42,6 +45,11 @@ projections of one model, never re-implemented):
 Programs run **inside the guest** (read `/sim` directly) or **on the host** (use HTTP `/v1`). The
 TypeScript SDK (`examples/sdk-ts`) hides the difference behind one typed API and auto-selects the
 transport (`HTTP` when `$GATOS_HTTP` is set, else `/sim`).
+
+The MCP server is a fourth, first-class projection of the same snapshots and command pipeline, but
+it is deliberately **not** included in this leaf-for-leaf table: it groups data and actions for AI
+agents instead of mirroring filesystem paths. Its resource/tool contract, complete command coverage,
+and the intentional exclusion of `/sim/display` live in [`SPEC_MCP.md`](SPEC_MCP.md).
 
 ---
 
@@ -127,6 +135,7 @@ their upload surfaces (thrown by the write itself, mid-stream — not by a comma
 | `http_field_endpoints` | `true` | the `/v1/fs/<path>` mirror (off ⇒ those routes `ENOENT`) |
 | `mqtt_enabled` / `mqtt_preferred_port` | `true` / `1883` | embedded MQTT broker |
 | `mqtt_publish_hz` | `0` | cap on the MQTT world-topic cadence (0 = every snapshot; below the sample rate the broker coalesces to the newest snapshot). MQTT topics are also **subscription-gated**: a topic no live filter matches is not published (a new subscription forces its retained baseline within a cycle), and a vanished vessel's retained topics are cleared with an empty payload |
+| `mcp_enabled` / `mcp_preferred_port` | `true` / `4243` | loopback Streamable HTTP MCP server at `/mcp`; falls back to an ephemeral port on clash (`0` = ephemeral). MCP groups the same model for AI agents; requests are framed at 24 MiB while responses are not size-capped; see `SPEC_MCP.md`. |
 | `command_timeout_ms` | `2000` | how long a write waits for the game thread before `ETIMEDOUT` |
 | `display_enabled` | `false` | boot seed for `/sim/display/enabled` — the screen stream (§3.8); **off by default** |
 | `display_fps` / `display_width` / `display_height` | `15` / `320` / `180` | boot seeds for the stream cadence + downscale size (runtime control is the `/sim/display/*` files) |
@@ -1685,5 +1694,7 @@ file in the same change.** Concretely, you MUST edit `SPEC_9P_FILESYSTEM.md` whe
 5. change the errno mapping or the archetype of a file.
 
 Also update `docs/KSA_INTEGRATION_MATRIX.md` (the KSA binding view) and the `gatos` skill if the
-change affects how programs are written. Keep the "Source of truth in code" pointers at the top
-accurate. The code wins; this file must mirror it exactly.
+change affects how programs are written. Update `SPEC_MCP.md` when that change affects an MCP logical
+resource/tool, its typed schema, capability report, or its action coverage mapping; `/sim/display`
+remains its documented MCP-v1 exclusion. Keep the "Source of truth in code" pointers at the top
+accurate. The code wins; these specifications must mirror it exactly.

@@ -34,6 +34,22 @@ connected to the QEMU `gatos.serial` chardev:
 | `echo CTL:IGNITE >` the device actuates → `OK`; the command reaches the executor | ✅ |
 | A bad command (`CTL:BOGUS`) → `ERR EINVAL` (no executor hit) | ✅ |
 
+### MCP transport — live mod pass pending
+
+The MCP host is loopback-only and needs no guest-image change. Run this during the next live KSA
+flight with an MCP client that supports Streamable HTTP; its static/schema coverage belongs in
+`gatOS.Mcp.Tests`, while this table verifies lifecycle wiring and the game-thread boundary.
+
+| # | Check | Result | Notes |
+|---|---|---|---|
+| 1 | The status window's **MCP** row reports a bound port; a client can initialize and discover the namespaced `gatos.*` tools and `gatos://` resources at `http://127.0.0.1:<port>/mcp` | ☐ | default preferred port is 4243; a clash falls back to an ephemeral port |
+| 2 | `gatos.get_world`, a resource read, and `gatos.get_vessel` return a common envelope with matching `snapshot_sequence` / `ut`; a vessel id containing path-hostile characters remains its raw KSA id | ☐ | proves the logical JSON projection, not the `/sim` name sanitizer |
+| 3 | List pagination defaults to 50 and accepts 1,000; `gatos.get_world(detail:"full")` and `gatos.get_vessel(include:["all"])` return complete response documents rather than a measured/truncated result | ☐ | request framing remains 24 MiB; use chunked clip/track upload for large inputs |
+| 4 | `gatos.ignite_engines`/`gatos.vessel_control` or `gatos.command` visibly execute through the normal game-thread command queue, then read back on a later snapshot; `gatos.execute_batch` rejects mixed phases and `gatos.schedule_batch` advances on its selected clock | ☐ | run only on a safe test vessel; existing control/debug gates still apply |
+| 5 | An invalid `Host` or `Origin`, a session id, or a non-JSON/non-POST request is rejected; normal loopback clients work without a bearer token | ☐ | loopback Host/Origin validation is the v1 network boundary |
+| 6 | `/sim/display` is absent from MCP discovery/resources/tools; `gatos.get_capabilities` reports that deliberate exclusion | ☐ | terminal-video stream must not be reintroduced as an MCP JSON interface |
+| 7 | Set `mcp_enabled = false`, restart the mod, and confirm the MCP status row says `disabled` with no bound port while `/sim`, HTTP, MQTT, serial, and the VM remain usable | ☐ | optional transport failure/disable must not affect the game |
+
 Full `GATOS_IT=1` suite re-run on v3: **green, 278/278, 0 skipped** (see AGENTS.md). The only
 remaining item is the **in-game pass** (the purrTTY tip release is now cut, so the
 T6.6/T9.3/G1–G4 checklists below are runnable, but they need a live KSA flight).

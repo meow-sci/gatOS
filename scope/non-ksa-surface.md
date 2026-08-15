@@ -10,7 +10,7 @@
 > attestation, not a re-documentation.
 
 ## Dependency-rule attestation
-Verified (csproj references + `using` graphs): **no `gatOS.{Logging,Vm,Ssh,NineP,SimFs,Http,Mqtt,Bus}`
+Verified (csproj references + `using` graphs): **no `gatOS.{Logging,Vm,Ssh,NineP,SimFs,Http,Mqtt,Mcp,Bus}`
 project references KSA, Brutal, or StarMap.** Only `gatOS.GameMod` does, condition-guarded on
 `Exists('$(KSAFolder)/…')`. This is what keeps the 9P server, VM manager, transports and SSH session
 headlessly testable, and what confines KSA-update breakage to `Game/Ksa/**` (see
@@ -27,7 +27,7 @@ headlessly testable, and what confines KSA-update breakage to `Game/Ksa/**` (see
 | Ports | `PortAllocator.cs` | ephemeral loopback ports for ssh/sim/mnt/http/mqtt/serial | — |
 | Guest agent / readiness | `QgaClient.cs`, `ReadinessProbe.cs`, `QemuLocator.cs` | QGA comms, SSH readiness, QEMU discovery (incl. bundled `vendor/qemu/win-x64`) | QEMU |
 | Paths | `GatOsPaths.cs` | the **single** source of all filesystem locations (mod dir, data dir, disks, logs, config) | — |
-| Config | `Configuration/GatOsConfig*` (in GameMod) + Tomlyn | TOML load/seed/save; sections `[common]/[telemetry]/[control]/[http]/[mqtt]/[serial]/[display]/[audio]/[iva]/[camera]/[schedule]/[[mounts]]` | Tomlyn |
+| Config | `Configuration/GatOsConfig*` (in GameMod) + Tomlyn | TOML load/seed/save; sections `[common]/[telemetry]/[control]/[http]/[mqtt]/[mcp]/[serial]/[display]/[audio]/[iva]/[camera]/[schedule]/[[mounts]]` | Tomlyn |
 
 Ports + disk layout table: [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md#port-allocation).
 
@@ -130,6 +130,16 @@ pending ([`../docs/VALIDATION.md`](../docs/VALIDATION.md)).
 `SimMqttBroker.cs` — embedded MQTTnet broker (loopback). Retained `gatos/{snapshot,system,bodies,time,status,events}`
 + `gatos/vessels/<id>/{telemetry,snapshot,stream}`; `gatos/command` in, `gatos/command/result` out;
 `gatos/sim/<path>` field mirror. Changed-only publisher (the one eager pusher). Dep: MQTTnet.
+
+## MCP — `gatOS.Mcp`
+`SimMcpServer.cs`, `McpRegistry.cs`, `McpPresenters.cs`, and `McpToolHandlers.cs` implement a
+loopback-only, stateless Streamable HTTP server at `/mcp` using the official C# SDK. Reads use only
+`SnapshotStore` and existing game-free stores; writes compile through `CommandCatalog` into
+`SimCommand`/`ICommandSink`, with shared atomic-batch and schedule builders. Resources and tools group
+state by world, celestial, vessel, kitten, and runtime feature rather than mirroring VFS leaves.
+There is no KSA reference or alternate actuator. `/sim/display` is the standing TTY-only exception
+and is absent from the constructor, registry, and coverage contract. Dep: exact-pinned
+`ModelContextProtocol.Core` 2.2.0. Public contract: [`SPEC_MCP.md`](../SPEC_MCP.md).
 
 ## Serial / bus — `gatOS.Bus`
 `SerialBridge.cs` over QEMU virtio-serial (`gatos.serial`). Wire formats `SerialTelemetry.cs` (NDJSON),

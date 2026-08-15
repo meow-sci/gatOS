@@ -17,6 +17,7 @@ KSA game process                                          QEMU subprocess
 │   SshShellSession ──SSH.NET──────────────────┼─127.0.0.1:<pSsh>──► hostfwd → :22       │
 │   NinePServer (listens 127.0.0.1:<p9>) ◄─────┼── guest connects out via 10.0.2.2       │
 │   SimFsTree ◄ SnapshotStore ◄ TelemetrySampler (game thread, OnBeforeGui)              │
+│   MCP server ◄ SnapshotStore + ICommandSink (loopback; logical JSON agent interface)   │
 │   ScheduleStore → CommandQueue.Post (game thread, before the drain)                    │
 │   IvaPhysicsManager → CabinSim (own Bepu world, assembly frame; OnAfterUi, off by dflt)│
 │   CameraDirector → Camera.PositionEcl/LocalRotation (game thread, OnAfterFrame)        │
@@ -85,6 +86,7 @@ cmdline via `QemuCommandBuilder`:
 | 9P `/mnt` server | `gatos.mntport=<port>` (0 = idle) | `mnt-mount` supervisor |
 | HTTP `/v1` server | `gatos.httpport=<port>` | guest env `$GATOS_HTTP` |
 | MQTT broker | `gatos.mqttport=<port>` | guest env `$GATOS_MQTT` |
+| MCP Streamable HTTP server | none (host-loopback only) | `http://127.0.0.1:<port>/mcp` (default preferred port 4243) |
 | virtio-serial bridge | `gatos.serial` chardev (4th port) | `/dev/virtio-ports/gatos.serial` |
 
 ### Slirp networking
@@ -176,7 +178,7 @@ core flight telemetry.
 
 ### Consumer cost
 
-- **9p and HTTP are lazy**: a snapshot costs nothing until a guest reads (and since GP1, reads hit
+- **9p, HTTP, and MCP are lazy**: a snapshot costs nothing until a guest/client reads (and since GP1, reads hit
   per-snapshot memoized formatting — N readers of one value = one format).
 - **MQTT is the one eager pusher**, now triply gated (GP2): on `ConnectedClients`, on **live
   subscription filters** (a topic nobody subscribed to is neither serialized nor injected; a new
@@ -405,6 +407,7 @@ wherever the shot is facing** (`KittenEva.PrepareWorker` reads the main camera).
 | `[control]` | `control_enabled`, `control_all_vessels`, `debug_namespace`, `command_timeout_ms`, `max_commands_per_frame` |
 | `[http]` | `enabled`, `preferred_port` (4242), `http_field_endpoints` |
 | `[mqtt]` | `enabled`, `preferred_port` (1883), `mqtt_field_topics`, `field_feed_hz`, `mqtt_publish_hz` |
+| `[mcp]` | `mcp_enabled` (on), `mcp_preferred_port` (4243; ephemeral fallback); loopback Streamable HTTP `/mcp`, exact local Host/Origin validation, no bearer token, 24 MiB request-framing safety limit (responses are not size-capped) |
 | `[serial]` | `serial_telemetry_port`, `serial_command_port`, `serial_mode`, `serial_interval_ms` |
 | `[display]` | `display_enabled` (off), `display_fps`, `display_width`, `display_height`, `display_encoding` (boot seeds for `/sim/display`) |
 | `[audio]` | `audio_enabled` (on), `audio_max_clip_bytes` (16 MiB), `audio_max_total_bytes` (64 MiB), `audio_max_clips` (64), `audio_max_channels` (16) |

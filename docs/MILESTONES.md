@@ -16,7 +16,7 @@ purrTTY contract, and CI are in place and green.
 
 All three gates passed against a real Alpine 3.24 guest (kernel 6.18): 9p synthetic files
 `cat`/`tail -f`/Ctrl-C-Tflush from the kernel's v9fs client against a hand-rolled C# 9P2000.L
-server; SSH.NET 2025.1.0 shell with **live resize** against dropbear; a known-good QEMU invocation.
+server; SSH.NET 2026.0.0 shell with **live resize** against dropbear; a known-good QEMU invocation.
 The spike's throwaway code was deleted when M2 landed (per plan).
 
 **`spike/NOTES.md` (committed) is REQUIRED READING before M3/M4/M7/M8 work** — notably:
@@ -549,6 +549,31 @@ rebroadcast). Full `GATOS_IT=1` suite green on guest v3, zero warnings.
 
 **Validated in-guest** (2026-06-13): TCP reachability, `$GATOS_MQTT` env, live telemetry read
 via wget. See `docs/VALIDATION.md`.
+
+---
+
+## MCP transport: DONE
+
+**`gatOS.Mcp`** is the first-class, AI-oriented transport. It uses the official
+`ModelContextProtocol.Core` 2.2.0 SDK for discovery, protocol negotiation, resource/tool schemas,
+and dispatch; `SimMcpServer` supplies the deliberately small loopback-only, stateless Streamable
+HTTP host. It binds `http://127.0.0.1:<port>/mcp`, prefers port 4243, and falls back to an ephemeral
+port when needed (or immediately when `mcp_preferred_port = 0`). The server has no bearer-token
+scheme; its loopback bind and exact local `Host`/`Origin` checks are the v1 boundary. It rejects
+sessionful MCP requests, has bounded request concurrency, and exposes its bound port/request/error
+status in the gatOS status window.
+
+`McpRegistry` projects the shared `SnapshotStore`, `ICommandSink`, and the existing audio, camera,
+and schedule stores into logical JSON resources and namespaced `gatos.*` tools. It never calls KSA
+from a request thread and adds no KSA reflection or actuator binding. `McpPresenters` owns raw-id
+entity lookup, sectioned vessel documents, 50-default/1,000-maximum cursor lists, waits, capability
+discovery, and the common snapshot envelope. `McpToolHandlers` maps concise controls, the canonical
+command envelope, same-tick batches, and timed batches back to the existing command catalog.
+
+Config: `mcp_enabled = true` and `mcp_preferred_port = 4243` in `gatos.toml`. Responses have no
+JSON result-size cap or inspection; HTTP request framing is capped at 24 MiB, and audio/camera-track
+uploads are chunked. `/sim/display` remains deliberately outside the MCP contract. The complete
+public resource, tool, schema, error, and maintenance contract is [`SPEC_MCP.md`](../SPEC_MCP.md).
 
 ---
 

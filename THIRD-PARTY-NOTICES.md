@@ -14,7 +14,7 @@ milestones land; entries marked *(planned)* are not bundled yet.
 
 ## SSH.NET (Renci.SshNet)
 
-- **Source:** NuGet `SSH.NET` ≥ 2025.1.0 — https://github.com/sshnet/SSH.NET
+- **Source:** NuGet `SSH.NET` 2026.0.0 — https://github.com/sshnet/SSH.NET
 - **License:** MIT
 - **Description:** Managed SSH client used by `gatOS.Ssh` to drive guest shell sessions (with live
   window-resize via `ShellStream.ChangeWindowSize`).
@@ -30,6 +30,14 @@ milestones land; entries marked *(planned)* are not bundled yet.
 - **Source:** NuGet `MQTTnet` — https://github.com/dotnet/MQTTnet
 - **License:** MIT
 - **Description:** The embedded MQTT broker in `gatOS.Mqtt` (the MQTT game-data bridge).
+
+## Model Context Protocol C# SDK
+
+- **Source:** NuGet `ModelContextProtocol.Core` 2.2.0 — https://github.com/modelcontextprotocol/csharp-sdk
+- **License:** Apache-2.0
+- **Description:** Official MCP protocol, schema, tool/resource, client, and stateless Streamable HTTP
+  implementation used by the host-side `gatOS.Mcp` transport. Its managed dependency closure is
+  recorded in `gatOS.GameMod.deps.json` and copied with the mod payload.
 
 ## QEMU *(planned — bundled for win-x64 at M11)*
 

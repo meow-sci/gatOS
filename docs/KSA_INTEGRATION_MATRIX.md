@@ -11,8 +11,8 @@
 formalization), **G3** (read-surface expansion: bodies/system, vessel extensions, per-module reads,
 new events) and **G4** (full control surface: throttle/staging/attitude/burn, RCS, per-light, decouplers,
 `/sim/debug`, solver-phase queue) surfaces. The HTTP (G5), serial-bus (G7 — codecs + the live
-`gatos.serial` virtio-serial bridge) and MQTT transports and the TypeScript SDK (G6) are all built;
-they add **no** KSA coupling — every transport speaks the same `SnapshotStore` (reads) and
+`gatos.serial` virtio-serial bridge), MQTT, and MCP transports and the TypeScript SDK (G6) are all
+built; they add **no** KSA coupling — every transport speaks the same `SnapshotStore` (reads) and
 `ICommandSink`/`SimCommand` (writes), so this matrix (the KSA-touching surface) is unaffected by them.
 
 **Verified:** **2026-08-05 against `2026.8.5.5168`** (full solution build green, 0 warnings; full test
@@ -78,21 +78,24 @@ Live in-flight checklist: `docs/VALIDATION.md`.
 
 ## Transport parity (binding)
 
-Every row below is reachable over **all** transports — there is one read surface and one write
-surface, projected per transport, never re-implemented:
+Every row below is reachable through the shared model — there is one read surface and one write
+surface, projected per transport, never re-implemented. MCP intentionally presents logical JSON
+resources/tools rather than a leaf-for-leaf filesystem mirror; its v1 contract and explicit
+`/sim/display` exclusion are in [`SPEC_MCP.md`](../SPEC_MCP.md).
 
-| Surface | 9p `/sim` | HTTP `/v1` | MQTT `gatos/` |
+| Surface | 9p `/sim` | HTTP `/v1` | MQTT `gatos/` | MCP |
 |---|---|---|---|
-| Data (granular + atomic) | scalar files + `telemetry` doc | `snapshot`/`system`/`bodies[/{id}]`/`vessels/{id}[/telemetry]` | `snapshot`/`system`/`bodies`/`time`/`status` + `vessels/<id>/{telemetry,snapshot}` |
-| Field-level (per leaf) | the file tree itself | `GET /v1/fs/<path>` (+ `?stream=1` SSE) | retained `gatos/sim/<path>` (one topic/leaf) |
-| Streaming | `stream` / `events` / `time/alarm` | `vessels/{id}/stream` / `events` (SSE) / `time/wait` | retained `vessels/<id>/*` / `events` topics |
-| Control + debug | `ctl/…`, per-module files, `debug/…` | `POST /v1/command`, `POST /v1/fs/<path>` | publish `gatos/command`, `gatos/sim/<path>/set` |
+| Data (granular + atomic) | scalar files + `telemetry` doc | `snapshot`/`system`/`bodies[/{id}]`/`vessels/{id}[/telemetry]` | `snapshot`/`system`/`bodies`/`time`/`status` + `vessels/<id>/{telemetry,snapshot}` | `gatos://` world/celestial/vessel/kitten/runtime resources + logical JSON read tools |
+| Field-level (per leaf) | the file tree itself | `GET /v1/fs/<path>` (+ `?stream=1` SSE) | retained `gatos/sim/<path>` (one topic/leaf) | deliberately not mirrored; grouped domain documents instead |
+| Streaming | `stream` / `events` / `time/alarm` | `vessels/{id}/stream` / `events` (SSE) / `time/wait` | retained `vessels/<id>/*` / `events` topics | `gatos.wait` for later snapshots, matching events, or simulation time |
+| Control + debug | `ctl/…`, per-module files, `debug/…` | `POST /v1/command`, `POST /v1/fs/<path>` | publish `gatos/command`, `gatos/sim/<path>/set` | logical control tools + canonical `gatos.command`, `gatos.execute_batch`, and `gatos.schedule_batch` |
 
-Aggregate reads project the one `SimSnapshot` through `gatOS.SimFs/SimJson` (HTTP + MQTT) or
-`Formats` (9p); the field-level mirror **walks the one `/sim` VFS tree** (`VfsScan`) the 9p server
-serves; writes funnel the one `SimCommand` through the single `ICommandSink`. Add a read to `SimJson`
-/ a `/sim` node / an action to the command table once — every transport gets it. See AGENTS.md
-"THE transport-parity rule".
+Aggregate reads project the one `SimSnapshot` through `gatOS.SimFs/SimJson` (HTTP, MQTT, and MCP)
+or `Formats` (9p); the field-level mirror **walks the one `/sim` VFS tree** (`VfsScan`) the 9p server
+serves; writes funnel the one `SimCommand` through the single `ICommandSink`. The MCP capability
+registry maps those same snapshots/actions to its logical contract and is coverage-tested against
+them. Add a read to `SimJson` / a `/sim` node / an action to the command table once — every transport
+gets it in the projection appropriate to that transport. See AGENTS.md "THE transport-parity rule".
 
 ## Archetypes (KSA_GAME_INTEGRATION_PLAN Part 2)
 

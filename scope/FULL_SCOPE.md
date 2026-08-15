@@ -249,7 +249,8 @@ update's blast radius is small and discoverable. The procedure:
 ## 1. What gatOS is (the seam in one picture)
 
 gatOS runs a real Alpine Linux in a QEMU microVM and exposes live KSA telemetry to the guest as a 9P
-filesystem at `/sim` (mirrored over HTTP `/v1`, MQTT `gatos/`, and a serial bus). Players open SSH
+filesystem at `/sim` (mirrored over HTTP `/v1`, MQTT `gatos/`, and a serial bus). Its first-class MCP
+transport presents that same snapshot/command seam as logical JSON resources and agent tools. Players open SSH
 terminals into the guest through purrTTY. **Only the left-hand "gatOS mod" box below ever touches KSA;**
 everything to the right of the `SimSnapshot`/`SimCommand` seam is game-free and headlessly testable.
 
@@ -263,7 +264,7 @@ everything to the right of the `SimSnapshot`/`SimCommand` seam is game-free and 
    │  TelemetrySampler          │   Readers/     └─────────────────┘  │      │     │  sshd, ash, apk  │
    │   (game thread, OnBeforeUi)│                                      ▼      │slirp│  /sim ◄ 9p tcp   │
    │  CommandQueue drain        │   writes       ┌── SimCommand ───┐  9P/HTTP │◄───►│  /mnt ◄ 9p tcp   │
-   │   (Frame + Solver phase)  ─┘─ Game/Ksa ────►│  (immutable)    │  MQTT    │     │  SSH ◄ hostfwd   │
+   │   (Frame + Solver phase)  ─┘─ Game/Ksa ────►│  (immutable)    │ MQTT/MCP │     │  SSH ◄ hostfwd   │
    │                                Actuators/   └─────────────────┘  serial │     └──────────────────┘
    │  SshShellSession (ICustomShell ← purrTTY contract)  VmHost → QEMU        │
    └──────────────────────────────────────────────────────────────────────┘
@@ -316,7 +317,7 @@ KSA game update have any chance of breaking it.
 | G | `/sim/ctl/batch` atomic same-tick command groups (SPEC §3.10; reuses the existing drain + per-file parsers, no new KSA binding) | No | [`non-ksa-surface.md`](non-ksa-surface.md) |
 | G | Timed command scheduler — `/sim/ctl/timed_batch` + `/sim/ctl/schedules/**`, the 7 `schedule.*` actions, three clock bases (`render`/`wall`/`ut`), shared-clock groups, coalescing catch-up, cap-pressure eviction (gated by `[schedule] schedule_enabled`). Adds **zero** KSA bindings: `KsaCatalog` routes the family straight to the game-free `ScheduleStore.Execute`, and `Mod.TickSchedules` is a driver, not a binding | No | [`non-ksa-surface.md#scheduler`](non-ksa-surface.md#scheduler) |
 | G | The game-free half of the programmable camera — `gatOS.SimFs/Camera/**`: the math primitives, `CameraRules`, the three-layer `Track ?? Override ?? Baseline` compositor, `CameraStore` + the writable `track/` dir, the six line grammars, and the JSON track parser/evaluator/player (`kind = camera-track` in the schedules registry) | No | [`non-ksa-surface.md#camera-game-free`](non-ksa-surface.md#camera-game-free) |
-| G | HTTP `/v1`, MQTT, serial/bus transports, TypeScript SDK | No | [`non-ksa-surface.md`](non-ksa-surface.md) |
+| G | HTTP `/v1`, MQTT, MCP Streamable HTTP, serial/bus transports, TypeScript SDK | No | [`non-ksa-surface.md`](non-ksa-surface.md) |
 
 ---
 

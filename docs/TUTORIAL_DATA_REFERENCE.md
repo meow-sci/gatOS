@@ -7,7 +7,8 @@ shown in **both** ways a tutorial will present it — the in-guest `/sim` filesy
 HTTP `/v1` mirror.
 
 It is not the catalog. The catalog is [`SPEC_9P_FILESYSTEM.md`](../SPEC_9P_FILESYSTEM.md) (every path,
-format, unit, errno, action key). This page pulls out the ~20% of that surface tutorials use 80% of
+format, unit, errno, action key); [`SPEC_MCP.md`](../SPEC_MCP.md) is the companion logical JSON
+contract for AI-agent clients. This page pulls out the ~20% of the filesystem surface tutorials use 80% of
 the time, adds the file↔HTTP correspondence so "show both approaches" is a copy job, and links back
 to the SPEC and the [`gatos` skill](../.agents/skills/gatos/SKILL.md) for depth.
 
@@ -36,6 +37,11 @@ The dual presentation is a **deliberate tutorial requirement**: every tutorial t
 should show the `/sim` file way and the HTTP way, so a reader can pick whichever fits their context.
 The [`tutorials` skill's `authoring.md`](../.agents/skills/tutorials/authoring.md) documents the
 synced-`<Tabs>` component that renders the two side by side.
+
+> **MCP is intentionally a different lesson.** It is not a third spelling for every `/sim` path.
+> AI-agent integrations use logical JSON resources/tools (`gatos.get_vessel`, `gatos.vessel_control`,
+> `gatos.execute_batch`, and so on) documented in `SPEC_MCP.md`. Keep filesystem/HTTP tutorials focused on
+> their dual-transport model; write MCP material against its own contract.
 
 ---
 

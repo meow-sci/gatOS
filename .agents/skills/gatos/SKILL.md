@@ -2,7 +2,7 @@
 name: gatos
 description: >-
   Write scripts and programs against gatOS — the KSA mod that exposes live Kitten Space Agency
-  simulation state as a 9P filesystem at /sim (also over HTTP /v1 and MQTT). Use this when asked to
+  simulation state as a 9P filesystem at /sim (also over HTTP /v1, MQTT, and an AI-oriented MCP server). Use this when asked to
   read game/celestial/vehicle telemetry, control vehicles (throttle, ignite, staging, attitude,
   burns, RCS, lights, docking), use game/debug controls (teleport, impulse kick, refuel, time-warp,
   switch vessel), direct the in-game camera / author cinematic shots and tracks, schedule timed
@@ -18,6 +18,12 @@ file and it actuates the game (returning a real Linux errno on failure). The exa
 served over **HTTP `/v1`** and **MQTT**, so a program can run inside the guest (read `/sim`
 directly) or on the host (HTTP). No custom RPC — the files *are* the API.
 
+For an **AI agent**, gatOS also provides a first-class MCP server. It projects the same snapshots
+and command pipeline as concise logical JSON resources/tools (world, celestial, vessel, kitten,
+runtime, direct controls, and typed same-tick/timed batches), rather than mirroring every `/sim`
+leaf. Its public contract is [`SPEC_MCP.md`](../../../SPEC_MCP.md). Do not invent a filesystem-path
+tool or use `/sim/display`: that terminal-video stream is deliberately outside MCP v1.
+
 > **The complete, authoritative catalog is [`SPEC_9P_FILESYSTEM.md`](../../../SPEC_9P_FILESYSTEM.md)**
 > at the repo root — every path, format, unit, read/write semantic, command action key, errno, and
 > HTTP route. This skill is the orientation; the SPEC is the reference. **When you change the `/sim`
@@ -28,6 +34,7 @@ directly) or on the host (HTTP). No custom RPC — the files *are* the API.
 | File | When |
 |---|---|
 | [`SPEC_9P_FILESYSTEM.md`](../../../SPEC_9P_FILESYSTEM.md) | the full path/format/units/command catalog — your primary reference |
+| [`SPEC_MCP.md`](../../../SPEC_MCP.md) | the MCP v1 logical resources/tools, canonical command envelope, batch semantics, capability preflight, and agent-specific caveats |
 | [`coordinate-frames.md`](coordinate-frames.md) | KSA reference frames (ECL/CCE/CCF/**CCI**/ENU), surface velocity, the Body→CCI attitude quaternion, orbital math — needed for any flight/orbit work; §8 is the camera's six placement frames |
 | [`flight-programs.md`](flight-programs.md) | how to structure a control loop; gating (pause/warp/stale); the `gogogo-rs` and `land-o-matic` case studies |
 | [`recipes.md`](recipes.md) | complete runnable Bun/TS programs — connecting, the **teleport** task, throttle/ignite, burns, events, **timed sequences** (§12), **camera shots** (§13) |
