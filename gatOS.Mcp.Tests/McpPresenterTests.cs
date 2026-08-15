@@ -42,6 +42,26 @@ public sealed class McpPresenterTests
     }
 
     [Test]
+    public async Task PaintControl_MapsLogicalInputToCanonicalPaintCommand()
+    {
+        var sink = new RecordingSink();
+        var presenters = new McpPresenters(new SnapshotStore(), sink, paint: new PaintStore());
+        var handlers = new McpToolHandlers(presenters, null, null, null);
+
+        var result = await handlers.PaintControl("kitten_material_color", "Valentina", color: [.1, .2, .3], target: "visor");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Ok, Is.True);
+            Assert.That(sink.Commands, Has.Count.EqualTo(1));
+            Assert.That(sink.Commands[0].Action, Is.EqualTo(SimActions.PaintKittenMaterialColor));
+            Assert.That(sink.Commands[0].VesselId, Is.EqualTo("Valentina"));
+            Assert.That(sink.Commands[0].Values, Is.EqualTo(new[] { .1, .2, .3 }));
+            Assert.That(sink.Commands[0].Token, Is.EqualTo("visor"));
+        });
+    }
+
+    [Test]
     public void Lists_DefaultTo50_CapAt1000_AndCursorSurvivesNewSnapshot()
     {
         var store = new SnapshotStore();

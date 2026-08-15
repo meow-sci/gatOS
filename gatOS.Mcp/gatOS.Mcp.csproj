@@ -18,4 +18,8 @@
         <PackageReference Include="ModelContextProtocol.Core" Version="[2.2.0]" />
     </ItemGroup>
 
+    <ItemGroup>
+        <InternalsVisibleTo Include="gatOS.Mcp.Tests" />
+    </ItemGroup>
+
 </Project>

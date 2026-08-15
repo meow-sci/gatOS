@@ -1,0 +1,116 @@
+---
+title: Vehicle and EVA paint
+description: Opt in to gatOS paint shaders, color whole vessels or individual parts, and safely tint EVA materials.
+sidebar:
+  order: 11
+---
+
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+
+Paint is a session-only visual system with two independent masters: one for vehicle-part shaders and
+one for EVA material clones. Both ship off. The files remain discoverable while off, but gatOS does
+not install shader hooks, rebuild a renderer, rebind an EVA material, or allocate a GPU clone until
+you opt in.
+
+:::caution[Enable only one vehicle-paint mod]
+
+Vehicle paint intercepts KSA's global shader compiler while the parts master is active. If another
+mod already owns a compiler prefix—including standalone Humble Arteest—gatOS refuses activation with
+`EBUSY` and leaves stock rendering active. Disable the other vehicle-paint integration first.
+
+:::
+
+## Paint a whole vessel
+
+Choose a normalized sRGB color, enable the vessel rule, then opt in to the part shader. The rule is
+live: parts added to the same vessel inherit it. Part glass stays stock.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+```sh
+echo "0.12 0.55 0.95" > /sim/vessels/by-id/Hunter/paint/parts/color
+echo 1 > /sim/vessels/by-id/Hunter/paint/parts/enabled
+echo tint > /sim/paint/parts/blend
+echo 1 > /sim/paint/parts/enabled
+cat /sim/paint/status
+```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+```sh
+curl -X POST --data '0.12 0.55 0.95' \
+  http://127.0.0.1:4242/v1/fs/vessels/by-id/Hunter/paint/parts/color
+curl -X POST --data '1' \
+  http://127.0.0.1:4242/v1/fs/vessels/by-id/Hunter/paint/parts/enabled
+curl -X POST --data 'tint' \
+  http://127.0.0.1:4242/v1/fs/paint/parts/blend
+curl -X POST --data '1' \
+  http://127.0.0.1:4242/v1/fs/paint/parts/enabled
+curl http://127.0.0.1:4242/v1/fs/paint/status
+```
+
+  </TabItem>
+</Tabs>
+
+`multiply` modulates the sampled texture, `tint` mixes the texture toward the chosen color, and
+`replace` uses the chosen color directly while retaining the shader's lighting. Changing mode while
+active requests another deferred renderer rebuild.
+
+To opt out, write `0` to `paint/parts/enabled`. gatOS removes its hooks and requests a stock shader
+rebuild. Desired rules remain in memory, ready for re-enable; use `paint/parts/clear` to discard them.
+
+## Choose a vehicle scope
+
+| Scope | Path | Meaning |
+| --- | --- | --- |
+| Global | `paint/parts/global/{enabled,color,clear}` | every paintable vehicle part |
+| Template | `paint/parts/templates/<template>/{enabled,color,clear}` | every part with that raw `Part.Template.Id` |
+| Vessel | `vessels/by-id/<id>/paint/parts/{enabled,color,clear}` | every current and future part in one live vessel |
+| Part | `vessels/by-id/<id>/parts/<n>/paint/{enabled,color,clear}` | one stable top-level part instance |
+| Subpart | `.../subparts/<m>/paint/{enabled,color,clear}` | one stable recursive subpart instance |
+
+More specific rules win: **part instance → vessel → template → global → stock**. A disabled rule at a
+more specific scope falls through to the next enabled rule. Individual part paths require
+`telemetry_vessel_parts=true`; use `parts/<n>/instance_id` or `parts/json` to discover stable identity.
+
+## Paint EVA kittens
+
+EVA paint has its own master and does not modify KSA's shared stock materials. gatOS creates bounded,
+pooled material clones and restores the original avatar slots on disable, despawn, avatar rebuild, or
+mod unload.
+
+```sh
+# Shared default for every live EVA.
+echo "0.85 0.25 0.55" > /sim/paint/kittens/shared/color
+echo 1 > /sim/paint/kittens/shared/enabled
+echo 1 > /sim/paint/kittens/enabled
+
+# Override one kitten's visor only.
+echo "0.1 0.9 0.35" > /sim/vessels/by-id/Valentina/paint/kitten/materials/visor/color
+echo 1 > /sim/vessels/by-id/Valentina/paint/kitten/materials/visor/enabled
+```
+
+Semantic material names are `body`, `fur`, `helmet`, `visor`, and `mmu`, with `.n` suffixes when an
+avatar has multiple slots. Read `/sim/paint/status` and the material directories for live discovery.
+Sclera and cosmetics remain stock.
+
+EVA precedence is **individual material → individual default → shared material → shared default →
+stock**. “Shared” means the rule applies to every live EVA through safe clones; it does not overwrite
+one material used by unrelated characters. The clone pool defaults to 64 and is capped by
+`paint_max_material_clones`.
+
+## Other interfaces
+
+- MQTT reads retained `gatos/sim/<path>` topics and writes the same raw values to
+  `gatos/sim/<path>/set`.
+- MCP uses [`gatos.paint_control`](/gatOS/mcp/tools/paint-control/). Read complete desired/runtime
+  state with `gatos.get_runtime_state({"feature":"paint"})` or `gatos://runtime/paint`; request
+  `include:["paint"]` from `gatos.get_vessel` for one vessel.
+- Generic HTTP and MQTT command envelopes accept every canonical `paint.*` action listed by
+  capabilities.
+
+All paint actions are Frame phase and honor `control_enabled`, but visual by-id operations do not
+require the target to be the controlled vessel. Rules are never written into a save game. Mod unload
+clears them and restores stock rendering.

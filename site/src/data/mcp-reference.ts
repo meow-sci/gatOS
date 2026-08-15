@@ -48,7 +48,7 @@ const includeField: McpField = {
   type: "string[] | null",
   default: "null",
   description:
-    "Sections to return: flight, orbit, environment, propulsion, resources, power, control, modules, encounters, parts, or all.",
+    "Sections to return: flight, orbit, environment, propulsion, resources, power, control, modules, encounters, parts, paint, or all.",
 };
 
 const commandFields: McpField[] = [
@@ -249,7 +249,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
       "EINVAL for an unknown include section.",
     ],
     notes: [
-      "There is no result-size truncation. Request parts or all when the complete nested graph is actually useful.",
+      "There is no result-size truncation. Request parts, paint, or all only when that nested state is actually useful.",
     ],
   },
   "gatos.list_kittens": {
@@ -302,12 +302,12 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         type: "string",
         required: true,
         description:
-          "camera, schedules, audio, welds, thug_life, face_fx, iva, engine_plume, plume_trail, clouds, or terrain.",
+          "camera, schedules, audio, paint, welds, thug_life, face_fx, iva, engine_plume, plume_trail, clouds, or terrain.",
       },
     ],
     returns:
       "The selected store/runtime snapshot and the closest available version/status fields, correlated with current snapshot_sequence and ut.",
-    example: '{"feature":"schedules"}',
+    example: '{"feature":"paint"}',
     equivalent: "gatos://runtime/{feature}",
     errors: ["EINVAL for an unknown feature; EOPNOTSUPP when its store is disabled."],
   },
@@ -969,6 +969,112 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
       "Entity scope differs by family; discover it from runtime state and capabilities.",
     ],
   },
+  "gatos.paint_control": {
+    name: "gatos.paint_control",
+    kind: "tool",
+    category: "Debug and rendering",
+    summary: "Opt in to paint rendering and color whole vessels, individual parts, templates, or EVA materials.",
+    useWhen:
+      "Changing vehicle or EVA appearance while preserving gatOS's explicit shader/material opt-in lifecycle.",
+    gate: "control_enabled plus the corresponding parts or kittens runtime master.",
+    fields: [
+      {
+        name: "operation",
+        type: "string",
+        required: true,
+        description: "Paint action suffix listed below; gatOS prefixes it with paint.",
+      },
+      {
+        name: "vessel_id",
+        type: "string",
+        default: '""',
+        description: "Raw vessel or EVA id for vessel-, part-, and individual-kitten rules.",
+      },
+      {
+        name: "value",
+        type: "number",
+        default: "0",
+        description: "0 or 1 for enabled flags and clear triggers.",
+      },
+      {
+        name: "color",
+        type: "number[] | null",
+        default: "null",
+        description: "Three finite normalized sRGB channels [r,g,b], each in 0..1.",
+      },
+      {
+        name: "target",
+        type: "string | null",
+        default: "null",
+        description:
+          "Blend token, raw Part.Template.Id, uint part instance_id, or semantic EVA material name, depending on operation.",
+      },
+    ],
+    operations: [
+      {
+        name: "parts_enabled / kittens_enabled",
+        action: "paint.parts_enabled / paint.kittens_enabled",
+        description: "Install or remove the relevant runtime rendering integration transactionally.",
+      },
+      {
+        name: "blend",
+        action: "paint.blend",
+        description: "Select multiply, tint, or replace through target.",
+      },
+      {
+        name: "global_enabled / global_color / global_clear / parts_clear",
+        action: "paint.global_* / paint.parts_clear",
+        description: "Manage the global vehicle rule or clear every retained vehicle rule.",
+      },
+      {
+        name: "template_enabled / template_color / template_clear",
+        action: "paint.template_*",
+        description: "Manage a Part.Template.Id rule named by target.",
+      },
+      {
+        name: "vessel_enabled / vessel_color / vessel_clear",
+        action: "paint.vessel_*",
+        description: "Manage a live whole-vessel rule named by vessel_id.",
+      },
+      {
+        name: "part_enabled / part_color / part_clear",
+        action: "paint.part_*",
+        description: "Manage one stable uint part instance_id supplied as target within vessel_id.",
+      },
+      {
+        name: "kitten_shared_enabled / kitten_shared_color / kitten_shared_clear / kittens_clear",
+        action: "paint.kitten_shared_* / paint.kittens_clear",
+        description: "Manage the shared EVA default or clear every retained EVA rule.",
+      },
+      {
+        name: "kitten_shared_material_enabled / kitten_shared_material_color / kitten_shared_material_clear",
+        action: "paint.kitten_shared_material_*",
+        description: "Manage one shared semantic EVA material named by target.",
+      },
+      {
+        name: "kitten_enabled / kitten_color / kitten_clear",
+        action: "paint.kitten_*",
+        description: "Manage one EVA's default rule through vessel_id.",
+      },
+      {
+        name: "kitten_material_enabled / kitten_material_color / kitten_material_clear",
+        action: "paint.kitten_material_*",
+        description: "Manage one semantic material on one EVA through vessel_id and target.",
+      },
+    ],
+    returns: "Canonical paint command outcome correlated with the current snapshot.",
+    example:
+      '{"operation":"vessel_color","vessel_id":"Hunter","color":[0.12,0.55,0.95]}',
+    errors: [
+      "EACCES when control is disabled; ENOENT for a missing live vessel/part/EVA; EINVAL for an unknown operation, target, flag, blend, or color.",
+      "EBUSY when another mod owns the global shader compiler prefix; EOPNOTSUPP when audited shader or material internals are incompatible.",
+    ],
+    notes: [
+      "Set the desired rule, then enable its rule flag and runtime master; disabling a master restores stock rendering but retains rules for re-enable.",
+      "Part precedence is instance > vessel > template > global > stock. EVA precedence is individual material > individual default > shared material > shared default > stock.",
+      "EVA shared rules use gatOS-owned clones; they do not overwrite KSA's shared stock MaterialData.",
+    ],
+  },
   "gatos.command": {
     name: "gatos.command",
     kind: "tool",
@@ -1190,7 +1296,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
     category: "Resource templates",
     summary: "Complete published runtime state for one feature.",
     useWhen:
-      "Inspecting camera, schedule, audio, cosmetic, IVA, or render-FX state through resources.",
+      "Inspecting camera, schedule, audio, paint, cosmetic, IVA, or render-FX state through resources.",
     gate: "The selected feature's gate and store availability.",
     fields: [
       {
@@ -1198,11 +1304,11 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         type: "URI template variable",
         required: true,
         description:
-          "camera, schedules, audio, welds, thug_life, face_fx, iva, engine_plume, plume_trail, clouds, or terrain.",
+          "camera, schedules, audio, paint, welds, thug_life, face_fx, iva, engine_plume, plume_trail, clouds, or terrain.",
       },
     ],
     returns: "Complete store/runtime state correlated with the current simulation sequence.",
-    example: "gatos://runtime/camera",
+    example: "gatos://runtime/paint",
     equivalent: "gatos.get_runtime_state",
     errors: ["EINVAL/EOPNOTSUPP data for unknown or disabled features."],
   },

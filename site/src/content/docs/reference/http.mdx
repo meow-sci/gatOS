@@ -2,7 +2,7 @@
 title: HTTP API
 description: The loopback /v1 service, aggregate JSON, field mirroring, SSE, commands, and uploads.
 sidebar:
-  order: 12
+  order: 13
 ---
 
 HTTP exists when `http_enabled=true`, on host loopback at `http://127.0.0.1:<port>/v1` and in the guest
@@ -42,6 +42,10 @@ The envelope also accepts `ordinal`, `values`, and `token` for action shapes tha
 Audio is the exception: `GET /audio/files`, `PUT|POST /audio/file/{name}`, and `DELETE /audio/file/{name}`
 handle binary clips. Camera tracks and schedules are ordinary field uploads: post JSON to
 `/fs/camera/track/<name>` or batch text to `/fs/ctl/timed_batch`.
+
+Paint is also an ordinary field mirror. For example, `POST /fs/paint/parts/enabled` opts in to the
+vehicle shader and `POST /fs/vessels/by-id/Hunter/paint/parts/color` sets a whole-vessel color. See
+[Vehicle and EVA paint](/gatOS/reference/paint/) for the required rule/master sequence.
 
 The server keeps HTTP/1.1 connections alive for roughly 30 seconds of idle time. Reuse a connection for
 polling; SSE remains open until the caller disconnects.

@@ -2,7 +2,7 @@
 title: Debug and visual tools
 description: Cheats, welding, cabin physics, rendering overrides, cosmetics, and live FX editors.
 sidebar:
-  order: 11
+  order: 12
 ---
 
 Everything on this page is under `debug/` and requires `debug_namespace=true`. These are sharp tools,
@@ -52,3 +52,7 @@ Engine-plume changes are per template, plume trail is global, clouds are body/la
 is body-scoped with global `wireframe`. FX values are float32 on read-back, session-only, and restored on
 unload. Use `help` and the root specification for each individual range and unit; `*_km`, `*_deg`, `*_px`,
 and channel names tell the truth more reliably than an assumption that every number is meters.
+
+Vehicle and EVA coloring is a separate, non-debug opt-in surface. See
+[Vehicle and EVA paint](/gatOS/reference/paint/) for its shader lifecycle, scopes, precedence, and
+material-clone behavior.

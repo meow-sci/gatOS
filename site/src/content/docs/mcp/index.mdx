@@ -30,7 +30,7 @@ as `gatos.ignite_engines`, `gatos.vessel_control`, `gatos.execute_batch`, and
     href="/gatOS/mcp/conventions/"
   />
   <LinkCard
-    title="Browse all 25 tools"
+    title="Browse all 26 tools"
     description="Read, control, media, debug, atomic batch, and timed schedule tools."
     href="/gatOS/mcp/tools/"
   />
@@ -74,6 +74,7 @@ bound port. Configure it with `mcp_enabled` and `mcp_preferred_port` in `gatos.t
 | Inspect feature-owned state            | [`gatos.get_runtime_state`](/gatOS/mcp/tools/get-runtime-state/)                                                                                                                |
 | Perform one ordinary flight action     | [Common vessel actions](/gatOS/mcp/tools/#common-vessel-actions) or [`gatos.vessel_control`](/gatOS/mcp/tools/vessel-control/)                                                  |
 | Change one fitted module               | [`gatos.module_control`](/gatOS/mcp/tools/module-control/)                                                                                                                      |
+| Paint a vehicle, part, or EVA           | [`gatos.paint_control`](/gatOS/mcp/tools/paint-control/)                                                                                                                        |
 | Coordinate same-tick changes           | [`gatos.execute_batch`](/gatOS/mcp/tools/execute-batch/)                                                                                                                        |
 | Run a timed sequence                   | [`gatos.schedule_batch`](/gatOS/mcp/tools/schedule-batch/) and [`gatos.schedule_control`](/gatOS/mcp/tools/schedule-control/)                                                   |
 | Use a known URI through resources/read | [Resource directory](/gatOS/mcp/resources/)                                                                                                                                     |
@@ -82,7 +83,7 @@ bound port. Configure it with `mcp_enabled` and `mcp_preferred_port` in `gatos.t
 
 Pass `detail:"full"` to `gatos.get_world` for the complete current snapshot. A vessel read can
 select `flight`, `orbit`, `environment`, `propulsion`, `resources`, `power`, `control`, `modules`,
-`encounters`, `parts`, or `all`. Selected sections include every matching nested object.
+`encounters`, `parts`, `paint`, or `all`. Selected sections include every matching nested object.
 
 Lists return 50 entities by default and accept at most 1,000 per page. Follow `next_cursor` for the
 rest. gatOS never measures, caps, or truncates MCP JSON results. Each snapshot-derived result carries
@@ -100,7 +101,7 @@ gatos.activate_stage({ vessel_id: "Hunter" })
 ```
 
 The logical families cover vessel and module controls, the programmable camera, camera tracks,
-audio, schedules, debug/game manipulation, and runtime render FX. The advanced
+audio, schedules, debug/game manipulation, runtime render FX, and vehicle/EVA paint. The advanced
 [`gatos.command`](/gatOS/mcp/tools/command/) envelope remains the complete-coverage backstop for
 every canonical gatOS action.
 

@@ -2,7 +2,7 @@
 title: MQTT and serial
 description: Retained topic mirrors, command messages, virtio serial telemetry, and SCPI input.
 sidebar:
-  order: 13
+  order: 14
 ---
 
 ## MQTT
@@ -21,6 +21,10 @@ Field topics need `mqtt_field_topics=true`. Aggregate world cadence uses `mqtt_p
 uses `field_feed_hz`. Publication is subscription-gated: an unmatched topic is not produced, a new
 subscription gets its retained baseline within a cycle, and a despawn clears retained vessel topics with an
 empty payload. MQTT mirrors text controls, not binary display frames or audio uploads.
+
+Paint follows the same mirror automatically: read `gatos/sim/paint/status`, write the vehicle master
+at `gatos/sim/paint/parts/enabled/set`, and address vessel/part/EVA rules with their ordinary `/sim`
+relative paths. See [Vehicle and EVA paint](/gatOS/reference/paint/).
 
 ## Virtio serial
 
