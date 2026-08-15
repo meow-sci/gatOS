@@ -4,6 +4,7 @@ using gatOS.SimFs.Audio;
 using gatOS.SimFs.Camera;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
+using gatOS.Paint;
 
 namespace gatOS.Mcp;
 
@@ -19,10 +20,11 @@ public sealed class McpPresenters
     private readonly AudioStore? _audio;
     private readonly CameraStore? _camera;
     private readonly ScheduleStore? _schedules;
+    private readonly PaintStore? _paint;
 
     public McpPresenters(SnapshotStore snapshots, ICommandSink? commands = null,
         Func<string>? transports = null, AudioStore? audio = null, CameraStore? camera = null,
-        ScheduleStore? schedules = null)
+        ScheduleStore? schedules = null, PaintStore? paint = null)
     {
         _snapshots = snapshots;
         _commands = commands;
@@ -30,6 +32,7 @@ public sealed class McpPresenters
         _audio = audio;
         _camera = camera;
         _schedules = schedules;
+        _paint = paint;
     }
 
     public SimSnapshot Current => _snapshots.Current;
@@ -109,7 +112,7 @@ public sealed class McpPresenters
             return Ok(vessel, s);
 
         var allowed = new HashSet<string>(
-            ["flight", "orbit", "environment", "propulsion", "resources", "power", "control", "modules", "encounters", "parts"],
+            ["flight", "orbit", "environment", "propulsion", "resources", "power", "control", "modules", "encounters", "parts", "paint"],
             StringComparer.OrdinalIgnoreCase);
         if (include.Any(x => !allowed.Contains(x))) return Invalid("include contains an unknown section", s);
 
@@ -140,6 +143,7 @@ public sealed class McpPresenters
             "plume_trail" => s.FxEditors?.Trail,
             "clouds" => s.FxEditors?.CloudBodies,
             "terrain" => s.FxEditors is null ? null : new { bodies = s.FxEditors.TerrainBodies, global = s.FxEditors.TerrainGlobal },
+            "paint" => _paint?.Current,
             _ => MissingSentinel.Value,
         };
         if (ReferenceEquals(data, MissingSentinel.Value)) return Invalid($"unknown runtime feature '{feature}'", s);
@@ -157,7 +161,7 @@ public sealed class McpPresenters
             json = new { size_limit = (int?)null, truncation = false },
             control_enabled = _commands?.ControlEnabled ?? false,
             debug_enabled = _commands?.DebugEnabled ?? false,
-            features = new { audio = _audio is not null, camera = _camera is not null, schedules = _schedules is not null },
+            features = new { audio = _audio is not null, camera = _camera is not null, schedules = _schedules is not null, paint = _paint is not null },
             actions = CommandCatalog.All.Select(d => new
             {
                 action = d.Action,
@@ -280,7 +284,7 @@ public sealed class McpPresenters
     private static object BodySummary(BodySnapshot b) => new { b.Id, b.Class, b.ParentId };
     private static object Player(IPlaybackPlayer p) => new { p.Id, p.Kind, p.Group, clock = p.Clock.Base.ToString().ToLowerInvariant(), p.DurationMs, state = p.State.ToString().ToLowerInvariant(), p.PendingCount, p.Dropped, p.LastError };
 
-    private static object? Section(VesselSnapshot v, string name) => name.ToLowerInvariant() switch
+    private object? Section(VesselSnapshot v, string name) => name.ToLowerInvariant() switch
     {
         "flight" => new { v.PositionCci, v.PositionEcl, v.VelocityCci, v.LatitudeDeg, v.LongitudeDeg, v.BarometricAltitude, v.RadarAltitude, v.OrbitalSpeed, v.SurfaceSpeed, v.InertialSpeed, v.AttitudeBody2Cci, v.BodyRatesRadS, v.Navball },
         "orbit" => v.Orbit,
@@ -292,6 +296,16 @@ public sealed class McpPresenters
         "modules" => new { v.Engines, v.Tanks, v.Rcs, v.Solar, v.Generators, v.Lights, v.Docking, v.Decouplers, v.Animations, v.Srb },
         "encounters" => v.Encounters,
         "parts" => v.Parts,
+        "paint" => _paint is null ? null : new
+        {
+            parts = _paint.Current.Vessels.TryGetValue(v.Id, out var vesselRule) ? vesselRule : PaintRule.Default,
+            part_overrides = _paint.Current.Parts.Where(x => x.Key.VesselId == v.Id)
+                .ToDictionary(x => x.Key.InstanceId, x => x.Value),
+            kitten = v.IsKitten && _paint.Current.Kittens.TryGetValue(v.Id, out var kittenRule)
+                ? kittenRule : PaintRule.Default,
+            kitten_materials = _paint.Current.KittenMaterials.Where(x => x.Key.VesselId == v.Id)
+                .ToDictionary(x => x.Key.MaterialName, x => x.Value),
+        },
         _ => null,
     };
 
@@ -300,6 +314,7 @@ public sealed class McpPresenters
         "audio_enabled" => _audio is not null,
         "camera_enabled" => _camera is not null,
         "schedule_enabled" => _schedules is not null,
+        "control_enabled + paint runtime master" => _paint is not null && (_commands?.ControlEnabled ?? false),
         "debug_namespace" => _commands?.DebugEnabled ?? false,
         _ => _commands?.ControlEnabled ?? false,
     };

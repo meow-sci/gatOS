@@ -3,6 +3,7 @@ using gatOS.SimFs.Audio;
 using gatOS.SimFs.Camera;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
+using gatOS.Paint;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using ModelContextProtocol.Protocol;
@@ -30,9 +31,10 @@ public sealed class McpRegistry
         },
     });
     public McpRegistry(SnapshotStore snapshots, ICommandSink? commands = null, Func<string>? transports = null,
-        AudioStore? audio = null, CameraStore? camera = null, ScheduleStore? schedules = null)
+        AudioStore? audio = null, CameraStore? camera = null, ScheduleStore? schedules = null,
+        PaintStore? paint = null)
     {
-        Presenters = new(snapshots, commands, transports, audio, camera, schedules);
+        Presenters = new(snapshots, commands, transports, audio, camera, schedules, paint);
         var h = new McpToolHandlers(Presenters, audio, camera, schedules);
         Tools = new McpServerPrimitiveCollection<McpServerTool>();
         AddRead("gatos.get_world", h.GetWorld, "Read simulation time, status, indexes, or the complete current world.");
@@ -58,6 +60,7 @@ public sealed class McpRegistry
         AddWrite("gatos.schedule_control", h.ScheduleControl, "Inspect or control schedule and camera players.");
         AddWrite("gatos.debug_control", h.DebugControl, "Use gated gatOS game/debug operations.", destructive: true);
         AddWrite("gatos.render_fx_control", h.RenderFxControl, "Edit engine plume, trail, cloud, or terrain runtime fields.");
+        AddWrite("gatos.paint_control", h.PaintControl, "Opt in/out and paint vehicles, part instances, templates, shared EVA materials, or individual EVAs.");
         AddWrite("gatos.command", h.Command, "Advanced canonical action envelope covering every catalog action.", destructive: true);
         AddWrite("gatos.execute_batch", h.ExecuteBatch, "Validate and submit an ordered same-phase same-tick command batch.", destructive: true);
         AddWrite("gatos.schedule_batch", h.ScheduleBatch, "Create a typed render, wall, or UT timed command sequence.", destructive: true);

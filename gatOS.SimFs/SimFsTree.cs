@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using gatOS.NineP.Protocol;
 using gatOS.NineP.Vfs;
+using gatOS.Paint;
 using gatOS.SimFs.Audio;
 using gatOS.SimFs.Camera;
 using gatOS.SimFs.Commands;
@@ -102,10 +103,14 @@ public static class SimFsTree
     ///     whole ownership + pose + playback control surface. Null (camera disabled in config) removes
     ///     it entirely so the SPEC stays truthful.
     /// </param>
+    /// <param name="paint">
+    ///     Optional always-visible paint rule/status store. Its two writable masters are the opt-in
+    ///     boundary; supplying the store alone installs no shader hooks and creates no GPU materials.
+    /// </param>
     public static VfsDirectory Build(SnapshotStore store, ICommandSink? commands, Func<string>? transports,
         DisplaySurface? display = null, AudioStore? audio = null, ScheduleStore? schedules = null,
-        CameraStore? camera = null)
-        => new Builder(store, commands, transports, display, audio, schedules, camera).BuildRoot();
+        CameraStore? camera = null, PaintStore? paint = null)
+        => new Builder(store, commands, transports, display, audio, schedules, camera, paint).BuildRoot();
 
     private sealed class Builder
     {
@@ -116,6 +121,7 @@ public static class SimFsTree
         private readonly AudioStore? _audio;
         private readonly ScheduleStore? _schedules;
         private readonly CameraStore? _camera;
+        private readonly PaintStore? _paint;
         private readonly ConcurrentDictionary<string, ulong> _qids = new();
         private long _nextQid;
 
@@ -158,7 +164,8 @@ public static class SimFsTree
         }
 
         internal Builder(SnapshotStore store, ICommandSink? commands, Func<string>? transports,
-            DisplaySurface? display, AudioStore? audio, ScheduleStore? schedules, CameraStore? camera)
+            DisplaySurface? display, AudioStore? audio, ScheduleStore? schedules, CameraStore? camera,
+            PaintStore? paint)
         {
             _store = store;
             _commands = commands;
@@ -167,6 +174,7 @@ public static class SimFsTree
             _audio = audio;
             _schedules = schedules;
             _camera = camera;
+            _paint = paint;
         }
 
         internal VfsDirectory BuildRoot()
@@ -220,6 +228,11 @@ public static class SimFsTree
             if (_camera is not null)
                 children.Add(CameraDir());
 
+            // Paint remains discoverable while disabled: its master switches are the explicit
+            // opt-in boundary that installs/removes renderer hooks and EVA material clones.
+            if (_paint is not null)
+                children.Add(PaintDir());
+
             var fixedChildren = children.ToArray();
             _root = new DelegateDirectory("/", Qid("/"), () => fixedChildren);
             return _root;
@@ -237,6 +250,202 @@ public static class SimFsTree
                 children.AddRange(ScheduleTree.Nodes(sink, schedules, () => _root!, Qid));
             return DelegateDirectory.Fixed("ctl", Qid("ctl"), children.ToArray());
         }
+
+        // ---- paint (opt-in vehicle shaders + gatOS-owned EVA material clones) ------------
+
+        private VfsDirectory PaintDir()
+            => DelegateDirectory.Fixed("paint", Qid("paint"),
+                Line("paint/status", "status", PaintStatusLine),
+                new StaticTextFile("help", Qid("paint/help"), () => PaintHelp),
+                PartPaintRootDir(), KittenPaintRootDir());
+
+        private string PaintStatusLine()
+        {
+            var s = _paint!.Current;
+            return $"parts={s.PartsStatus.ToString().ToLowerInvariant()} kittens={s.KittensStatus.ToString().ToLowerInvariant()} "
+                + $"blend={PaintBlendModes.Format(s.Blend)} clones={s.LiveMaterialClones}/{s.MaterialCloneCap} "
+                + $"bindings={s.ActiveKittenBindings} raytraced={Formats.Flag(s.RaytracedShaderAvailable)} "
+                + $"part_error={s.PartError.Replace('\n', ' ')} kitten_error={s.KittenError.Replace('\n', ' ')}";
+        }
+
+        private VfsDirectory PartPaintRootDir()
+        {
+            var sink = _commands;
+            var q = "paint/parts";
+            var children = new List<VfsNode>
+            {
+                FlagControl($"{q}/enabled", "enabled", "", SimActions.PaintPartsEnabled,
+                    SimCommand.NoOrdinal, () => Formats.Flag(_paint!.Current.PartsEnabled)),
+                EnumControl($"{q}/blend", "blend", "", SimActions.PaintBlend,
+                    ["multiply", "tint", "replace"], () => PaintBlendModes.Format(_paint!.Current.Blend)),
+                PaintRuleDir("global", $"{q}/global", "", null,
+                    SimActions.PaintGlobalEnabled, SimActions.PaintGlobalColor, SimActions.PaintGlobalClear,
+                    () => _paint!.Current.GlobalPart),
+                TemplatePaintDir(),
+            };
+            if (sink is not null)
+                children.Insert(2, new TriggerFile("clear", Qid($"{q}/clear"), sink,
+                    new SimCommand("", SimActions.PaintPartsClear, SimCommand.NoOrdinal, 1)));
+            return DelegateDirectory.Fixed("parts", Qid(q), children.ToArray());
+        }
+
+        private VfsDirectory TemplatePaintDir()
+            => DynamicRuleDirectory("templates", "paint/parts/templates", PartTemplateIds,
+                (name, id) => PaintRuleDir(name, $"paint/parts/templates/{name}", "", id,
+                    SimActions.PaintTemplateEnabled, SimActions.PaintTemplateColor, SimActions.PaintTemplateClear,
+                    () => _paint!.Current.Templates.TryGetValue(id, out var rule) ? rule : PaintRule.Default));
+
+        private IReadOnlyList<string> PartTemplateIds()
+            => _paint!.Current.Templates.Keys
+                .Concat(_store.Current.Vessels.SelectMany(v => v.Parts)
+                    .SelectMany(p => p.Subparts.Select(s => s.Template).Prepend(p.Template)))
+                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+
+        private VfsDirectory KittenPaintRootDir()
+        {
+            var sink = _commands;
+            var q = "paint/kittens";
+            var children = new List<VfsNode>
+            {
+                FlagControl($"{q}/enabled", "enabled", "", SimActions.PaintKittensEnabled,
+                    SimCommand.NoOrdinal, () => Formats.Flag(_paint!.Current.KittensEnabled)),
+                PaintRuleDir("shared", $"{q}/shared", "", null,
+                    SimActions.PaintKittenSharedEnabled, SimActions.PaintKittenSharedColor,
+                    SimActions.PaintKittenSharedClear, () => _paint!.Current.SharedKitten),
+                SharedKittenMaterialsDir(),
+            };
+            if (sink is not null)
+                children.Insert(1, new TriggerFile("clear", Qid($"{q}/clear"), sink,
+                    new SimCommand("", SimActions.PaintKittensClear, SimCommand.NoOrdinal, 1)));
+            return DelegateDirectory.Fixed("kittens", Qid(q), children.ToArray());
+        }
+
+        private VfsDirectory SharedKittenMaterialsDir()
+            => DynamicRuleDirectory("materials", "paint/kittens/materials", KittenMaterialNames,
+                (name, id) => PaintRuleDir(name, $"paint/kittens/materials/{name}", "", id,
+                    SimActions.PaintKittenSharedMaterialEnabled, SimActions.PaintKittenSharedMaterialColor,
+                    SimActions.PaintKittenSharedMaterialClear,
+                    () => _paint!.Current.SharedMaterials.TryGetValue(id, out var rule) ? rule : PaintRule.Default));
+
+        private IReadOnlyList<string> KittenMaterialNames()
+            => _paint!.Current.MaterialNames.Concat(_paint.Current.SharedMaterials.Keys)
+                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+
+        private VfsDirectory DynamicRuleDirectory(string name, string q, Func<IReadOnlyList<string>> ids,
+            Func<string, string, VfsDirectory> create)
+            => new DelegateDirectory(name, Qid(q),
+                () => SanitizeNames(ids(), static id => id).Select(x => (VfsNode)create(x.Name, x.Item)).ToArray(),
+                child => SanitizeNames(ids(), static id => id).FirstOrDefault(x => x.Name == child) is var match
+                    && match.Item is not null ? create(match.Name, match.Item) : null);
+
+        private VfsDirectory PaintRuleDir(string name, string q, string vesselId, string? target,
+            string enabledAction, string colorAction, string clearAction, Func<PaintRule> read)
+        {
+            var nodes = new List<VfsNode>
+            {
+                PaintFlagControl($"{q}/enabled", "enabled", vesselId, enabledAction, target,
+                    () => Formats.Flag(read().Enabled)),
+                PaintColorControl($"{q}/color", "color", vesselId, colorAction, target,
+                    () => read().Color.ToString()),
+            };
+            if (_commands is { } sink)
+                nodes.Add(new TriggerFile("clear", Qid($"{q}/clear"), sink,
+                    new SimCommand(vesselId, clearAction, SimCommand.NoOrdinal, 1) { Token = target }));
+            return DelegateDirectory.Fixed(name, Qid(q), nodes.ToArray());
+        }
+
+        private VfsFile PaintFlagControl(string q, string name, string vesselId, string action, string? target,
+            Func<string> read)
+            => LineControl(q, name, read, token => token switch
+            {
+                "0" or "1" => new SimCommand(vesselId, action, SimCommand.NoOrdinal, token == "1" ? 1 : 0)
+                    { Token = target },
+                _ => null,
+            });
+
+        private VfsFile PaintColorControl(string q, string name, string vesselId, string action, string? target,
+            Func<string> read)
+            => LineControl(q, name, read, token =>
+            {
+                var fields = token.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                if (fields.Length != 3) return null;
+                var values = new double[3];
+                for (var i = 0; i < values.Length; i++)
+                    if (!double.TryParse(fields[i], NumberStyles.Float, CultureInfo.InvariantCulture, out values[i]))
+                        return null;
+                if (!PaintColor.TryFrom(values, out _)) return null;
+                return new SimCommand(vesselId, action, SimCommand.NoOrdinal, 0) { Token = target, Values = values };
+            });
+
+        private VfsDirectory VesselPaintDir(string q, string vesselId, bool kitten)
+        {
+            var children = new List<VfsNode>
+            {
+                PaintRuleDir("parts", $"{q}/parts", vesselId, null,
+                    SimActions.PaintVesselEnabled, SimActions.PaintVesselColor, SimActions.PaintVesselClear,
+                    () => _paint!.Current.Vessels.TryGetValue(vesselId, out var rule) ? rule : PaintRule.Default),
+            };
+            if (kitten)
+                children.Add(KittenInstancePaintDir($"{q}/kitten", vesselId));
+            return DelegateDirectory.Fixed("paint", Qid(q), children.ToArray());
+        }
+
+        private VfsDirectory KittenInstancePaintDir(string q, string vesselId)
+            => DelegateDirectory.Fixed("kitten", Qid(q),
+                PaintRuleDir("default", $"{q}/default", vesselId, null,
+                    SimActions.PaintKittenEnabled, SimActions.PaintKittenColor, SimActions.PaintKittenClear,
+                    () => _paint!.Current.Kittens.TryGetValue(vesselId, out var rule) ? rule : PaintRule.Default),
+                DynamicRuleDirectory("materials", $"{q}/materials", KittenMaterialNames,
+                    (name, id) => PaintRuleDir(name, $"{q}/materials/{name}", vesselId, id,
+                        SimActions.PaintKittenMaterialEnabled, SimActions.PaintKittenMaterialColor,
+                        SimActions.PaintKittenMaterialClear,
+                        () => _paint!.Current.KittenMaterials.TryGetValue(new(vesselId, id), out var rule)
+                            ? rule : PaintRule.Default)));
+
+        private VfsDirectory PartPaintDir(string q, string vesselId, Func<uint> instanceId)
+        {
+            PaintRule Read()
+                => _paint!.Current.Parts.TryGetValue(new(vesselId, instanceId()), out var rule)
+                    ? rule : PaintRule.Default;
+            var nodes = new List<VfsNode>
+            {
+                LineControl($"{q}/enabled", "enabled", () => Formats.Flag(Read().Enabled), token => token switch
+                {
+                    "0" or "1" => new SimCommand(vesselId, SimActions.PaintPartEnabled,
+                        SimCommand.NoOrdinal, token == "1" ? 1 : 0)
+                        { Token = instanceId().ToString(CultureInfo.InvariantCulture) },
+                    _ => null,
+                }),
+                LineControl($"{q}/color", "color", () => Read().Color.ToString(), token =>
+                {
+                    var fields = token.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                    if (fields.Length != 3) return null;
+                    var values = new double[3];
+                    for (var i = 0; i < 3; i++)
+                        if (!double.TryParse(fields[i], NumberStyles.Float, CultureInfo.InvariantCulture, out values[i]))
+                            return null;
+                    return PaintColor.TryFrom(values, out _)
+                        ? new SimCommand(vesselId, SimActions.PaintPartColor, SimCommand.NoOrdinal, 0)
+                            { Token = instanceId().ToString(CultureInfo.InvariantCulture), Values = values }
+                        : null;
+                }),
+            };
+            if (_commands is not null)
+                nodes.Add(LineControl($"{q}/clear", "clear", () => "0", token => token == "1"
+                    ? new SimCommand(vesselId, SimActions.PaintPartClear, SimCommand.NoOrdinal, 1)
+                        { Token = instanceId().ToString(CultureInfo.InvariantCulture) }
+                    : null));
+            return DelegateDirectory.Fixed("paint", Qid(q), nodes.ToArray());
+        }
+
+        private const string PaintHelp = """
+            Vehicle paint is opt-in: write 1 to parts/enabled to transform shaders in memory; write 0 to restore stock.
+            RGB values are normalized sRGB triples. Blend is multiply, tint, or replace.
+            Part precedence: part instance > live vessel > template > global > stock.
+            EVA paint uses gatOS-owned material clones and restores stock bindings on disable.
+            EVA precedence: individual material > individual default > shared material > shared default > stock.
+            HTTP mirrors these leaves at /v1/fs/paint/...; MQTT at gatos/sim/paint/... and .../set.
+            """;
 
         // ---- time (KSA_GAME_INTEGRATION_PLAN §4.2) ----------------------------------------
 
@@ -793,6 +1002,7 @@ public static class SimFsTree
             // controls (engine active, rcs active, light state, decoupler fire, solar/animation
             // goal) live inside their own read dirs above and light up the same way.
             var ctl = _commands is not null ? CtlDir(p, vesselId) : null;
+            var paint = _paint is not null ? VesselPaintDir($"{p}/paint", vesselId, Vessel(vesselId).IsKitten) : null;
 
             return new DelegateDirectory(sanitized, Qid(p),
                 () =>
@@ -834,6 +1044,8 @@ public static class SimFsTree
                     children.Add(stream);
                     if (ctl is not null)
                         children.Add(ctl);
+                    if (paint is not null)
+                        children.Add(paint);
 
                     return children;
                 },
@@ -861,6 +1073,7 @@ public static class SimFsTree
                         "parts" => vessel.Parts.Count > 0 ? parts : null,
                         "stream" => stream,
                         "ctl" => ctl,
+                        "paint" => paint,
                         _ => FindByName(prefix, name),
                     };
                 });
@@ -1090,21 +1303,29 @@ public static class SimFsTree
         }
 
         private VfsDirectory PartDir(string p, string vesselId, int index)
-            => DelegateDirectory.Fixed($"{index}", Qid($"{p}/parts/{index}"),
+        {
+            var q = $"{p}/parts/{index}";
+            var nodes = new List<VfsNode>
+            {
                 // instance_id is the STABLE handle a weld anchors to (Part.Id can collide).
-                Line($"{p}/parts/{index}/instance_id", "instance_id",
+                Line($"{q}/instance_id", "instance_id",
                     () => Formats.UInt(Part(vesselId, index).InstanceId)),
-                Line($"{p}/parts/{index}/id", "id", () => Part(vesselId, index).Id),
-                Line($"{p}/parts/{index}/display_name", "display_name",
+                Line($"{q}/id", "id", () => Part(vesselId, index).Id),
+                Line($"{q}/display_name", "display_name",
                     () => Part(vesselId, index).DisplayName),
-                Line($"{p}/parts/{index}/template", "template", () => Part(vesselId, index).Template),
-                Line($"{p}/parts/{index}/is_root", "is_root",
+                Line($"{q}/template", "template", () => Part(vesselId, index).Template),
+                Line($"{q}/is_root", "is_root",
                     () => Formats.Flag(Part(vesselId, index).IsRoot)),
-                Line($"{p}/parts/{index}/subpart_count", "subpart_count",
+                Line($"{q}/subpart_count", "subpart_count",
                     () => Part(vesselId, index).SubpartCount.ToString(CultureInfo.InvariantCulture)),
-                Line($"{p}/parts/{index}/position", "position",
+                Line($"{q}/position", "position",
                     () => Formats.Vector(Part(vesselId, index).PositionVehicleAsmb)),
-                SubpartsDir(p, vesselId, index));
+                SubpartsDir(p, vesselId, index),
+            };
+            if (_paint is not null)
+                nodes.Add(PartPaintDir($"{q}/paint", vesselId, () => Part(vesselId, index).InstanceId));
+            return DelegateDirectory.Fixed($"{index}", Qid(q), nodes.ToArray());
+        }
 
         private VfsDirectory SubpartsDir(string p, string vesselId, int partIndex)
             => IndexedDir("subparts", $"{p}/parts/{partIndex}/subparts",
@@ -1112,18 +1333,27 @@ public static class SimFsTree
                 index => SubpartDir(p, vesselId, partIndex, index));
 
         private VfsDirectory SubpartDir(string p, string vesselId, int partIndex, int index)
-            => DelegateDirectory.Fixed($"{index}", Qid($"{p}/parts/{partIndex}/subparts/{index}"),
+        {
+            var q = $"{p}/parts/{partIndex}/subparts/{index}";
+            var nodes = new List<VfsNode>
+            {
                 // A subpart's instance_id is a valid weld anchor exactly like a top-level part's.
-                Line($"{p}/parts/{partIndex}/subparts/{index}/instance_id", "instance_id",
+                Line($"{q}/instance_id", "instance_id",
                     () => Formats.UInt(Subpart(vesselId, partIndex, index).InstanceId)),
-                Line($"{p}/parts/{partIndex}/subparts/{index}/id", "id",
+                Line($"{q}/id", "id",
                     () => Subpart(vesselId, partIndex, index).Id),
-                Line($"{p}/parts/{partIndex}/subparts/{index}/display_name", "display_name",
+                Line($"{q}/display_name", "display_name",
                     () => Subpart(vesselId, partIndex, index).DisplayName),
-                Line($"{p}/parts/{partIndex}/subparts/{index}/template", "template",
+                Line($"{q}/template", "template",
                     () => Subpart(vesselId, partIndex, index).Template),
-                Line($"{p}/parts/{partIndex}/subparts/{index}/position", "position",
-                    () => Formats.Vector(Subpart(vesselId, partIndex, index).PositionVehicleAsmb)));
+                Line($"{q}/position", "position",
+                    () => Formats.Vector(Subpart(vesselId, partIndex, index).PositionVehicleAsmb)),
+            };
+            if (_paint is not null)
+                nodes.Add(PartPaintDir($"{q}/paint", vesselId,
+                    () => Subpart(vesselId, partIndex, index).InstanceId));
+            return DelegateDirectory.Fixed($"{index}", Qid(q), nodes.ToArray());
+        }
 
         // ---- control surface (only when a command sink is wired — KSA_GAME_INTEGRATION_PLAN T1) ----
 

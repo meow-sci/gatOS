@@ -6,6 +6,7 @@ using gatOS.GameMod.Game.Ksa.Actuators;
 using gatOS.GameMod.Game.Ksa.Camera;
 using gatOS.GameMod.Game.Ksa.Fx;
 using gatOS.GameMod.Game.Ksa.Iva;
+using gatOS.GameMod.Game.Ksa.Paint;
 using gatOS.GameMod.Game.Ksa.Render;
 using gatOS.GameMod.Game.Ksa.ThugLife;
 using gatOS.GameMod.Game.Ksa.Welds;
@@ -119,6 +120,10 @@ public sealed partial class Mod
     private CameraDirector? _cameraDirector;
     private bool _cameraDead;
     private Harmony? _cameraHarmony;
+
+    // Paint manager is inert until a transport writes one of its two runtime masters. It owns all
+    // dynamic renderer hooks and material clones and therefore has one unconditional unload path.
+    private PaintManager? _paintManager;
 
     // Game-thread-only driver state for the timed-command scheduler (CAMERA_CONTROLS_PLAN §3.2).
     // The due list is reused across ticks (Clear()ed, never reallocated) so a steady-state tick
@@ -305,8 +310,23 @@ public sealed partial class Mod
         // Constructing the face-FX registry touches no particle type: it holds no emitter until a
         // guest writes /sim/debug/fx/spawn, and every spawn is a self-retiring burst.
         _faceFx ??= new FaceFxManager();
+        if (_paintManager is null && _paintStore is { } paintStore)
+        {
+            _paintManager = new PaintManager(paintStore);
+            if (Config.PaintPartsEnabled)
+                _paintManager.Execute(new SimCommand("", SimActions.PaintPartsEnabled, SimCommand.NoOrdinal, 1));
+            if (Config.PaintKittensEnabled)
+                _paintManager.Execute(new SimCommand("", SimActions.PaintKittensEnabled, SimCommand.NoOrdinal, 1));
+        }
         _catalog ??= new KsaCatalog(_health, Config.ControlAllVessels, _weldManager, _thugLife,
-            _ivaPhysics, _audioActuator, _scheduleStore, _cameraDirector, _faceFx);
+            _ivaPhysics, _audioActuator, _scheduleStore, _cameraDirector, _faceFx, _paintManager);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void DrivePaint()
+    {
+        try { _paintManager?.Tick(); }
+        catch (Exception ex) { ModLog.Log.Error($"gatOS paint tick failed: {ex.Message}"); }
     }
 
     /// <summary>Snapshots the <c>[iva]</c> config section into the cabin simulation's tuning record.</summary>
@@ -623,6 +643,16 @@ public sealed partial class Mod
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     partial void TeardownGameCheats()
     {
+        try
+        {
+            _paintManager?.Dispose();
+            _paintManager = null;
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS paint teardown error: {ex.Message}");
+        }
+
         try
         {
             // FX editors first: every touched plume template / trail setting / cloud layer / terrain

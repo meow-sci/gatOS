@@ -850,3 +850,10 @@ frame math (`GetCci2Ccf`, `GetBody2Cci`, `GetCce2Cci`, `GetLlaFromCcf`) is summa
 in [`docs/KSA_CELESTIAL_COORDINATE_FRAMES.md`](../docs/KSA_CELESTIAL_COORDINATE_FRAMES.md). A frame-math
 change is the classic *silent* drift (compiles, wrong numbers) — re-verify against a live flight per the
 playbook step 5.
+# Paint reads
+
+Paint reads live vehicles/parts/subparts (`Vehicle.Id`, `Part.InstanceId`, `Part.Template.Id`), shader
+references/GLSL source, KittenEva avatar/renderable graphs, protected material-index arrays, and the
+material AssetMap for handle-to-source identity. No GPU material read-back is attempted: the buffer
+is device-local and lacks TransferSrc. All reflection/anchor failures degrade paint instead of
+changing stock rendering. Exact fields and baseline are in `plans/PAINT_ASBUILT.md`.

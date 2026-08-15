@@ -710,3 +710,21 @@ listed with their card.
 | M-E "Ascent & CM" | P12: ABORT STAGE + `ctl/stage` at TIG, APS monitored ascent to target orbit; `agc start cm` → Comanche055 P00/V16N36 on :19697, `dsky --cm` lamp set | ☐ | staging path; CM mode |
 | embedded | `agc start lm --agc=embedded` (built `--features embedded`): M-B and M-C repeat identically; pausing the game freezes V16N36 exactly; kill + restart resumes from the auto core dump | ☐ | A6 exit criteria |
 | system | `apollo11-system` generated + selected: Moon ~389,000 km at t≈+273,000 s (LOI), crescent moon over the pad at t=0, `Apollo11` landmark at the padload site | ☐ | epoch placement sanity |
+# Paint live KSA checklist (2026.8.19.5261)
+
+- [ ] Disabled boot: no gatOS paint Harmony owner, stock shaders/material indices, zero clones/work.
+- [ ] Enable parts through each of 9P, HTTP field POST, MQTT `/set`, and MCP; status becomes active
+  after deferred rebuild and raster compile count advances.
+- [ ] Static/dynamic top-level parts and subparts: global/template/vessel/instance precedence; all
+  multiply/tint/replace modes; exact black sentinel; staging and vessel split/join semantics.
+- [ ] Raytraced IVA shader when available; glass remains stock; frost/wetness/emissive/temperature
+  variants still compile.
+- [ ] Disable parts restores stock; re-enable restores retained rules; explicit clear removes them.
+- [ ] With standalone humble-arteest active, enabling refuses with conflict and does not partially patch.
+- [ ] Force an anchor/compile failure: stock fallback, degraded status, no render-thread exception.
+- [ ] EVA shared and individual precedence for body/fur/helmet/visor/MMU; sclera/cosmetics stay stock.
+- [ ] EVA disable, despawn, scene change, and avatar replacement restore exact captured handles.
+- [ ] Repeated colours share clones; changed/cleared rules free unused handles; cap returns a clean
+  degraded state without exhausting KSA's 512-entry material pool.
+- [ ] Interop: if another mod changes a bound slot, gatOS conditional restore does not overwrite it.
+- [ ] Soak enable/disable/rebuild and EVA churn while watching Vulkan validation and clone counters.

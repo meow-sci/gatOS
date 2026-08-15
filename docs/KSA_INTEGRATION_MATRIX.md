@@ -633,3 +633,11 @@ is media, the controls are plain `DisplaySettings` mutators). Confined to a sing
    latches the accessor degraded → it returns `EOPNOTSUPP`, logs once, and surfaces in
    `/sim/status/accessors`. The guest *sees* a failed sensor instead of the mod crashing.
 4. Re-run the control-surface checklist in `docs/VALIDATION.md`.
+
+## Paint
+
+| Area | KSA members | Behavior | Risk |
+|---|---|---|---|
+| Paint: vehicle shader lifecycle | `ShaderModuleUtils.FromFile/FromString`; `ShaderReference.ModPath`; `Program.RendererRebuildNeeded` | Dynamic Harmony, only while `/sim/paint/parts/enabled=1`; GLSL transformed in memory; foreign compiler prefixes rejected | High |
+| Paint: per-part instance data | static/dynamic `PartModel*Module.UpdateRenderData`; static/dynamic `PartModel*.AddInstance`; `StateBitFlag` bits 11..31 | scoped Part handoff + 7:7:7 sRGB OR; glass stock | High |
+| Paint: EVA material clones | `KittenEva._renderable`; `CharacterAvatar`; protected `MaterialIndices`; `GpuMaterialSystem.CreateObject`; `AssetMap`; `GpuObjectAssetRef.Dispose` | gatOS-owned pooled clones, conditional restore, fixed cap; never mutates stock shared material | High |

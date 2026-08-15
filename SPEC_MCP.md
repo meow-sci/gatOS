@@ -242,6 +242,22 @@ semantics:
 terminal-video transport with no logical JSON resource/tool equivalent. This omission is deliberate,
 documented, and must remain explicit in future coverage reviews.
 
+## 6.1 Paint
+
+`gatos.paint_control` is the first-class logical wrapper for every `paint.*` catalog action. Input:
+`operation` is the action suffix (for example `parts_enabled`, `global_color`, `vessel_color`,
+`part_color`, `kittens_enabled`, or `kitten_material_color`); `vessel_id` addresses vessel/EVA
+rules; `target` carries a template id, uint part `instance_id`, or semantic EVA material name;
+`value` carries flags; `color` is a normalized three-number sRGB array. `gatos.command` remains the
+complete canonical-envelope backstop.
+
+`gatos.get_runtime_state(feature:"paint")` and `gatos://runtime/paint` return the complete immutable
+paint snapshot: desired rules, runtime masters/status, shader compile diagnostics, discovered EVA
+material names, active bindings, clone usage/cap, raytraced capability, and per-subsystem errors.
+`gatos.get_vessel(include:["paint"])` includes that vessel's whole-vessel, per-part, and (for EVA)
+individual material rules. `gatos.get_capabilities` advertises paint actions with logical tool
+`gatos.paint_control` and gate `control_enabled + paint runtime master`.
+
 ## 7. Coverage and maintenance mandate
 
 MCP v1 must be complete for all current **logical** gatOS reads and commands, without duplicating the

@@ -1,5 +1,6 @@
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
+using gatOS.Paint;
 using NUnit.Framework;
 
 namespace gatOS.Mcp.Tests;
@@ -17,10 +18,27 @@ public sealed class McpPresenterTests
             Assert.That(names, Does.Contain("gatos.get_world"));
             Assert.That(names, Does.Contain("gatos.execute_batch"));
             Assert.That(names, Does.Contain("gatos.schedule_batch"));
-            Assert.That(names, Has.Length.EqualTo(25));
+            Assert.That(names, Has.Length.EqualTo(26));
+            Assert.That(names, Does.Contain("gatos.paint_control"));
             Assert.That(names, Has.None.Contains("display"));
             Assert.That(registry.Resources.Select(r => r.ProtocolResource?.Name ?? ""), Has.None.Contains("display"));
         });
+    }
+
+    [Test]
+    public void PaintRuntime_IsFirstClassAndCapabilitiesMapItsActions()
+    {
+        var paint = new PaintStore();
+        paint.SetGlobalPart(true, new PaintColor(0.1, 0.2, 0.3));
+        var presenters = new McpPresenters(new SnapshotStore(), paint: paint);
+        var runtime = presenters.GetRuntimeState("paint");
+        Assert.That(runtime.Ok, Is.True);
+        Assert.That(runtime.Data, Is.EqualTo(paint.Current));
+
+        var capabilities = presenters.GetCapabilities();
+        var json = gatOS.SimFs.SimJson.Serialize(capabilities.Data);
+        Assert.That(json, Does.Contain("gatos.paint_control"));
+        Assert.That(json, Does.Contain("paint.parts_enabled"));
     }
 
     [Test]

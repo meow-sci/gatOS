@@ -170,3 +170,9 @@ KSA update changes the *contents* of a snapshot (caught and documented on the re
 *shape* of these subsystems is fixed by gatOS, not the game. The only way a KSA update reaches them is if
 gatOS deliberately changes a `SimSnapshot`/`SimCommand` field in response — which is a gatOS API change,
 tracked in [`SPEC_9P_FILESYSTEM.md`](../SPEC_9P_FILESYSTEM.md), not KSA churn.
+# Paint game-free surface
+
+`gatOS.Paint` owns normalized sRGB validation/formatting, blend tokens, 7:7:7 encoding, precedence,
+immutable `PaintSnapshot`, mutable game-thread `PaintStore`, and the pure idempotent GLSL transform.
+`gatOS.SimFs` owns paths/parsers and canonical `paint.*` actions; HTTP/MQTT mirror its VFS and MCP
+projects the same store logically. None references KSA/Brutal/StarMap.

@@ -334,3 +334,18 @@ This is fully worked (a copy-pasteable Bun/TS program) in [`recipes.md` §1](rec
 read `bodies` for Earth's `mu`/`mean_radius`, compute `r = radius + 120000` and `v = sqrt(mu/r)`,
 teleport Hunter to CCI `[r,0,0, 0,v,0]` (equatorial circular), and teleport Polaris to the same orbit
 advanced in true anomaly by `Δθ = 50/r`. Everything you need to derive it is in the SPEC + frames doc.
+# Paint vehicles and EVA kittens
+
+Paint is session-only and explicitly opt-in. Enable vehicle shader paint with
+`echo 1 > /sim/paint/parts/enabled`, then set a normalized sRGB triple and enable the desired rule.
+Whole-vessel example: write `0.15 0.5 1` then `1` under
+`/sim/vessels/by-id/<id>/paint/parts/{color,enabled}`. An adjacent part/subpart `paint/` directory is
+the individual override; it requires the parts telemetry gate. Precedence is instance, live vessel,
+template, global.
+
+Enable safe EVA clones with `echo 1 > /sim/paint/kittens/enabled`. Shared rules live under
+`/sim/paint/kittens/{shared,materials}`; individual rules under the EVA vessel's
+`paint/kitten/{default,materials}`. Material names are discovered live (`body`, `fur`, `helmet`,
+`visor`, `mmu`, with numeric suffixes). Disabling either master restores stock but retains rules;
+write its `clear` trigger to remove rules. HTTP and MQTT use the normal field mirrors; MCP uses
+`gatos.paint_control` or canonical `gatos.command`.

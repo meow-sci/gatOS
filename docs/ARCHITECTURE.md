@@ -424,3 +424,11 @@ Config is read from `<GatOsPaths.DataDir>/gatos.toml` (seeded on first run from
 Written atomically (temp+rename). On Windows the install dir and data dir are the same folder —
 see [ModDir == DataDir memory note](../memory/moddir-equals-datadir-windows.md) and the M6
 description in [`docs/MILESTONES.md`](MILESTONES.md#m6).
+## Paint vertical slice
+
+Paint follows the one-model/many-transports rule. `gatOS.Paint` contains the game-free rules,
+immutable store projection, state-bit codec, and pure GLSL transform. `SimFsTree` is the only
+filesystem definition, automatically mirrored by HTTP and MQTT; MCP presents the same store as a
+logical tool/resource. Only `gatOS.GameMod/Game/Ksa/Paint` references KSA: one manager owns dynamic
+Harmony installation, deferred renderer rebuilds, live part identity, EVA material clones, and
+unload restoration. Disabled steady state is one branch with no patches, scans, clones, or GPU work.

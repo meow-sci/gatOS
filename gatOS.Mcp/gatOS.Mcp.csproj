@@ -11,6 +11,7 @@
     <ItemGroup>
         <ProjectReference Include="..\gatOS.SimFs\gatOS.SimFs.csproj" />
         <ProjectReference Include="..\gatOS.Logging\gatOS.Logging.csproj" />
+        <ProjectReference Include="..\gatOS.Paint\gatOS.Paint.csproj" />
     </ItemGroup>
 
     <ItemGroup>

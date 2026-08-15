@@ -3,6 +3,7 @@ using gatOS.GameMod.Game.Ksa.Actuators;
 using gatOS.GameMod.Game.Ksa.Camera;
 using gatOS.GameMod.Game.Ksa.Fx;
 using gatOS.GameMod.Game.Ksa.Iva;
+using gatOS.GameMod.Game.Ksa.Paint;
 using gatOS.GameMod.Game.Ksa.Render;
 using gatOS.GameMod.Game.Ksa.ThugLife;
 using gatOS.GameMod.Game.Ksa.Welds;
@@ -22,7 +23,7 @@ namespace gatOS.GameMod.Game.Ksa;
 /// </summary>
 internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager welds, ThugLifeManager thugLife,
     IvaPhysicsManager iva, AudioActuator? audio = null, ScheduleStore? schedules = null,
-    CameraDirector? camera = null, FaceFxManager? faceFx = null)
+    CameraDirector? camera = null, FaceFxManager? faceFx = null, PaintManager? paint = null)
     : ICommandExecutor
 {
     /// <inheritdoc />
@@ -101,6 +102,13 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
             // before the authority gate.
             if (command.Action.StartsWith("camera.", StringComparison.Ordinal))
                 return Finish(accessor, Camera(command));
+
+            // Paint's own manager resolves vessel/part/EVA identities and deliberately permits
+            // visual edits by-id, like scale/always_render. Its runtime masters are the opt-in gate.
+            if (command.Action.StartsWith("paint.", StringComparison.Ordinal))
+                return Finish(accessor, paint is { } paintManager
+                    ? paintManager.Execute(command)
+                    : new CommandResult(CommandOutcome.Unsupported, "paint is unavailable"));
 
             // control_vessel targets the vehicle named by the token (the one to take control of),
             // not the (sender) VesselId.

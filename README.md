@@ -666,3 +666,11 @@ Alpine guest, SSH.NET, Tomlyn, and friends) keep their own licenses — see
 [`THIRD-PARTY-NOTICES.md`](./THIRD-PARTY-NOTICES.md).
 
 _Now go forth and `ssh` into a rocket. The kittens are counting on you._ 🐱🛰️
+### Paint vehicles and EVA kittens
+
+`/sim/paint` adds session-only global/template/vessel/part paint and shared/individual EVA colour
+rules. Both render paths are explicit opt-ins and restore stock on opt-out: vehicle paint transforms
+KSA shaders in memory during a deferred renderer rebuild, while EVA paint uses bounded gatOS-owned
+material clones. The same controls are available through HTTP field endpoints, MQTT field topics,
+and the first-class MCP `gatos.paint_control` tool. See
+[`plans/PAINT_ASBUILT.md`](plans/PAINT_ASBUILT.md) for semantics and maintenance.

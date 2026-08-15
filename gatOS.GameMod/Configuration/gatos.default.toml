@@ -146,6 +146,17 @@ display_height = 180
 # on compressible o=z payloads (purrtty gotcha 34, fixed).
 display_encoding = "rgba-zlib"
 
+# ===== PAINT — opt-in vehicle shaders and EVA material clones (/sim/paint) =====
+
+# Boot seed only. false means no shader compiler or part-render patches are installed.
+paint_parts_enabled = false
+
+# Boot seed only. false means no EVA material arrays are rebound and no GPU clones exist.
+paint_kittens_enabled = false
+
+# Hard limit on gatOS-owned material clones (the game's material pool is fixed at 512).
+paint_max_material_clones = 64
+
 # ===== AUDIO — userland playback through the game's speakers (/sim/audio) =====
 
 # Serve /sim/audio: upload clips (cat x.mp3 > /sim/audio/file/x.mp3) and play

@@ -1063,3 +1063,10 @@ Harmony hook target is UNCHANGED** — no code change required. Highlights:
   `OrbitController.cs` churn is the **editor camera** controller (middle-mouse zoom-drag), unrelated to
   vehicle orbits/attitude; `Tank.cs`/`PowerManager.cs` changes are ice-particle visuals / a span→array
   refactor — the refill cheats' members (`Vehicle.RefillConsumables`, `Battery.Refill`) are untouched.
+# Paint writes
+
+Part paint ORs audited free state-flag bits 11..31 in static/dynamic per-instance data and toggles
+`Program.RendererRebuildNeeded`; GLSL is compiled from transformed memory and never written to disk.
+EVA paint allocates gatOS-owned `MaterialData` clones, writes only their initial upload, and replaces
+supported avatar `MaterialIndices` slots. Restore is conditional on the slot still carrying gatOS's
+handle; owned AssetMap entries are removed/disposed. Stock MaterialData is never overwritten.

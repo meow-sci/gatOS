@@ -406,3 +406,10 @@ compiler can't see them. They are listed in [`ksa-runtime-coupling.md`](ksa-runt
 [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) (runtime shape),
 [`docs/KSA_CELESTIAL_COORDINATE_FRAMES.md`](../docs/KSA_CELESTIAL_COORDINATE_FRAMES.md) (frames),
 [`docs/VALIDATION.md`](../docs/VALIDATION.md) (live checklists).
+# Paint surface
+
+Paint adds a game-free rule/transform domain (`gatOS.Paint`) and one high-churn KSA adapter
+(`Game/Ksa/Paint`). It covers opt-in vehicle shader transformation and reversible shared/individual
+EVA coloration across 9P, HTTP, MQTT, and MCP. Its authoritative maintenance map is
+[`plans/PAINT_ASBUILT.md`](../plans/PAINT_ASBUILT.md); every KSA upgrade must run that document's
+shader/state-bit/material-clone audit and the paint checklist in `docs/VALIDATION.md`.

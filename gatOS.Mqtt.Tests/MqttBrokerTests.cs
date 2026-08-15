@@ -4,6 +4,7 @@ using System.Threading.Channels;
 using gatOS.SimFs;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
+using gatOS.Paint;
 using MQTTnet;
 using MQTTnet.Client;
 
@@ -30,7 +31,7 @@ public sealed class MqttBrokerTests
         _sink = new RecordingSink();
         // Share the real /sim tree (built with the sink, so ctl/ exists) so the field-level
         // gatos/sim/<path> mirror runs; a high field cadence keeps the tests prompt.
-        var simRoot = SimFsTree.Build(_store, _sink, null);
+        var simRoot = SimFsTree.Build(_store, _sink, null, paint: new PaintStore());
         _broker = new SimMqttBroker(_store, _sink, simRoot: simRoot, fieldFeedHz: 50);
         await _broker.StartAsync(0); // ephemeral
 
@@ -195,6 +196,13 @@ public sealed class MqttBrokerTests
         var result = await WaitForAsync(t => t == SimMqttBroker.CommandResultTopic);
         Assert.That(result, Does.Contain("ok"));
         Assert.That(_sink.Last, Is.EqualTo(new SimCommand("v1", "vessel.throttle", SimCommand.NoOrdinal, 0.8)));
+    }
+
+    [Test]
+    public async Task Field_PaintMasterUsesTheSameTopicMirror()
+    {
+        await SetAsync("paint/kittens/enabled", "1");
+        Assert.That(_sink.Last, Is.EqualTo(new SimCommand("", SimActions.PaintKittensEnabled, -1, 1)));
     }
 
     [Test]

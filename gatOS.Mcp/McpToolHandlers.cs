@@ -83,6 +83,11 @@ internal sealed class McpToolHandlers
     public Task<McpEnvelope> RenderFxControl(string family, string operation, string? entity = null, string? field = null,
         double value = 0, IReadOnlyList<double>? values = null, string? token = null, CancellationToken cancellationToken = default)
         => Logical("debug." + FxFamily(family), operation, "", -1, value, values, field ?? token, entity, cancellationToken);
+    public Task<McpEnvelope> PaintControl(string operation, string vessel_id = "", double value = 0,
+        IReadOnlyList<double>? color = null,
+        [Description("Template id, part instance_id, or semantic EVA material name")] string? target = null,
+        CancellationToken cancellationToken = default)
+        => Logical("paint", operation, vessel_id, -1, value, color, target, null, cancellationToken);
 
     public Task<McpEnvelope> Command(string action, string vessel_id = "", int ordinal = -1, double value = 0,
         IReadOnlyList<double>? values = null, string? token = null, string? aux = null, CancellationToken cancellationToken = default)
@@ -216,6 +221,7 @@ internal sealed class McpToolHandlers
             ("camera", "geodetic") => SimActions.CameraGeo,
             ("camera", "reset") => SimActions.CameraPoseReset,
             ("audio", "update" or "pause" or "resume" or "seek") => SimActions.AudioSet,
+            ("paint", _) => "paint." + op,
             ("debug.engineplume", "set") => SimActions.DebugEnginePlumeSet,
             ("debug.engineplume", "reset") => SimActions.DebugEnginePlumeReset,
             ("debug.plumetrail", "set") => SimActions.DebugPlumeTrailSet,

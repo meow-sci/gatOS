@@ -694,3 +694,12 @@ schedules and a KSA update does not touch them. Listed so the coupling census is
 See [`non-ksa-surface.md`](non-ksa-surface.md) for the rest of the game-free surface, and
 [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md) for the KSA assets these couplings resolve
 against.
+# Paint runtime coupling
+
+Part paint dynamically installs seven exact gatOS-owned Harmony methods only after the runtime
+master is enabled: the global shader-file compiler prefix; enter/finalizer scopes around static and
+dynamic PartModel modules; and static/dynamic AddInstance prefixes. Enable is preflighted and
+transactional, foreign compiler prefixes are a hard conflict, failure falls back to stock, and
+disable/unload removes only the stored gatOS methods before requesting KSA's deferred renderer
+rebuild. EVA paint uses no Harmony patch; its live game-thread tick conditionally rebinds captured
+material-index arrays to owned clones. See `plans/PAINT_ASBUILT.md` for exact seams and upgrade audit.

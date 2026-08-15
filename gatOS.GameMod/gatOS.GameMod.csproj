@@ -121,6 +121,7 @@
         <ProjectReference Include="..\gatOS.Bus\gatOS.Bus.csproj" />
         <ProjectReference Include="..\gatOS.Vm\gatOS.Vm.csproj" />
         <ProjectReference Include="..\gatOS.Logging\gatOS.Logging.csproj" />
+        <ProjectReference Include="..\gatOS.Paint\gatOS.Paint.csproj" />
     </ItemGroup>
 
     <ItemGroup>
@@ -214,6 +215,14 @@
         </Reference>
         <Reference Include="Brutal.Vulkan" Condition="Exists('$(KSAFolder)/Brutal.Vulkan.dll')">
             <HintPath>$(KSAFolder)/Brutal.Vulkan.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Brutal.ShaderC" Condition="Exists('$(KSAFolder)/Brutal.ShaderC.dll')">
+            <HintPath>$(KSAFolder)/Brutal.ShaderC.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Planet.Core" Condition="Exists('$(KSAFolder)/Planet.Core.dll')">
+            <HintPath>$(KSAFolder)/Planet.Core.dll</HintPath>
             <Private>false</Private>
         </Reference>
         <Reference Include="Brutal.Vulkan.Abstractions" Condition="Exists('$(KSAFolder)/Brutal.Vulkan.Abstractions.dll')">

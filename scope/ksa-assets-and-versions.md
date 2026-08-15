@@ -511,3 +511,10 @@ The applied 4892→4939 result: clean pass, no code changes — recorded in the 
 sections, and the matrix header; live re-check items in [`../docs/VALIDATION.md`](../docs/VALIDATION.md).
 Since the assemblies checkout is a git repo holding every drop, prefer `git diff <oldCommit>..<newCommit>`
 inside it over the two-checkout `--no-index` diff.
+# Paint assets at 2026.8.19.5261
+
+Required shader reference/path: `MeshIndirectFrag` / `MeshIndirect.frag`. Optional raytraced:
+`MeshIndirectRaytracedFrag` / `MeshIndirectRaytraced.frag`. Both must contain the `vec3 sampledColor`
+anchor, `inStateFlags`, and `gammaToLinear`. EVA clones reconstruct standard `PbrMaterialReference`
+assets and KSA's generated `*_FurMaterial` recipe. These are high-churn assets; re-audit the complete
+checklist in `plans/PAINT_ASBUILT.md` on every KSA revision.

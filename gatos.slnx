@@ -6,6 +6,8 @@
     </Configurations>
     <Project Path="gatOS.Logging/gatOS.Logging.csproj" />
     <Project Path="gatOS.Logging.Tests/gatOS.Logging.Tests.csproj" />
+    <Project Path="gatOS.Paint/gatOS.Paint.csproj" />
+    <Project Path="gatOS.Paint.Tests/gatOS.Paint.Tests.csproj" />
     <Project Path="gatOS.NineP/gatOS.NineP.csproj" />
     <Project Path="gatOS.NineP.Tests/gatOS.NineP.Tests.csproj" />
     <Project Path="gatOS.SimFs/gatOS.SimFs.csproj" />

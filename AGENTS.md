@@ -43,7 +43,7 @@ and the decisions locked in (Part 1).
 transport, host folder mounts (`/mnt/<name>`), the welds / `always_render_iva` / parts-listing
 cheats ported from `unscience`, the `/sim/audio` userland playback feature, the `/sim/debug/iva`
 free-floating cabin-object physics, the generic timed command scheduler (`/sim/ctl/timed_batch`)
-and the programmable camera (`/sim/camera`), are code-complete.** The only pending work is a set of in-game
+the programmable camera (`/sim/camera`), and opt-in vehicle/EVA paint (`/sim/paint`), are code-complete.** The only pending work is a set of in-game
 passes (T6.6/T9.3/G1–G4, plus the welds/IVA/parts, thug_life, per-vessel scale/always_render, debug
 impulse, `ctl/translate`, `/sim/audio`, IVA-cabin-physics, FX-editor, **timed-scheduler and camera**
 checklists) that require a live KSA flight; checklists are in [`docs/VALIDATION.md`](docs/VALIDATION.md). The purrTTY tip release is now
@@ -184,6 +184,7 @@ cut.
 | FX editors (`/sim/debug/{engineplume,plumetrail,clouds,terrain}` — the game's four built-in imgui render editors as filesystems; issue #2, `plans/FX_EDITORS_PLAN.md`) | Code DONE; in-game pending | `gatOS.SimFs/Fx/FxCatalog.cs` (the four declarative field tables + the nine action keys) driving the `SimFsTree` debug dirs; `Game/Ksa/Fx/` (`FxReflect` handles + per-capability health latches, Plume/Trail/Cloud/Terrain actuators, `FxEditorReader` sampler, `FxPristine` reset/teardown) — no Harmony patch, gated by `[control] debug_namespace` |
 | Timed command scheduler (`/sim/ctl/timed_batch` + `/sim/ctl/schedules/` — offset-scripted command playback on three clock bases, 7 `schedule.*` actions; `plans/SCHEDULER_ASBUILT.md`) | Code DONE; in-game pending | `gatOS.SimFs/Commands/{PlaybackClock,Schedule,Scheduler,ScheduleStore,ScheduleTree,TimedBatchFile}.cs` + `CommandQueue.Post`/`IPostObserver` — **100 % game-free, zero KSA bindings**; game side is only `Mod.TickSchedules` (the game-thread tick) and one `KsaCatalog` routing branch to `ScheduleStore.Execute`; gated by `[schedule] schedule_enabled` |
 | Programmable camera (`/sim/camera/**` — ownership take/release, six frames, aim-with-offset, geodetic placement, JSON tracks, the interpolated `time` channel, `map/scope`; `plans/CAMERA_ASBUILT.md`) | Code DONE; same-frame fix pending live recheck | `gatOS.SimFs/Camera/**` (game-free math/compositor/tracks + anchor-relative smoother) + `gatOS.SimFs/SimFsTree.cs`; `Game/Ksa/Camera/{CameraDirector,CameraFrames,CameraTargets,CameraReader,CameraViewportPatch}.cs` + `CameraActuator.cs`. A main-viewport-identity Harmony prefix applies after simulation advance and before `Camera.OnFrame`; the postfix publishes KSA's final applied transform. Shared schedules/drain run before the prefix's camera apply; anchor translation is exact, only the relative component smooths, and aim is exact. Gated by `[camera] camera_enabled`. **IVA/Map ownership contexts remain unsupported** (`scope/ksa-runtime-coupling.md#camera-driver`) |
+| Vehicle + EVA paint (`/sim/paint`) | Code DONE; in-game pending | `gatOS.Paint/` game-free rules/state/GLSL transform; `Game/Ksa/Paint/` transactional opt-in shader hooks + reversible EVA material clones; 9P/HTTP/MQTT/MCP parity. Part precedence instance > live vessel > template > global; EVA precedence individual material/default > shared material/default. Full high-churn maintenance contract: `plans/PAINT_ASBUILT.md`. |
 | Cinematic camera editor (`examples/photog-rs`) | DONE (standalone API consumer) | Rust/ratatui ordered-shot editor + versioned project JSON; compiles render-rate native camera tracks with a shared-clock `timed_batch` sidecar for smoothing/projection/release cues; direct `/sim` + HTTP `/v1`, live target discovery, hybrid playback controls, golden/compiler/transport/TUI tests. No `/sim` contract change. |
 | Screen stream (`/sim/display`) | Code DONE; misrender **root-caused + fixed** (purrTTY libghostty `o=z` corruption → default `rgba`, + purrTTY content-hash re-decode; STREAM_PLAN.md §11); **perf/stability P0–P7 of [`plans/PERF_IMPROVEMENT_PLAN.md`](plans/PERF_IMPROVEMENT_PLAN.md) landed 2026-07-02, confirmed working in-game (informal pass)** (SSH read-pump, a=t keyframes, GPU blit downscale, zero-alloc encoder, demand pacing, 9p pooling + msize 512 KiB/guest v15, purrtty consumption fixes, P6: the purrTTY native rebuilt from ghostty main + `purrtty/vt-video-fixes` — the zig-0.15.2 `o=z` flate corruption and the placement-pin leak are FIXED, so `display_encoding` defaults to `rgba-zlib` again, 3–10× less wire; and P7: the native APC bulk lane, 82→1185 MiB/s consumption throughput); formal S6/S9 + P8 soak checklists still open | `SimFs/Display/`, `Game/Ksa/FrameCapture.cs` + `DisplayRenderPatch.cs` (in-band render-hook capture), `STREAM_PLAN.md` |
 | `ctl/rotate` (W1, AGC_PLAN §7.4) | Code DONE; in-game pending | `Game/Ksa/Actuators/RotateActuator.cs`, `SimFs/Commands/RotateRules.cs` — manual RCS rotation signs, the translate sibling; full authority needs `attitude_mode=manual` (auto strips rotation bits) |
@@ -241,7 +242,7 @@ prerequisites are hard failures, not skips (see `gatOS.Vm.Tests/TestEnv.cs`); te
 ## Repository layout & project map
 
 ```
-gatos.slnx                      XML solution (19 projects: 10 libs/mod + 9 test projects)
+gatos.slnx                      XML solution (21 projects: 11 libs/mod + 10 test projects)
 Directory.Build.props           shared build config + KSA/dist path resolution
 AGENTS.md / README.md           this file; user-facing readme
 AGENTS.md                       the /sim schema-change constitution: the step-by-step playbook for
@@ -318,7 +319,9 @@ gatOS.NineP    → Logging                              9P2000.L codec + server 
                                                       write/create surface (Tlcreate/Tmkdir/Tunlinkat/
                                                       Trenameat) + HostDirectory/HostFile/HostMountTree
                                                       back the /mnt host-folder passthrough (built)
-gatOS.SimFs    → NineP, Logging                       /sim tree, snapshots, stream/events, AlarmFile,
+gatOS.Paint                      (no deps)            game-free paint colors/blend/bit encoding,
+                                                      immutable rule/status store + pure GLSL transform
+gatOS.SimFs    → NineP, Logging, Paint                /sim tree, snapshots, stream/events, AlarmFile,
                                                       EventDiffer/SampleClock/Sanitize (M8+M9+G3, built);
                                                       TelemetrySettings (runtime-mutable sample rate +
                                                       per-stream gates the sampler reads each tick);

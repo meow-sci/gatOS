@@ -5,6 +5,7 @@ using gatOS.NineP.Vfs;
 using gatOS.SimFs;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
+using gatOS.Paint;
 
 namespace gatOS.Http.Tests;
 
@@ -28,7 +29,7 @@ public sealed class HttpServerTests
         _sink = new RecordingSink();
         // Build the real /sim tree (with the sink, so ctl/ exists) and share it with the server so
         // the field-level /v1/fs endpoints resolve against the same tree the 9p server would serve.
-        var simRoot = SimFsTree.Build(_store, _sink, null);
+        var simRoot = SimFsTree.Build(_store, _sink, null, paint: new PaintStore());
         _server = new SimHttpServer(_store, _sink, () => "9p 1; http 2", simRoot);
         await _server.StartAsync();
         _client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{_server.Port}/") };
@@ -282,6 +283,14 @@ public sealed class HttpServerTests
             new StringContent("0.8", Encoding.UTF8, "text/plain"));
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Assert.That(_sink.Last, Is.EqualTo(new SimCommand("v1", "vessel.throttle", SimCommand.NoOrdinal, 0.8)));
+    }
+
+    [Test]
+    public async Task Fs_PaintMasterUsesTheSameFieldMirror()
+    {
+        Assert.That((await _client.GetStringAsync("v1/fs/paint/parts/enabled")).Trim(), Is.EqualTo("0"));
+        await PostFieldAsync("paint/parts/enabled", "1");
+        Assert.That(_sink.Last, Is.EqualTo(new SimCommand("", SimActions.PaintPartsEnabled, -1, 1)));
     }
 
     [Test]

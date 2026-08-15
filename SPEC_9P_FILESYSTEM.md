@@ -1698,3 +1698,41 @@ change affects how programs are written. Update `SPEC_MCP.md` when that change a
 resource/tool, its typed schema, capability report, or its action coverage mapping; `/sim/display`
 remains its documented MCP-v1 exclusion. Keep the "Source of truth in code" pointers at the top
 accurate. The code wins; these specifications must mirror it exactly.
+# Paint (`/sim/paint`)
+
+Paint is an always-discoverable, session-only control surface. Both rendering mechanisms are inert
+until their explicit runtime masters are written; configuration values are boot seeds only. Full
+renderer/maintenance detail is in [`plans/PAINT_ASBUILT.md`](plans/PAINT_ASBUILT.md).
+
+| Path | R/W | Value / semantics | Action |
+|---|---|---|---|
+| `paint/status` | R | `parts=<status> kittens=<status> blend=<mode> clones=<n>/<cap> bindings=<n> raytraced=<0|1> part_error=<text> kitten_error=<text>` | — |
+| `paint/help` | R | concise grammar and transport mirrors | — |
+| `paint/parts/enabled` | R/W | `0|1`; transactional in-memory shader opt-out/opt-in | `paint.parts_enabled` |
+| `paint/parts/blend` | R/W | `multiply|tint|replace`; active changes request a deferred rebuild | `paint.blend` |
+| `paint/parts/clear` | R/W trigger | write `1`; clears global/template/vessel/part rules, not master | `paint.parts_clear` |
+| `paint/parts/global/{enabled,color,clear}` | R/W | flag; normalized sRGB `r g b`; trigger | `paint.global_*` |
+| `paint/parts/templates/<template>/{enabled,color,clear}` | R/W | `Part.Template.Id` rule | `paint.template_*` (`token=<raw id>`) |
+| `paint/kittens/enabled` | R/W | `0|1`; owns/restores clone bindings | `paint.kittens_enabled` |
+| `paint/kittens/clear` | R/W trigger | write `1`; clears every shared/individual EVA rule | `paint.kittens_clear` |
+| `paint/kittens/shared/{enabled,color,clear}` | R/W | shared safe-clone default | `paint.kitten_shared_*` |
+| `paint/kittens/materials/<name>/{enabled,color,clear}` | R/W | shared semantic material rule | `paint.kitten_shared_material_*` |
+| `vessels/by-id/<id>/paint/parts/{enabled,color,clear}` | R/W | live whole-vessel rule | `paint.vessel_*` |
+| `vessels/by-id/<eva>/paint/kitten/default/{enabled,color,clear}` | R/W | individual EVA default | `paint.kitten_*` |
+| `vessels/by-id/<eva>/paint/kitten/materials/<name>/{enabled,color,clear}` | R/W | individual EVA material | `paint.kitten_material_*` |
+| `vessels/by-id/<id>/parts/<n>/paint/{enabled,color,clear}` | R/W | stable `instance_id` rule | `paint.part_*` (`token=<instance_id>`) |
+| `.../subparts/<m>/paint/{enabled,color,clear}` | R/W | stable subpart `instance_id` rule | `paint.part_*` |
+
+Part precedence is instance > live vessel > template > global > stock. EVA precedence is individual
+material > individual default > shared material > shared default > stock. The currently enumerated
+EVA material names are `body[.n]`, `fur[.n]`, `helmet[.n]`, `visor[.n]`, and `mmu[.n]`; absent
+attachments do not appear. Sclera/cosmetics and part glass remain stock.
+
+All actions are Frame phase and use the ordinary `control_enabled` gate. Visual by-id operations do
+not require the target to be the controlled vessel. Invalid flags/tokens/non-finite or out-of-range
+RGB fail `EINVAL`; missing live targets fail `ENOENT`; a shader-prefix conflict returns `EBUSY`;
+incompatible audited render internals return `EOPNOTSUPP` and leave stock rendering active.
+
+HTTP mirrors every leaf at `GET|POST /v1/fs/<path>`. MQTT publishes retained
+`gatos/sim/<path>` and accepts writes at `gatos/sim/<path>/set`; canonical HTTP/MQTT command
+envelopes also accept every action above.

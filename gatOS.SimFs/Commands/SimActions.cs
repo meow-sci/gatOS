@@ -78,6 +78,37 @@ public static class SimActions
     public const string DebugIvaAdopt = "debug.iva_adopt";
     public const string DebugIvaAdoptAll = "debug.iva_adopt_all";
 
+    // Opt-in vehicle shader and EVA material paint controls.
+    public const string PaintPartsEnabled = "paint.parts_enabled";
+    public const string PaintBlend = "paint.blend";
+    public const string PaintPartsClear = "paint.parts_clear";
+    public const string PaintGlobalEnabled = "paint.global_enabled";
+    public const string PaintGlobalColor = "paint.global_color";
+    public const string PaintGlobalClear = "paint.global_clear";
+    public const string PaintTemplateEnabled = "paint.template_enabled";
+    public const string PaintTemplateColor = "paint.template_color";
+    public const string PaintTemplateClear = "paint.template_clear";
+    public const string PaintVesselEnabled = "paint.vessel_enabled";
+    public const string PaintVesselColor = "paint.vessel_color";
+    public const string PaintVesselClear = "paint.vessel_clear";
+    public const string PaintPartEnabled = "paint.part_enabled";
+    public const string PaintPartColor = "paint.part_color";
+    public const string PaintPartClear = "paint.part_clear";
+    public const string PaintKittensEnabled = "paint.kittens_enabled";
+    public const string PaintKittensClear = "paint.kittens_clear";
+    public const string PaintKittenSharedEnabled = "paint.kitten_shared_enabled";
+    public const string PaintKittenSharedColor = "paint.kitten_shared_color";
+    public const string PaintKittenSharedClear = "paint.kitten_shared_clear";
+    public const string PaintKittenSharedMaterialEnabled = "paint.kitten_shared_material_enabled";
+    public const string PaintKittenSharedMaterialColor = "paint.kitten_shared_material_color";
+    public const string PaintKittenSharedMaterialClear = "paint.kitten_shared_material_clear";
+    public const string PaintKittenEnabled = "paint.kitten_enabled";
+    public const string PaintKittenColor = "paint.kitten_color";
+    public const string PaintKittenClear = "paint.kitten_clear";
+    public const string PaintKittenMaterialEnabled = "paint.kitten_material_enabled";
+    public const string PaintKittenMaterialColor = "paint.kitten_material_color";
+    public const string PaintKittenMaterialClear = "paint.kitten_material_clear";
+
     // Feature families with their own game-free parsers/catalogues.
     public const string AudioPlay = "audio.play";
     public const string AudioSet = "audio.set";

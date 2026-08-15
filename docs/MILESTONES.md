@@ -1174,3 +1174,11 @@ complete.
 
 **Next**: M10 (persistence & savegame shape). Everything past M9 is not yet implemented, with
 the single exception of T11.1 (QEMU win-x64 bundle) which was pulled forward and is done.
+# Paint vertical slice (post-G7, code complete; live validation pending)
+
+Vehicle and EVA paint is implemented as an isolated `gatOS.Paint` domain plus
+`Game/Ksa/Paint` adapter. It is opt-in at runtime, exposed through 9P/HTTP/MQTT/MCP, supports
+global/template/live-vessel/part precedence and shared/individual EVA semantic-material precedence,
+and owns a transactional shader patch lifecycle plus reversible GPU material clones. Maintenance
+contract and live checklist: [`plans/PAINT_ASBUILT.md`](../plans/PAINT_ASBUILT.md) and
+[`docs/VALIDATION.md`](VALIDATION.md).

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using gatOS.Bus;
 using gatOS.GameMod.Configuration;
 using gatOS.Logging;
+using gatOS.Paint;
 using gatOS.Http;
 using gatOS.Mcp;
 using gatOS.Mqtt;
@@ -102,6 +103,10 @@ public sealed partial class Mod
     // leaves and the game-thread director (Game/Ksa/Camera/CameraDirector). Null when
     // [camera] camera_enabled=false — /sim/camera then does not exist on any transport.
     private CameraStore? _cameraStore;
+
+    // Always-visible paint control/readback store. Runtime masters remain off until explicitly
+    // enabled, so merely exposing /sim/paint installs no hooks and allocates no GPU materials.
+    private PaintStore? _paintStore;
 
     // Timing of one telemetry sample (game thread, written by the sampler; read by the status
     // window). Allocation-free; owned here so the status window can read it before the sampler
@@ -247,8 +252,9 @@ public sealed partial class Mod
                 _cameraStore = new CameraStore(new CameraLimits(
                     _config.CameraMaxTracks, _config.CameraMaxTrackBytes, _config.CameraMaxTotalBytes,
                     _config.CameraMaxKeys, _config.CameraFovMin, _config.CameraFovMax));
+            _paintStore = new PaintStore(_config.PaintMaxMaterialClones);
             _simRoot = SimFsTree.Build(_simStore, _commandQueue, SimTransportsStatus, _displaySurface,
-                _audioStore, schedules: _scheduleStore, camera: _cameraStore);
+                _audioStore, schedules: _scheduleStore, camera: _cameraStore, paint: _paintStore);
             StartSimServer(port: 0);
             StartHttpServer();
             StartMqttBroker();
@@ -438,6 +444,7 @@ public sealed partial class Mod
             DrainCommands();
         }
         DriveAudio(); // right after the drain: prune finished channels, enforce end=, publish status
+        DrivePaint(); // apply/prune live part and EVA bindings after paint commands from this drain
         UpdateThugLife(); // validate/re-resolve thug-life anchors on the game thread, before the scene renders
     }
 
@@ -712,7 +719,7 @@ public sealed partial class Mod
         try
         {
             var registry = new McpRegistry(store, _commandQueue, SimTransportsStatus,
-                _audioStore, _cameraStore, _scheduleStore);
+                _audioStore, _cameraStore, _scheduleStore, _paintStore);
             var version = typeof(Mod).Assembly.GetName().Version?.ToString() ?? "1.0.0";
             var server = new SimMcpServer(registry, version);
             server.StartAsync(_config.McpPreferredPort).GetAwaiter().GetResult();
@@ -1016,6 +1023,7 @@ public sealed partial class Mod
     partial void DrainCommands();
     partial void TickSchedules(double dt);
     partial void DriveAudio();
+    partial void DrivePaint();
     partial void InstallDisplayHook();
     partial void DisposeDisplayCapture();
     partial void DriveWelds(double dt);

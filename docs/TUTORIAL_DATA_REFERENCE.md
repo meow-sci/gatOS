@@ -480,3 +480,11 @@ Full units table: [SPEC §8](../SPEC_9P_FILESYSTEM.md). Full gotcha list:
 
 Keep this doc in lockstep with the SPEC: when the `/sim` surface changes, the SPEC is updated in the
 same change (its constitution) — refresh the affected rows here too so tutorials never teach a stale API.
+# Paint correspondence
+
+Paint controls are ordinary `/sim` state/trigger leaves. A filesystem write such as
+`echo '0.2 0.6 1' > /sim/vessels/by-id/$id/paint/parts/color` corresponds to
+`POST /v1/fs/vessels/by-id/<id>/paint/parts/color` with the same text body and MQTT publish to
+`gatos/sim/vessels/by-id/<id>/paint/parts/color/set`. Always enable the relevant root master first.
+Painting one part requires `telemetry_vessel_parts=true`; read its stable `instance_id` and write the
+adjacent `paint/color` + `paint/enabled`. See `SPEC_9P_FILESYSTEM.md` §Paint for precedence and errors.

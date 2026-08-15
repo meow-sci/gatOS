@@ -111,6 +111,12 @@ public sealed class GatOsConfig
                 + "(raw fallback). rgba-zlib needs purrTTY's 2026-07-02+ native — older pins crash\n"
                 + "on compressible o=z payloads (purrtty gotcha 34, fixed)."),
         }),
+        ("PAINT — opt-in vehicle shaders and EVA material clones (/sim/paint)", new[]
+        {
+            ("paint_parts_enabled", "Boot seed for /sim/paint/parts/enabled. false keeps every shader hook absent."),
+            ("paint_kittens_enabled", "Boot seed for /sim/paint/kittens/enabled. false creates no material clones."),
+            ("paint_max_material_clones", "Hard cap on gatOS-owned EVA material clones (clamped 1..256)."),
+        }),
         ("AUDIO — userland playback through the game's speakers (/sim/audio)", new[]
         {
             ("audio_enabled", "Serve /sim/audio: upload clips (cat x.mp3 > /sim/audio/file/x.mp3) and play\n"
@@ -338,6 +344,17 @@ public sealed class GatOsConfig
     ///     memory-corrupts on <c>o=z</c> payloads of compressible data (purrtty gotcha 34).
     /// </summary>
     public string DisplayEncoding { get; set; } = "rgba-zlib";
+
+    // ---- PAINT: runtime opt-in vehicle shaders and EVA material clones (/sim/paint). ----
+
+    /// <summary>Boot seed for the part shader master. Runtime opt-in/out remains writable.</summary>
+    public bool PaintPartsEnabled { get; set; }
+
+    /// <summary>Boot seed for the EVA material clone master. Runtime opt-in/out remains writable.</summary>
+    public bool PaintKittensEnabled { get; set; }
+
+    /// <summary>Hard bound below KSA's fixed 512-entry material buffer.</summary>
+    public int PaintMaxMaterialClones { get; set; } = 64;
 
     // ---- AUDIO: userland playback through the game's FMOD (/sim/audio; GATOS_CUSTOM_AUDIO_PLAN). ----
 
@@ -676,6 +693,7 @@ public sealed class GatOsConfig
         DisplayFps = Clamp(nameof(DisplayFps), DisplayFps, 1, 60);
         DisplayWidth = Clamp(nameof(DisplayWidth), DisplayWidth, 16, 1920);
         DisplayHeight = Clamp(nameof(DisplayHeight), DisplayHeight, 16, 1920);
+        PaintMaxMaterialClones = Clamp(nameof(PaintMaxMaterialClones), PaintMaxMaterialClones, 1, 256);
         AudioMaxClipBytes = Clamp(nameof(AudioMaxClipBytes), AudioMaxClipBytes, 4096, 256 * 1024 * 1024);
         AudioMaxTotalBytes = Clamp(nameof(AudioMaxTotalBytes), AudioMaxTotalBytes,
             AudioMaxClipBytes, 1024 * 1024 * 1024);

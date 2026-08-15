@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <AssemblyName>gatOS.Paint</AssemblyName>
+        <RootNamespace>gatOS.Paint</RootNamespace>
+        <Description>Game-free paint rules, state, shader transforms, and material binding transactions.</Description>
+        <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    </PropertyGroup>
+
+</Project>
