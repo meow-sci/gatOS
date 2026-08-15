@@ -1,0 +1,4 @@
+interface:
+  display_name: "OKF Authoring"
+  short_description: "Author compliant Open Knowledge Format bundles."
+  default_prompt: "Create or revise this knowledge bundle to comply with OKF v0.2."
