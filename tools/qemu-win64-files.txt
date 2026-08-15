@@ -12,7 +12,7 @@
 #    instantiates the default VGA and the vapic option ROM even with -display none).
 #  - COPYING/COPYING.LIB: QEMU license texts, shipped alongside the redistributed binaries.
 #
-#pin: url=https://qemu.weilnetz.de/w64/qemu-w64-setup-20260501.exe
+#pin: url=https://qemu.weilnetz.de/w64/2026/qemu-w64-setup-20260501.exe
 #pin: sha512=3d6b996bb904666f3b7ff62bed233b2d21dffe96f512af0a7151cfcc828bc5c8f9b62623cf2a9d363a3ae48111761f4630cce776eacb9b70d83e61e6ae50de47
 brlapi-0.8.dll
 COPYING
