@@ -1,0 +1,56 @@
+---
+title: Throttle and Ignite
+description: Set engine throttle, ignite safely, and shut down again using ordinary file writes.
+sidebar:
+  label: Throttle and Ignite
+  order: 3
+---
+
+import { Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+
+Writing a control file is a command. Set a value, get a result. That is the whole deal.
+
+`throttle` is a setpoint from `0` to `1`. `ignite` and `shutdown` are one-shots. The engine master,
+`ctl/engine`, is the read-back-friendly version for a switch or a UI.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    # Keep a hand near shutdown. This is a real engine command.
+    echo 0.25 > /sim/vessels/active/ctl/throttle
+    echo 1 > /sim/vessels/active/ctl/ignite
+
+    cat /sim/vessels/active/ctl/engine       # 1 when engines are on
+    echo 1 > /sim/vessels/active/ctl/shutdown
+    echo 0 > /sim/vessels/active/ctl/throttle
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    ```sh
+    curl -X POST --data '0.25' http://127.0.0.1:4242/v1/fs/vessels/active/ctl/throttle
+    curl -X POST --data '1' http://127.0.0.1:4242/v1/fs/vessels/active/ctl/ignite
+
+    curl http://127.0.0.1:4242/v1/fs/vessels/active/ctl/engine
+    curl -X POST --data '1' http://127.0.0.1:4242/v1/fs/vessels/active/ctl/shutdown
+    curl -X POST --data '0' http://127.0.0.1:4242/v1/fs/vessels/active/ctl/throttle
+    ```
+
+  </TabItem>
+</Tabs>
+
+Frame-phase controls take effect on the next game-frame drain. A rejected value returns a real errno:
+`EINVAL` for a bad value, `EACCES` when control is disabled or forbidden, and `EBUSY` for a one-shot
+that cannot fire again right now.
+
+:::caution[Commands can still be ignored by KSA]
+Check `telemetry.controllable` before writing controls. A vessel with no control module can accept
+the write path but KSA will not fly it. The usual `vessels/active/` alias avoids targeting the wrong
+vessel when `control_all_vessels` is off.
+:::
+
+Next: [Staging and modules](/gatOS/guides/staging-and-modules/), where controls start to have indexes.
+
+<LinkCard title="Next: Staging and modules" href="/gatOS/guides/staging-and-modules/" description="Fire a stage and discover the parts fitted to this particular vessel." />

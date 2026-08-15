@@ -1,0 +1,41 @@
+---
+title: Study a Real Landing Autopilot
+description: Tour land-o-matic's pure guidance core, safe control loop, and live gatOS adapters.
+sidebar:
+  label: land-o-matic
+  order: 61
+---
+
+`land-o-matic` is the capstone shape made concrete. It keeps guidance math separate from game I/O,
+tests the pure core on the host, then connects that core to live `/sim` telemetry and controls.
+
+## What it combines
+
+- A read-only flight HUD and coherent telemetry sampler.
+- G-FOLD-style powered-descent planning.
+- UPFG-style steering and attitude targets.
+- Atmosphere and drag estimates from live environment data.
+- Explicit phase, frame, pause, warp, and stale-snapshot gates.
+- An abort path that can take control from every active state.
+
+## Run it
+
+```sh title="inside the guest"
+cd /mnt/gatOS/examples/land-o-matic
+cargo run --release
+```
+
+For development, use a fixture or the HTTP field mirror:
+
+```sh
+cargo test
+cargo run -- --root ./fixture
+cargo run -- --url http://127.0.0.1:4242/v1
+```
+
+The important lesson is architectural: `state -> command` is ordinary deterministic code. Filesystem
+and HTTP adapters belong at the edge. That keeps orbital math testable when no kitten is available to
+crash the prototype.
+
+Read the [example README](https://github.com/meow-sci/gatOS/tree/main/examples/land-o-matic) beside
+the [closed-loop guidance guide](/gatOS/guides/closed-loop-guidance/).

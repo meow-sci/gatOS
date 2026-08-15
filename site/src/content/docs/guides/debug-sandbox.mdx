@@ -1,0 +1,50 @@
+---
+title: Set Up a Flight with the Debug Sandbox
+description: Refuel, move time, switch vessels, teleport, and apply impulses through the optional /sim/debug tree.
+sidebar:
+  label: Debug Sandbox
+  order: 46
+---
+
+import { Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+
+The debug tree exists to set the stage quickly. It is excellent for tutorials, test flights, and
+recovering from experiments that were technically educational.
+
+## Common actions
+
+```sh
+echo 1 > /sim/debug/vessels/Hunter/refill_fuel
+echo 1 > /sim/debug/vessels/Hunter/refill_battery
+echo Hunter > /sim/debug/control_vessel
+echo 10 > /sim/debug/time/warp
+```
+
+Teleport writes a six-number CCI state vector about the vessel's current parent body:
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+    ```sh
+    echo '6578100 0 0 0 7784 0' > /sim/debug/vessels/Hunter/teleport
+    ```
+  </TabItem>
+  <TabItem label="HTTP (host)">
+    ```sh
+    curl -X POST http://127.0.0.1:4242/v1/command \
+      -H 'content-type: application/json' \
+      -d '{"vessel_id":"Hunter","action":"debug.teleport","values":[6578100,0,0,0,7784,0]}'
+    ```
+  </TabItem>
+</Tabs>
+
+:::caution[Teleport does not change the parent]
+
+The state is interpreted around the vessel's current SOI parent. Verify
+`/sim/vessels/by-id/Hunter/parent` before writing or your neat orbit may become an extremely long walk.
+
+:::
+
+`debug_namespace = false` removes this whole subtree. These actions remain deliberate cheats; they
+are not softened into ordinary flight controls.
+
+<LinkCard title="Debug reference" href="/gatOS/reference/debug-and-fx/" description="Teleport, impulse, refills, warp, focus, visual tools, gates, and errors." />

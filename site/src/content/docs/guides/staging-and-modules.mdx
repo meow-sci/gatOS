@@ -1,0 +1,55 @@
+---
+title: Staging and Modules
+description: Fire the next stage, control vessel-wide toggles, and inspect the individual modules that make up a craft.
+sidebar:
+  label: Staging and Modules
+  order: 4
+---
+
+import { Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+
+The `ctl/` directory has vessel-wide controls. Module directories are the per-part view. They only
+appear when the vessel has that kind of module, which is rather better than a lie-filled directory.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    # One-shot: activates the next KSA stage.
+    echo 1 > /sim/vessels/active/ctl/stage
+
+    # Master switches, then individual fitted modules.
+    echo 1 > /sim/vessels/active/ctl/lights
+    ls /sim/vessels/active/lights
+    cat /sim/vessels/active/lights/0/on
+    echo 0 > /sim/vessels/active/lights/0/on
+
+    ls /sim/vessels/active/engines
+    cat /sim/vessels/active/engines/0/active
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    ```sh
+    curl -X POST --data '1' http://127.0.0.1:4242/v1/fs/vessels/active/ctl/stage
+    curl -X POST --data '1' http://127.0.0.1:4242/v1/fs/vessels/active/ctl/lights
+    curl http://127.0.0.1:4242/v1/fs/vessels/active/lights/0/on
+    curl -X POST --data '0' http://127.0.0.1:4242/v1/fs/vessels/active/lights/0/on
+    ```
+
+  </TabItem>
+</Tabs>
+
+`stage` is a one-shot, so firing it again while KSA cannot advance returns `EBUSY`. Do not use a shell
+glob with `>` to fan out a command: redirection wants exactly one target. You will meet the proper
+same-tick fan-out tool in [Atomic batches](/gatOS/guides/atomic-batches/).
+
+:::note
+Module indexes describe the current vessel, not a universal part catalogue. Staging can change them.
+Discover them again after a separation or a dock.
+:::
+
+Next, let the onboard computer do some steering: [Attitude modes](/gatOS/guides/attitude-modes/).
+
+<LinkCard title="Next: Attitude modes" href="/gatOS/guides/attitude-modes/" description="Ask KSA's flight computer to keep a named orientation for you." />

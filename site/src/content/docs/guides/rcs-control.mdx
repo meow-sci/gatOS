@@ -1,0 +1,54 @@
+---
+title: RCS Control
+description: Translate and rotate with manual body-axis RCS commands, including the stop and authority rules.
+sidebar:
+  label: RCS Control
+  order: 16
+---
+
+import { Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+
+`ctl/translate` and `ctl/rotate` are held-key controls. Their signs select full thrust or torque along
+the vessel body axes: +X nose, +Y right, +Z down. Magnitudes are ignored. Write zeroes to stop.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    # First enable both the fitted RCS modules and KSA's RCS authority.
+    echo 1       > /sim/vessels/active/ctl/rcs
+    echo Enabled > /sim/vessels/active/ctl/rcs_mode
+
+    echo '1 0 0' > /sim/vessels/active/ctl/translate  # forward
+    echo '0 0 0' > /sim/vessels/active/ctl/translate  # stop
+
+    echo manual  > /sim/vessels/active/ctl/attitude_mode
+    echo '0 1 0' > /sim/vessels/active/ctl/rotate     # pitch up
+    echo '0 0 0' > /sim/vessels/active/ctl/rotate     # stop
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    ```sh
+    curl -X POST --data 'Enabled' http://127.0.0.1:4242/v1/fs/vessels/active/ctl/rcs_mode
+    curl -X POST --data '1 0 0' http://127.0.0.1:4242/v1/fs/vessels/active/ctl/translate
+    curl -X POST --data '0 0 0' http://127.0.0.1:4242/v1/fs/vessels/active/ctl/translate
+    ```
+
+  </TabItem>
+</Tabs>
+
+Translation composes with an attitude hold. Full manual rotation does not: an automatic attitude mode
+strips the rotation bits, so use `manual` for your own DAP. Both controls latch until reset, but KSA also
+clears them when focus changes, the game window loses focus, camera mode changes, ImGui holds keyboard
+focus, or warp exceeds 30×.
+
+:::caution[Always clean up]
+Put `0 0 0` writes in a program’s `finally` block. A forgotten translate command is not a gentle drift;
+it is a held key with a rocket attached.
+:::
+
+Next: [Docking and parts](/gatOS/guides/docking-and-parts/) shows the physical features these controls help you approach.
+
+<LinkCard title="Next: Docking and parts" href="/gatOS/guides/docking-and-parts/" description="Discover fitted docking ports and part identities before you operate on them." />

@@ -1,0 +1,56 @@
+---
+title: Watch the Game in Your Terminal
+description: Turn on /sim/display and render KSA's clean scene as a live Kitty image stream.
+sidebar:
+  label: Terminal Screen Stream
+  order: 42
+---
+
+import { Steps, LinkCard } from "@astrojs/starlight/components";
+
+Yes, the terminal can show the game that contains the terminal. Please resist putting that terminal
+on a screen inside the game unless you have made peace with recursion.
+
+## Quick start
+
+```sh
+echo 1 > /sim/display/enabled
+cat /sim/display/stream
+```
+
+Press Ctrl-C to stop reading, then turn capture back off:
+
+```sh
+echo 0 > /sim/display/enabled
+```
+
+The stream is already encoded as in-place Kitty graphics commands. A compatible purrTTY or Kitty
+terminal paints each frame; `cat` does not decode pixels itself.
+
+## Tune it live
+
+```sh
+echo 24  > /sim/display/fps
+echo 640 > /sim/display/width
+echo 360 > /sim/display/height
+cat /sim/display/format
+```
+
+Capture is demand-paced. It costs nothing while disabled and only produces frames while a reader is
+present.
+
+:::note[What is in the picture]
+
+The capture is KSA's clean, pre-composite scene. Game UI is not included. The default
+`rgba-zlib` encoding needs the current purrTTY native build.
+
+:::
+
+:::note[Validation status]
+
+The stream works in the informal in-game pass. Its [formal performance and stability checklist](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#screen-stream-simdisplay--in-game-validation-pass--not-yet-run)
+is still open.
+
+:::
+
+<LinkCard title="Display reference" href="/gatOS/reference/display/" description="Controls, encodings, demand behavior, terminal requirements, and transport exclusions." />

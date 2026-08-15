@@ -1,0 +1,55 @@
+---
+title: Closed-Loop Guidance
+description: Build a flight program around a pure guidance core, fresh telemetry, explicit holds, and a real abort path.
+sidebar:
+  label: Closed-Loop Guidance
+  order: 18
+---
+
+import { LinkCard } from "@astrojs/starlight/components";
+
+This is the shape of a real autopilot, not a promise that a page can teach you G-FOLD before lunch.
+The useful split is simple: keep the maths pure, keep `/sim` at the edges, and make failure a named
+state instead of a surprise.
+
+## The loop
+
+```text
+atomic telemetry -> validate and gate -> pure state-to-command decision
+                 -> execute current command -> wait in simulation time -> repeat
+```
+
+Read `vessels/active/telemetry` once per tick. Gate on `controllable`, paused `sim_dt`, `warp > 1`,
+unchanged `seq`, and non-finite fields. While held, make no new control writes and show the reason.
+When fresh data returns, solve again. That is model-predictive control in the practical, non-mystical
+sense: apply only the first useful command from the newest plan.
+
+## Keep the core boring and testable
+
+```python title="guidance.py"
+def decide(state):
+    # Pure input -> pure command. No files, HTTP, clocks, or global game state here.
+    if state["alt_radar"] < 0 or not state["finite"]:
+        return {"mode": "abort"}
+    return {"mode": "burn", "throttle": 0.4, "aim_cci": state["desired_thrust_cci"]}
+```
+
+The I/O layer turns a fresh telemetry JSON object into `state`, calls `decide`, converts a CCI aim into
+a Body→CCI quaternion with the shared toolkit, and writes throttle and attitude. Unit-test `decide` with
+saved fixture states. The game can then be the fun integration test, not the only place your maths exists.
+
+## Make abort first-class
+
+An abort must be reachable from every state. At minimum: throttle `0`, `shutdown` `1`, and
+`attitude_mode` `manual`. Keep the cleanup path independent of the nominal landing or burn logic.
+
+:::caution[Frames are contracts]
+Use CCI for gatOS position, velocity, attitude, and burn I/O. Use an ENU frame only inside your local
+surface guidance calculation. Surface-relative velocity is not raw CCI velocity. Mixing those facts is
+how a beautiful spreadsheet becomes a crater.
+:::
+
+For a full worked powered-descent implementation, read the repository’s `examples/land-o-matic`.
+For a less serious but still useful loop, revisit [Hold a lock](/gatOS/guides/hold-a-lock/).
+
+<LinkCard title="Explore: Reference frames" href="/gatOS/guides/reference-frames/" description="Return to the frame rules whenever a guidance equation starts to feel suspicious." />

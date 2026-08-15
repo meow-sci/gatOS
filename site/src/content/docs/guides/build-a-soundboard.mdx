@@ -1,0 +1,60 @@
+---
+title: Build an In-Game Soundboard
+description: Upload audio to /sim, play it through KSA's mixer, and control a running clip from the shell.
+sidebar:
+  label: In-Game Soundboard
+  order: 43
+---
+
+import { Tabs, TabItem, Steps, LinkCard } from "@astrojs/starlight/components";
+
+`/sim/audio` lets ordinary Linux userland play through KSA's FMOD mixer. Upload a clip, name the
+channel, then change it while it is playing.
+
+## Upload and play
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+    ```sh
+    cat launch.ogg > /sim/audio/file/launch.ogg
+    echo 'launch.ogg id=launch vol=0.7 group=sfx' > /sim/audio/play
+    ```
+  </TabItem>
+  <TabItem label="HTTP (host)">
+    ```sh
+    curl -T launch.ogg http://127.0.0.1:4242/v1/audio/file/launch.ogg
+    curl -X POST --data 'launch.ogg id=launch vol=0.7 group=sfx' \
+      http://127.0.0.1:4242/v1/fs/audio/play
+    ```
+  </TabItem>
+</Tabs>
+
+## Mix it live
+
+```sh
+echo 'launch vol=0.25 pitch=0.9' > /sim/audio/set
+cat /sim/audio/status
+echo launch > /sim/audio/stop
+```
+
+Use `loop=1` for music, `start=` and `end=` for a range in milliseconds, and `pan=` for placement.
+`group=sfx|music|ui` chooses which KSA volume slider governs the channel.
+
+:::note[Memory, not a jukebox disk]
+
+Uploaded clips live in mod memory. They are bounded by clip, store, count, and concurrent-channel
+caps. Remove a stored clip with `rm /sim/audio/file/<name>`.
+
+:::
+
+:::note[Validation status]
+
+Audio is code-complete and unit-tested; its [live KSA playback checklist](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#simaudio-userland-audio-playback--validation-pass--not-yet-run)
+is pending.
+
+:::
+
+The [`the90s`](https://github.com/meow-sci/gatOS/tree/main/examples/the90s) example turns this into a
+proper terminal soundboard, naturally styled like software recovered from a mall kiosk.
+
+<LinkCard title="Audio reference" href="/gatOS/reference/audio/" description="Formats, upload routes, play/set/stop grammar, events, limits, and errors." />

@@ -1,0 +1,53 @@
+---
+title: Repaint the Engine Plumes
+description: Discover a plume template, change its live colors, and restore KSA's original values cleanly.
+sidebar:
+  label: Edit Engine Plumes
+  order: 45
+---
+
+import { Steps, LinkCard } from "@astrojs/starlight/components";
+
+The render editors expose KSA's own plume, trail, cloud, and terrain knobs as files. We will touch one
+engine-plume template, make the change obvious, then put it back.
+
+## Discover a template
+
+```sh
+ls /sim/debug/engineplume/templates
+cat /sim/debug/engineplume/templates/<template>/json | jq .
+```
+
+The `json` document is the quickest way to see the current field set. Individual files are the
+writable controls.
+
+<Steps>
+
+1. Pick a template used by a visible engine.
+2. Read its current values and save the template id.
+3. Write one color or intensity field from the reference.
+4. Watch every nozzle using that template change.
+5. Write `1` to the template's `reset` file.
+
+</Steps>
+
+:::caution[Templates are shared]
+
+A plume template is not an engine. Editing it repaints every nozzle in the universe using that
+template, including vessels you are not flying. Reset restores the pristine values gatOS captured
+before its first write.
+
+:::
+
+All editor changes are session-scoped and restored on unload. The
+[`nyan-fire-rs`](https://github.com/meow-sci/gatOS/tree/main/examples/nyan-fire-rs) console builds a
+striped animated show on this surface.
+
+:::note[Validation status]
+
+The editors are code-complete. Engine plume, global trail, per-body cloud, and terrain behavior still
+have an [open live-flight checklist](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#fx-editors-simdebugengineplumeplumetrailcloudsterrain--validation-pass--not-yet-run).
+
+:::
+
+<LinkCard title="Render and FX reference" href="/gatOS/reference/debug-and-fx/" description="Every editor family, scope, range, reset rule, gate, health latch, and error." />

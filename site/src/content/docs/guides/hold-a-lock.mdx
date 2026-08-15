@@ -1,0 +1,67 @@
+---
+title: Hold a Lock
+description: Recompute a custom attitude target safely with a small control loop that knows when to hold still.
+sidebar:
+  label: Hold a Lock
+  order: 10
+---
+
+import { Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+
+A one-shot target goes stale as a vessel moves. A controller repeats the same small ritual: read a coherent
+snapshot, decide, write a fresh command, wait in sim time. It also knows when *not* to fly.
+
+## The loop shape
+
+```python title="~/tutorials/hold-lock.py"
+import math
+from gatos_io import read_json, write_vec, write
+from gatos_frames import neg, body_to_cci
+
+base = "/sim/vessels/active"
+last_seq = None
+while True:
+    t = read_json(f"{base}/telemetry")
+    if t["controllable"] and t["warp"] <= 1 and t["seq"] != last_seq and all(math.isfinite(x) for x in t["pos_cci"]):
+        # CCI origin is the parent body. Reverse position to point at it.
+        q = body_to_cci(neg(tuple(t["pos_cci"])), tuple(t["pos_cci"]))
+        write_vec(f"{base}/ctl/attitude_target", q)
+    last_seq = t["seq"]
+    write("/sim/time/alarm", t["ut"] + 0.2)
+    open("/sim/time/alarm").read()  # park until sim time reaches the target
+```
+
+The script does not write while paused, warped, stale, non-finite, or uncontrollable. Holding the last
+valid command is safer than manufacturing a new bad one. This example aims at the parent; swap the pure
+calculation in the middle for your own rule.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    cd ~/tutorials
+    python3 hold-lock.py
+    # Ctrl-C, then release the hold if you want manual control.
+    echo manual > /sim/vessels/active/ctl/attitude_mode
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    ```sh
+    # The same loop reads GET /v1/vessels/active/telemetry,
+    # POSTs its quaternion to /v1/fs/vessels/active/ctl/attitude_target,
+    # then long-polls /v1/time/wait?until=<ut+0.2>.
+    ```
+
+  </TabItem>
+</Tabs>
+
+:::caution[Keep hand-written loops near 1×]
+Named modes and scheduled burns are warp-correct inside KSA. Your own loop gets only sampled snapshots,
+so hold on warp rather than trying to chase it.
+:::
+
+Next, add the numbers that make an orbital decision: [Orbital math](/gatOS/guides/orbital-math/).
+
+<LinkCard title="Next: Orbital math" href="/gatOS/guides/orbital-math/" description="Use live body constants instead of hard-coded Earth numbers." />

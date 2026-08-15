@@ -1,0 +1,47 @@
+---
+title: Wait in Sim Time
+description: Wait for game time to advance without accidentally turning a time-warp into a wall-clock nap.
+sidebar:
+  label: Wait in Sim Time
+  order: 6
+---
+
+import { Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+
+Your watch and KSA’s clock are different animals. At warp, thirty game-seconds can pass before your
+coffee cools. When paused, no game-seconds pass at all. Use the simulation clock.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    # Wait 300 simulation seconds. The read blocks until the target time is reached.
+    ut=$(cat /sim/time/ut)
+    target=$(awk "BEGIN { print $ut + 300 }")
+    echo "$target" > /sim/time/alarm
+    cat /sim/time/alarm
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    ```sh
+    ut=$(curl -s http://127.0.0.1:4242/v1/time | jq -r .ut)
+    target=$(awk "BEGIN { print $ut + 300 }")
+    curl "http://127.0.0.1:4242/v1/time/wait?until=$target"
+    ```
+
+  </TabItem>
+</Tabs>
+
+The alarm is a blocking read, not a background timer. It returns the reached UT. In a program, calculate
+time steps from successive `ut` values. Do not call `sleep(1)` and hope that one second means one second.
+
+:::note
+Sampling has a ceiling. The default sampler publishes at 10 Hz, so a loop cannot get ten fresh snapshots
+per second by glaring at the files harder.
+:::
+
+Next: [Hold a lock](/gatOS/guides/hold-a-lock/), the safe shape of a continuous controller.
+
+<LinkCard title="Next: Hold a lock" href="/gatOS/guides/hold-a-lock/" description="Turn a one-shot attitude target into a careful, paced control loop." />

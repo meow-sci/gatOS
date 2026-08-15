@@ -1,0 +1,34 @@
+---
+title: Write Something in the Sky
+description: Explore skycaptain, a closed-loop autopilot that turns text into an atmospheric flight path.
+sidebar:
+  label: skycaptain
+  order: 62
+---
+
+`skycaptain` accepts a message, turns the glyphs into a path, and flies that path through a body's
+atmosphere. The exhaust becomes the pen. Aerodynamics becomes the reviewer.
+
+```sh title="inside the guest"
+cd /mnt/gatOS/examples/skycaptain
+cargo run --release
+```
+
+The example is useful because it joins several ordinary gatOS ideas:
+
+- live body and atmosphere constants,
+- local frame construction,
+- a pure path planner,
+- continuous attitude and throttle control,
+- pause, warp, and stale-data gating,
+- preflight checks that reject a craft whose minimum thrust cannot descend along the requested path.
+
+Read the [skycaptain README](https://github.com/meow-sci/gatOS/tree/main/examples/skycaptain) for craft
+selection, controls, and the exact flight model.
+
+:::tip[Bring a gentle engine]
+
+If minimum throttle exceeds local gravity by too much, every down-stroke is physically impossible.
+The program checks this before converting your tasteful word into an accidental ascent profile.
+
+:::

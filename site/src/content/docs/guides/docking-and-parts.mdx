@@ -1,0 +1,54 @@
+---
+title: Docking and Parts
+description: Discover a vessel's fitted parts and docking ports, then undock a specific port deliberately.
+sidebar:
+  label: Docking and Parts
+  order: 17
+---
+
+import { Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+
+Part and docking directories are a live description of this craft. Inspect before you act. It is the
+difference between “undock port 0” and “why is the lander suddenly a historical artefact?”
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    # The compact whole part tree is easiest to search with jq.
+    cat /sim/vessels/active/parts/json | jq '.[].display_name'
+
+    ls /sim/vessels/active/docking
+    cat /sim/vessels/active/docking/0/docked
+    cat /sim/vessels/active/docking/0/docked_to
+    cat /sim/vessels/active/docking/0/pushoff_impulse
+
+    # One-shot. Only do this when port 0 is the one you mean.
+    echo 1 > /sim/vessels/active/docking/0/undock
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    ```sh
+    curl http://127.0.0.1:4242/v1/fs/vessels/active/docking/0/docked
+    curl http://127.0.0.1:4242/v1/fs/vessels/active/docking/0/docked_to
+    curl -X POST --data '1' http://127.0.0.1:4242/v1/fs/vessels/active/docking/0/undock
+    ```
+
+  </TabItem>
+</Tabs>
+
+`undock` returns `EBUSY` when the selected port is not docked. `pushoff_impulse` reports the KSA
+separation impulse in newton-seconds; its debug override lives under
+`debug/vessels/<id>/docking/<n>/pushoff_impulse` and needs `debug_namespace`.
+
+:::note
+`parts/` needs `telemetry_vessel_parts=true`, the default. Part indexes can change after staging or
+docking, so discover them again. Use an `instance_id` from `parts/json` when an advanced feature asks
+for a stable physical anchor.
+:::
+
+Next: [Closed-loop guidance](/gatOS/guides/closed-loop-guidance/), where the pieces become an actual flight program.
+
+<LinkCard title="Next: Closed-loop guidance" href="/gatOS/guides/closed-loop-guidance/" description="Shape telemetry, decisions, commands, and aborts into a testable autopilot." />

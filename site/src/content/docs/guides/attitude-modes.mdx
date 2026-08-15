@@ -1,0 +1,51 @@
+---
+title: Attitude Modes
+description: Let KSA's flight computer hold prograde, retrograde, radial-in, and other named directions.
+sidebar:
+  label: Attitude Modes
+  order: 5
+---
+
+import { Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+
+When the direction has a name, use the named mode. KSA keeps tracking it while you orbit and time-warp.
+No quaternion math. The onboard computer gets to do its job. Good kitty.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    echo Prograde   > /sim/vessels/active/ctl/attitude_mode
+    echo Retrograde > /sim/vessels/active/ctl/attitude_mode
+    echo RadialIn   > /sim/vessels/active/ctl/attitude_mode
+
+    # Release the automatic hold.
+    echo manual > /sim/vessels/active/ctl/attitude_mode
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    ```sh
+    curl -X POST --data 'Prograde' http://127.0.0.1:4242/v1/fs/vessels/active/ctl/attitude_mode
+    curl -X POST --data 'Retrograde' http://127.0.0.1:4242/v1/fs/vessels/active/ctl/attitude_mode
+    curl -X POST --data 'RadialIn' http://127.0.0.1:4242/v1/fs/vessels/active/ctl/attitude_mode
+    curl -X POST --data 'manual' http://127.0.0.1:4242/v1/fs/vessels/active/ctl/attitude_mode
+    ```
+
+  </TabItem>
+</Tabs>
+
+`attitude_mode` is solver-phase, so expect it to take effect on the next solver step, about 10 Hz.
+`ctl/attitude_frame` selects the reference frame for modes that use one. The [attitude reference](/gatOS/reference/attitude-modes/)
+lists every accepted token.
+
+:::caution[RCS is a separate switch]
+`ctl/rcs` enables fitted RCS thrusters. `ctl/rcs_mode` enables the flight computer's RCS authority.
+If a reaction-wheel-free craft politely refuses to turn, read `ctl/rcs_mode` and set it to `Enabled`.
+:::
+
+For a custom direction, later use [Point at parent](/gatOS/guides/vessel-control-point-at-parent/).
+First, learn to wait on the simulation’s clock.
+
+<LinkCard title="Next: Wait in sim time" href="/gatOS/guides/wait-in-sim-time/" description="Make a program wait through warp and pause without guessing at wall-clock seconds." />

@@ -1,0 +1,49 @@
+---
+title: Atomic Batches
+description: Commit up to 64 same-phase control writes together in one KSA game tick.
+sidebar:
+  label: Atomic Batches
+  order: 14
+---
+
+import { Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+
+Normal writes wait for the game thread, so a shell loop lands one command per frame. A batch validates
+every line first, then executes the whole group in order in one tick. Very useful for formations,
+coordinated FX, and a suspiciously well-timed party light switch.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    cat > /sim/ctl/batch <<'EOF'
+    vessels/active/ctl/lights 1
+    vessels/active/ctl/rcs 1
+    commit
+    EOF
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    ```sh
+    curl -X POST --data $'vessels/active/ctl/lights 1\nvessels/active/ctl/rcs 1\ncommit\n' \
+      http://127.0.0.1:4242/v1/fs/ctl/batch
+    ```
+
+  </TabItem>
+</Tabs>
+
+Paths are `/sim`-relative, though bare and `/sim/`-rooted spellings also work. Close without `commit`
+and the unfinished batch is discarded. A failing path or value rejects the whole submission before
+anything fires.
+
+:::caution[Same tick means same phase]
+Every command in a batch must be Frame phase or Solver phase, never both. `ctl/lights` is Frame;
+`ctl/attitude_mode` is Solver. Mixing them returns `EINVAL`, because those drains are different moments.
+The limit is 64 commands and 64 KiB.
+:::
+
+Next: [Timed sequences](/gatOS/guides/timed-sequences/) spread the same command language over a clock.
+
+<LinkCard title="Next: Timed sequences" href="/gatOS/guides/timed-sequences/" description="Run launch cues, lighting, or control changes along a host-owned timeline." />

@@ -1,0 +1,41 @@
+---
+title: Fly with the Apollo Guidance Computer
+description: Run the real Apollo guidance software, its DSKY, and a gatOS bridge inside the guest.
+sidebar:
+  label: Apollo Guidance Computer
+  order: 63
+---
+
+The AGC example is not an imitation control panel. It runs Virtual AGC with the real Luminary099 or
+Comanche055 software, then bridges gatOS telemetry into virtual IMU, PIPA, and radar measurements.
+Commands come back through the same vessel controls used by every other program.
+
+## What ships
+
+- Embedded or external yaAGC execution.
+- A terminal DSKY.
+- Live padload generation and an audit against the current KSA system.
+- Virtual inertial sensors and landing radar.
+- RCS translation and rotation demodulation.
+- Engine, throttle, uplink, and downlink plumbing.
+- A July 1969 Earth/Moon system generator and Apollo 11 flight guide.
+
+## Start with the manual
+
+Follow the [AGC README](https://github.com/meow-sci/gatOS/tree/main/examples/agc) for its toolchain,
+memory recommendation, build, and launcher. The complete mission profile lives in the
+[Apollo 11 flight guide](https://github.com/meow-sci/gatOS/blob/main/examples/agc/APOLLO_11_FLIGHT_GUIDE.md).
+
+:::caution[Manual attitude is part of the contract]
+
+The AGC bridge commands the jets itself. Leave KSA attitude control in `manual`, and keep the same
+pause, warp, freshness, and cleanup gates used by other closed-loop programs.
+
+:::
+
+:::note[Validation status]
+
+The host and wire layers are verified. The [in-game mission cards](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#agc-examplesagc--luminary099-in-guest--mission-cards-m-am-e--not-yet-run-in-game)
+remain pending.
+
+:::

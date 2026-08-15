@@ -1,0 +1,74 @@
+---
+title: Read Live Telemetry
+description: Read one vessel's live state as friendly scalar files, then as one atomic JSON snapshot.
+sidebar:
+  label: Read Live Telemetry
+  order: 2
+---
+
+import { Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+
+You have met `/sim`. Now let’s ask a vessel how it is doing. Early on, individual files are lovely:
+they say exactly what they contain. A program that makes decisions needs the whole picture from one
+instant, though. That is what `telemetry` is for.
+
+## First, read the obvious files
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    cat /sim/vessels/active/mass/total
+    cat /sim/vessels/active/altitude/radar
+    cat /sim/vessels/active/orbit/apoapsis
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    ```sh
+    curl http://127.0.0.1:4242/v1/fs/vessels/active/mass/total
+    curl http://127.0.0.1:4242/v1/fs/vessels/active/altitude/radar
+    curl http://127.0.0.1:4242/v1/fs/vessels/active/orbit/apoapsis
+    ```
+
+  </TabItem>
+</Tabs>
+
+Values are SI: mass is kilograms and altitude is metres. Apoapsis and periapsis are also altitudes
+above the mean surface, not distances from the planet’s centre.
+
+## Take one coherent picture
+
+`vessels/active/telemetry` is one JSON document sampled together. Its `seq` and `ut` identify the
+snapshot. Use it in a loop so position, velocity, mass, and orbit cannot come from slightly different
+moments.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    cat /sim/vessels/active/telemetry | jq '{id, sit, parent, controllable, mass, alt, orbit, ut, seq}'
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    ```sh
+    curl http://127.0.0.1:4242/v1/vessels/active/telemetry | jq '{id, sit, parent, controllable, mass, alt, orbit, ut, seq}'
+    ```
+
+  </TabItem>
+</Tabs>
+
+`controllable` is the important little flag. `1` means KSA can accept vessel commands. When it is
+`0`, do not start a burn just because the numbers looked exciting.
+
+:::note[No active vessel]
+`vessels/active` follows the vessel you control. With no controlled vessel it returns `ENOENT`.
+Use `vessels/by-id/<id>/` when your program deliberately works on a named vessel.
+:::
+
+Next, make your first write: [Throttle and ignite](/gatOS/guides/throttle-and-ignite/).
+
+<LinkCard title="Next: Throttle and ignite" href="/gatOS/guides/throttle-and-ignite/" description="Set a throttle, light an engine, and handle a real command failure." />

@@ -1,0 +1,56 @@
+---
+title: Timed Sequences
+description: Commit a host-owned sequence of control writes on render, wall-clock, or simulation time.
+sidebar:
+  label: Timed Sequences
+  order: 15
+---
+
+import { Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+
+`ctl/timed_batch` uses the batch language with a leading absolute offset in milliseconds. Once committed,
+the host owns the schedule. Your guest shell can close, and the little mission conductor keeps waving.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    cat > /sim/ctl/timed_batch <<'EOF'
+    @id launch-seq
+    @clock ut
+    0    vessels/active/ctl/throttle 1
+    1200 vessels/active/ctl/ignite 1
+    commit
+    EOF
+
+    cat /sim/ctl/schedules/launch-seq/state
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    ```sh
+    curl -X POST --data $'@id launch-seq\n@clock ut\n0 vessels/active/ctl/throttle 1\n1200 vessels/active/ctl/ignite 1\ncommit\n' \
+      http://127.0.0.1:4242/v1/fs/ctl/timed_batch
+    curl http://127.0.0.1:4242/v1/fs/ctl/schedules/launch-seq/state
+    ```
+
+  </TabItem>
+</Tabs>
+
+Offsets are absolute, not delays. `render` is best for footage and deliberately does not catch up after
+a hitch. `wall` is real elapsed time and can catch up in a burst. `ut` follows simulation time and is the
+natural choice for mission events under warp.
+
+:::note
+Timed batches allow phase mixing because their entries occur on different ticks. On catch-up, trigger
+commands still fire in order while state writes coalesce to the last value for each path. Check
+`dropped` on the schedule if that distinction matters.
+:::
+
+This needs `schedule_enabled=true`, which is on by default. Use `pause`, `rate`, `scrub`, `loop`, `stop`,
+or `remove` below `ctl/schedules/<id>/` to drive the live player.
+
+Next: [RCS control](/gatOS/guides/rcs-control/) for manual translation and rotation.
+
+<LinkCard title="Next: RCS control" href="/gatOS/guides/rcs-control/" description="Drive the body-axis RCS controls and always leave a stop command behind." />

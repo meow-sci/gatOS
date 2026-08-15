@@ -40,36 +40,40 @@ terminal/`vi`, not a big IDE); put the real explanation in the page prose.
 
 | # | Slug (`guides/…`) | Teaches (one new idea) | Builds on | Status |
 |---|---|---|---|---|
-| 0 | `hello-sim` | the sim *is* a filesystem; read a value two ways | — | to write |
-| 1 | `read-telemetry` | scalar files vs the atomic `telemetry` doc; parse it | 0 | to write |
-| 2 | `throttle-and-ignite` | first writes: actuate + read the errno | 1 | to write |
-| 3 | `staging-and-modules` | one-shots, master toggles, per-module files | 2 | to write |
-| 4 | `attitude-modes` | the onboard flight computer via **named modes** (no math) | 2 | to write |
+| 0 | `/intro/first-five-minutes` | the sim *is* a filesystem; read a value two ways | — | **Intro** |
+| 1 | `read-telemetry` | scalar files vs the atomic `telemetry` doc; parse it | 0 | **done** |
+| 2 | `throttle-and-ignite` | first writes: actuate + read the errno | 1 | **done** |
+| 3 | `staging-and-modules` | one-shots, master toggles, per-module files | 2 | **done** |
+| 4 | `attitude-modes` | the onboard flight computer via **named modes** (no math) | 2 | **done** |
 | 5 | `vessel-control-point-at-parent` | CCI frame + custom **Body→CCI quaternion**, via the toolkit | `gatos-io`, `reference-frames` | **done** |
-| 6 | `wait-in-sim-time` | pace in **sim time**, not wall time | 1 | to write |
-| 7 | `hold-a-lock` | the **control loop** + gating (pause/warp/stale) | 5, 6 | to write |
-| 8 | `orbital-math` | constants + the vis-viva / circular-orbit cheat-sheet | 1 | to write |
-| 9 | `schedule-a-burn` | **maneuver nodes** — `ctl/burn` with a CCI Δv | 4, 8 | to write |
+| 6 | `wait-in-sim-time` | pace in **sim time**, not wall time | 1 | **done** |
+| 7 | `hold-a-lock` | the **control loop** + gating (pause/warp/stale) | 5, 6 | **done** |
+| 8 | `orbital-math` | constants + the vis-viva / circular-orbit cheat-sheet | 1 | **done** |
+| 9 | `schedule-a-burn` | **maneuver nodes** — `ctl/burn` with a CCI Δv | 4, 8 | **done** |
 | 10 | `teleport-into-orbit` | set up state with `debug/teleport` (CCI state vector) — an argparse program placing an N-vessel formation into a circular/eccentric orbit | `gatos-io`, `reference-frames` | **done** |
 | 10b | `searchlight-track-a-vessel` | the **continuous control loop** (read → gate → aim → pace, runs until Ctrl-C): track a target vessel with a computed attitude + a spotlight aimed by a **calibrated** animation goal | 5, 10 (staging); teaches pacing/gating inline until 6/7 exist | **done** |
 | 10c | `eva-taxi-to-a-part` | **part→world geometry** (`part_world = pos + transform(seat − com, att_q)`) + **RCS translation flight** (`ctl/translate` bang-bang latching jets; velocity-matching `dv = v_des − v_rel` law → emergent flip-and-burn) | 10b (the loop), `gatos-io` (`transform` addition) | **done** |
 | 10d | `punch-it` | the **impulse cheat** (`debug/vessels/<id>/impulse`) + the **body-frame `body` keyword** doing the rotation for you: map a human word (front/back/left/right/top/bottom) → a body-axis unit push; N·s (Δv=J/m) vs `dv` m/s | `gatos-io` (`write`); body-frame idea from 5/10c | **done** |
-| 11 | `react-to-events` | event-driven control (`/sim/events`, `grep -m1`, SSE) | 2 | to write |
-| 12 | `closed-loop-guidance` | full autopilot architecture (pure core, ENU, abort) | 7, 9 | capstone |
+| 11 | `react-to-events` | event-driven control (`/sim/events`, `grep -m1`, SSE) | 2 | **done** |
+| 12 | `atomic-batches` | same-phase commands in one game tick | 3 | **done** |
+| 13 | `timed-sequences` | host-owned command playback on render, wall, or UT time | 12 | **done** |
+| 14 | `rcs-control` | manual translation and rotation, including latching cleanup | 4 | **done** |
+| 15 | `docking-and-parts` | discover ports and stable part identities before acting | 14 | **done** |
+| 16 | `closed-loop-guidance` | full autopilot architecture (pure core, ENU, abort) | 7, 9 | **done** |
 
 ---
 
 ## Per-rung detail
 
-### 0. `hello-sim` — the simulation is a filesystem
+### 0. Intro's `first-five-minutes` — the simulation is a filesystem
 - **Goal:** the reader `cat`s a live value and `GET`s the same value over HTTP, and *gets* that there's
   no API to learn beyond files.
 - **Surface:** `time/ut`, `system/name`, `vessels/active/id`, `bodies/Earth/radius`. `ls /sim`.
 - **New idea:** the mental model + the two transports (in-guest `cat` vs host `GET /v1/fs/…`).
-- **Both transports:** yes — this is where you establish the synced-tabs convention.
+- **Both transports:** yes — this is where the Intro establishes the synced-tabs convention.
 - **Gotchas:** a value is text + `\n`; `vessels/active/id` is `ENOENT` when nothing is controlled.
 
-### 1. `read-telemetry` — read everything at once
+### 1. `read-telemetry` — read everything at once (**done**)
 - **Goal:** print a one-line orbit summary of the active vessel.
 - **Surface:** `vessels/active/telemetry` (atomic doc, §4) vs the scalar files `position/cci`,
   `mass/total`, `orbit/*`.
@@ -77,7 +81,7 @@ terminal/`vi`, not a big IDE); put the real explanation in the page prose.
   loop); JSON parsing; `sit`/`parent`/`controllable`.
 - **Gotchas:** guard non-finite/absent fields; `controllable == 0` matters later.
 
-### 2. `throttle-and-ignite` — your first writes
+### 2. `throttle-and-ignite` — your first writes (**done**)
 - **Goal:** throttle up and light the engine, then shut down.
 - **Surface:** `ctl/throttle`, `ctl/ignite`, `ctl/shutdown`, `ctl/engine`. The `vessels/active/` alias.
 - **New idea:** a write **actuates** and returns a real errno; setpoint (`throttle`, read back) vs
@@ -86,14 +90,14 @@ terminal/`vi`, not a big IDE); put the real explanation in the page prose.
 - **Gotchas:** `EACCES` if `control_enabled=false` or not the active vessel; `controllable==0` silently
   ignores. Mirrors `examples/gogogo-rs`.
 
-### 3. `staging-and-modules` — stage, lights, and per-module control
+### 3. `staging-and-modules` — stage, lights, and per-module control (**done**)
 - **Goal:** stage, flip master lights/RCS, then toggle a single engine/light by index.
 - **Surface:** `ctl/stage`, `ctl/lights`, `ctl/rcs`; `engines/<n>/active`, `lights/<n>/on`.
 - **New idea:** modules appear only when fitted; index addressing; the fan-out concept (many writes in
   one tick — `examples/kecho`).
 - **Gotchas:** one-shots return `EBUSY` if re-fired; a glob `echo >` is an ambiguous redirect.
 
-### 4. `attitude-modes` — the flight computer, no math (**the "basic flight computer" rung**)
+### 4. `attitude-modes` — the flight computer, no math (**done**)
 - **Goal:** hold prograde, then retrograde, then radial-in, and watch the vessel steer itself.
 - **Surface:** `ctl/attitude_mode` (tokens, §3.4.19), `ctl/attitude_frame`.
 - **New idea:** the setpoint is **onboard** — the autopilot steers and tracks, warp-correct, no
@@ -114,27 +118,27 @@ terminal/`vi`, not a big IDE); put the real explanation in the page prose.
   (`RadialIn` does this for free) in the closing `:::tip`. (A future polish could add the HTTP
   transport tab; today it's in-guest Python to match the toolkit.)
 
-### 6. `wait-in-sim-time` — pace correctly
+### 6. `wait-in-sim-time` — pace correctly (**done**)
 - **Goal:** do something, wait 300 sim-seconds, do the next thing — correctly under warp/pause.
 - **Surface:** `time/alarm` (write target, read parks) / `GET /v1/time/wait?until=`.
 - **New idea:** sim time ≠ wall time; never `sleep(dt)`; key Δt off the change in `ut`.
 - **Gotchas:** the ceiling is `sample_rate_hz` (default 10).
 
-### 7. `hold-a-lock` — the control loop + gating
+### 7. `hold-a-lock` — the control loop + gating (**done**)
 - **Goal:** turn rung 5's one-shot into a loop that re-reads and re-points every tick, safely.
 - **Surface:** loop of `telemetry` read → compute → `ctl/attitude_target` write, paced by rung 6.
 - **New idea:** the loop skeleton (read → gate → decide → actuate → pace); **gate** on paused
   (`sim_dt==0`), warping (`warp>1`), stale (`seq` unchanged); hold with no writes + a banner.
 - **Gotchas:** run closed loops near 1× warp; named modes survive warp, your per-tick math doesn't.
 
-### 8. `orbital-math` — the numbers
+### 8. `orbital-math` — the numbers (**done**)
 - **Goal:** compute circular speed and read the current orbit's apoapsis/periapsis/period.
 - **Surface:** `bodies/<parent>/{mu,radius}`, `orbit/*`.
 - **New idea:** μ/r² gravity (never 9.8); `v_circular=sqrt(μ/r)`; vis-viva; altitudes are above-surface
   (add radius); angles in degrees.
 - **Gotchas:** mass is kg; read constants once.
 
-### 9. `schedule-a-burn` — maneuver nodes
+### 9. `schedule-a-burn` — maneuver nodes (**done**)
 - **Goal:** circularize at apoapsis by scheduling a prograde burn.
 - **Surface:** `ctl/burn = "ut dvx dvy dvz"`; `orbit/time_to_ap`, `time/ut`.
 - **New idea:** an impulsive maneuver at a future sim time with a **CCI Δv**; onboard execution (no
@@ -156,8 +160,8 @@ terminal/`vi`, not a big IDE); put the real explanation in the page prose.
   **compute-then-actuate**: split into a *plan* phase (all reads + math) and a bare *write* phase, so
   the N teleports fire back-to-back and land in one physics tick — interleaving a read between writes
   lets the sim tick and smears the formation at orbital speed.
-- **Self-contained:** teaches the orbit math inline, so it does **not** depend on the (unwritten) rung
-  8 `orbital-math`. Adds `write_nums` + `scale`/`add`/`sub` to the toolkit; page is
+- **Self-contained:** teaches the orbit math inline, so it does **not** depend on rung 8
+  `orbital-math`. Adds `write_nums` + `scale`/`add`/`sub` to the toolkit; page is
   [`teleport-into-orbit.mdx`](../../../site/src/content/docs/guides/teleport-into-orbit.mdx).
 - **Gotchas:** needs `debug_namespace` (default on); keep apoapsis inside the parent's `soi`; also
   worked (host/TS, two-vessel circular) in `recipes.md §1`.
@@ -174,9 +178,8 @@ terminal/`vi`, not a big IDE); put the real explanation in the page prose.
   the **calibration constant**: `lights/<n>/goal` sweeps the part's aim animation 0..1, but where in
   that sweep the beam parallels body +X is a fact about the part's model — a `--aim-goal` flag tuned
   by eye (poke `goal` from a shell, watch, bake the number in).
-- **Self-contained:** rungs 6/7 are unwritten, so it teaches `sleep_sim` (alarm-file pacing) and the
-  paused/warp gate inline (wall-clock nap while held, sim-time pacing while flying) — fold back into
-  those rungs when they're authored. Page:
+- **Self-contained:** it also teaches `sleep_sim` (alarm-file pacing) and the paused/warp gate inline,
+  so it remains useful as a standalone project. Page:
   [`searchlight-track-a-vessel.mdx`](../../../site/src/content/docs/guides/searchlight-track-a-vessel.mdx).
 - **Gotchas:** attitude writes are solver-phase (~10 Hz — hold under warp rather than chase);
   `lights/<n>/goal` exists only when the light part carries an animation (catch `OSError` and carry
@@ -222,13 +225,33 @@ terminal/`vi`, not a big IDE); put the real explanation in the page prose.
   / `EINVAL` (bad vector/keyword). The direction=which-way-it-goes convention is a choice — negate to
   make it "punched *away from*" instead.
 
-### 11. `react-to-events` — event-driven control
+### 11. `react-to-events` — event-driven control (**done**)
 - **Goal:** wait for launch/flameout/SOI-change and act, without polling.
 - **Surface:** `/sim/events` (`tail -f`, `grep -m1`) / `GET /v1/events` (SSE); per-vessel `stream`.
 - **New idea:** discrete events as a coordination primitive; block on the next event cheaply.
 - **Gotchas:** events honor `telemetry_events`; parse one JSON object per line.
 
-### 12. `closed-loop-guidance` — capstone
+### 12. `atomic-batches` — one tick, many commands (**done**)
+- **Goal:** commit up to 64 Frame-phase or Solver-phase writes together without sequential frame drift.
+- **Surface:** `ctl/batch` command lines plus `commit`; `POST /v1/fs/ctl/batch` carries the same body.
+- **Gotchas:** validation is all-or-nothing, but runtime commands remain independent; one batch cannot mix phases.
+
+### 13. `timed-sequences` — a host-owned playback clock (**done**)
+- **Goal:** stage, throttle, light, or cue a control sequence without keeping a guest script alive.
+- **Surface:** `ctl/timed_batch`, `ctl/schedules/<id>/`, and `schedule.*` events.
+- **Gotchas:** offsets are absolute milliseconds; choose `render`, `wall`, or `ut` deliberately; requires `schedule_enabled`.
+
+### 14. `rcs-control` — manual body-axis flight (**done**)
+- **Goal:** command manual translation and rotation while making cleanup and authority explicit.
+- **Surface:** `ctl/{rcs,rcs_mode,translate,rotate,attitude_mode}`.
+- **Gotchas:** translation and rotation latch until zeroed; full rotate authority needs `manual`; disabled `rcs_mode` blocks both.
+
+### 15. `docking-and-parts` — inspect before separation (**done**)
+- **Goal:** discover a live craft's part tree and selected docking port before issuing `undock`.
+- **Surface:** `parts/json`, `docking/<n>/{docked,docked_to,pushoff_impulse,undock}`.
+- **Gotchas:** indexes change with the craft; `parts/` needs `telemetry_vessel_parts`; undocking a free port is `EBUSY`.
+
+### 16. `closed-loop-guidance` — capstone (**done**)
 - **Goal:** the architecture of a real autopilot (not a full G-FOLD — the *shape*).
 - **Surface:** everything above, plus a local **ENU** frame and surface-relative velocity.
 - **New idea:** a **pure `state → command` core** (host-testable, no `/sim` dependency); re-solve each
@@ -241,7 +264,7 @@ terminal/`vi`, not a big IDE); put the real explanation in the page prose.
 ## Extending the ladder
 
 New rungs slot **after their last prerequisite** — keep the one-new-idea rule. Candidate bonus rungs
-once the core exists: RCS translation/docking, solar/power management, a live terminal dashboard
+once the core exists: solar/power management, a live terminal dashboard
 (reading `stream`), the `/sim/display` screen stream, and the cosmetic cheats (welds, `thug_life`).
 When you add or reorder a rung, update the table above and re-check every "builds on" so a reader is
 never sent an idea they haven't met.

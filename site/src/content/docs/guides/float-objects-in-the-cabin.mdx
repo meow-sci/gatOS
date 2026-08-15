@@ -1,0 +1,61 @@
+---
+title: Float Objects Around the Cabin
+description: Turn on gatOS's IVA physics, release a small cabin prop, and watch it respond to the vessel's motion.
+sidebar:
+  label: IVA Cabin Physics
+  order: 48
+---
+
+import { Steps, LinkCard } from "@astrojs/starlight/components";
+
+IVA cabin physics cuts small decorative subparts loose into a gatOS-owned physics world. They drift
+while coasting, slide under acceleration, and collide with the actual interior art.
+
+## Start the simulation
+
+```sh
+echo 1 > /sim/debug/iva/enabled
+cat /sim/debug/iva/interior
+```
+
+Nothing is simulated while the master switch is off. That is the shipped default.
+
+## Adopt a prop
+
+```sh
+echo 'Gemini7 4 Sardine' > /sim/debug/iva/adopt_all
+ls /sim/debug/iva
+cat /sim/debug/iva/0/position
+echo '0.3 0 0' > /sim/debug/iva/0/nudge
+```
+
+<Steps>
+
+1. Enter the vessel's IVA view.
+2. Enable cabin physics.
+3. Adopt one or a few small props.
+4. Coast, thrust, or rotate and watch their inertial response.
+5. Run `echo 1 > /sim/debug/iva/clear` to restore every object.
+6. Write `0` to `enabled` to tear the simulation down.
+
+</Steps>
+
+:::caution[Subparts only]
+
+`adopt` takes a subpart instance id, never a top-level vessel part. The size gate exists so a typo
+cannot cut a seat or hull panel loose.
+
+:::
+
+Objects park under warp, in the VAB, and outside IVA unless `run_outside_iva` is enabled. The feature
+does not alter the save file because KSA does not persist these driven subpart transforms.
+
+:::note[Validation status]
+
+The independent physics world and filesystem surface are code-complete. The [full cabin flight
+checklist](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#iva-cabin-physics-simdebugiva--validation-pass--not-yet-run)
+is pending.
+
+:::
+
+<LinkCard title="IVA reference" href="/gatOS/reference/debug-and-fx/#iva-cabin-physics" description="Object discovery, limits, physics tuning, events, parking, cleanup, and errors." />

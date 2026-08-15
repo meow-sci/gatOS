@@ -1,0 +1,50 @@
+---
+title: Share a Host Folder with the Guest
+description: Mount a host folder at /mnt without copying scripts into the Linux disk by hand.
+sidebar:
+  label: Host Folder Mounts
+  order: 33
+---
+
+import { Steps, LinkCard } from "@astrojs/starlight/components";
+
+Host mounts are the comfortable way to edit on your desktop and run in the guest. Save a script in
+your normal editor, then execute the same file under `/mnt`.
+
+## Configure a read-only mount
+
+Add an entry to the live `gatos.toml` before starting the VM:
+
+```toml
+[[mounts]]
+name = "scripts"
+path = "C:/Users/you/ksa-scripts"
+read_only = true
+```
+
+On Linux, use an absolute Linux path. The `name` becomes the guest directory.
+
+<Steps>
+
+1. Shut down the gatOS VM.
+2. Add the mount entry and save `gatos.toml`.
+3. Start the VM and run `ls -la /mnt/scripts`.
+4. Edit a file on the host, then read it again from the guest.
+
+</Steps>
+
+## Make it writable
+
+Set `read_only = false` only when guest programs must create or change host files.
+
+:::danger[This is your real folder]
+
+A writable mount is full passthrough. Guest programs can create, overwrite, rename, and delete real
+host files. Start read-only, especially while testing scripts that contain `rm`, globs, or a cat on
+the keyboard.
+
+:::
+
+Mounts use a separate 9P server from `/sim`. They are not exposed through HTTP, MQTT, serial, or MCP.
+
+<LinkCard title="Host mounts reference" href="/gatOS/reference/host-mounts/" description="Names, paths, access rules, lifecycle, and failure behavior." />

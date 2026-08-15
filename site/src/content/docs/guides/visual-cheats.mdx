@@ -1,0 +1,47 @@
+---
+title: Make the Scene Slightly Ridiculous
+description: Scale a vessel, force distant rendering, and attach the obligatory thug-life glasses.
+sidebar:
+  label: Visual Cheats
+  order: 49
+---
+
+import { Steps, LinkCard } from "@astrojs/starlight/components";
+
+Some tools improve flight. These improve morale.
+
+## Make a vessel enormous
+
+```sh
+echo 50000 > /sim/vessels/by-id/Hunter/scale
+echo 1 > /sim/vessels/by-id/Hunter/always_render
+```
+
+`scale` is a one-shot render scale and `always_render` bypasses the distant sub-pixel cull. Both are
+first-class vessel controls rather than debug leaves, and both can target any vessel.
+
+## Add glasses
+
+```sh
+iid=$(cat /sim/vessels/by-id/Hunter/parts/0/instance_id)
+echo "Hunter $iid" > /sim/debug/thug_life/add
+echo '0.9 0.22' > /sim/debug/thug_life/0/size
+echo '0.23 0 -0.33' > /sim/debug/thug_life/0/position
+```
+
+Tune position, rotation, and size live. Then clean the scene:
+
+```sh
+echo 1 > /sim/debug/thug_life/clear
+echo 1 > /sim/vessels/by-id/Hunter/scale
+echo 0 > /sim/vessels/by-id/Hunter/always_render
+```
+
+:::note[Validation status]
+
+Scale and force-render have an [open validation checklist](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#per-vessel-scale--always_render-nodes--validation-pass--not-yet-run).
+The Vulkan glasses renderer has its [own checklist](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#thug_life-world-space-quad-render-cheat--validation-pass--not-yet-run).
+
+:::
+
+<LinkCard title="Debug and visual reference" href="/gatOS/reference/debug-and-fx/" description="Scale, force rendering, thug-life entries, particles, gates, persistence, and cleanup." />

@@ -1,0 +1,51 @@
+---
+title: Throw a Fleet-Wide Light Show
+description: Discover vessel lights and change them together with an atomic /sim batch.
+sidebar:
+  label: Fleet Light Show
+  order: 44
+---
+
+import { Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+
+Lights are ordinary fitted modules. That makes them useful for status indicators, formation signals,
+and the sort of dance party mission control will deny approving.
+
+## Find the lights
+
+```sh
+find /sim/vessels/by-id -path '*/lights/*/on' -print
+```
+
+## Change several in one frame
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+    ```sh
+    cat > /sim/ctl/batch <<'EOF'
+    vessels/by-id/Hunter/lights/0/on 1
+    vessels/by-id/Polaris/lights/0/on 1
+    commit
+    EOF
+    ```
+  </TabItem>
+  <TabItem label="HTTP (host)">
+    ```sh
+    curl -X POST http://127.0.0.1:4242/v1/fs/ctl/batch \
+      --data-binary $'vessels/by-id/Hunter/lights/0/on 1\nvessels/by-id/Polaris/lights/0/on 1\ncommit\n'
+    ```
+  </TabItem>
+</Tabs>
+
+The filesystem batch is what makes independent leaf writes land in the same game tick. For a timed
+pattern, use `/sim/ctl/timed_batch` or the [`dancy-party-rs`](https://github.com/meow-sci/gatOS/tree/main/examples/dancy-party-rs)
+console.
+
+:::caution[Modules are conditional]
+
+A vessel with no light module has no `lights/` entries. Discover first; do not assume index `0`
+exists on every craft.
+
+:::
+
+<LinkCard title="Batch reference" href="/gatOS/reference/batches-and-schedules/" description="Same-tick groups, timed playback, phases, caps, and errors." />

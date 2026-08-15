@@ -1,0 +1,53 @@
+---
+title: Use the Serial Link
+description: Enable the virtio serial channel, read active-vessel telemetry, and send a simple SCPI command.
+sidebar:
+  label: Serial Link
+  order: 32
+---
+
+import { Steps, LinkCard } from "@astrojs/starlight/components";
+
+The serial bridge is the narrow, hardware-flavored interface. It streams the active vessel and
+accepts compact SCPI commands. It is not a second copy of the whole `/sim` tree.
+
+## Enable it
+
+Set these flat keys in `gatos.toml`, then restart the VM:
+
+```toml
+serial_telemetry_port = true
+serial_command_port = true
+serial_mode = "ndjson"
+serial_interval_ms = 500
+```
+
+## Read the port
+
+```sh title="inside the guest"
+stty -F /dev/virtio-ports/gatos.serial raw -echo
+cat /dev/virtio-ports/gatos.serial
+```
+
+NDJSON prints one JSON document per line. `nmea` and `ccsds` change the outbound framing, not the
+simulation model behind it.
+
+## Send a command
+
+Open the device read-write from one program or a terminal multiplexer, then send the SCPI line for
+the active vessel:
+
+```text
+CTL:THROTTLE 0.5
+```
+
+Use the serial reference for the complete accepted vocabulary and response framing.
+
+:::note[Reserved buses]
+
+`bus_ccsds` and `bus_1553` exist in the configuration schema as reserved switches. They do not serve
+a bus today. The serial channel's CCSDS mode is real; the separate bus feature is not.
+
+:::
+
+<LinkCard title="Serial reference" href="/gatOS/reference/serial/" description="Device path, modes, SCPI commands, cadence, and current limitations." />

@@ -1,0 +1,52 @@
+---
+title: Things Already Built with gatOS
+description: Pick a complete dashboard, autopilot, camera tool, soundboard, or gloriously unnecessary visual toy.
+sidebar:
+  label: Examples Gallery
+  order: 60
+---
+
+import { Card, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+The repository examples are complete programs, not tiny API fragments. Run one as-is, steal the good
+parts, or stare at it until your own project begins to seem reasonable.
+
+## Cockpits and controls
+
+<CardGrid>
+  <Card title="dashboard-rs"><p>A ready-made fleet dashboard and flight console over HTTP.</p><p>Rust · HTTP · Available</p></Card>
+  <Card title="simfs-dashboard"><p>Build your own terminal panel from any live `/sim` leaves.</p><p>Rust · `/sim` or HTTP · Available</p></Card>
+  <Card title="gogogo-rs"><p>A tiny throttle-and-ignite panel with almost no chrome.</p><p>Rust · `/sim` or HTTP · Available</p></Card>
+  <Card title="pressme-rs"><p>Big configurable buttons that launch ordinary guest commands.</p><p>Rust · Linux userland · Available</p></Card>
+</CardGrid>
+
+## Flight computers
+
+<CardGrid>
+  <Card title="land-o-matic"><p>Powered-descent guidance using G-FOLD and UPFG ideas.</p><p>Rust · `/sim` or HTTP · Available</p></Card>
+  <Card title="skycaptain"><p>Fly a vessel through the atmosphere to write words in the sky.</p><p>Rust · `/sim` · Available</p></Card>
+  <Card title="agc"><p>Real Luminary099 and Comanche055 guidance software, virtual sensors, and a DSKY.</p><p>Rust + yaAGC · Experimental, mission validation pending</p></Card>
+</CardGrid>
+
+## Camera, screen, and sound
+
+<CardGrid>
+  <Card title="photog-rs"><p>A terminal editor and compiler for repeatable cinematic takes.</p><p>Rust · `/sim` or HTTP · Experimental</p></Card>
+  <Card title="shotbuilder"><p>Compile one move into a camera track and an ordinary timed batch.</p><p>TypeScript/Bun · Available</p></Card>
+  <Card title="simscreen"><p>Render KSA's clean scene directly in a Kitty graphics terminal.</p><p>Shell · `/sim/display` · Experimental</p></Card>
+  <Card title="the90s"><p>A wonderfully questionable in-game soundboard.</p><p>Rust · `/sim/audio` or HTTP · Experimental</p></Card>
+</CardGrid>
+
+## Lights, FX, and troublemaking
+
+<CardGrid>
+  <Card title="dancy-party-rs"><p>Coordinate fleet lights into a terminal-controlled dance party.</p><p>Rust · `/sim` or HTTP · Available</p></Card>
+  <Card title="nyan-fire-rs"><p>Animate shared engine-plume templates with striped palettes.</p><p>Rust · debug FX · Experimental</p></Card>
+  <Card title="thug"><p>Find a vessel's root part and attach the glasses correctly.</p><p>Rust · debug render · Experimental</p></Card>
+  <Card title="fx"><p>Spawn face-anchored particle effects and timed celebrations.</p><p>Rust · debug namespace · Experimental</p></Card>
+</CardGrid>
+
+Browse every source directory in [`examples/`](https://github.com/meow-sci/gatOS/tree/main/examples).
+Each README documents build commands, controls, transports, and feature gates.
+
+<LinkCard title="Build a tiny HTTP dashboard" href="/gatOS/guides/http-dashboard/" description="Start with a short program before adopting a full cockpit." />

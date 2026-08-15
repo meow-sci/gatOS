@@ -1,0 +1,47 @@
+---
+title: React to Events
+description: Wait for meaningful changes in KSA instead of repeatedly asking whether something happened yet.
+sidebar:
+  label: React to Events
+  order: 13
+---
+
+import { Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+
+Telemetry tells you what is true now. Events tell you what just changed. `/sim/events` is a growing
+NDJSON log: one JSON object per line, including `situation-change`, `engine-state`, `flameout`,
+`docked`, `undocked`, `decoupled`, and the schedule events.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    # Watch everything.
+    tail -f /sim/events
+
+    # Stop after the next flameout. grep sees one JSON line at a time.
+    tail -f /sim/events | grep -m1 '"type":"flameout"'
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    ```sh
+    # SSE. Each event is a data: line containing the same JSON object.
+    curl -N http://127.0.0.1:4242/v1/events
+    ```
+
+  </TabItem>
+</Tabs>
+
+Use the event as a wake-up, then read a fresh telemetry document before commanding anything. An event
+reports the transition, not a magic complete state machine in miniature.
+
+:::note[The event gate]
+Events require `telemetry_events=true`, the default. `tail -f` works because the guest supplies a
+polling-friendly tail shim for `/sim`; GNU `tail`’s usual inotify expectation would be a tiny tragedy.
+:::
+
+Next, make several writes genuinely simultaneous with [Atomic batches](/gatOS/guides/atomic-batches/).
+
+<LinkCard title="Next: Atomic batches" href="/gatOS/guides/atomic-batches/" description="Commit a set of same-phase controls in one game tick." />

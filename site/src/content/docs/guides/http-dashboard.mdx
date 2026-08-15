@@ -1,0 +1,69 @@
+---
+title: Build a Tiny HTTP Dashboard
+description: Read one coherent world snapshot over HTTP and turn it into a useful terminal status line.
+sidebar:
+  label: HTTP Dashboard
+  order: 30
+---
+
+import { Steps, LinkCard } from "@astrojs/starlight/components";
+
+`/sim` is lovely when your program lives in the guest. HTTP is the same flight data wearing shoes
+and visiting another process.
+
+This guide builds a tiny host-side dashboard from the atomic world snapshot. One request gives you a
+self-consistent view instead of a handful of fields sampled at slightly different moments.
+
+## Before you start
+
+- Leave `http_enabled = true` in `gatos.toml`.
+- Read the actual port from the gatOS status window. The preferred host address is
+  `http://127.0.0.1:4242/v1`.
+- Install `jq` on the machine running the command.
+
+## Read the world
+
+```sh title="one snapshot"
+curl -s http://127.0.0.1:4242/v1/snapshot | jq .
+```
+
+The same immutable snapshot feeds `/sim`, MQTT, serial, and MCP. HTTP simply packages it as JSON.
+
+## Print an active-vessel status line
+
+```sh title="watch-flight.sh"
+#!/bin/sh
+set -eu
+
+base=${GATOS_HTTP:-http://127.0.0.1:4242/v1}
+
+while :; do
+  curl -fsS "$base/vessels/active/telemetry" |
+    jq -r '"\(.id)  alt=\(.alt.radar)m  speed=\(.vel.surf)m/s  fuel=\(.mass.p)kg"'
+  sleep 0.5
+done
+```
+
+<Steps>
+
+1. Save the script and run `chmod +x watch-flight.sh`.
+2. Launch or select a vessel in KSA.
+3. Run `./watch-flight.sh`.
+4. Change altitude or throttle and watch the line follow along.
+
+</Steps>
+
+:::tip[Build the cockpit instead]
+
+[`examples/dashboard-rs`](https://github.com/meow-sci/gatOS/tree/main/examples/dashboard-rs) is the
+full ratatui version: fleet list, orbit data, controls, and proper error reporting.
+
+:::
+
+## When polling is the wrong tool
+
+Use `/v1/events` for discrete events and the vessel stream endpoint for a continuous feed. Use
+`/v1/fs/<path>?stream=1` when one scalar is all you need. A dashboard that asks for the world 60 times
+a second is mostly benchmarking its own enthusiasm.
+
+<LinkCard title="HTTP reference" href="/gatOS/reference/http/" description="Routes, response shapes, streaming behavior, limits, and command writes." />

@@ -1,0 +1,50 @@
+---
+title: Schedule a Burn
+description: Ask the flight computer to execute an impulsive CCI delta-v at a future simulation time.
+sidebar:
+  label: Schedule a Burn
+  order: 12
+---
+
+import { Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+
+`ctl/burn` is for an impulsive maneuver: one UT plus a three-component **CCI** Δv. It is not a scalar
+“go prograde” number. Compute the vector in the parent body’s inertial frame, then let KSA orient and
+execute the maneuver.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    ut=$(cat /sim/time/ut)
+    t_ap=$(cat /sim/vessels/active/orbit/time_to_ap)
+    burn_ut=$(awk "BEGIN { print $ut + $t_ap }")
+
+    # Example shape only: replace 12 0 0 with your computed CCI delta-v in m/s.
+    echo "$burn_ut 12 0 0" > /sim/vessels/active/ctl/burn
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    ```sh
+    # Same raw file value over HTTP.
+    curl -X POST --data '123456 12 0 0' \
+      http://127.0.0.1:4242/v1/fs/vessels/active/ctl/burn
+    ```
+
+  </TabItem>
+</Tabs>
+
+For circularisation, derive the required *direction and magnitude* with vis-viva, then express that
+direction in CCI. The currently prograde vector is not always CCI +X. Read position and velocity, do
+the frame math, then write the four numbers.
+
+:::caution[Solver phase]
+`ctl/burn` is solver-phase, so it takes effect on the next solver step. It is a planned maneuver,
+not a promise that a craft with no thrust or propellant can perform the impossible.
+:::
+
+Next: [React to events](/gatOS/guides/react-to-events/) when a time is not the right trigger.
+
+<LinkCard title="Next: React to events" href="/gatOS/guides/react-to-events/" description="Wait for a launch, flameout, dock, or separation without polling." />

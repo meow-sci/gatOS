@@ -1,0 +1,53 @@
+---
+title: Weld One Vessel to Another
+description: Pick a live part anchor, capture the current relative pose, and create a runtime vessel weld.
+sidebar:
+  label: Weld Vessels
+  order: 47
+---
+
+import { Steps, LinkCard } from "@astrojs/starlight/components";
+
+A weld keeps one vessel rigidly attached to another vessel's part. `weld_here` is the friendly route:
+place the vessels in-game first, then ask gatOS to preserve the pose already on screen.
+
+## Pick the anchor
+
+```sh
+cat /sim/vessels/by-id/Rocket/parts/json | jq \
+  '.parts[] | {name: .display_name, instance_id}'
+```
+
+Top-level part and subpart instance ids can anchor a weld. A moving subpart, such as a robotics
+segment, carries the source vessel with it.
+
+<Steps>
+
+1. Move `Hunter` into the desired pose beside `Rocket`.
+2. Choose the target part instance id.
+3. Write `<target-vessel> <part-instance-id>` to Hunter's `weld_here` file.
+4. Inspect `/sim/debug/welds/` to find the registry entry.
+5. Disable the entry or use `unweld` when finished.
+
+</Steps>
+
+```sh
+echo 'Rocket 123456' > /sim/debug/vessels/Hunter/weld_here
+cat /sim/debug/welds/Hunter/target
+echo 1 > /sim/debug/vessels/Hunter/unweld
+```
+
+:::note[Runtime only]
+
+Welds are session state. They do not rewrite KSA's vessel save model.
+
+:::
+
+:::note[Validation status]
+
+The weld and part surfaces are code-complete; their [live KSA checklist](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#welds--always_render_iva--parts--validation-pass--not-yet-run)
+is pending.
+
+:::
+
+<LinkCard title="Debug and weld reference" href="/gatOS/reference/debug-and-fx/" description="Explicit poses, captured poses, registry controls, anchors, cleanup, and errors." />

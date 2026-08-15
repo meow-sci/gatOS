@@ -1,0 +1,59 @@
+---
+title: Edit a Cinematic Take with photog
+description: Arrange camera shots in a terminal editor, preview them live, and compile a repeatable gatOS camera track.
+sidebar:
+  label: Edit with photog
+  order: 41
+---
+
+import { Steps, LinkCard } from "@astrojs/starlight/components";
+
+The direct camera guide teaches the controls. `photog-rs` is what you reach for when a shot has more
+than one idea in it.
+
+It is a ratatui editor for ordered shots. You choose anchors, frames, positions, aim targets, timing,
+and lens settings, then compile them into a native camera track plus an optional timed-command
+sidecar.
+
+## Run it
+
+```sh title="inside the gatOS guest"
+cd /mnt/gatOS/examples/photog-rs
+cargo run --release
+```
+
+Or run it on the host against HTTP:
+
+```sh title="host-side"
+cargo run --release -- --url http://127.0.0.1:4242/v1
+```
+
+<Steps>
+
+1. Create a project and add a shot.
+2. Choose a vessel or body anchor from live discovery.
+3. Set the placement frame and camera offset.
+4. Aim at a vessel, body, part, or fixed point.
+5. Preview the shot, then compile it.
+6. Play the generated track and sidecar together.
+
+</Steps>
+
+The project file is versioned JSON. The compiler samples ordinary camera leaf writes onto the shared
+timeline, so the finished take remains inspectable instead of becoming mysterious editor goo.
+
+:::caution[Ownership contexts]
+
+gatOS owns the fixed main viewport. It does not own IVA or Map camera contexts. `camera/map/scope`
+is supported, but moving the owned camera into Map is not.
+
+:::
+
+:::note[Validation status]
+
+The camera driver is code-complete. Its first live pass found a same-frame driver bug; the fix landed
+and the [live recheck is pending](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#programmable-camera-simcamera--validation-pass--first-pass-found-driver-bug-fix-landed-recheck-pending).
+
+:::
+
+<LinkCard title="Camera reference" href="/gatOS/reference/camera/" description="Ownership, frames, targets, leaf grammar, track schema, timing, and limitations." />

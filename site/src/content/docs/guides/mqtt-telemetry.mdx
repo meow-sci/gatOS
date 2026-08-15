@@ -1,0 +1,56 @@
+---
+title: Subscribe to Live Telemetry with MQTT
+description: Watch retained world state and live flight events from gatOS's embedded MQTT broker.
+sidebar:
+  label: MQTT Telemetry
+  order: 31
+---
+
+import { Steps, LinkCard } from "@astrojs/starlight/components";
+
+MQTT is handy when several little programs want the same data. One can draw a dashboard, another can
+log the flight, and a third can blink something ill-advised.
+
+## Connect
+
+The guest shell receives `$GATOS_MQTT` when MQTT is enabled. On the host, the preferred broker is
+`127.0.0.1:1883`; the status window shows the actual port.
+
+```sh title="inside the guest"
+apk add mosquitto-clients
+mosquitto_sub -h sim -p 1883 -t 'gatos/#' -v
+```
+
+```sh title="on the host"
+mosquitto_sub -h 127.0.0.1 -p 1883 -t 'gatos/events' -v
+```
+
+<Steps>
+
+1. Subscribe to `gatos/snapshot` and note that a value arrives immediately. It is retained.
+2. Subscribe to `gatos/events` and stage or ignite a vessel. Events are live, not retained.
+3. Subscribe to `gatos/sim/vessels/active/altitude/radar` for the field-level mirror.
+
+</Steps>
+
+## Send a command
+
+```sh title="set half throttle"
+mosquitto_pub -h sim -p 1883 -t gatos/command -m \
+  '{"vessel_id":"Hunter","action":"vessel.throttle","value":0.5}'
+```
+
+Use the exact vessel id and action key. Commands report results on the command-result topic described
+in the MQTT reference.
+
+:::caution[Local really means local]
+
+The embedded broker binds to loopback. A Raspberry Pi or ESP32 elsewhere on your network cannot
+connect directly. Bridge or forward it deliberately if that is what you want.
+
+:::
+
+MQTT publishing is subscription-gated, changed-only, and rate-capped. Unsubscribed topics cost very
+little, which is a nice property for a feature named after shouting messages into space.
+
+<LinkCard title="MQTT reference" href="/gatOS/reference/mqtt/" description="Topic families, retention, field mirrors, commands, cadence, and binding behavior." />

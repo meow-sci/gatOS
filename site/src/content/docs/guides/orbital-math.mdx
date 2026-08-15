@@ -1,0 +1,54 @@
+---
+title: Orbital Math from Live Constants
+description: Compute circular speed and inspect an orbit using KSA's own body constants and SI units.
+sidebar:
+  label: Orbital Math
+  order: 11
+---
+
+import { Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+
+The useful orbital numbers are already in `/sim`. Read them from the current parent, once, and leave
+the old 9.8 habit on the launchpad.
+
+For an orbit with centre-to-vessel radius $r$, circular speed is $v_c = \sqrt{\mu/r}$. Here,
+`mu` is m³/s², `radius` is metres, and an apoapsis or periapsis is an altitude above the surface.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    parent=$(cat /sim/vessels/active/parent)
+    mu=$(cat "/sim/bodies/$parent/mu")
+    radius=$(cat "/sim/bodies/$parent/radius")
+    altitude=120000
+    awk "BEGIN { r=$radius + $altitude; print sqrt($mu / r) \" m/s\" }"
+
+    cat /sim/vessels/active/orbit/apoapsis
+    cat /sim/vessels/active/orbit/periapsis
+    cat /sim/vessels/active/orbit/period
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    ```sh
+    parent=$(curl -s http://127.0.0.1:4242/v1/vessels/active/telemetry | jq -r .parent)
+    curl "http://127.0.0.1:4242/v1/bodies/$parent" | jq '{mu, mean_radius, soi_meters}'
+    curl http://127.0.0.1:4242/v1/vessels/active/telemetry | jq '.orbit'
+    ```
+
+  </TabItem>
+</Tabs>
+
+The vis-viva equation is $v^2 = \mu(2/r - 1/a)$. Use metres and seconds throughout. Angles from
+the orbit files are degrees, so convert before feeding them to `sin` or `cos`.
+
+:::tip
+Read body constants once at program startup. The planet is not changing its gravitational parameter
+between ticks. A vehicle’s engine set can change after staging, so engine data is different.
+:::
+
+Next: turn a future UT and a CCI Δv into [a scheduled burn](/gatOS/guides/schedule-a-burn/).
+
+<LinkCard title="Next: Schedule a burn" href="/gatOS/guides/schedule-a-burn/" description="Hand an impulsive maneuver to KSA's flight computer." />

@@ -3,10 +3,10 @@ title: Point at Parent
 description: Your first flight program — use the toolkit you built to aim a vessel's nose at the body it's orbiting, with nothing but file I/O on /sim.
 sidebar:
   label: Point at Parent
-  order: 4
+  order: 9
 ---
 
-import { Steps, Aside, LinkCard } from "@astrojs/starlight/components";
+import { Steps, Aside, LinkCard, Tabs, TabItem } from "@astrojs/starlight/components";
 
 This is the one where we actually fly something!
 
@@ -98,6 +98,32 @@ print(f"{vessel}: flight computer now pointing at parent body", file=sys.stderr)
 That's the entire program. Four meaningful lines — read, flip, convert, write — because all the
 plumbing and the fiddly quaternion math are tucked away in the toolkit. 
 
+## The final write, both ways
+
+The geometry belongs in your program, wherever it runs. Once you have the `[x y z w]` Body→CCI
+quaternion, its final trip to gatOS is the same control write on either transport:
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+    ```sh
+    echo "$x $y $z $w" > /sim/vessels/by-id/Hunter/ctl/attitude_target
+    ```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+    ```sh
+    curl -X POST --data "$x $y $z $w" \
+      http://127.0.0.1:4242/v1/fs/vessels/by-id/Hunter/ctl/attitude_target
+    ```
+
+  </TabItem>
+</Tabs>
+
+`ctl/attitude_target` is solver-phase, so it is applied on the next solver step rather than at the
+instant the write returns.
+
 Let's unpack what those four lines are really doing:
 
 - **Read** the position in CCI. Because of where CCI's origin sits, this vector already _is_ the
@@ -139,12 +165,12 @@ nothing but a bit of file i/o.
   so for common scenarios you can skip the custom math:
 
   ```sh
-  echo Prograde > /sim/vessels/by-id/Hunter/ctl/attitude_mode
+  echo RadialIn > /sim/vessels/by-id/Hunter/ctl/attitude_mode
   ```
 
   See [Attitude Modes](/gatOS/reference/attitude-modes/) for a complete list
 
-  The named mode even keeps tracking the body as you orbit. We built the quaternion by hand here to
+  `RadialIn` keeps tracking the parent body as you orbit. We built the quaternion by hand here to
   show how CCI, the body +X thrust axis, and `ctl/attitude_target` fit together — the same machinery
   you'll reuse for a _custom_ direction that no built-in mode covers.
 </Aside>
