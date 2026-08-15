@@ -258,10 +258,10 @@ you shouldn't have).
 
 ## Talking to the game: the data interfaces
 
-Here's the trick that makes gatOS more than a novelty terminal: your spacecraft's live state is
-exposed through **five interchangeable interfaces**, and they all project the same data and command
-pipeline. Read your altitude from a shell file, an HTTP endpoint, an MQTT topic, or an MCP resource —
-it's the same published snapshot. Pick whatever fits the job.
+Here's the trick that makes gatOS more than a novelty terminal: every interface reads the same live
+snapshot and submits work to the same command pipeline, but each presents it for a different job.
+`/sim`, HTTP, and MQTT offer broad field-level access; MCP packages the model into logical JSON for
+AI agents; serial is a narrower active-vessel telemetry and SCPI link. Pick the projection that fits.
 
 > Every reading is a live snapshot. Telemetry files update as the game does; control points act the
 > instant you write them. IDs in paths below (`<id>`) are vehicle ids; `active` is always an alias
@@ -364,8 +364,9 @@ curl -X POST $GATOS_HTTP/v1/fs/vessels/active/ctl/throttle -d '0.8'  # actuate o
 
 ### 3. MQTT — for pub/sub and home-automation tools (`$GATOS_MQTT`)
 
-An embedded broker, reachable from the guest at `$GATOS_MQTT`. Point any MQTT client (Node-RED, a
-Grafana plugin, `mosquitto_sub`, an ESP32 on your desk…) at it.
+An embedded broker, reachable from the guest at `$GATOS_MQTT` and from the host on loopback. Point a
+local MQTT client such as Node-RED, a Grafana plugin, or `mosquitto_sub` at it. A device elsewhere on
+your LAN needs a bridge or an explicit forward; gatOS does not expose the broker to the network.
 
 ```sh
 # Subscribe to everything (retained, so you get the latest value immediately):
@@ -471,8 +472,8 @@ guest to write to your real files, since it then has full create/edit/delete/ren
 folder. Edit `[[mounts]]` before launching (there's no in-game UI for it); changes take effect on the
 next launch, and the gatOS status window shows a **Mounts** row with the active shares.
 
-> Requires the guest image that ships the mount supervisor (v10+). A fresh install fetches it
-> automatically.
+> Requires the guest image that ships the mount supervisor (v10+). Player release archives bundle
+> the pinned guest image; the fetch scripts are for development and release assembly.
 
 ---
 
@@ -497,9 +498,10 @@ big `apk` install can do it). When it's full you'll see the classic Linux sympto
 No space left on device (os error 28)
 ```
 
-**The default is 8 GiB**, set by `disk_size_gb` in `gatos.toml`. Each save profile has its own disk (a
-qcow2 *overlay* in `disks/`), so the number only costs real space as you actually use it — an 8 GiB
-disk that's 1 GiB full takes ~1 GiB on your drive, not 8.
+**The default is 8 GiB**, set by `disk_size_gb` in `gatos.toml`. The current build uses one persistent
+`default` qcow2 overlay for the game process; per-save disk selection is still M10 work. The virtual
+size only costs real space as blocks are used, so an 8 GiB disk that is 1 GiB full takes roughly
+1 GiB on your drive, not 8.
 
 **To give yourself more room**, edit `gatos.toml`:
 
@@ -507,8 +509,8 @@ disk that's 1 GiB full takes ~1 GiB on your drive, not 8.
 disk_size_gb = 32
 ```
 
-then **relaunch KSA** (gatOS reads `gatos.toml` at launch). On the next VM boot it grows the current
-save's disk and the guest expands its filesystem to fill it automatically — no commands, no `resize2fs`
+then **relaunch KSA** (gatOS reads `gatos.toml` at launch). On the next VM boot it grows the active
+default disk and the guest expands its filesystem to fill it automatically — no commands, no `resize2fs`
 by hand. You can confirm the new size from inside the guest with `df -h /`.
 
 A few things worth knowing:

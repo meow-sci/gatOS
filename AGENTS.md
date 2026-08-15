@@ -16,8 +16,9 @@ Live KSA vehicle telemetry is exposed to the guest **as a filesystem**: a C#-imp
 **9P2000.L server** that the guest mounts at `/sim`, so the entire unix toolbox (`cat`, `watch`,
 `tail -f`, `jq`, awk pipelines) becomes the game API surface. HTTP, MQTT, serial, and the first-class
 MCP server project the same snapshot/command model for their respective clients; MCP is the concise,
-logical JSON interface for AI agents, deliberately not a filesystem mirror. Persistence is qcow2
-overlays, one per save profile, on top of a pristine shipped base image.
+logical JSON interface for AI agents, deliberately not a filesystem mirror. Persistence is a qcow2
+overlay on top of a pristine shipped base image. The storage layer accepts a profile id, but the
+current GameMod uses one persistent `default` profile; per-save selection is M10.
 
 > **`/sim` is a published API. Its complete catalog is [`SPEC_9P_FILESYSTEM.md`](SPEC_9P_FILESYSTEM.md)**
 > — every path, value format, unit, read/write semantic, command action key, errno, and HTTP `/v1` /
@@ -594,9 +595,11 @@ user-facing API surface** — guests, modders and the `gatos` skill script again
 `SPEC_MCP.md` is the companion public contract for the MCP server's intentionally non-1:1 logical
 JSON resources and tools. It shares the same model but not the filesystem's per-leaf design.
 
-**MUST — keep the SPEC in lockstep with the code.** In the *same change* that you add, remove, rename,
+**MUST — keep the SPEC and published site reference in lockstep with the code.** In the *same change*
+that you add, remove, rename,
 or alter the format/units/phase/semantics of any of the following, you MUST update
-`SPEC_9P_FILESYSTEM.md` (and `docs/KSA_INTEGRATION_MATRIX.md` when the KSA binding moves):
+`SPEC_9P_FILESYSTEM.md`, the matching page under `site/src/content/docs/reference/` (and
+`docs/KSA_INTEGRATION_MATRIX.md` when the KSA binding moves):
 
 - a `/sim` node or directory (`SimFsTree.cs`), including per-module files;
 - a value **format** or **unit** (`Formats.cs`, `SimSnapshot` field semantics);

@@ -42,15 +42,11 @@ mirror) can be turned on or off in `gatos.toml`.
 
 ## Status
 
-Early development, building milestone by milestone. Working today: the guest image pipeline, the
-QEMU VM lifecycle, SSH shell sessions (purrTTY's custom-shell contract, with live resize), the
-in-game mod integration (lazy VM boot, config, diagnostics menu + status window), and the whole
-`/sim` telemetry stack wired end to end — a C# 9P2000.L server, the `/sim` file tree (scalars,
-NDJSON `stream`/`events` files) and the game-thread sampler that feeds it live vehicle data
-(position, velocity, attitude, orbit, engines, tanks, battery, flight events). The guest mounts
-`/sim` automatically at boot; the first in-game validation flight is pending. Still to come:
-per-save persistence polish and release packaging. See `OS_PLAN.md` for the roadmap and
-`OS_ANALYSIS.md` (in this repo and `../purrtty`) for the architecture rationale.
+The Linux guest, QEMU lifecycle, SSH shell, `/sim`, HTTP, MQTT, serial, MCP, host mounts, display,
+audio, timed scheduler, programmable camera, render editors, and debug tools are code-complete. A
+number of KSA-facing features still have live-flight validation checklists open; the current record is
+[`docs/VALIDATION.md`](docs/VALIDATION.md). Per-save disk selection and the remaining M10+ polish are
+still planned work. See `AGENTS.md` for the current feature matrix and `OS_PLAN.md` for the roadmap.
 
 ## In game
 
@@ -69,14 +65,12 @@ User data (disks, logs, the `gatos.toml` config) lives under
 ## Requirements
 
 - **The purrTTY mod** — gatOS uses it as the terminal UI (it can also load headless without it).
-- **QEMU:** bundled with the mod on both player platforms (D5) — no installation needed.
+- **QEMU:** bundled with the Windows release. The current Linux release uses system QEMU.
   - **Windows:** trimmed win-x64 build in the dist. For hardware acceleration, enable the **Windows
     Hypervisor Platform** feature — see [Hardware acceleration (Windows)](#hardware-acceleration-windows)
     below. Without it, gatOS falls back to slower pure emulation (TCG), still playable for shell work.
-  - **Linux:** portable linux-x64 bundle in the dist (lands with M11/T11.6; until then, install
-    QEMU from your distro). Acceleration wants `/dev/kvm` access (add your user to the `kvm`
-    group); TCG fallback otherwise. A system QEMU on `PATH` is still honored when the bundle is
-    absent.
+  - **Linux:** install `qemu-system-x86_64` from your distro. Acceleration wants `/dev/kvm` access
+    (add your user to the `kvm` group); TCG is the fallback. A portable Linux bundle remains planned.
   - **macOS (dev only):** `brew install qemu`.
 
 ## Hardware acceleration (Windows)

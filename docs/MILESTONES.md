@@ -144,8 +144,8 @@ In the **purrtty** repo, commits `9fb5e13`/`a56966a`:
   cross-mod registration timing without a refresh hook), launching via
   `ProcessLaunchOptions.CreateCustomGame(id)`
 
-**Still pending: the purrTTY tip release cut** (next push to purrtty `main`) — M6 in-game
-testing needs a purrTTY install carrying both changes.
+The purrTTY tip release carrying both changes is cut. M6 in-game validation now depends only on
+running the checklist with that release installed.
 
 ---
 

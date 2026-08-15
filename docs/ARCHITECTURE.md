@@ -108,10 +108,13 @@ guest's `/etc/hosts` aliases `10.0.2.2` as `sim`, so scripts can use `$GATOS_HTT
         initramfs-virt         trimmed initramfs
         manifest.toml          host boot contract (cmdline template, ssh user/key, host-key pin)
         id_ed25519             SSH client key (committed static key, loopback-only)
-    <profile>.qcow2          per-save overlay (backing ref = base-v<N>.qcow2, bare relative)
+    <profile>.qcow2          persistent overlay (current GameMod passes profile "default")
     <profile>.toml           sidecar recording the guest version the overlay was created on
     <profile>.lock           lock file (stale reclaim on process-absent check)
 ```
+
+The storage layer accepts a profile key, but per-save selection is M10 work; the shipped GameMod
+currently uses the single profile id `default`.
 
 **Version-pinned boots.** A profile always boots the kernel/initrd/manifest of the guest version
 its overlay was created on (`GuestBoot`): the sidecar's `guest_version` selects `guest-v<N>/`, so a
@@ -375,17 +378,14 @@ dir, the line grammars, and the JSON track parser/evaluator/player — which reg
 controls drive a take. The game-side director (`Game/Ksa/Camera/`, 21 anchors + the rebound
 `CameraActuator.Focus`) resolves targets and frames and writes the pose.
 
-**`Mod.DriveCamera` is the eighth game-thread work site and the only driver that runs on *every*
-rendered frame** — at the end of `[StarMapAfterOnFrame]`, after the render, so the *next* frame's
-`Program.OnFrameViewports` rebuilds every view/projection matrix from `Camera.PositionEcl` /
-`LocalRotation` / the projection gatOS wrote. That ordering is the entire reason the feature needs **no
-Harmony patch**, and it works only because ownership parks `CameraMode.Fixed` (by direct field
-assignment, so no `TimedAlert` lands in the footage) and unfollows — making `FixedController.OnFrame`'s
-`if (following != null)` body a no-op. It does **not** generalise: `IVAController` and `MapController`
-both write the camera unconditionally at the top of their frame and both bail out of their mode when
-`Following == null`, so **IVA and Map ownership contexts are not implemented and are not implementable
-without a Harmony patch** (`scope/ksa-runtime-coupling.md#camera-mode-contexts`). The map's zoom ships
-instead, as `/sim/camera/map/scope`.
+The camera driver uses a guarded Harmony prefix on the main viewport's `Viewport.OnFrame`: after
+simulation advance and before KSA's `Camera.OnFrame`, it drains schedules and applies the owned pose
+in the same frame. The postfix publishes KSA's final applied transform. Identity guarding prevents
+auxiliary viewports from driving the director. Ownership parks `CameraMode.Fixed` (by direct field
+assignment, so no `TimedAlert` lands in the footage) and unfollows, making the stock fixed controller
+a no-op. This does **not** generalise: IVA and Map controllers overwrite their contexts, so **IVA and
+Map ownership are unsupported** (`scope/ksa-runtime-coupling.md#camera-mode-contexts`). The map's zoom
+still ships independently as `/sim/camera/map/scope`.
 
 The director self-gates to one branch while gatOS does not own the camera (the default), publishes its
 `CameraStatus` with a single volatile swap that every `/sim/camera` leaf renders from per access (the
@@ -398,22 +398,25 @@ wherever the shot is facing** (`KittenEva.PrepareWorker` reads the main camera).
 
 ---
 
-## Config sections reference
+## Config groups reference
+
+The live file uses flat TOML keys. The shipped comments group them for humans; names such as
+"telemetry" and "camera" below are documentation groups, not `[table]` headers.
 
 | Section | Key knobs |
 |---|---|
-| `[common]` | `sample_rate_hz`, `disk_size_gb`, `cpu_model` |
-| `[telemetry]` | `telemetry_enabled`, `telemetry_vessel_detail`, `telemetry_vessel_parts`, `telemetry_bodies`, `telemetry_bodies_rate_hz`, `telemetry_events` |
-| `[control]` | `control_enabled`, `control_all_vessels`, `debug_namespace`, `command_timeout_ms`, `max_commands_per_frame` |
-| `[http]` | `enabled`, `preferred_port` (4242), `http_field_endpoints` |
-| `[mqtt]` | `enabled`, `preferred_port` (1883), `mqtt_field_topics`, `field_feed_hz`, `mqtt_publish_hz` |
-| `[mcp]` | `mcp_enabled` (on), `mcp_preferred_port` (4243; ephemeral fallback); loopback Streamable HTTP `/mcp`, exact local Host/Origin validation, no bearer token, 24 MiB request-framing safety limit (responses are not size-capped) |
-| `[serial]` | `serial_telemetry_port`, `serial_command_port`, `serial_mode`, `serial_interval_ms` |
-| `[display]` | `display_enabled` (off), `display_fps`, `display_width`, `display_height`, `display_encoding` (boot seeds for `/sim/display`) |
-| `[audio]` | `audio_enabled` (on), `audio_max_clip_bytes` (16 MiB), `audio_max_total_bytes` (64 MiB), `audio_max_clips` (64), `audio_max_channels` (16) |
-| `[iva]` | `iva_physics_enabled` (off — the boot seed for `/sim/debug/iva/enabled`), `iva_run_outside_iva`, the `CabinTuning` knobs (`iva_substep_hz`, `iva_friction`, `iva_restitution`, `iva_max_speed`, `iva_density_kg_m3`, `iva_max_objects`, `iva_max_object_size`, `iva_impact_speed`, `iva_double_sided_interior`, `iva_max_substeps_per_frame`) |
-| `[camera]` | `camera_enabled` (on), `camera_max_tracks` (32), `camera_max_track_bytes` (1 MiB), `camera_max_total_bytes` (8 MiB), `camera_max_keys` (4096), `camera_fov_min`/`camera_fov_max` (1 / 179), `camera_release_blend_s` (0.6), `camera_allow_time_channel` (on — the `time` channel *also* needs `[control] debug_namespace`) |
-| `[schedule]` | `schedule_enabled` (on), `schedule_max_live` (16), `schedule_max_entries` (8192), `schedule_max_bytes` (1 MiB), `schedule_default_clock` (`"render"`) |
+| Common | `sample_rate_hz`, `disk_size_gb`, `cpu_model` |
+| Telemetry | `telemetry_enabled`, `telemetry_vessel_detail`, `telemetry_vessel_parts`, `telemetry_bodies`, `telemetry_bodies_rate_hz`, `telemetry_events` |
+| Control | `control_enabled`, `control_all_vessels`, `debug_namespace`, `command_timeout_ms`, `max_commands_per_frame` |
+| HTTP | `http_enabled`, `http_preferred_port` (4242), `http_field_endpoints` |
+| MQTT | `mqtt_enabled`, `mqtt_preferred_port` (1883), `mqtt_field_topics`, `field_feed_hz`, `mqtt_publish_hz` |
+| MCP | `mcp_enabled` (on), `mcp_preferred_port` (4243; ephemeral fallback); loopback Streamable HTTP `/mcp`, exact local Host/Origin validation, no bearer token, 24 MiB request-framing safety limit (responses are not size-capped) |
+| Serial | `serial_telemetry_port`, `serial_command_port`, `serial_mode`, `serial_interval_ms` |
+| Display | `display_enabled` (off), `display_fps`, `display_width`, `display_height`, `display_encoding` (boot seeds for `/sim/display`) |
+| Audio | `audio_enabled` (on), `audio_max_clip_bytes` (16 MiB), `audio_max_total_bytes` (64 MiB), `audio_max_clips` (64), `audio_max_channels` (16) |
+| IVA | `iva_physics_enabled` (off, the boot seed for `/sim/debug/iva/enabled`), `iva_run_outside_iva`, the `CabinTuning` knobs (`iva_substep_hz`, `iva_friction`, `iva_restitution`, `iva_max_speed`, `iva_density_kg_m3`, `iva_max_objects`, `iva_max_object_size`, `iva_impact_speed`, `iva_double_sided_interior`, `iva_max_substeps_per_frame`) |
+| Camera | `camera_enabled` (on), `camera_max_tracks` (32), `camera_max_track_bytes` (1 MiB), `camera_max_total_bytes` (8 MiB), `camera_max_keys` (4096), `camera_fov_min`/`camera_fov_max` (1 / 179), `camera_release_blend_s` (0.6), `camera_allow_time_channel` (on; the `time` channel also needs `debug_namespace`) |
+| Schedule | `schedule_enabled` (on), `schedule_max_live` (16), `schedule_max_entries` (8192), `schedule_max_bytes` (1 MiB), `schedule_default_clock` (`"render"`) |
 | `[[mounts]]` | `name`, `path`, `read_only` (array, off by default) |
 
 Config is read from `<GatOsPaths.DataDir>/gatos.toml` (seeded on first run from
