@@ -16,6 +16,8 @@
     <Project Path="gatOS.Bus.Tests/gatOS.Bus.Tests.csproj" />
     <Project Path="gatOS.Mqtt/gatOS.Mqtt.csproj" />
     <Project Path="gatOS.Mqtt.Tests/gatOS.Mqtt.Tests.csproj" />
+    <Project Path="gatOS.Mcp/gatOS.Mcp.csproj" />
+    <Project Path="gatOS.Mcp.Tests/gatOS.Mcp.Tests.csproj" />
     <Project Path="gatOS.Vm/gatOS.Vm.csproj" />
     <Project Path="gatOS.Vm.Tests/gatOS.Vm.Tests.csproj" />
     <Project Path="gatOS.Ssh/gatOS.Ssh.csproj" />

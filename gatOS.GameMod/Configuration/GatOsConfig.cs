@@ -84,6 +84,8 @@ public sealed class GatOsConfig
             ("http_enabled", "Serve the magic HTTP API (guest reaches it at $GATOS_HTTP / 10.0.2.2)."),
             ("http_preferred_port", "Preferred HTTP port (4242); 0 = ephemeral only; falls back on a clash."),
             ("http_field_endpoints", "Serve the per-field /v1/fs/<path> filesystem mirror (reads + SSE + writes)."),
+            ("mcp_enabled", "Serve the host-side MCP API for AI agents on loopback."),
+            ("mcp_preferred_port", "Preferred MCP port (4243); 0 = ephemeral only; falls back on a clash."),
             ("mqtt_enabled", "Run the embedded MQTT broker (guest reaches it at $GATOS_MQTT / 10.0.2.2)."),
             ("mqtt_preferred_port", "Preferred MQTT port (1883); 0 = ephemeral only; falls back on a clash."),
             ("mqtt_field_topics", "Publish the per-field gatos/sim/<path> filesystem mirror (one topic per leaf)."),
@@ -271,6 +273,12 @@ public sealed class GatOsConfig
 
     /// <summary>Serve the per-field <c>/v1/fs/&lt;path&gt;</c> filesystem mirror (reads, SSE, writes).</summary>
     public bool HttpFieldEndpoints { get; set; } = true;
+
+    /// <summary>Serve the first-class host-side MCP endpoint for AI agents.</summary>
+    public bool McpEnabled { get; set; } = true;
+
+    /// <summary>Preferred MCP port (4243); 0 = ephemeral only; falls back to ephemeral on a clash.</summary>
+    public int McpPreferredPort { get; set; } = 4243;
 
     /// <summary>Run the embedded MQTT broker (an additional game-data bridge).</summary>
     public bool MqttEnabled { get; set; } = true;
@@ -658,6 +666,8 @@ public sealed class GatOsConfig
         MaxCommandsPerFrame = Clamp(nameof(MaxCommandsPerFrame), MaxCommandsPerFrame, 1, 4096);
         if (HttpPreferredPort != 0)
             HttpPreferredPort = Clamp(nameof(HttpPreferredPort), HttpPreferredPort, 1024, 65535);
+        if (McpPreferredPort != 0)
+            McpPreferredPort = Clamp(nameof(McpPreferredPort), McpPreferredPort, 1024, 65535);
         if (MqttPreferredPort != 0)
             MqttPreferredPort = Clamp(nameof(MqttPreferredPort), MqttPreferredPort, 1024, 65535);
         SerialIntervalMs = Clamp(nameof(SerialIntervalMs), SerialIntervalMs, 50, 60000);

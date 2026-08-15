@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <AssemblyName>gatOS.Mcp</AssemblyName>
+        <RootNamespace>gatOS.Mcp</RootNamespace>
+        <Description>Game-free Model Context Protocol transport over the shared gatOS snapshot and command domain.</Description>
+        <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\gatOS.SimFs\gatOS.SimFs.csproj" />
+        <ProjectReference Include="..\gatOS.Logging\gatOS.Logging.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="ModelContextProtocol.Core" Version="[2.2.0]" />
+    </ItemGroup>
+
+</Project>

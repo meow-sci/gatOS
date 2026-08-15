@@ -86,6 +86,12 @@ http_preferred_port = 4242
 # Serve the per-field /v1/fs/<path> filesystem mirror (reads + SSE + writes).
 http_field_endpoints = true
 
+# Serve the host-side MCP API for AI agents at http://127.0.0.1:<port>/mcp.
+mcp_enabled = true
+
+# Preferred MCP port (4243); 0 = ephemeral only; falls back on a clash.
+mcp_preferred_port = 4243
+
 # Run the embedded MQTT broker (guest reaches it at $GATOS_MQTT / 10.0.2.2).
 mqtt_enabled = true
 

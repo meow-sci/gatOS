@@ -235,7 +235,8 @@ public sealed partial class Mod
             var active = state is VmState.Starting or VmState.Running
                          || (_simServer?.ActiveSessions ?? 0) > 0
                          || (_httpServer?.ActiveSessions ?? 0) > 0
-                         || (_mqttBroker?.ConnectedClients ?? 0) > 0;
+                         || (_mqttBroker?.ConnectedClients ?? 0) > 0
+                         || (_mcpServer?.ActiveRequests ?? 0) > 0;
             _telemetry.Tick(dt, active);
         }
         catch (Exception ex)
@@ -1042,6 +1043,8 @@ public sealed partial class Mod
             ImGui.Text(HttpStatusText());
             Row("MQTT");
             ImGui.Text(MqttStatusText());
+            Row("MCP");
+            ImGui.Text(McpStatusText());
             Row("Mounts");
             ImGui.Text(MountsStatusText());
             Row("Uptime");

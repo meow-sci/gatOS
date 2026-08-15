@@ -3,6 +3,7 @@ using gatOS.Bus;
 using gatOS.GameMod.Configuration;
 using gatOS.Logging;
 using gatOS.Http;
+using gatOS.Mcp;
 using gatOS.Mqtt;
 using gatOS.NineP.Server;
 using gatOS.NineP.Vfs;
@@ -124,6 +125,10 @@ public sealed partial class Mod
     // loopback port the guest reaches at 10.0.2.2. Volatile — read by the render thread (status)
     // and the VM boot's HttpPortProvider on their own threads.
     private volatile SimHttpServer? _httpServer;
+
+    // First-class host-side MCP transport for AI agents. It consumes the same immutable snapshots,
+    // command sink, and feature stores as 9P/HTTP/MQTT and deliberately has no DisplaySurface.
+    private volatile SimMcpServer? _mcpServer;
 
     // The embedded MQTT broker (additional bridge): same store + command pipeline, loopback port,
     // guest reaches it at 10.0.2.2. Volatile for the same reasons as the HTTP server.
@@ -247,6 +252,7 @@ public sealed partial class Mod
             StartSimServer(port: 0);
             StartHttpServer();
             StartMqttBroker();
+            StartMcpServer();
             StartMountsServer();
 
             _disks = new DiskManager();
@@ -331,10 +337,11 @@ public sealed partial class Mod
         var ninep = server is { Port: > 0 } ? server.Port.ToString() : "unbound";
         var http = _httpServer is { Port: > 0 } h ? h.Port.ToString() : "off";
         var mqtt = _mqttBroker is { Port: > 0 } m ? m.Port.ToString() : "off";
+        var mcp = _mcpServer is { Port: > 0 } mc ? mc.Port.ToString() : "off";
         var mnt = _mountsServer is { Port: > 0 } mt ? mt.Port.ToString() : "off";
         var serial = SerialStatusText();
         var control = _commandQueue is { ControlEnabled: true } ? "on" : "off";
-        return $"9p {ninep}\nhttp {http}\nmqtt {mqtt}\nmnt {mnt}\nserial {serial}\ncontrol {control}";
+        return $"9p {ninep}\nhttp {http}\nmqtt {mqtt}\nmcp {mcp}\nmnt {mnt}\nserial {serial}\ncontrol {control}";
     }
 
     /// <summary>
@@ -494,6 +501,11 @@ public sealed partial class Mod
             _mqttBroker = null;
             if (mqttBroker is not null && !mqttBroker.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)))
                 ModLog.Log.Warn("The MQTT broker did not stop within 5 s at unload.");
+
+            var mcpServer = _mcpServer;
+            _mcpServer = null;
+            if (mcpServer is not null && !mcpServer.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)))
+                ModLog.Log.Warn("The MCP server did not stop within 5 s at unload.");
 
             var mountsServer = _mountsServer;
             _mountsServer = null;
@@ -691,6 +703,36 @@ public sealed partial class Mod
         return broker is null
             ? (_config.MqttEnabled ? "not running" : "disabled")
             : $"port {broker.Port}";
+    }
+
+    private void StartMcpServer()
+    {
+        if (!_config.McpEnabled || _simStore is not { } store)
+            return;
+        try
+        {
+            var registry = new McpRegistry(store, _commandQueue, SimTransportsStatus,
+                _audioStore, _cameraStore, _scheduleStore);
+            var version = typeof(Mod).Assembly.GetName().Version?.ToString() ?? "1.0.0";
+            var server = new SimMcpServer(registry, version);
+            server.StartAsync(_config.McpPreferredPort).GetAwaiter().GetResult();
+            _mcpServer = server;
+            ModLog.Log.Info($"gatOS MCP listening on http://127.0.0.1:{server.Port}/mcp.");
+        }
+        catch (Exception ex)
+        {
+            _mcpServer = null;
+            ModLog.Log.Error($"The MCP server failed to start: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>One status-window line for the host-side MCP server.</summary>
+    internal string McpStatusText()
+    {
+        var server = _mcpServer;
+        return server is null
+            ? (_config.McpEnabled ? "not running" : "disabled")
+            : $"port {server.Port}, {server.ActiveConnections} connection(s), {server.ActiveRequests} request(s), {server.ErrorCount} error(s)";
     }
 
     /// <summary>
