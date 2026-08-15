@@ -17,9 +17,19 @@ if (!item) throw new Error(`Unknown MCP reference entry: ${entry}`);
   {item.equivalent && <div><dt>Equivalent interface</dt><dd><code>{item.equivalent}</code></dd></div>}
 </dl>
 
+<nav class="page-nav" aria-label="On this reference page">
+  <strong>On this page</strong>
+  {item.fields && item.fields.length > 0 && <a href="#input">Input</a>}
+  {item.operations && item.operations.length > 0 && <a href="#operations">Operations</a>}
+  <a href="#example">Example</a>
+  <a href="#result">Result</a>
+  {item.errors && item.errors.length > 0 && <a href="#errors">Errors</a>}
+  {item.notes && item.notes.length > 0 && <a href="#operational-notes">Operational notes</a>}
+</nav>
+
 {item.fields && item.fields.length > 0 && (
   <section>
-    <h2>Input</h2>
+    <h2 id="input">Input</h2>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Field</th><th>Type</th><th>Requirement</th><th>Description</th></tr></thead>
@@ -35,7 +45,7 @@ if (!item) throw new Error(`Unknown MCP reference entry: ${entry}`);
 
 {item.operations && item.operations.length > 0 && (
   <section>
-    <h2>Operations</h2>
+    <h2 id="operations">Operations</h2>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Operation</th><th>Canonical action</th><th>Meaning</th></tr></thead>
@@ -48,17 +58,17 @@ if (!item) throw new Error(`Unknown MCP reference entry: ${entry}`);
 )}
 
 <section>
-  <h2>{item.kind === "tool" ? "Call example" : "Resource URI example"}</h2>
+  <h2 id="example">{item.kind === "tool" ? "Call example" : "Resource URI example"}</h2>
   <pre><code>{item.kind === "tool" ? `${item.name}(${item.example})` : item.example}</code></pre>
 </section>
 
 <section>
-  <h2>Result</h2>
+  <h2 id="result">Result</h2>
   <p>{item.returns}</p>
 </section>
 
-{item.errors && item.errors.length > 0 && <section><h2>Errors</h2><ul>{item.errors.map((error) => <li>{error}</li>)}</ul></section>}
-{item.notes && item.notes.length > 0 && <section><h2>Operational notes</h2><ul>{item.notes.map((note) => <li>{note}</li>)}</ul></section>}
+{item.errors && item.errors.length > 0 && <section><h2 id="errors">Errors</h2><ul>{item.errors.map((error) => <li>{error}</li>)}</ul></section>}
+{item.notes && item.notes.length > 0 && <section><h2 id="operational-notes">Operational notes</h2><ul>{item.notes.map((note) => <li>{note}</li>)}</ul></section>}
 
 <p class="footer-links">
   <a href="/gatOS/mcp/conventions/">Shared conventions</a>
@@ -77,6 +87,8 @@ if (!item) throw new Error(`Unknown MCP reference entry: ${entry}`);
   .facts div + div { border-top: 1px solid var(--sl-color-gray-5); }
   .facts dt { color: var(--sl-color-white); font-weight: 650; }
   .facts dd { margin: 0; }
+  .page-nav { align-items: baseline; display: flex; flex-wrap: wrap; gap: .45rem 1rem; margin: 1.25rem 0 2rem; }
+  .page-nav strong { color: var(--sl-color-white); }
   .table-wrap { overflow-x: auto; }
   table { display: table; width: 100%; }
   th { white-space: nowrap; }
