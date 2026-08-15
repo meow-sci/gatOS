@@ -103,7 +103,7 @@ purrTTY TerminalWindow tab
   `SSH-` prefix check **still passes**.
 - The "retry once on connection-refused" path in `ConnectAsync` (a per-connection fork can briefly
   refuse right after the banner) applies equally to OpenSSH's per-connection model.
-- SSH.NET version in use: **`SSH.NET 2025.1.0`** (`gatOS.Ssh.csproj`). This is the SSH.NET line whose
+- SSH.NET version in use: **`SSH.NET 2026.0.0`** (`gatOS.Ssh.csproj`). This retains the SSH.NET line whose
   primary, exercised target *is* OpenSSH; ed25519 host keys, ed25519 client keys, `curve25519-sha256`
   KEX and the modern AEAD ciphers are all supported. Validated facts in `spike/NOTES.md` T1.3
   (CreateShellStream + live `ChangeWindowSize` + ed25519 `PrivateKeyFile`) are all standard SSH and

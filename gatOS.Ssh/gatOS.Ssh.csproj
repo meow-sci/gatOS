@@ -17,7 +17,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="SSH.NET" Version="2025.1.0" />
+        <PackageReference Include="SSH.NET" Version="2026.0.0" />
         <!-- SSH.NET pulls Microsoft.Extensions.Logging.Abstractions 8.0.3 transitively, but the
              vendored purrTTY.Logging and the KSA game assemblies are built against 10.0.0
              (mirrors purrTTY.Logging's own direct reference). Lifting it here resolves the
