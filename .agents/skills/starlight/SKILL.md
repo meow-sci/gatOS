@@ -12,7 +12,7 @@ description: >-
 
 # Starlight — the docs theme's components & authoring surface
 
-Starlight (v**0.41.2** here) themes the gatOS docs site: sidebar, search, dark mode, and a set of
+Starlight (v**0.41.7** here) themes the gatOS docs site: sidebar, search, dark mode, and a set of
 **built-in components** you use inside `.mdx` pages. This skill is the component + frontmatter + syntax
 cheat sheet. For the framework underneath (MDX mechanics, content collections, config, build) see the
 [`astro`](../astro/SKILL.md) skill; for the gatOS-specific writing style, the [`tutorials`](../tutorials/SKILL.md) skill.
@@ -277,5 +277,5 @@ python3 point-at-parent.py Hunter    # frame="none" drops the terminal chrome
 - **`href` needs the `/gatOS/` base** and a trailing slash.
 - **Bad frontmatter field or icon name fails the build** — that's the schema/Expressive-Code guard
   working, not a prose problem. Run `pnpm build` to catch it (see the `astro` skill).
-- Props here match **Starlight 0.41.2**; a prop from a newer docs example may not exist. Check
+- Props here match **Starlight 0.41.7**; a prop from a newer docs example may not exist. Check
   `site/package.json` if a component rejects a prop.

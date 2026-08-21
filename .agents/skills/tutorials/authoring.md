@@ -1,6 +1,6 @@
 # Authoring mechanics — Starlight / MDX for the gatOS docs site
 
-Everything you need to turn a lesson into a rendered page. The site is **Astro + Starlight 0.41.2**
+Everything you need to turn a lesson into a rendered page. The site is **Astro 7.2.2 + Starlight 0.41.7**
 (`site/`); tutorials are MDX files that Starlight themes and sidebars automatically.
 
 ---
@@ -8,15 +8,16 @@ Everything you need to turn a lesson into a rendered page. The site is **Astro +
 ## 1. Where a tutorial lives, and its URL
 
 - Put the file at **`site/src/content/docs/guides/<slug>.mdx`**.
-- Its URL is **`/guides/<slug>/`** (the path under `docs/` becomes the route).
+- Its published URL is **`/gatOS/guides/<slug>/`** (the content path becomes the route beneath the
+  configured `/gatOS/` deployment base).
 - Use `.mdx` (not `.md`) whenever you need components — asides work in both, but `<Tabs>`, `<Steps>`,
   `<Card>` etc. require `.mdx`. Default to `.mdx` for tutorials.
 - Slugs are kebab-case and stable (they're the permalink). The existing model page is
   `guides/vessel-control-point-at-parent.mdx`.
 
-The sidebar is **auto-generated** from the `guides/` directory (`site/astro.config.mjs`:
-`autogenerate: { directory: 'guides' }`), so a new file shows up with no config edit. Order and label
-are controlled per-file in frontmatter (§2).
+The guide sidebar is **curated** in `site/astro.config.mjs`; add a new guide there when it belongs in
+the primary learning journey. Every guide also belongs on `guides/index.mdx`, which is the
+intent-oriented landing page. Frontmatter still controls the page title and search metadata.
 
 ---
 
@@ -135,7 +136,7 @@ aim = [-c for c in pos]                   # lines 18-20 highlighted
   <Card title="Next: schedule a burn" icon="rocket">Turn the pointing into a maneuver.</Card>
 </CardGrid>
 
-<LinkCard title="Point at parent" href="/guides/vessel-control-point-at-parent/"
+<LinkCard title="Point at parent" href="/gatOS/guides/vessel-control-point-at-parent/"
   description="The gentler first program this one builds on." />
 ```
 
@@ -147,7 +148,8 @@ Use a `<LinkCard>` (or a plain link) at the foot of each tutorial to the **next 
 
 A rendered `.mdx` can only link to things the *reader* can reach:
 
-- **Another tutorial / site page:** root-relative, `[Point at parent](/guides/vessel-control-point-at-parent/)`.
+- **Another tutorial / site page:** root-relative with the production base,
+  `[Point at parent](/gatOS/guides/vessel-control-point-at-parent/)`.
   (Include the trailing slash.)
 - **The canonical API catalog:** the SPEC on GitHub —
   `https://github.com/meow-sci/gatOS/blob/main/SPEC_9P_FILESYSTEM.md`. Do **not** link `../../../SPEC…`

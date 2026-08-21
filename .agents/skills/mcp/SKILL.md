@@ -7,6 +7,21 @@ description: Build, extend, review, test, or deploy Model Context Protocol (MCP)
 
 Build the smallest server that meets the requested transport and capability needs. Prefer the high-level hosting API and attribute discovery unless the project has a reason to use low-level `ModelContextProtocol.Core` APIs.
 
+## gatOS repository adaptation
+
+gatOS is one of those explicit exceptions: `gatOS.Mcp/SimMcpServer.cs` owns a custom stateless,
+POST-only Streamable HTTP adapter and constructs official SDK primitives from `McpRegistry`. Keep
+that architecture unless the task explicitly changes the transport contract. In particular, preserve
+Host/Origin checks, no sessions or GET stream, request/cancellation bounds, protocol-clean structured
+errors, and coverage with a real official SDK client.
+
+For gatOS tools, generated JSON Schema descriptions are an agent interface, not decoration. Every
+parameter needs an operation-aware `[Description]`; every multipurpose tool description must explain
+how its discriminator chooses `value`, `values`, `token`, and `aux`. Mark a tool destructive when any
+operation can irreversibly stage, ignite, undock, fire a decoupler, or perform a debug mutation.
+Update implementation/tests, `SPEC_MCP.md`, `site/src/data/mcp-reference.ts`, the affected public MCP
+pages, and `.agents/skills/gatos/SKILL.md` in lockstep.
+
 ## Workflow
 
 1. Select a package and transport in [getting started](reference/getting-started.md) and [transports](reference/transports.md).

@@ -168,7 +168,7 @@ via `pnpm lint` / `pnpm format`.
 - **Frontmatter is schema-checked** — a build error like "Invalid frontmatter" means a bad field
   name/type, not broken prose. Check against the Starlight frontmatter reference.
 - **Capitalized component tags + imports** — the two most common MDX mistakes.
-- Astro version here is **7.0.6**; Starlight **0.41.2** (see `site/package.json`). Match doc examples
+- Astro version here is **7.2.2**; Starlight **0.41.7** (see `site/package.json`). Match doc examples
   to these; newer component props may not exist yet.
 
 ## Where to look next

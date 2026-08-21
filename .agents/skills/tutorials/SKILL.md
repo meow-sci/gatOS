@@ -42,8 +42,9 @@ polished `.mdx` page. It does **not** teach the sim — that's the `gatos` skill
 | [`curriculum.md`](curriculum.md) | **the tutorial ladder** — the ordered beginner→advanced series, each entry's goal, prerequisites, `/sim` surface, and gotchas. Consult before writing *any* tutorial so it fits the progression |
 | [`snippets.md`](snippets.md) | **the reusable helper library** every tutorial copies — connection/transport-select, read/write, the verbatim Body→CCI quaternion, vector math, gating, sim-time pacing — in Python (in-guest), Bun/TS (host), and shell |
 
-Where tutorials live: **`site/src/content/docs/guides/*.mdx`**. Starlight auto-generates the sidebar
-from the directory (`site/astro.config.mjs`), so a new file appears automatically. The one existing
+Where tutorials live: **`site/src/content/docs/guides/*.mdx`**. The public journey is curated in
+`site/astro.config.mjs` and `guides/index.mdx`, so add a new tutorial to both when it should be
+discoverable from the primary guide path. The one existing
 work-in-progress model page is
 [`vessel-control-point-at-parent.mdx`](../../../site/src/content/docs/guides/vessel-control-point-at-parent.mdx)
 — read it before writing; it *is* the house style.

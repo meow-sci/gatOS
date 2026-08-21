@@ -75,6 +75,38 @@ TypeScript/Bun SDK over both transports).
 - **Pace in sim time, not wall time:** block on `time/alarm` (or `GET /v1/time/wait`); gate on
   `time/sim_dt==0` (paused) and `time/warp>1` (warping).
 
+## MCP operating loop for an AI agent
+
+MCP is operation-shaped even where a tool uses the shared `value`/`values`/`token`/`aux` wire slots.
+Never fill every optional slot speculatively. Choose the operation, read its parameter descriptions
+and capability entry, and send only the slots that operation consumes.
+
+1. Call `gatos.get_capabilities` once per session and again after a feature/configuration change.
+2. Call `gatos.get_world(detail:"summary")`, discover raw ids with a list tool, then read the target.
+3. Check `controllable`, current parent, module ordinals, feature gates, and degraded health before acting.
+4. Use the narrowest logical tool. Use `gatos.command` only as the canonical-action backstop.
+5. Use `gatos.execute_batch` for same-tick commands of one derived phase; use
+   `gatos.schedule_batch` for absolute millisecond offsets that may mix phases.
+6. Save the pre-action `snapshot_sequence`, call `gatos.wait(after_sequence:...)`, and re-read the
+   affected state. An accepted command is not immediate read-back.
+7. Branch on structured `errno` and `retryable`. Never blindly retry stage, ignite, undock,
+   decoupler fire, release, remove, clear, or another one-shot/lifecycle trigger.
+
+The public operation-by-operation calls and recovery playbooks live under `site/src/content/docs/mcp/`;
+the versioned contract is `SPEC_MCP.md`.
+
+## Maintaining the MCP projection
+
+gatOS deliberately uses the official C# SDK's low-level primitives behind a custom, stateless,
+POST-only Streamable HTTP host. Preserve its Host/Origin validation, lack of sessions/GET/SSE, request
+limits, cancellation, and real-SDK client tests. Do not add a second command model: logical tools must
+map to `SimCommand` and immutable reads must project `SimSnapshot`/the shared stores.
+
+An MCP surface change updates together: `gatOS.Mcp/` and tests, `CommandCatalog` where the shared
+action changes, `SPEC_MCP.md`, `site/src/data/mcp-reference.ts`, the affected `site/.../mcp/` prose,
+and this skill when agent behavior changes. Multipurpose tool docs must collocate each operation's
+exact required fields, enum/range/unit, full example, phase/gate, and retry hazard.
+
 ## Access at a glance
 
 ```sh
