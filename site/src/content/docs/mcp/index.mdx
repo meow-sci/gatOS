@@ -30,6 +30,11 @@ as `gatos.ignite_engines`, `gatos.vessel_control`, `gatos.execute_batch`, and
     href="/gatOS/mcp/conventions/"
   />
   <LinkCard
+    title="Run an agent safely"
+    description="Observe–act–verify, same-tick and timed coordination, camera work, and errno recovery."
+    href="/gatOS/mcp/playbooks/"
+  />
+  <LinkCard
     title="Browse all 26 tools"
     description="Read, control, media, debug, atomic batch, and timed schedule tools."
     href="/gatOS/mcp/tools/"
@@ -65,6 +70,9 @@ status window reports the actual bound port.
   planning turn with the simulation.
 </Steps>
 
+The complete observe–act–verify loop and task sequences live in the
+[agent playbooks](/gatOS/mcp/playbooks/).
+
 ## Choose the right interface
 
 | Intent                                 | Best starting point                                                                                                                                                             |
@@ -75,7 +83,7 @@ status window reports the actual bound port.
 | Inspect feature-owned state            | [`gatos.get_runtime_state`](/gatOS/mcp/tools/get-runtime-state/)                                                                                                                |
 | Perform one ordinary flight action     | [Common vessel actions](/gatOS/mcp/tools/#common-vessel-actions) or [`gatos.vessel_control`](/gatOS/mcp/tools/vessel-control/)                                                  |
 | Change one fitted module               | [`gatos.module_control`](/gatOS/mcp/tools/module-control/)                                                                                                                      |
-| Paint a vehicle, part, or EVA           | [`gatos.paint_control`](/gatOS/mcp/tools/paint-control/)                                                                                                                        |
+| Paint a vehicle, part, or EVA          | [`gatos.paint_control`](/gatOS/mcp/tools/paint-control/)                                                                                                                        |
 | Coordinate same-tick changes           | [`gatos.execute_batch`](/gatOS/mcp/tools/execute-batch/)                                                                                                                        |
 | Run a timed sequence                   | [`gatos.schedule_batch`](/gatOS/mcp/tools/schedule-batch/) and [`gatos.schedule_control`](/gatOS/mcp/tools/schedule-control/)                                                   |
 | Use a known URI through resources/read | [Resource directory](/gatOS/mcp/resources/)                                                                                                                                     |

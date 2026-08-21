@@ -5,6 +5,12 @@ and architecture decision). This document is the **execution plan**: fine-graine
 tasks intended to be handed to coding agents one at a time (or a few in parallel where the
 dependency graph allows), starting from an **empty repository**.*
 
+> **Historical plan, not current behavior.** Most milestones in this original greenfield plan have
+> landed and later work substantially expanded the writable `/sim`, transport, MCP, media, debug,
+> and automation surfaces. Use `AGENTS.md`, `docs/MILESTONES.md`, the two public SPEC files, and the
+> implementation for what exists today. Part 0's execution/build conventions remain binding; later
+> milestone prose records the original design unless a section explicitly says otherwise.
+
 **What is being built (one paragraph):** gatOS is a **standalone KSA mod** that runs a real,
 minimal Alpine Linux inside a QEMU microVM subprocess. Players open terminal sessions into it
 through **purrTTY** (which stays an unmodified terminal emulator, consumed only via its published

@@ -21,18 +21,18 @@ to restore defaults. Out-of-range values are clamped and logged, not rejected. T
 
 ## Transport and feature gates
 
-| Keys                                                                                           | Default                                                   | Effect                                      |
-| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------- |
-| `http_enabled`, `http_bind_host`, `http_preferred_port`, `http_field_endpoints`                                  | true, 127.0.0.1, 4242, true                                          | HTTP listener and field mirror                       |
-| `mcp_enabled`, `mcp_bind_host`, `mcp_preferred_port`                                                            | true, 127.0.0.1, 4243                                                | MCP listener                       |
-| `mqtt_enabled`, `mqtt_bind_host`, `mqtt_preferred_port`, `mqtt_field_topics`, `mqtt_publish_hz`, `field_feed_hz` | true, 127.0.0.1, 1883, true, 0, 4                                    | broker and pacing                           |
-| `serial_telemetry_port`, `serial_command_port`, `serial_mode`, `serial_interval_ms`            | false, false, ndjson, 500                                 | virtio serial bridge                        |
-| `display_*`                                                                                    | false, 15 fps, 320×180, `rgba-zlib`                       | display boot seed; runtime leaves take over |
-| `paint_parts_enabled`, `paint_kittens_enabled`, `paint_max_material_clones`                    | false, false, 64                                          | paint boot seeds and EVA clone cap          |
-| `audio_*`                                                                                      | enabled, 16 MiB clip, 64 MiB total, 64 clips, 16 channels | audio service and caps                      |
-| `camera_*`                                                                                     | enabled, 32 tracks, 1 MiB track, 8 MiB total, 4096 keys   | camera service, caps, lens range, hand-back |
-| `schedule_*`                                                                                   | enabled, 16 live, 8192 entries, 1 MiB                     | timeline service, caps, default clock       |
-| `iva_*`                                                                                        | disabled                                                  | cabin-physics boot seed and tuning          |
+| Keys                                                                                                             | Default                                                   | Effect                                      |
+| ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------- |
+| `http_enabled`, `http_bind_host`, `http_preferred_port`, `http_field_endpoints`                                  | true, 127.0.0.1, 4242, true                               | HTTP listener and field mirror              |
+| `mcp_enabled`, `mcp_bind_host`, `mcp_preferred_port`                                                             | true, 127.0.0.1, 4243                                     | MCP listener                                |
+| `mqtt_enabled`, `mqtt_bind_host`, `mqtt_preferred_port`, `mqtt_field_topics`, `mqtt_publish_hz`, `field_feed_hz` | true, 127.0.0.1, 1883, true, 0, 4                         | broker and pacing                           |
+| `serial_telemetry_port`, `serial_command_port`, `serial_mode`, `serial_interval_ms`                              | false, false, ndjson, 500                                 | virtio serial bridge                        |
+| `display_*`                                                                                                      | false, 15 fps, 320×180, `rgba-zlib`                       | display boot seed; runtime leaves take over |
+| `paint_parts_enabled`, `paint_kittens_enabled`, `paint_max_material_clones`                                      | false, false, 64                                          | paint boot seeds and EVA clone cap          |
+| `audio_*`                                                                                                        | enabled, 16 MiB clip, 64 MiB total, 64 clips, 16 channels | audio service and caps                      |
+| `camera_*`                                                                                                       | enabled, 32 tracks, 1 MiB track, 8 MiB total, 4096 keys   | camera service, caps, lens range, hand-back |
+| `schedule_*`                                                                                                     | enabled, 16 live, 8192 entries, 1 MiB                     | timeline service, caps, default clock       |
+| `iva_*`                                                                                                          | disabled                                                  | cabin-physics boot seed and tuning          |
 
 Paint's two booleans are boot seeds for the live `/sim/paint/{parts,kittens}/enabled` masters; they
 do not hide the surface. The clone cap is clamped to 1..256. Some telemetry/display/IVA values are

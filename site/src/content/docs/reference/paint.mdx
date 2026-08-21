@@ -63,13 +63,13 @@ rebuild. Desired rules remain in memory, ready for re-enable; use `paint/parts/c
 
 ## Choose a vehicle scope
 
-| Scope | Path | Meaning |
-| --- | --- | --- |
-| Global | `paint/parts/global/{enabled,color,clear}` | every paintable vehicle part |
-| Template | `paint/parts/templates/<template>/{enabled,color,clear}` | every part with that raw `Part.Template.Id` |
-| Vessel | `vessels/by-id/<id>/paint/parts/{enabled,color,clear}` | every current and future part in one live vessel |
-| Part | `vessels/by-id/<id>/parts/<n>/paint/{enabled,color,clear}` | one stable top-level part instance |
-| Subpart | `.../subparts/<m>/paint/{enabled,color,clear}` | one stable recursive subpart instance |
+| Scope    | Path                                                       | Meaning                                          |
+| -------- | ---------------------------------------------------------- | ------------------------------------------------ |
+| Global   | `paint/parts/global/{enabled,color,clear}`                 | every paintable vehicle part                     |
+| Template | `paint/parts/templates/<template>/{enabled,color,clear}`   | every part with that raw `Part.Template.Id`      |
+| Vessel   | `vessels/by-id/<id>/paint/parts/{enabled,color,clear}`     | every current and future part in one live vessel |
+| Part     | `vessels/by-id/<id>/parts/<n>/paint/{enabled,color,clear}` | one stable top-level part instance               |
+| Subpart  | `.../subparts/<m>/paint/{enabled,color,clear}`             | one stable recursive subpart instance            |
 
 More specific rules win: **part instance → vessel → template → global → stock**. A disabled rule at a
 more specific scope falls through to the next enabled rule. Individual part paths require

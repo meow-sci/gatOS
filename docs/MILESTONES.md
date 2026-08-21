@@ -567,7 +567,7 @@ sessionful MCP requests, has bounded request concurrency, and exposes its bound 
 status in the gatOS status window.
 
 `McpRegistry` projects the shared `SnapshotStore`, `ICommandSink`, and the existing audio, camera,
-and schedule stores into logical JSON resources and namespaced `gatos.*` tools. It never calls KSA
+schedule, and paint stores into logical JSON resources and namespaced `gatos.*` tools. It never calls KSA
 from a request thread and adds no KSA reflection or actuator binding. `McpPresenters` owns raw-id
 entity lookup, sectioned vessel documents, 50-default/1,000-maximum cursor lists, waits, capability
 discovery, and the common snapshot envelope. `McpToolHandlers` maps concise controls, the canonical

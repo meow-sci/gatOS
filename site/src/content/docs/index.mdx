@@ -5,7 +5,7 @@ template: splash
 tableOfContents: false
 ---
 
-import { Card, CardGrid, LinkButton } from "@astrojs/starlight/components";
+import { CardGrid, LinkButton, LinkCard } from "@astrojs/starlight/components";
 
 ![gatOS](../../assets/gatos-banner.png)
 
@@ -30,16 +30,21 @@ echo 0.4 > /sim/vessels/active/ctl/throttle
 ## Pick your hatch
 
 <CardGrid>
-  <Card title="Open a terminal" icon="terminal">
-    Learn the little Linux computer, explore `/sim`, and fly something with a write to a file.
-  </Card>
-  <Card title="Build something" icon="puzzle">
-    Write scripts, dashboards, flight programs, timed shows, cameras, and perhaps a very serious
-    soundboard.
-  </Card>
-  <Card title="Connect an agent" icon="robot">
-    Give an AI client the concise local MCP API instead of making it spelunk through a filesystem.
-  </Card>
+  <LinkCard
+    title="Open the onboard Linux"
+    href="/gatOS/intro/first-five-minutes/"
+    description="Explore /sim and fly something with ordinary shell tools."
+  />
+  <LinkCard
+    title="Build automation and projects"
+    href="/gatOS/guides/"
+    description="Write flight programs, dashboards, timed shows, cameras, and a very serious soundboard."
+  />
+  <LinkCard
+    title="Connect an AI agent"
+    href="/gatOS/mcp/getting-started/"
+    description="Use the concise local MCP API and a reliable observe–act–verify loop."
+  />
 </CardGrid>
 
 ## More than a terminal gag

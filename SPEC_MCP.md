@@ -68,10 +68,12 @@ a human-readable `message`, and a `retryable` indication. The errno vocabulary i
 | `EOPNOTSUPP` | The feature is unavailable, disabled by its capability gate, or has degraded. |
 | `EFBIG`, `ENOSPC`, `EEXIST`, `EPERM` | The existing audio/track-store upload errors. |
 
-`gatos.get_capabilities` is the required preflight. It reports the live feature gates, configured
-domain limits, transport health, control/debug authority status, and degraded accessors. Agents
-should call it before a feature-specific tool and should read a target vessel's `controllable` state
-before attempting normal flight control.
+`gatos.get_capabilities` is the required preflight. It reports list limits, configured feature
+availability, control/debug authority status, and per-action phase, gate, argument-shape, unit, and
+safety metadata. Transport health and degraded accessors instead live in the world/status snapshot;
+feature-store limits live in `gatos.get_runtime_state`. Agents should call capabilities before a
+feature-specific tool and should read a target vessel's `controllable` state before attempting
+normal flight control.
 
 ## 2. Resources
 
@@ -84,7 +86,7 @@ tools exist for clients that only use tools; they return the same JSON projectio
 | `gatos://celestials` | Celestial catalog, up to the 1,000-entry list maximum. |
 | `gatos://celestials/{id}` | One `BodySnapshot`, addressed by raw celestial id. |
 | `gatos://vessels` | Vessel catalog, up to the 1,000-entry list maximum. |
-| `gatos://vessels/{id}` | One complete vessel document; its optional sections match `gatos.get_vessel`. |
+| `gatos://vessels/{id}` | One complete vessel document. Use `gatos.get_vessel` when include filtering is needed. |
 | `gatos://kittens` | Kitten-vessel catalog, up to the 1,000-entry list maximum. |
 | `gatos://kittens/{id}` | One kitten vessel document. |
 | `gatos://runtime/{feature}` | Live state for one runtime feature from the `feature` vocabulary in §3. |
@@ -107,17 +109,17 @@ All tools below return JSON and preserve the full native precision/shape supplie
 | `gatos.list_kittens` | — | `limit`, `cursor` | Paginated kitten summaries. |
 | `gatos.get_kitten` | `id` | `include` | One kitten vessel document; a non-kitten id is `EINVAL`. |
 | `gatos.get_runtime_state` | `feature` | — | One runtime-state document. |
-| `gatos.get_capabilities` | — | — | Capability gates, domain limits, health, and transport status. |
+| `gatos.get_capabilities` | — | — | List limits, feature gates, authority state, and per-action metadata. |
 | `gatos.wait` | at least one condition | `timeout_ms` | A later snapshot or event satisfying a condition. |
 
 `gatos.get_vessel` and `gatos.get_kitten` accept `include` as an array drawn from
 `flight`, `orbit`, `environment`, `propulsion`, `resources`, `power`, `control`, `modules`,
-`encounters`, `parts`, and `all`. Omit `include` or include `all` for the complete document. A
+`encounters`, `parts`, `paint`, and `all`. Omit `include` or include `all` for the complete document. A
 sectioned response always includes identity/control fields (`id`, `name`, `situation`,
 `parent_body_name`, `controlled`, `controllable`, and `is_kitten`); request `flight` for position,
 velocity, attitude, altitude, and navball data.
 
-The `feature` input to `gatos.get_runtime_state` is one of `camera`, `schedules`, `audio`, `welds`, `thug_life`,
+The `feature` input to `gatos.get_runtime_state` is one of `camera`, `schedules`, `audio`, `paint`, `welds`, `thug_life`,
 `face_fx`, `iva`, `engine_plume`, `plume_trail`, `clouds`, or `terrain`. It exposes the corresponding
 logical snapshot/read-back state, including configuration and pristine/reset diagnostics where the
 underlying feature provides them.
@@ -184,22 +186,102 @@ sample at which it was accepted. Failed commands use the error fields in §1.2.
 | `gatos.vessel_control` | `{operation, vessel_id, ordinal?, value?, values?, token?, aux?}`. Applies one vessel action: engine master, throttle, master lights/RCS, manual RCS translation/rotation, RCS mode, attitude mode/frame/target, burn, scale, or always-render. An unqualified operation derives `vessel.<operation>` except for `focus` and `take_control`; a qualified action remains qualified. Distinct phases need `gatos.execute_batch`/`gatos.schedule_batch` for coordination. |
 | `gatos.module_control` | `{operation, vessel_id, ordinal, value?, values?, token?, aux?}`. Controls one indexed engine, RCS controller, light, animation/deployment, docking port, or decoupler. An unqualified operation derives `module.<operation>` except for `undock`, `fire_decoupler`, and `pushoff`; a qualified action remains qualified. |
 | `gatos.camera_control` | `{operation, value?, values?, token?, aux?}`. Takes/releases ownership, changes game follow/mode/tidal/map scope, or patches a gatOS camera pose, aim, projection, and smoothing channel. It maps to the existing `camera.*` commands and preserves ownership restrictions. |
-| `gatos.camera_track` | `{operation, name?, json?, offset?:0, complete?:true}`. `operation` is `list`, `read`, `upload`, or `delete`. Upload sends the named JSON track, optionally chunked at a byte `offset`; `complete` commits the upload. Track playback remains under `gatos.camera_control`/`gatos.schedule_control`. |
+| `gatos.camera_track` | `{operation, name?, json?, offset?:0, complete?:true, value?, token?}`. `operation` is `list`, `read`, `upload`, `delete`, `play`, `update`, or `stop`. Upload sends the named JSON track, optionally chunked at a byte `offset`; `complete` commits it. The playback operations map to `camera.play`, `camera.set`, and `camera.stop`. |
 | `gatos.audio_control` | `{operation, value?, values?, token?, aux?}`. Plays, adjusts, stops, or reads the status of game audio channels. |
 | `gatos.audio_clip` | `{operation, name?, offset?:0, complete?:true, data_base64?}`. `operation` is `list`, `retrieve`, `upload`, or `delete`. Upload data is JSON base64 and can be chunked at a byte `offset`; keep each request below the 24 MiB framing limit while configured clip/store limits remain enforced. Retrieval returns metadata plus an MCP audio content block for known audio extensions, or an embedded binary resource when the container is unknown. |
 | `gatos.schedule_control` | `{operation, id?, value?, token?}`. Reads or manages existing schedule players: pause, scrub, rate, loop, stop, remove, or clear. |
 | `gatos.debug_control` | `{operation, vessel_id?:"", ordinal?:-1, value?, values?, token?, aux?}`. Performs the logical cheat/debug groups: focus/control-vessel, teleport, impulse, refills, docking pushoff, global IVA rendering, welds, thug-life cosmetics, face FX, and IVA cabin physics. |
 | `gatos.render_fx_control` | `{family, operation, entity?, field?, value?, values?, token?}`. Reads, sets, clears where applicable, or restores pristine values for engine plume, plume trail, clouds, and terrain editor state. Its entity scope remains explicit: template, global renderer, body/layer/type, or body/global terrain. |
+| `gatos.paint_control` | `{operation, vessel_id?:"", value?:0, color?, target?}`. Controls paint runtime masters and global/template/vessel/part/shared-EVA/individual-EVA rules. Flags use `value`; colors use normalized `color:[r,g,b]`; `target` names the blend, template, part instance, or semantic EVA material required by the selected operation. |
 | `gatos.command` | The canonical command envelope in §4. Complete action coverage without filesystem paths. |
 | `gatos.execute_batch` | `{commands:[<canonical command>, ...]}`. Atomically submits one same-tick group. |
 | `gatos.schedule_batch` | `{id?, group?, clock, rate, loop, entries:[{at_ms, command:<canonical command>}, ...]}`. Registers a non-blocking timed command player. |
 
-The operation and shared command fields above are the complete v1 JSON schemas; there is no
-untyped `control` patch object or `/sim` path payload. The action catalog validates field arity,
-range, unit, gate, and phase. CCI vectors/quaternions retain the `values` conventions in the
-underlying command contract, and FX field validation remains driven by the existing FX catalog.
+The fields above define the outer v1 wire envelopes; the discriminator branches in §5.1 define the
+legal operation-specific payloads. There is no untyped `control` patch object or `/sim` path payload.
+The action catalog validates field arity, range, unit, gate, and phase. CCI vectors/quaternions retain
+the `values` conventions in the underlying command contract, and FX field validation remains driven
+by the existing FX catalog.
 
-### 5.1 Batches
+### 5.1 Operation-shaped calls
+
+The generic-looking payload slots are a wire-compatibility envelope, not a bag of interchangeable
+options. **Choose an operation first, then send only the slots on that row.** Omitted numeric slots
+default to zero, which is not a substitute for a required value. The server advertises these rules
+in tool and parameter descriptions; `gatos.get_capabilities` remains the live source for gates,
+phase, safety, and canonical action availability.
+
+#### Vessel and module control
+
+| Tool operation | Complete operation payload | Meaning / accepted values |
+|---|---|---|
+| `vessel_control` `ignite`, `shutdown`, `stage` | `{operation,vessel_id}` | One-shot triggers; inspect live state before retrying. |
+| `engine_master`, `lights`, `rcs`, `always_render` | `{operation,vessel_id,value:0\|1}` | Vessel-wide flags. |
+| `throttle` | `{operation:"throttle",vessel_id,value:0..1}` | Manual throttle fraction. |
+| `translate`, `rotate` | `{operation,vessel_id,values:[x,y,z]}` | Body-axis signs; magnitudes ignored; `[0,0,0]` stops. |
+| `rcs_mode` | `{operation:"rcs_mode",vessel_id,token:"Enabled"\|"Disabled"}` | Flight-computer RCS master, distinct from `rcs`. |
+| `attitude_mode` | `{operation:"attitude_mode",vessel_id,token:<mode>}` | `manual`, `StabilityAssist`, `Prograde`, `Retrograde`, `Normal`, `AntiNormal`, `RadialIn`, `RadialOut`, `Target`, `AntiTarget`, or `Maneuver`; case-insensitive. |
+| `attitude_frame` | `{operation:"attitude_frame",vessel_id,token:<frame>}` | `Inertial`, `Orbital`, `Surface`, or `Target`; case-insensitive. |
+| `attitude_target` | `{operation:"attitude_target",vessel_id,values:[x,y,z,w]}` | Body-to-CCI quaternion. |
+| `burn` | `{operation:"burn",vessel_id,values:[ut,dvx,dvy,dvz]}` | Absolute UT seconds and parent-body CCI delta-v in m/s. |
+| `scale` | `{operation:"scale",vessel_id,value:>0}` | Finite render scale; `1` restores ordinary scale. |
+| `focus`, `take_control` | `{operation,vessel_id}` | View-only focus or debug control transfer. |
+| `module_control` `engine_active`, `rcs_active`, `light_on` | `{operation,vessel_id,ordinal,value:0\|1}` | Indexed flags. |
+| `engine_minimum_throttle`, `animation_goal`, `solar_deployment` | `{operation,vessel_id,ordinal,value:0..1}` | Indexed normalized setpoints. |
+| `light_brightness`, `light_outer_angle`, `light_inner_angle` | `{operation,vessel_id,ordinal,value}` | Brightness or degrees, subject to the live module's bounds. |
+| `light_color` | `{operation:"light_color",vessel_id,ordinal,values:[r,g,b]}` | Normalized RGB. |
+| `undock`, `fire_decoupler` | `{operation,vessel_id,ordinal}` | Irreversible indexed triggers. |
+| `pushoff` | `{operation:"pushoff",vessel_id,ordinal,value:<N*s>}` | Debug docking separation impulse. |
+
+#### Camera, audio, and schedules
+
+| Tool operation | Complete operation payload | Meaning / accepted values |
+|---|---|---|
+| `camera_control` `ownership`/`take` | `{operation,value:0\|1}` | Take ownership or eased release. |
+| `release`, `reset`, `stop` | `{operation}` | Hard release, clear pose overrides, or stop player. |
+| `mode` | `{operation:"mode",token:"orbit"\|"free"\|"map"\|"iva"\|"fixed"}` | Game camera mode while not owned. |
+| `follow`, `anchor`, `aim_target` | `{operation,token:<target-ref>}` | `vessel:<id>`, `body:<id>`, `part:<vessel>/<iid>` where supported, or `none`. |
+| `tidal`, `ortho` | `{operation,value:0\|1}` | Boolean channels. |
+| `map_scope`, `orbit_radius`, `orbit_azimuth`, `orbit_elevation`, `roll`, `fov`, `ortho_height`, `smoothing` | `{operation,value}` | Metres, degrees, or seconds according to the operation; live configured bounds apply. |
+| `position`, `aim_offset` | `{operation,values:[x,y,z],token?:<frame>}` | Three-vector; only position consumes the optional frame token. |
+| `frame`, `aim_frame` | `{operation,token:"ecl"\|"cce"\|"bodyfixed"\|"enu"\|"lvlh"\|"chase"}` | Placement or aim-offset frame. |
+| `geodetic` | `{operation:"geodetic",values:[lat,lon,alt],token?:"body:<id>"}` | Degrees, degrees, terrain altitude metres. |
+| `rotation` | `{operation:"rotation",values:[x,y,z,w]}` | Explicit quaternion, norm 0.5..2. |
+| `aim` | `{operation:"aim",token:<target-ref>,values:[offX,offY,offZ,frameOrdinal,upOrdinal,roll,rollPresent]}` | Complete aim constraint; frame 0..5 and up 0..3 are defined in `SPEC_9P_FILESYSTEM.md` §5. |
+| `aim_up` | `{operation:"aim_up",token:"world"\|"target"\|"velocity"\|"free"}` | Aim up reference. |
+| `play` | `{operation:"play",token:<track>,aux?:<group>,values?:[atS,rate,loop,atPresent,ratePresent,loopPresent]}` | Start a track; timeline is seconds. |
+| `set` | `{operation:"set",values:[key,value,...]}` | Camera player keys: `0=t seconds`, `1=rate`, `2=loop`, `3=paused`. |
+| `audio_control` `play` | `{operation:"play",token:<clip>,aux?:<channel>,values?:[startMs,endMs,vol,loop,pan,pitch,group]}` | Group `0=sfx`, `1=music`, `2=ui`; `endMs=0` means full clip. |
+| `update`, `pause`, `resume`, `seek` | `{operation,token:<channel-or-clip>,values:[key,value,...]}` | Keys: `0=vol`, `1=pan`, `2=pitch`, `3=paused`, `4=seek_ms`. |
+| `stop` | `{operation:"stop",token:"all"\|<channel>\|<clip>}` | Stop matching channels. |
+| `schedule_control` `list` | `{operation:"list"}` | All players. |
+| `get`, `stop`, `remove` | `{operation,id}` | Read, stop, or remove one player. |
+| `pause`, `loop` | `{operation,id,value:0\|1}` | `resume` is pause with value `0`. |
+| `scrub`, `rate` | `{operation,id,value}` | Position in ms or rate 0..100. |
+| `clear` | `{operation:"clear"}` | Remove every player. |
+
+#### Debug, render FX, and paint
+
+The debug family is intentionally explicit and potentially destructive. The common shapes are:
+`teleport` uses `{vessel_id,values:[px,py,pz,vx,vy,vz]}`; `impulse` uses
+`{vessel_id,values:[x,y,z],token?:"cci"|"body",aux?:"ns"|"dv"}`; refills use only `vessel_id`;
+weld creation uses `vessel_id` as source, `token` as target, and the documented pose in `values`;
+indexed thug-life and IVA mutations use `ordinal`; IVA adoption uses `token` as vessel id and
+`values` beginning with the SubPart instance id. Exact worked shapes are published on the
+`gatos.debug_control` public reference page and the canonical actions remain in
+`SPEC_9P_FILESYSTEM.md` §5.1.
+
+`gatos.render_fx_control` always uses `{family,operation,entity?,field?,value?,values?}`. `family` is
+`engine_plume`, `plume_trail`, `clouds`, or `terrain`; `operation` is `set`, `reset`, or the
+plume-trail-only `clear`. Entity is an engine template, a body, or omitted for the global trail
+renderer and terrain wireframe. Field arity/range comes from the live FX catalog.
+
+`gatos.paint_control` uses `value:0|1` for enabled/clear operations, `color:[r,g,b]` for color
+operations, and `target` for `blend`, template ids, part instance ids, and semantic EVA material
+names. `vessel_id` is required only for vessel/part/individual-EVA operations. §6.1 gives the
+precedence and runtime-master behavior.
+
+### 5.2 Batches
 
 `gatos.execute_batch` is the JSON counterpart of `/sim/ctl/batch`, not a serialized batch-file upload.
 It validates every command before submission, preserves declared order, allows at most **64** commands,
@@ -207,7 +289,7 @@ and rejects a mixture of Frame and Solver commands with `EINVAL`. It executes as
 If an individual command fails at game time, later commands still run; the result reports the first
 failure just as the existing batch behavior does.
 
-### 5.2 Timed batches
+### 5.3 Timed batches
 
 `gatos.schedule_batch` is the JSON counterpart of `/sim/ctl/timed_batch`, not a text script. `at_ms` is a
 non-negative, absolute timeline offset in milliseconds. `clock` is `render`, `wall`, or `ut`; `rate`

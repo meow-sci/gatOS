@@ -114,7 +114,14 @@ export default defineConfig({
         },
         {
           label: "MCP",
-          items: [{ autogenerate: { directory: "mcp" } }],
+          items: [
+            { label: "Overview", link: "/mcp/" },
+            { label: "Connect and get started", link: "/mcp/getting-started/" },
+            { label: "Agent playbooks", link: "/mcp/playbooks/" },
+            { label: "Conventions and errors", link: "/mcp/conventions/" },
+            { label: "Tool directory", link: "/mcp/tools/" },
+            { label: "Resource directory", link: "/mcp/resources/" },
+          ],
         },
         {
           label: "Reference",

@@ -80,8 +80,10 @@ result cap. Camera tracks and audio clips support chunked upload through their s
 
 All writes compile into canonical `SimCommand` values or call an existing game-free camera/audio
 store. [`gatos.get_capabilities`](/gatOS/mcp/tools/get-capabilities/) is the machine-readable source
-for each action's argument shape, units, Frame/Solver phase, trigger/state classification, gates,
-idempotence, and safety notes.
+for canonical command actions' argument shapes, units, Frame/Solver phase, trigger/state
+classification, gates, idempotence, and safety notes. Multipurpose store operations use the exact
+operation cards in their tool reference. Read world status for transport/accessor health and
+runtime state for feature-store limits.
 
 The client never chooses execution phase:
 

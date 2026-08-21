@@ -1,49 +1,21 @@
-# Starlight Starter Kit: Basics
+# gatOS public documentation
 
-[![Built with Starlight](https://astro.badg.es/v2/built-with-starlight/tiny.svg)](https://starlight.astro.build)
+This directory builds the public Astro/Starlight site at
+<https://meow.science.fail/gatOS/>. Player-facing content lives under `src/content/docs/`; the
+curated sidebar is in `astro.config.mjs`.
 
-```
-pnpm create astro@latest -- --template starlight
-```
-
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
-
-## 🚀 Project Structure
-
-Inside of your Astro + Starlight project, you'll see the following folders and files:
-
-```
-.
-├── public/
-├── src/
-│   ├── assets/
-│   ├── content/
-│   │   └── docs/
-│   └── content.config.ts
-├── astro.config.mjs
-├── package.json
-└── tsconfig.json
+```sh
+pnpm install
+pnpm build
+pnpm lint
+pnpm astro dev --background
 ```
 
-Starlight looks for `.md` or `.mdx` files in the `src/content/docs/` directory. Each file is exposed as a route based on its file name.
+Use `pnpm astro dev status|logs|stop` to manage the background development server.
 
-Images can be added to `src/assets/` and embedded in Markdown with a relative link.
+The root `SPEC_9P_FILESYSTEM.md` is the exhaustive `/sim` and transport contract.
+`SPEC_MCP.md` plus `gatOS.Mcp/` define the MCP surface. MCP leaf pages render curated data from
+`src/data/mcp-reference.ts` through `src/components/McpReference.astro`; keep each multipurpose
+operation's legal call shape and example adjacent.
 
-Static assets, like favicons, can be placed in the `public/` directory.
-
-## 🧞 Commands
-
-All commands are run from the root of the project, from a terminal:
-
-| Command                | Action                                           |
-| :--------------------- | :----------------------------------------------- |
-| `pnpm install`         | Installs dependencies                            |
-| `pnpm dev`             | Starts local dev server at `localhost:4321`      |
-| `pnpm build`           | Build your production site to `./dist/`          |
-| `pnpm preview`         | Preview your build locally, before deploying     |
-| `pnpm astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `pnpm astro -- --help` | Get help using the Astro CLI                     |
-
-## 👀 Want to learn more?
-
-Check out [Starlight’s docs](https://starlight.astro.build/), read [the Astro documentation](https://docs.astro.build), or jump into the [Astro Discord server](https://astro.build/chat).
+See [AGENTS.md](./AGENTS.md) for the authoring, link-prefix, lockstep, and validation rules.

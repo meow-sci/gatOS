@@ -2,11 +2,15 @@
 
 **A real Linux computer for your spacecraft in [Kitten Space Agency](https://ahwoo.com/app/100000/kitten-space-agency).**
 
+**Player documentation:** [meow.science.fail/gatOS](https://meow.science.fail/gatOS/) — installation,
+first flight, task-oriented guides, full reference, and the operation-shaped MCP manual for AI agents.
+
 Yes, "gato" is Spanish for cat. Yes, your astronauts are kittens. 
 
 You can thank community member Kiwi Shark this perfect OS name!
 
-gatOS gives you an onboard Linux computer, exposing flight telemetry and controls into a Linux device filesystem files you can `cat`, `grep`, and `tail -f` like it's 1989 mission control.
+gatOS gives you an onboard Linux computer, exposing flight telemetry and controls as files you can
+`cat`, `grep`, and `tail -f` like it's 1989 mission control.
 
 > **gatOS + [purrTTY](../purrtty) are two mods that work together.** purrTTY is the terminal window
 > you type into; gatOS is the little Linux machine behind it. Install both.

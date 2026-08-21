@@ -26,6 +26,32 @@ public sealed class McpPresenterTests
     }
 
     [Test]
+    public void MultipurposeTools_AdvertiseOperationAwareSchemasAndRisk()
+    {
+        var registry = new McpRegistry(new SnapshotStore());
+        var vessel = registry.Tools.Single(t => t.ProtocolTool.Name == "gatos.vessel_control").ProtocolTool;
+        var module = registry.Tools.Single(t => t.ProtocolTool.Name == "gatos.module_control").ProtocolTool;
+        var camera = registry.Tools.Single(t => t.ProtocolTool.Name == "gatos.camera_control").ProtocolTool;
+
+        var vesselProperties = vessel.InputSchema.GetProperty("properties");
+        var cameraProperties = camera.InputSchema.GetProperty("properties");
+        Assert.Multiple(() =>
+        {
+            Assert.That(vessel.Description, Does.Contain("translate/rotate/attitude_target/burn"));
+            Assert.That(vesselProperties.GetProperty("operation").GetProperty("description").GetString(),
+                Does.Contain("attitude_target"));
+            Assert.That(vesselProperties.GetProperty("values").GetProperty("description").GetString(),
+                Does.Contain("[ut,dvx,dvy,dvz]"));
+            Assert.That(cameraProperties.GetProperty("operation").GetProperty("description").GetString(),
+                Does.Contain("geodetic"));
+            Assert.That(cameraProperties.GetProperty("values").GetProperty("description").GetString(),
+                Does.Contain("seven slots"));
+            Assert.That(vessel.Annotations?.DestructiveHint, Is.True);
+            Assert.That(module.Annotations?.DestructiveHint, Is.True);
+        });
+    }
+
+    [Test]
     public void PaintRuntime_IsFirstClassAndCapabilitiesMapItsActions()
     {
         var paint = new PaintStore();

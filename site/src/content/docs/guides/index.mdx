@@ -1,0 +1,139 @@
+---
+title: Guides
+description: Choose a gatOS project by outcome, from a first telemetry read to guidance, integrations, and cinematic tools.
+sidebar:
+  order: 1
+  label: Start building
+---
+
+import { CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+Pick the result you want, then follow the path. You do not need to read the guides in filename order.
+The foundations build on one another; the project and creative guides tell you their prerequisites.
+
+## Make a first flight program
+
+<CardGrid>
+  <LinkCard
+    title="Read live telemetry"
+    href="/gatOS/guides/read-telemetry/"
+    description="Read coherent vessel state from /sim or HTTP."
+  />
+  <LinkCard
+    title="Throttle and ignite"
+    href="/gatOS/guides/throttle-and-ignite/"
+    description="Send a safe first control and verify its read-back."
+  />
+  <LinkCard
+    title="Understand reference frames"
+    href="/gatOS/guides/reference-frames/"
+    description="Learn the CCI and body axes used by flight controls."
+  />
+  <LinkCard
+    title="Build the gatos-io helpers"
+    href="/gatOS/guides/gatos-io/"
+    description="Reuse the transport and frame helpers used by later programs."
+  />
+</CardGrid>
+
+## Automate flight
+
+<CardGrid>
+  <LinkCard
+    title="Point at a parent body"
+    href="/gatOS/guides/vessel-control-point-at-parent/"
+    description="Compute and command a Body-to-CCI attitude quaternion."
+  />
+  <LinkCard
+    title="Wait in simulation time"
+    href="/gatOS/guides/wait-in-sim-time/"
+    description="Pace control loops by snapshots, events, and UT instead of sleeps."
+  />
+  <LinkCard
+    title="Coordinate commands"
+    href="/gatOS/guides/atomic-batches/"
+    description="Land related controls on one game tick."
+  />
+  <LinkCard
+    title="Run a timed sequence"
+    href="/gatOS/guides/timed-sequences/"
+    description="Author launch cues and mission events on render, wall, or UT clocks."
+  />
+  <LinkCard
+    title="Use RCS"
+    href="/gatOS/guides/rcs-control/"
+    description="Translate and rotate in the vessel body frame."
+  />
+  <LinkCard
+    title="Build closed-loop guidance"
+    href="/gatOS/guides/closed-loop-guidance/"
+    description="Combine coherent reads, gating, pointing, and actuation."
+  />
+</CardGrid>
+
+## Connect other software
+
+<CardGrid>
+  <LinkCard
+    title="Build an HTTP dashboard"
+    href="/gatOS/guides/http-dashboard/"
+    description="Use the host-side /v1 mirror."
+  />
+  <LinkCard
+    title="Stream with MQTT"
+    href="/gatOS/guides/mqtt-telemetry/"
+    description="Subscribe to paced telemetry and send commands."
+  />
+  <LinkCard
+    title="Connect over serial"
+    href="/gatOS/guides/serial-link/"
+    description="Use the line-oriented command and telemetry bus."
+  />
+  <LinkCard
+    title="Mount a host folder"
+    href="/gatOS/guides/host-mounts/"
+    description="Share scripts and artifacts at /mnt/name."
+  />
+  <LinkCard
+    title="Connect an AI agent"
+    href="/gatOS/mcp/getting-started/"
+    description="Use the logical JSON MCP interface and its operating playbooks."
+  />
+</CardGrid>
+
+## Direct, paint, and experiment
+
+<CardGrid>
+  <LinkCard
+    title="Direct a camera shot"
+    href="/gatOS/guides/direct-a-camera-shot/"
+    description="Take camera ownership, place it, aim it, and hand it back."
+  />
+  <LinkCard
+    title="Build a soundboard"
+    href="/gatOS/guides/build-a-soundboard/"
+    description="Upload clips and control game audio channels."
+  />
+  <LinkCard
+    title="Edit engine plumes"
+    href="/gatOS/guides/edit-engine-plumes/"
+    description="Learn the scope and reset model shared by the live FX editors."
+  />
+  <LinkCard
+    title="Open the debug sandbox"
+    href="/gatOS/guides/debug-sandbox/"
+    description="Teleport, impulse, refill, and manipulate the game deliberately."
+  />
+  <LinkCard
+    title="Weld vessels"
+    href="/gatOS/guides/weld-vessels/"
+    description="Create session-scoped rigid attachments between live vessels."
+  />
+  <LinkCard
+    title="Float cabin objects"
+    href="/gatOS/guides/float-objects-in-the-cabin/"
+    description="Opt in to gatOS-owned IVA cabin physics."
+  />
+</CardGrid>
+
+For complete programs rather than lessons, browse the [example projects](/gatOS/guides/examples/).

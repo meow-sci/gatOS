@@ -51,16 +51,16 @@ public sealed class McpRegistry
         AddWrite("gatos.ignite_engines", h.Ignite, "Ignite all ignitable vessel engines.", destructive: true);
         AddWrite("gatos.shutdown_engines", h.Shutdown, "Shut down all vessel engines.", destructive: true);
         AddWrite("gatos.activate_stage", h.Stage, "Activate the next vessel stage.", destructive: true);
-        AddWrite("gatos.vessel_control", h.VesselControl, "Apply a logical vessel-level control operation.");
-        AddWrite("gatos.module_control", h.ModuleControl, "Apply a logical engine, RCS, light, animation, docking, or decoupler operation.");
-        AddWrite("gatos.camera_control", h.CameraControl, "Control the programmable camera.");
-        AddWrite("gatos.camera_track", h.CameraTrack, "List, read, upload, or delete structured camera tracks.");
-        AddWrite("gatos.audio_control", h.AudioControl, "Control named audio playback channels.");
+        AddWrite("gatos.vessel_control", h.VesselControl, "Vessel control family. operation selects the payload shape: flags/fractions use value; translate/rotate/attitude_target/burn use values; modes/frames use token. Includes irreversible ignite, stage, and take_control operations; inspect state first.", destructive: true);
+        AddWrite("gatos.module_control", h.ModuleControl, "Indexed module control family. operation selects engine/RCS/light/animation/docking/decoupler semantics; ordinal is always the zero-based module index. Includes irreversible undock and fire_decoupler operations; inspect module state first.", destructive: true);
+        AddWrite("gatos.camera_control", h.CameraControl, "Programmable camera family. operation selects ownership, target/frame token, scalar lens/orbit value, vector/quaternion placement, seven-slot aim, or playback key/value payload. Read camera runtime state before composing complex calls.");
+        AddWrite("gatos.camera_track", h.CameraTrack, "List/read/upload/delete structured camera tracks, or play/update/stop the camera player. Uploads accept UTF-8 JSON chunks by decoded byte offset.");
+        AddWrite("gatos.audio_control", h.AudioControl, "Audio playback family. play uses token=clip, aux=channel, values=[start_ms,end_ms,volume,loop,pan,pitch,group]; update uses flat numeric key/value pairs; stop uses token=all/channel/clip.");
         AddWrite("gatos.audio_clip", h.AudioClip, "List, retrieve as MCP audio/binary content, upload in base64 chunks, or delete audio clips.", outputSchema: EnvelopeOutputSchema);
-        AddWrite("gatos.schedule_control", h.ScheduleControl, "Inspect or control schedule and camera players.");
-        AddWrite("gatos.debug_control", h.DebugControl, "Use gated gatOS game/debug operations.", destructive: true);
-        AddWrite("gatos.render_fx_control", h.RenderFxControl, "Edit engine plume, trail, cloud, or terrain runtime fields.");
-        AddWrite("gatos.paint_control", h.PaintControl, "Opt in/out and paint vehicles, part instances, templates, shared EVA materials, or individual EVAs.");
+        AddWrite("gatos.schedule_control", h.ScheduleControl, "Inspect or control schedule/camera players. list has no id; get/stop/remove use id; pause/loop use value 0|1; scrub uses milliseconds; rate uses 0..100; clear has no id.");
+        AddWrite("gatos.debug_control", h.DebugControl, "Explicit debug/cheat family for warp, teleport/impulse, refills, welds, cosmetics, IVA physics, and face FX. Each operation has a distinct payload; consult gatos.get_capabilities and the MCP reference before mutation.", destructive: true);
+        AddWrite("gatos.render_fx_control", h.RenderFxControl, "Runtime FX editor. family is engine_plume/plume_trail/clouds/terrain; operation is set/reset or plume_trail clear; entity scope and field path vary by family.");
+        AddWrite("gatos.paint_control", h.PaintControl, "Opt-in paint family. operation selects master/global/template/vessel/part/EVA rule; flags use value, colors use normalized color=[r,g,b], and target names a template, part instance, blend, or EVA material.");
         AddWrite("gatos.command", h.Command, "Advanced canonical action envelope covering every catalog action.", destructive: true);
         AddWrite("gatos.execute_batch", h.ExecuteBatch, "Validate and submit an ordered same-phase same-tick command batch.", destructive: true);
         AddWrite("gatos.schedule_batch", h.ScheduleBatch, "Create a typed render, wall, or UT timed command sequence.", destructive: true);
@@ -84,7 +84,7 @@ public sealed class McpRegistry
     public McpServerOptions CreateOptions(string version) => new()
     {
         ServerInfo = new Implementation { Name = "gatOS", Version = version },
-        ServerInstructions = "Read immutable snapshots; compare snapshot_sequence and ut for freshness. KSA vectors use CCI/body frames. Control, debug, camera, audio, and schedule gates remain authoritative. execute_batch is same-tick and single-phase; schedule_batch is timed and may mix phases. Use gatos.get_capabilities for detailed discovery. /sim/display is intentionally absent because it is a TTY-only visual stream.",
+        ServerInstructions = "Operating loop: call gatos.get_capabilities, discover raw ids, read the target and its controllable/gate state, call the narrowest tool, then gatos.wait(after_sequence=previous) and re-read before planning again. Multipurpose control tools are discriminated by operation: read each parameter description and the matching capability action before filling value/values/token/aux; omit irrelevant slots. KSA vectors use documented CCI/body frames. execute_batch is same-tick and single-phase; schedule_batch uses absolute at_ms offsets and may mix phases. Never blindly retry one-shot triggers such as stage, ignite, undock, decoupler fire, release, clear, or remove. Expected failures return isError plus structured errno/retryable fields. /sim/display is intentionally absent because it is a TTY-only visual stream.",
         ScopeRequests = false,
         ToolCollection = Tools,
         ResourceCollection = Resources,

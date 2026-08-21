@@ -8,13 +8,13 @@ sidebar:
 gatOS has one live snapshot and command model, but it does not force every consumer to pretend it is a
 filesystem. Choose the shape that makes the job pleasant.
 
-| Interface     | Best for                                       | Where it runs           | Start here                                          |
-| ------------- | ---------------------------------------------- | ----------------------- | --------------------------------------------------- |
-| `/sim`        | shell work, guest programs, discovery          | Alpine guest            | [Filesystem overview](/gatOS/intro/sim-filesystem/) |
-| HTTP `/v1`    | dashboards, browser tools, simple host scripts | host and guest | [HTTP overview](/gatOS/intro/http/)                 |
-| MQTT          | pub/sub telemetry and automation tooling       | host and guest | [MQTT overview](/gatOS/intro/mqtt/)                 |
-| MCP           | AI agents and structured tool clients          | host           | [MCP overview](/gatOS/intro/mcp/)                   |
-| Virtio serial | hardware-style telemetry and SCPI              | Alpine guest device     | [Serial overview](/gatOS/intro/serial/)             |
+| Interface     | Best for                                       | Where it runs       | Start here                                          |
+| ------------- | ---------------------------------------------- | ------------------- | --------------------------------------------------- |
+| `/sim`        | shell work, guest programs, discovery          | Alpine guest        | [Filesystem overview](/gatOS/intro/sim-filesystem/) |
+| HTTP `/v1`    | dashboards, browser tools, simple host scripts | host and guest      | [HTTP overview](/gatOS/intro/http/)                 |
+| MQTT          | pub/sub telemetry and automation tooling       | host and guest      | [MQTT overview](/gatOS/intro/mqtt/)                 |
+| MCP           | AI agents and structured tool clients          | host                | [MCP overview](/gatOS/intro/mcp/)                   |
+| Virtio serial | hardware-style telemetry and SCPI              | Alpine guest device | [Serial overview](/gatOS/intro/serial/)             |
 
 `/sim` is the richest human exploration surface. HTTP and MQTT project the same snapshot and command
 pipeline, including an optional per-field mirror. MCP deliberately groups the model into logical JSON

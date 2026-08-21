@@ -1,0 +1,110 @@
+---
+title: Agent playbooks
+description: Reliable call sequences for observing, controlling, coordinating, and recovering through the gatOS MCP server.
+sidebar:
+  order: 3
+---
+
+import { Steps, LinkCard } from "@astrojs/starlight/components";
+
+An MCP tool call is one move inside a live control loop. These playbooks show the surrounding reads,
+preflight, wait, and verification that make the move reliable.
+
+## The default operating loop
+
+<Steps>
+
+1. Call `gatos.get_capabilities({})`. Retain gates, action metadata, limits, and unavailable features.
+2. Call `gatos.get_world({"detail":"summary"})`, then discover raw ids with the appropriate list tool.
+3. Read the target. For a vessel, request only the sections needed to decide and verify the action.
+4. Check `controllable`, the current parent body, relevant module state, and optional feature gates.
+5. Call the narrowest tool whose operation exactly matches the user's intent. Omit irrelevant payload slots.
+6. Call `gatos.wait` with the pre-action `snapshot_sequence`, then re-read the state you expected to change.
+7. If the result is an error, branch on `errno` and `retryable`; do not infer success from an HTTP 200.
+
+</Steps>
+
+```text title="one safe throttle change"
+gatos.get_capabilities({})
+gatos.get_vessel({"id":"active","include":["flight","control","propulsion"]})
+gatos.vessel_control({"operation":"throttle","vessel_id":"Hunter","value":0.35})
+gatos.wait({"after_sequence":812,"timeout_ms":30000})
+gatos.get_vessel({"id":"Hunter","include":["control","propulsion"]})
+```
+
+## Same-tick coordination
+
+Use `gatos.execute_batch` when several changes must reach one game tick. Every command must derive the
+same Frame or Solver phase; this is atomic admission and ordered execution, not rollback.
+
+```text
+gatos.execute_batch({
+  "commands": [
+    {"action":"vessel.throttle","vessel_id":"Hunter","value":1},
+    {"action":"vessel.lights","vessel_id":"Hunter","value":1},
+    {"action":"vessel.ignite","vessel_id":"Hunter","value":1}
+  ]
+})
+```
+
+If one admitted command fails in the game, later commands still execute and the result reports the
+first failure. Re-read all affected state.
+
+## A timed mission sequence
+
+Use `gatos.schedule_batch` when commands belong at absolute offsets and may cross phases. Offsets and
+player positions are milliseconds.
+
+```text
+gatos.schedule_batch({
+  "id": "launch-seq",
+  "clock": "ut",
+  "entries": [
+    {"at_ms":0,"command":{"action":"vessel.throttle","vessel_id":"Hunter","value":1}},
+    {"at_ms":1200,"command":{"action":"vessel.ignite","vessel_id":"Hunter","value":1}}
+  ]
+})
+gatos.schedule_control({"operation":"get","id":"launch-seq"})
+```
+
+Use `render` for footage that should slow after a hitch, `wall` for real elapsed time, and `ut` for
+mission events that follow simulation time and warp.
+
+## Compose a camera shot
+
+```text
+gatos.get_runtime_state({"feature":"camera"})
+gatos.camera_control({"operation":"ownership","value":1})
+gatos.camera_control({"operation":"anchor","token":"vessel:Hunter"})
+gatos.camera_control({"operation":"frame","token":"bodyfixed"})
+gatos.camera_control({"operation":"position","values":[-40,0,-6]})
+gatos.camera_control({"operation":"aim_target","token":"vessel:Hunter"})
+gatos.camera_control({"operation":"smoothing","value":0.35})
+```
+
+Read camera runtime state after composition. Use `release` for a hard cut or `ownership` with value
+`0` for the configured eased hand-back. IVA and Map are not supported ownership contexts.
+
+## Error recovery
+
+| Result                            | Next move                                                                                                    |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `EINVAL`                          | Fix the selected operation's exact shape, enum, range, or field combination. Do not add every optional slot. |
+| `ENOENT`                          | Re-list or re-read live ids/modules; the entity may have despawned or changed ordinal.                       |
+| `EACCES`                          | Stop and inspect `control_enabled`, `debug_namespace`, authority, and `controllable`.                        |
+| `EOPNOTSUPP`                      | Inspect capabilities and runtime health. The feature may be disabled or degraded.                            |
+| `EBUSY`                           | Re-read state before retrying. A trigger may already have fired or a live table may be full.                 |
+| `ETIMEDOUT` with `retryable:true` | The wait or game-thread drain timed out. Re-read before deciding whether another attempt is safe.            |
+
+:::caution[Do not blindly retry triggers]
+
+Stage, ignite, undock, decoupler fire, release, remove, clear, and similar lifecycle actions may have
+already changed the game even when a client lost the response. Re-read their target before retrying.
+
+:::
+
+<LinkCard
+  title="Browse operation-shaped tool calls"
+  href="/gatOS/mcp/tools/"
+  description="Each multipurpose tool keeps an operation's exact arguments, accepted values, and complete example together."
+/>

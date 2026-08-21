@@ -9,6 +9,8 @@ export interface McpField {
 export interface McpOperation {
   name: string;
   action?: string;
+  callShape?: string;
+  example?: string;
   description: string;
 }
 
@@ -315,17 +317,18 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
     name: "gatos.get_capabilities",
     kind: "tool",
     category: "World and discovery",
-    summary: "Discover canonical actions, schemas, phases, gates, limits, and safety metadata.",
+    summary:
+      "Discover canonical actions, argument shapes, phases, gates, list limits, and safety metadata.",
     useWhen:
       "At session start, before using optional features, or whenever an operation's units or availability are uncertain.",
     gate: "Always available while MCP is running.",
     fields: [],
     returns:
-      "A catalog-generated capability document reflecting current feature gates and transport limits.",
+      "A catalog-generated document with list limits, feature availability, authority state, and per-action metadata.",
     example: "{}",
     equivalent: "gatos://capabilities",
     notes: [
-      "Treat this as the machine-readable authority. It is generated from the same command catalog used for validation.",
+      "Treat this as the machine-readable authority for action metadata. Read world status for transport/accessor health and runtime state for feature-store limits.",
     ],
   },
   "gatos.wait": {
@@ -451,39 +454,90 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
     ],
     operations: [
       {
-        name: "ignite / shutdown / engine_master / stage",
-        action: "vessel.ignite / vessel.shutdown / vessel.engine / vessel.stage",
-        description: "Engine and staging triggers or engine master state.",
+        name: "ignite | shutdown | stage",
+        action: "vessel.ignite | vessel.shutdown | vessel.stage",
+        callShape: "{ operation, vessel_id }",
+        example: '{"operation":"stage","vessel_id":"Hunter"}',
+        description:
+          "One-shot engine or staging triggers. Omitted payload fields keep their defaults and are ignored.",
       },
       {
-        name: "throttle / lights / rcs / rcs_mode",
-        action: "vessel.*",
-        description: "Primary flight-system scalar or enum state.",
+        name: "engine_master | lights | rcs | always_render",
+        action: "vessel.engine | vessel.lights | vessel.rcs | vessel.always_render",
+        callShape: "{ operation, vessel_id, value: 0 | 1 }",
+        example: '{"operation":"rcs","vessel_id":"Hunter","value":1}',
+        description: "Set a vessel-wide flag. engine_master maps to vessel.engine.",
       },
       {
-        name: "translate / rotate",
-        action: "vessel.translate / vessel.rotate",
-        description: "Body-axis RCS command vectors.",
+        name: "throttle",
+        action: "vessel.throttle",
+        callShape: '{ operation: "throttle", vessel_id, value: number  // 0..1 }',
+        example: '{"operation":"throttle","vessel_id":"Hunter","value":0.72}',
+        description: "Set manual throttle as a normalized fraction.",
       },
       {
-        name: "attitude_mode / attitude_frame / attitude_target",
-        action: "vessel.attitude_*",
-        description: "Flight-computer attitude configuration and target quaternion.",
+        name: "translate | rotate",
+        action: "vessel.translate | vessel.rotate",
+        callShape: "{ operation, vessel_id, values: [x, y, z]  // signs; magnitudes ignored }",
+        example: '{"operation":"translate","vessel_id":"Hunter","values":[1,0,-1]}',
+        description:
+          "Latch body-axis bang-bang RCS commands. Write [0,0,0] to stop; rcs_mode must be Enabled.",
+      },
+      {
+        name: "rcs_mode",
+        action: "vessel.rcs_mode",
+        callShape: '{ operation: "rcs_mode", vessel_id, token: "Enabled" | "Disabled" }',
+        example: '{"operation":"rcs_mode","vessel_id":"Hunter","token":"Enabled"}',
+        description:
+          "Set the flight computer's RCS master switch. This is distinct from the vessel rcs flag.",
+      },
+      {
+        name: "attitude_mode",
+        action: "vessel.attitude_mode",
+        callShape:
+          '{ operation: "attitude_mode", vessel_id, token: "manual" | "StabilityAssist" | "Prograde" | "Retrograde" | "Normal" | "AntiNormal" | "RadialIn" | "RadialOut" | "Target" | "AntiTarget" | "Maneuver" }',
+        example: '{"operation":"attitude_mode","vessel_id":"Hunter","token":"Prograde"}',
+        description:
+          "Choose manual control or a named flight-computer tracking mode. Matching is case-insensitive.",
+      },
+      {
+        name: "attitude_frame",
+        action: "vessel.attitude_frame",
+        callShape:
+          '{ operation: "attitude_frame", vessel_id, token: "Inertial" | "Orbital" | "Surface" | "Target" }',
+        example: '{"operation":"attitude_frame","vessel_id":"Hunter","token":"Orbital"}',
+        description: "Set the reference frame used by named attitude modes.",
+      },
+      {
+        name: "attitude_target",
+        action: "vessel.attitude_target",
+        callShape: '{ operation: "attitude_target", vessel_id, values: [x, y, z, w] }',
+        example: '{"operation":"attitude_target","vessel_id":"Hunter","values":[0,0,0,1]}',
+        description:
+          "Set a Body-to-CCI quaternion. The quaternion norm must be valid for the game actuator.",
       },
       {
         name: "burn",
         action: "vessel.burn",
-        description: "Burn vector/setpoint using the canonical catalog units.",
+        callShape: '{ operation: "burn", vessel_id, values: [ut_seconds, dv_x, dv_y, dv_z] }',
+        example: '{"operation":"burn","vessel_id":"Hunter","values":[12840,0,12.5,0]}',
+        description:
+          "Set a flight-computer burn at absolute UT with a parent-body CCI delta-v in m/s.",
       },
       {
-        name: "scale / always_render",
-        action: "vessel.scale / vessel.always_render",
-        description: "Per-vessel visual controls.",
+        name: "scale",
+        action: "vessel.scale",
+        callShape: '{ operation: "scale", vessel_id, value: number  // finite and > 0 }',
+        example: '{"operation":"scale","vessel_id":"Hunter","value":25}',
+        description: "Set session render scale. Value 1 restores ordinary scale.",
       },
       {
-        name: "focus / take_control",
-        action: "camera.focus / debug.control_vessel",
-        description: "Focus the camera or change the player-controlled vessel.",
+        name: "focus | take_control",
+        action: "camera.focus | debug.control_vessel",
+        callShape: "{ operation, vessel_id }",
+        example: '{"operation":"focus","vessel_id":"Hunter"}',
+        description:
+          "Focus is view-only; take_control changes the player-controlled vessel and is a debug action.",
       },
     ],
     returns: "The compiled canonical action and command outcome with current freshness metadata.",
@@ -520,34 +574,67 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
     ],
     operations: [
       {
-        name: "engine_active / engine_minimum_throttle",
-        action: "engine.active / engine.min_throttle",
-        description: "Engine state and minimum-throttle setting.",
+        name: "engine_active | rcs_active | light_on",
+        action: "engine.active | rcs.active | light.on",
+        callShape: "{ operation, vessel_id, ordinal, value: 0 | 1 }",
+        example: '{"operation":"engine_active","vessel_id":"Hunter","ordinal":0,"value":1}',
+        description: "Enable or disable one indexed engine, RCS controller, or light.",
       },
       {
-        name: "rcs_active",
-        action: "rcs.active",
-        description: "Enable or disable one RCS controller.",
+        name: "engine_minimum_throttle",
+        action: "engine.min_throttle",
+        callShape:
+          '{ operation: "engine_minimum_throttle", vessel_id, ordinal, value: number  // 0..1 }',
+        example:
+          '{"operation":"engine_minimum_throttle","vessel_id":"Hunter","ordinal":0,"value":0.15}',
+        description:
+          "Set one engine's normalized minimum-throttle fraction. engine_min_throttle is an alias.",
       },
       {
-        name: "light_on / light_brightness / light_color",
-        action: "light.*",
-        description: "Light state, intensity, and RGB color.",
+        name: "light_brightness",
+        action: "light.brightness",
+        callShape: '{ operation: "light_brightness", vessel_id, ordinal, value: number  // >= 0 }',
+        example: '{"operation":"light_brightness","vessel_id":"Hunter","ordinal":2,"value":4}',
+        description: "Set one light's brightness multiplier.",
       },
       {
-        name: "light_outer_angle / light_inner_angle",
-        action: "light.*_angle",
-        description: "Spotlight cone angles.",
+        name: "light_color",
+        action: "light.color",
+        callShape:
+          '{ operation: "light_color", vessel_id, ordinal, values: [r, g, b]  // each 0..1 }',
+        example:
+          '{"operation":"light_color","vessel_id":"Hunter","ordinal":2,"values":[1,0.25,0.05]}',
+        description: "Set one light's normalized RGB color.",
       },
       {
-        name: "animation_goal / solar_deployment",
+        name: "light_outer_angle | light_inner_angle",
+        action: "light.outer_angle | light.inner_angle",
+        callShape: "{ operation, vessel_id, ordinal, value: degrees }",
+        example: '{"operation":"light_outer_angle","vessel_id":"Hunter","ordinal":2,"value":42}',
+        description: "Set spotlight cone angles; the inner angle cannot exceed the outer angle.",
+      },
+      {
+        name: "animation_goal | solar_deployment",
         action: "animation.goal",
-        description: "Drive animation or deployment goal.",
+        callShape: "{ operation, vessel_id, ordinal, value: number  // 0..1 }",
+        example: '{"operation":"solar_deployment","vessel_id":"Hunter","ordinal":0,"value":1}',
+        description: "Drive an animation or solar deployment to a normalized goal.",
       },
       {
-        name: "undock / fire_decoupler / pushoff",
-        action: "docking.undock / decoupler.fire / debug.docking_pushoff",
-        description: "Discrete docking and separation operations.",
+        name: "undock | fire_decoupler",
+        action: "docking.undock | decoupler.fire",
+        callShape: "{ operation, vessel_id, ordinal }",
+        example: '{"operation":"undock","vessel_id":"Hunter","ordinal":0}',
+        description:
+          "Fire a one-shot indexed separation trigger. Inspect live module state before retrying.",
+      },
+      {
+        name: "pushoff",
+        action: "debug.docking_pushoff",
+        callShape: '{ operation: "pushoff", vessel_id, ordinal, value: impulse_newton_seconds }',
+        example: '{"operation":"pushoff","vessel_id":"Hunter","ordinal":0,"value":250}',
+        description:
+          "Set a docking port's debug undock push-off impulse. Requires debug_namespace.",
       },
     ],
     returns: "Command outcome for the selected module and canonical action.",
@@ -567,39 +654,111 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
     fields: logicalFields,
     operations: [
       {
-        name: "ownership / take / release",
-        action: "camera.enabled / camera.release",
-        description: "Acquire or release camera ownership.",
+        name: "ownership | take",
+        action: "camera.enabled",
+        callShape: "{ operation, value: 0 | 1 }",
+        example: '{"operation":"ownership","value":1}',
+        description: "Take ownership with 1 or perform the configured eased hand-back with 0.",
       },
       {
-        name: "mode / follow / tidal / map_scope",
+        name: "release | reset | stop",
+        action: "camera.release | camera.pose_reset | camera.stop",
+        callShape: "{ operation }",
+        example: '{"operation":"release"}',
+        description: "One-shot hard release, pose-override reset, or camera-player stop.",
+      },
+      {
+        name: "mode",
+        action: "camera.mode",
+        callShape: '{ operation: "mode", token: "orbit" | "free" | "map" | "iva" | "fixed" }',
+        example: '{"operation":"mode","token":"fixed"}',
+        description: "Change the game's camera mode while gatOS does not own the camera.",
+      },
+      {
+        name: "follow | anchor | aim_target",
+        action: "camera.follow | camera.anchor | camera.aim_target",
+        callShape:
+          '{ operation, token: "vessel:<id>" | "body:<id>" | "part:<vessel>/<instance_id>" | "none" }',
+        example: '{"operation":"anchor","token":"vessel:Hunter"}',
+        description: "Set a target reference. follow does not accept part targets; anchor does.",
+      },
+      {
+        name: "tidal | ortho",
+        action: "camera.tidal | camera.ortho",
+        callShape: "{ operation, value: 0 | 1 }",
+        example: '{"operation":"ortho","value":1}',
+        description: "Set a boolean game-camera or projection channel.",
+      },
+      {
+        name: "map_scope | orbit_radius | orbit_azimuth | orbit_elevation | roll | fov | ortho_height | smoothing",
         action: "camera.*",
-        description: "Select game camera behavior and map scope.",
+        callShape: "{ operation, value: number }",
+        example: '{"operation":"smoothing","value":0.35}',
+        description:
+          "Set one scalar. Units/ranges: map_scope and radii/heights are metres; azimuth/elevation/roll/fov are degrees; smoothing is 0..10 seconds.",
       },
       {
-        name: "position / frame / anchor / geodetic",
-        action: "camera.position / frame / anchor / geo",
-        description: "Place the camera in CCI, body, anchor, or geodetic terms.",
+        name: "position | aim_offset",
+        action: "camera.position | camera.aim_offset",
+        callShape: "{ operation, values: [x, y, z], token?: frame }",
+        example: '{"operation":"position","values":[-40,0,-6],"token":"bodyfixed"}',
+        description:
+          "Set a three-vector. position may carry a placement-frame token; aim_offset uses the current aim frame.",
       },
       {
-        name: "orbit_radius / orbit_azimuth / orbit_elevation",
-        action: "camera.orbit_*",
-        description: "Anchor-relative orbit placement.",
+        name: "frame | aim_frame",
+        action: "camera.frame | camera.aim_frame",
+        callShape: '{ operation, token: "ecl" | "cce" | "bodyfixed" | "enu" | "lvlh" | "chase" }',
+        example: '{"operation":"frame","token":"bodyfixed"}',
+        description: "Select the placement or aim-offset reference frame.",
       },
       {
-        name: "rotation / aim / aim_target / aim_offset / aim_frame / aim_up / roll",
-        action: "camera.*",
-        description: "Orient or aim the camera.",
+        name: "geodetic",
+        action: "camera.geo",
+        callShape:
+          '{ operation: "geodetic", values: [lat_deg, lon_deg, altitude_m], token?: "body:<id>" }',
+        example: '{"operation":"geodetic","values":[12.5,-42,800],"token":"body:Kerbin"}',
+        description: "Place over terrain on an explicit body or the current body anchor.",
       },
       {
-        name: "fov / ortho / ortho_height / smoothing / reset",
-        action: "camera.*",
-        description: "Lens, projection, smoothing, and pose reset.",
+        name: "rotation",
+        action: "camera.rotation",
+        callShape: '{ operation: "rotation", values: [x, y, z, w] }',
+        example: '{"operation":"rotation","values":[0,0,0,1]}',
+        description: "Set an explicit camera quaternion; valid norm is 0.5..2.",
       },
       {
-        name: "play / set / stop",
-        action: "camera.play / camera.set / camera.stop",
-        description: "Control a stored camera track player.",
+        name: "aim",
+        action: "camera.aim",
+        callShape:
+          '{ operation: "aim", token: target_ref, values: [off_x, off_y, off_z, frame_ordinal, up_ordinal, roll_deg, roll_present] }',
+        example: '{"operation":"aim","token":"vessel:Hunter","values":[0,0,-1.2,2,0,0,0]}',
+        description:
+          "Set the complete aim constraint. Frame ordinals 0..5 are ecl/cce/bodyfixed/enu/lvlh/chase; up ordinals 0..3 are world/target/velocity/free.",
+      },
+      {
+        name: "aim_up",
+        action: "camera.aim_up",
+        callShape: '{ operation: "aim_up", token: "world" | "target" | "velocity" | "free" }',
+        example: '{"operation":"aim_up","token":"world"}',
+        description: "Choose the camera aim up-reference.",
+      },
+      {
+        name: "play",
+        action: "camera.play",
+        callShape:
+          '{ operation: "play", token: track_name, aux?: group, values?: [at_s, rate, loop, at_present, rate_present, loop_present] }',
+        example: '{"operation":"play","token":"launch","values":[0,1,0,0,0,0]}',
+        description:
+          "Start a stored track. Track time is seconds and schedule_enabled is also required.",
+      },
+      {
+        name: "set",
+        action: "camera.set",
+        callShape:
+          '{ operation: "set", values: [key, value, ...]  // 0=t_s, 1=rate, 2=loop, 3=paused }',
+        example: '{"operation":"set","values":[3,1]}',
+        description: "Patch the active camera player with flat numeric key/value pairs.",
       },
     ],
     returns: "Camera command result correlated to current snapshot state.",
@@ -659,11 +818,36 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
       },
     ],
     operations: [
-      { name: "list / read", description: "List stored names or return one track's JSON." },
-      { name: "upload / delete", description: "Chunk-upload or remove a stored track." },
       {
-        name: "play / update / stop",
+        name: "list",
+        callShape: '{ operation: "list" }',
+        example: '{"operation":"list"}',
+        description: "List stored track names and metadata.",
+      },
+      {
+        name: "read",
+        callShape: '{ operation: "read", name }',
+        example: '{"operation":"read","name":"launch"}',
+        description: "Return one track's complete JSON.",
+      },
+      {
+        name: "upload",
+        callShape: '{ operation: "upload", name, json, offset?: byte_offset, complete?: boolean }',
+        example:
+          '{"operation":"upload","name":"launch","json":"{\\"version\\":1,\\"shots\\":[]}","offset":0,"complete":true}',
+        description: "Write a UTF-8 JSON chunk; complete=true validates and commits the track.",
+      },
+      {
+        name: "delete",
+        callShape: '{ operation: "delete", name }',
+        example: '{"operation":"delete","name":"launch"}',
+        description: "Remove one stored track.",
+      },
+      {
+        name: "play | update | stop",
         action: "camera.play / camera.set / camera.stop",
+        callShape: "{ operation, name?, value?, token? }",
+        example: '{"operation":"play","name":"launch"}',
         description: "Control the camera player.",
       },
     ],
@@ -687,14 +871,29 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
       {
         name: "play",
         action: "audio.play",
-        description: "Start a named clip/channel using canonical named fields.",
+        callShape:
+          '{ operation: "play", token: clip_name, aux?: channel_id, values?: [start_ms, end_ms, volume, loop, pan, pitch, group] }',
+        example:
+          '{"operation":"play","token":"launch.wav","aux":"mission","values":[0,0,1,0,0,1,0]}',
+        description:
+          "Start a clip. group is 0=sfx, 1=music, or 2=ui; end_ms 0 means the whole clip.",
       },
       {
         name: "update / pause / resume / seek",
         action: "audio.set",
-        description: "Update playback state, position, gain, or other channel fields.",
+        callShape:
+          "{ operation, token: channel_id_or_clip, values: [key, value, ...]  // 0=volume, 1=pan, 2=pitch, 3=paused, 4=seek_ms }",
+        example: '{"operation":"update","token":"mission","values":[0,0.25,3,1]}',
+        description:
+          "Patch a live channel using flat numeric key/value pairs. pause/resume/seek map to this same action.",
       },
-      { name: "stop", action: "audio.stop", description: "Stop a playback channel." },
+      {
+        name: "stop",
+        action: "audio.stop",
+        callShape: '{ operation: "stop", token: "all" | channel_id | clip_name }',
+        example: '{"operation":"stop","token":"mission"}',
+        description: "Stop one matching channel/clip, or all channels.",
+      },
     ],
     returns: "Audio command outcome with freshness metadata.",
     example: '{"operation":"play","token":"launch.wav","aux":"mission","value":1}',
@@ -742,14 +941,33 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
       },
     ],
     operations: [
-      { name: "list", description: "List stored clips." },
+      {
+        name: "list",
+        callShape: '{ operation: "list" }',
+        example: '{"operation":"list"}',
+        description: "List stored clips.",
+      },
       {
         name: "retrieve",
+        callShape: '{ operation: "retrieve", name }',
+        example: '{"operation":"retrieve","name":"launch.wav"}',
         description:
           "Return metadata and MCP AudioContentBlock for known formats, otherwise an embedded binary resource.",
       },
-      { name: "upload", description: "Write a bounded base64 chunk through AudioStore." },
-      { name: "delete", description: "Remove a clip." },
+      {
+        name: "upload",
+        callShape:
+          '{ operation: "upload", name, data_base64, offset?: decoded_byte_offset, complete?: boolean }',
+        example:
+          '{"operation":"upload","name":"beep.wav","data_base64":"UklGRg==","offset":0,"complete":true}',
+        description: "Write a bounded base64 chunk through AudioStore.",
+      },
+      {
+        name: "delete",
+        callShape: '{ operation: "delete", name }',
+        example: '{"operation":"delete","name":"beep.wav"}',
+        description: "Remove a clip.",
+      },
     ],
     returns: "Store metadata; retrieve additionally emits audio or embedded binary content.",
     example: '{"operation":"retrieve","name":"launch.wav"}',
@@ -796,21 +1014,59 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
       },
     ],
     operations: [
-      { name: "list / get", description: "Read all players or one player." },
+      {
+        name: "list",
+        callShape: '{ operation: "list" }',
+        example: '{"operation":"list"}',
+        description: "Read all players.",
+      },
+      {
+        name: "get",
+        callShape: '{ operation: "get", id }',
+        example: '{"operation":"get","id":"launch-seq"}',
+        description: "Read one player.",
+      },
       {
         name: "pause / resume",
         action: "schedule.pause",
-        description: "Set paused state; resume maps to pause value 0.",
+        callShape: "{ operation, id, value?: 0 | 1 }",
+        example: '{"operation":"pause","id":"launch-seq","value":1}',
+        description: "Set paused state; resume maps to pause value 0 automatically.",
       },
       {
-        name: "scrub / rate / loop",
-        action: "schedule.*",
-        description: "Change position in ms, playback rate, or looping.",
+        name: "scrub",
+        action: "schedule.scrub",
+        callShape: '{ operation: "scrub", id, value: position_ms }',
+        example: '{"operation":"scrub","id":"launch-seq","value":3500}',
+        description: "Seek without firing skipped entries.",
       },
       {
-        name: "stop / remove / clear",
+        name: "rate",
+        action: "schedule.rate",
+        callShape: '{ operation: "rate", id, value: number  // 0..100 }',
+        example: '{"operation":"rate","id":"launch-seq","value":0.5}',
+        description: "Set playback rate; 0 is a legal frozen state.",
+      },
+      {
+        name: "loop",
         action: "schedule.*",
-        description: "Stop execution or remove one/all players.",
+        callShape: '{ operation: "loop", id, value: 0 | 1 }',
+        example: '{"operation":"loop","id":"launch-seq","value":1}',
+        description: "Enable or disable looping.",
+      },
+      {
+        name: "stop | remove",
+        action: "schedule.*",
+        callShape: "{ operation, id }",
+        example: '{"operation":"stop","id":"launch-seq"}',
+        description: "Stop execution while keeping the player, or remove it from the registry.",
+      },
+      {
+        name: "clear",
+        action: "schedule.clear",
+        callShape: '{ operation: "clear" }',
+        example: '{"operation":"clear"}',
+        description: "Remove every live and committed-but-not-activated player.",
       },
     ],
     returns: "Player state for reads or command outcome for controls.",
@@ -849,44 +1105,141 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
     ],
     operations: [
       {
-        name: "warp / teleport / impulse",
-        action: "debug.*",
-        description: "Change time warp or vessel motion/position.",
+        name: "warp",
+        action: "debug.warp",
+        callShape: '{ operation: "warp", value: multiplier }',
+        example: '{"operation":"warp","value":10}',
+        description: "Set the game time-warp factor.",
       },
       {
-        name: "refill_fuel / refill_battery",
-        action: "debug.*",
-        description: "Refill vessel resources.",
+        name: "teleport",
+        action: "debug.teleport",
+        callShape:
+          '{ operation: "teleport", vessel_id, values: [px_m, py_m, pz_m, vx_mps, vy_mps, vz_mps] }',
+        example: '{"operation":"teleport","vessel_id":"Hunter","values":[6578100,0,0,0,7784,0]}',
+        description:
+          "Set a CCI state vector about the vessel's current parent body; this does not change SOI.",
       },
       {
-        name: "control_vessel / always_render_iva",
-        action: "debug.*",
-        description: "Change controlled vessel or force IVA rendering.",
+        name: "impulse",
+        action: "debug.impulse",
+        callShape:
+          '{ operation: "impulse", vessel_id, values: [x, y, z], token?: "cci" | "body", aux?: "ns" | "dv" }',
+        example:
+          '{"operation":"impulse","vessel_id":"Hunter","values":[10,0,0],"token":"body","aux":"dv"}',
+        description:
+          'Apply an impulse; defaults are parent-body CCI and newton-seconds. aux="dv" changes the vector to m/s delta-v.',
       },
       {
-        name: "weld_create / weld_here / weld_remove / weld_clear / weld_enable",
-        action: "debug.weld_*",
-        description: "Manage runtime welds.",
+        name: "refill_fuel | refill_battery",
+        action: "debug.refill_fuel | debug.refill_battery",
+        callShape: "{ operation, vessel_id }",
+        example: '{"operation":"refill_fuel","vessel_id":"Hunter"}',
+        description: "Refill one vessel's relevant resources on the solver phase.",
+      },
+      {
+        name: "control_vessel | always_render_iva",
+        action: "debug.control_vessel | debug.always_render_iva",
+        callShape:
+          '{ operation: "control_vessel", vessel_id } OR { operation: "always_render_iva", value: 0 | 1 }',
+        example: '{"operation":"control_vessel","vessel_id":"Hunter"}',
+        description: "Change the player-controlled vessel or globally force IVA meshes to render.",
+      },
+      {
+        name: "weld_create",
+        action: "debug.weld_create",
+        callShape:
+          '{ operation: "weld_create", vessel_id: source, token: target, values: [part_iid, x, y, z, pitch, yaw, roll, lock] }',
+        example:
+          '{"operation":"weld_create","vessel_id":"Tug","token":"Station","values":[42,0,0,0,0,0,0,1]}',
+        description:
+          "Create an explicit runtime weld from a source vessel to a target part/subpart.",
+      },
+      {
+        name: "weld_here",
+        action: "debug.weld_here",
+        callShape:
+          '{ operation: "weld_here", vessel_id: source, token: target, values: [part_iid, lock] }',
+        example: '{"operation":"weld_here","vessel_id":"Tug","token":"Station","values":[42,1]}',
+        description: "Capture the current relative pose and weld there.",
+      },
+      {
+        name: "weld_remove | weld_clear",
+        action: "debug.weld_remove | debug.weld_clear",
+        callShape: '{ operation: "weld_remove", vessel_id: source } OR { operation: "weld_clear" }',
+        example: '{"operation":"weld_remove","vessel_id":"Tug"}',
+        description: "Remove one source weld or every weld.",
+      },
+      {
+        name: "weld_enable",
+        action: "debug.weld_enable",
+        callShape: '{ operation: "weld_enable", vessel_id: source, value: 0 | 1 }',
+        example: '{"operation":"weld_enable","vessel_id":"Tug","value":0}',
+        description: "Suspend or resume a retained weld.",
       },
       {
         name: "docking_pushoff",
         action: "debug.docking_pushoff",
-        description: "Apply debug separation at a docking module.",
+        callShape:
+          '{ operation: "docking_pushoff", vessel_id, ordinal: docking_port_index, value: impulse_newton_seconds }',
+        example: '{"operation":"docking_pushoff","vessel_id":"Hunter","ordinal":0,"value":250}',
+        description: "Set debug separation impulse for an indexed docking port.",
       },
       {
-        name: "thug_life_add / clear / remove / visible / position / rotation / size / cameras",
+        name: "thug_life_add",
+        action: "debug.thug_life_add",
+        callShape:
+          '{ operation: "thug_life_add", token: vessel_id, values: [part_iid] | [part_iid, x, y, z, pitch, yaw, roll, width, height] }',
+        example: '{"operation":"thug_life_add","token":"Hunter","values":[42]}',
+        description: "Create a part-anchored sunglasses render entry.",
+      },
+      {
+        name: "thug_life_remove | visible | position | rotation | size | cameras",
         action: "debug.thug_life_*",
-        description: "Manage the sunglasses cosmetic.",
+        callShape: "{ operation, ordinal: entry_id, value? | values? | token? }",
+        example: '{"operation":"thug_life_visible","ordinal":0,"value":1}',
+        description:
+          "Mutate one entry: flag in value, position/rotation/size in values, or camera mask in token. thug_life_clear needs only operation.",
       },
       {
-        name: "iva_physics / iva_run_outside_iva / iva_clear / iva_release / iva_nudge / iva_adopt / iva_adopt_all",
+        name: "iva_physics | iva_run_outside_iva",
+        action: "debug.iva_physics | debug.iva_run_outside_iva",
+        callShape: "{ operation, value: 0 | 1 }",
+        example: '{"operation":"iva_physics","value":1}',
+        description: "Enable cabin physics or its outside-IVA simulation policy.",
+      },
+      {
+        name: "iva_adopt",
+        action: "debug.iva_adopt",
+        callShape:
+          '{ operation: "iva_adopt", token: vessel_id, values: [subpart_iid] | [subpart_iid, vx, vy, vz] }',
+        example: '{"operation":"iva_adopt","token":"Hunter","values":[4123]}',
+        description: "Adopt an interior SubPart, optionally with assembly-frame starting velocity.",
+      },
+      {
+        name: "iva_adopt_all",
+        action: "debug.iva_adopt_all",
+        callShape:
+          '{ operation: "iva_adopt_all", token: vessel_id, value?: max_count, aux?: template_substring }',
+        example: '{"operation":"iva_adopt_all","token":"Hunter","value":4,"aux":"Sardine"}',
+        description:
+          "Adopt the smallest eligible props, optionally filtered by template substring.",
+      },
+      {
+        name: "iva_nudge | iva_release | iva_clear",
         action: "debug.iva_*",
-        description: "Manage free-floating IVA cabin objects.",
+        callShape:
+          '{ operation: "iva_nudge", ordinal: object_id, values: [vx, vy, vz] } OR { operation: "iva_release", ordinal: object_id } OR { operation: "iva_clear" }',
+        example: '{"operation":"iva_nudge","ordinal":0,"values":[0.3,0,0]}',
+        description: "Kick/release one floating object, or return every object to rest.",
       },
       {
-        name: "fx_spawn / fx_clear",
-        action: "debug.fx_*",
-        description: "Spawn or clear face particle FX.",
+        name: "fx_spawn | fx_clear",
+        action: "debug.fx_spawn | debug.fx_clear",
+        callShape:
+          '{ operation: "fx_spawn", token: vessel_id, aux: profile, values?: [scale, off_x, off_y, off_z] } OR { operation: "fx_clear" }',
+        example: '{"operation":"fx_spawn","token":"Valentina","aux":"sparkle","values":[1,0,0,0]}',
+        description: "Spawn a face/vehicle-anchored particle burst or stop all gatOS effects.",
       },
     ],
     returns: "Canonical debug command outcome.",
@@ -949,14 +1302,27 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
       {
         name: "set",
         action: "debug.{family}_set",
-        description: "Validate and set one declared FxCatalog field.",
+        callShape: '{ family, operation: "set", entity, field, value?: scalar, values?: vector }',
+        example:
+          '{"family":"engine_plume","operation":"set","entity":"MethaloxVac","field":"emission/brightness","value":35}',
+        description:
+          "Validate and set one declared FxCatalog field. engine_plume entity is a template id; plume_trail entity is omitted; clouds entity is a body id; terrain uses a body id or an empty entity for wireframe.",
       },
       {
         name: "reset",
         action: "debug.{family}_reset",
-        description: "Restore pristine session values for the selected scope.",
+        callShape: '{ family, operation: "reset", entity? }',
+        example: '{"family":"clouds","operation":"reset","entity":"Kerbin"}',
+        description:
+          "Restore pristine session values for a template, body, or the global plume-trail renderer.",
       },
-      { name: "clear", action: "debug.plumetrail_clear", description: "Clear live plume trails." },
+      {
+        name: "clear",
+        action: "debug.plumetrail_clear",
+        callShape: '{ family: "plume_trail", operation: "clear" }',
+        example: '{"family":"plume_trail","operation":"clear"}',
+        description: "Drop existing live trail geometry without changing renderer settings.",
+      },
     ],
     returns: "FX command outcome; use get_runtime_state to inspect published editor state.",
     example:
@@ -973,7 +1339,8 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
     name: "gatos.paint_control",
     kind: "tool",
     category: "Debug and rendering",
-    summary: "Opt in to paint rendering and color whole vessels, individual parts, templates, or EVA materials.",
+    summary:
+      "Opt in to paint rendering and color whole vessels, individual parts, templates, or EVA materials.",
     useWhen:
       "Changing vehicle or EVA appearance while preserving gatOS's explicit shader/material opt-in lifecycle.",
     gate: "control_enabled plus the corresponding parts or kittens runtime master.",
@@ -1014,57 +1381,85 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
       {
         name: "parts_enabled / kittens_enabled",
         action: "paint.parts_enabled / paint.kittens_enabled",
-        description: "Install or remove the relevant runtime rendering integration transactionally.",
+        callShape: "{ operation, value: 0 | 1 }",
+        example: '{"operation":"parts_enabled","value":1}',
+        description:
+          "Install or remove the relevant runtime rendering integration transactionally.",
       },
       {
         name: "blend",
         action: "paint.blend",
-        description: "Select multiply, tint, or replace through target.",
+        callShape: '{ operation: "blend", target: "multiply" | "tint" | "replace" }',
+        example: '{"operation":"blend","target":"tint"}',
+        description: "Select the vehicle shader blend mode through target.",
       },
       {
-        name: "global_enabled / global_color / global_clear / parts_clear",
+        name: "global_enabled | global_color | global_clear | parts_clear",
         action: "paint.global_* / paint.parts_clear",
-        description: "Manage the global vehicle rule or clear every retained vehicle rule.",
+        callShape:
+          '{ operation, value: 0 | 1 } for enabled/clear; { operation: "global_color", color: [r,g,b] } for color',
+        example: '{"operation":"global_color","color":[0.12,0.55,0.95]}',
+        description:
+          "Manage the global vehicle rule or clear every retained vehicle rule. RGB channels are normalized 0..1.",
       },
       {
         name: "template_enabled / template_color / template_clear",
         action: "paint.template_*",
-        description: "Manage a Part.Template.Id rule named by target.",
+        callShape: "{ operation, target: part_template_id, value?: 0 | 1, color?: [r,g,b] }",
+        example: '{"operation":"template_color","target":"FuelTankSmall","color":[0.8,0.2,0.1]}',
+        description:
+          "Manage a Part.Template.Id rule named by target; color operations use color and enabled/clear use value.",
       },
       {
         name: "vessel_enabled / vessel_color / vessel_clear",
         action: "paint.vessel_*",
+        callShape: "{ operation, vessel_id, value?: 0 | 1, color?: [r,g,b] }",
+        example: '{"operation":"vessel_color","vessel_id":"Hunter","color":[0.12,0.55,0.95]}',
         description: "Manage a live whole-vessel rule named by vessel_id.",
       },
       {
         name: "part_enabled / part_color / part_clear",
         action: "paint.part_*",
+        callShape:
+          "{ operation, vessel_id, target: part_instance_id_as_string, value?: 0 | 1, color?: [r,g,b] }",
+        example:
+          '{"operation":"part_color","vessel_id":"Hunter","target":"4123","color":[1,0.5,0]}',
         description: "Manage one stable uint part instance_id supplied as target within vessel_id.",
       },
       {
         name: "kitten_shared_enabled / kitten_shared_color / kitten_shared_clear / kittens_clear",
         action: "paint.kitten_shared_* / paint.kittens_clear",
+        callShape: "{ operation, value?: 0 | 1, color?: [r,g,b] }",
+        example: '{"operation":"kitten_shared_color","color":[0.7,0.7,1]}',
         description: "Manage the shared EVA default or clear every retained EVA rule.",
       },
       {
         name: "kitten_shared_material_enabled / kitten_shared_material_color / kitten_shared_material_clear",
         action: "paint.kitten_shared_material_*",
+        callShape: "{ operation, target: semantic_material_name, value?: 0 | 1, color?: [r,g,b] }",
+        example:
+          '{"operation":"kitten_shared_material_color","target":"visor","color":[0.1,0.3,0.8]}',
         description: "Manage one shared semantic EVA material named by target.",
       },
       {
         name: "kitten_enabled / kitten_color / kitten_clear",
         action: "paint.kitten_*",
+        callShape: "{ operation, vessel_id: eva_id, value?: 0 | 1, color?: [r,g,b] }",
+        example: '{"operation":"kitten_color","vessel_id":"Valentina","color":[1,0.2,0.4]}',
         description: "Manage one EVA's default rule through vessel_id.",
       },
       {
         name: "kitten_material_enabled / kitten_material_color / kitten_material_clear",
         action: "paint.kitten_material_*",
+        callShape:
+          "{ operation, vessel_id: eva_id, target: semantic_material_name, value?: 0 | 1, color?: [r,g,b] }",
+        example:
+          '{"operation":"kitten_material_color","vessel_id":"Valentina","target":"visor","color":[0.1,0.3,0.8]}',
         description: "Manage one semantic material on one EVA through vessel_id and target.",
       },
     ],
     returns: "Canonical paint command outcome correlated with the current snapshot.",
-    example:
-      '{"operation":"vessel_color","vessel_id":"Hunter","color":[0.12,0.55,0.95]}',
+    example: '{"operation":"vessel_color","vessel_id":"Hunter","color":[0.12,0.55,0.95]}',
     errors: [
       "EACCES when control is disabled; ENOENT for a missing live vessel/part/EVA; EINVAL for an unknown operation, target, flag, blend, or color.",
       "EBUSY when another mod owns the global shader compiler prefix; EOPNOTSUPP when audited shader or material internals are incompatible.",

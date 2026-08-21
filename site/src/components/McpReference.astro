@@ -45,14 +45,16 @@ if (!item) throw new Error(`Unknown MCP reference entry: ${entry}`);
 
 {item.operations && item.operations.length > 0 && (
   <section>
-    <h2 id="operations">Operations</h2>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Operation</th><th>Canonical action</th><th>Meaning</th></tr></thead>
-        <tbody>{item.operations.map((operation) => <tr>
-          <td><code>{operation.name}</code></td><td>{operation.action ? <code>{operation.action}</code> : "—"}</td><td>{operation.description}</td>
-        </tr>)}</tbody>
-      </table>
+    <h2 id="operations">Operation call shapes</h2>
+    <p>Choose an operation below. Its required payload and a complete call stay together—there is no second table to cross-reference.</p>
+    <div class="operation-list">
+      {item.operations.map((operation) => <article class="operation-card">
+        <h3><code>{operation.name}</code></h3>
+        {operation.action && <p class="canonical"><strong>Canonical action:</strong> <code>{operation.action}</code></p>}
+        <p>{operation.description}</p>
+        {operation.callShape && <><h4>Arguments for this operation</h4><pre><code>{operation.callShape}</code></pre></>}
+        {operation.example && <><h4>Example</h4><pre><code>{`${item.name}(${operation.example})`}</code></pre></>}
+      </article>)}
     </div>
   </section>
 )}
@@ -92,6 +94,12 @@ if (!item) throw new Error(`Unknown MCP reference entry: ${entry}`);
   .table-wrap { overflow-x: auto; }
   table { display: table; width: 100%; }
   th { white-space: nowrap; }
+  .operation-list { display: grid; gap: 1rem; }
+  .operation-card { border: 1px solid var(--sl-color-gray-5); border-radius: .65rem; padding: 1rem; }
+  .operation-card h3 { margin-top: 0; }
+  .operation-card h4 { font-size: .9rem; margin: 1rem 0 .35rem; }
+  .operation-card pre { margin: 0; overflow-x: auto; }
+  .canonical { color: var(--sl-color-gray-2); }
   .footer-links { border-top: 1px solid var(--sl-color-gray-5); display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 2.5rem; padding-top: 1rem; }
   @media (max-width: 34rem) { .facts div { grid-template-columns: 1fr; } }
 </style>

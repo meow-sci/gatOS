@@ -212,7 +212,7 @@ so container runtimes work: in-guest `apk add podman` runs rootful containers ou
 
 ```bash
 dotnet build                                     # build the whole solution
-dotnet test  gatos.slnx --nologo -v quiet        # full suite (9 test projects)
+dotnet test  gatos.slnx --nologo -v quiet        # full suite (10 test projects)
 dotnet build gatOS.Vm                            # one project
 dotnet build gatOS.GameMod                       # also deploys the mod folder (see below)
 ```
@@ -615,6 +615,12 @@ The code wins; the specifications mirror it — they must never disagree. This i
 optional: the transport-parity rule already keeps one read surface (`SimJson`/`Formats`) and one
 write surface (`SimCommand`/`CommandQueue`). The MCP capability registry maps that shared model to its
 logical resources/tools; update `SPEC_MCP.md` whenever a changed read/action affects that map.
+The public MCP reference is rendered from `site/src/data/mcp-reference.ts` through
+`site/src/components/McpReference.astro`, with task prose under `site/src/content/docs/mcp/`.
+An MCP name, resource, operation, argument shape, enum/range, gate, result, or safety change must
+update those files and the MCP discovery/schema tests in the same work item. Multipurpose tools must
+document each operation's exact call shape and complete example together; a generic field list plus
+a separate operation list is not sufficient for either people or agents.
 `/sim/display` is the explicit MCP-v1 exclusion. The `gatos` skill (`.agents/skills/gatos/`) and its sidecars (`coordinate-frames.md`,
 `flight-programs.md`, `recipes.md`) point at the SPEC; refresh them when a change affects how programs
 are written.
@@ -635,7 +641,7 @@ The constitution above says when the contract must change. This operational play
   4242/1883/4243, `0` = ephemeral, occupied preferred ports fall back to ephemeral). The guest-only
   9P listeners stay fixed to loopback. A non-loopback transport bind is intentional unauthenticated
   exposure, so user docs must not claim these services are always local or secure.
-- In the same change, update the applicable specifications (`SPEC_9P_FILESYSTEM.md` and/or `SPEC_MCP.md`), KSA integration matrix as applicable, `scope/FULL_SCOPE.md` plus relevant scope pages, `docs/VALIDATION.md` for game-coupled validation, `docs/MILESTONES.md`, and this file if status/guidance changes. Refresh `.agents/skills/gatos/` and `docs/TUTORIAL_DATA_REFERENCE.md` when program-authoring behavior changes. For MCP, extend the capability-coverage tests whenever a shared logical read, action, store feature, or intentional exclusion changes.
+- In the same change, update the applicable specifications (`SPEC_9P_FILESYSTEM.md` and/or `SPEC_MCP.md`), KSA integration matrix as applicable, `scope/FULL_SCOPE.md` plus relevant scope pages, `docs/VALIDATION.md` for game-coupled validation, `docs/MILESTONES.md`, and this file if status/guidance changes. Refresh `.agents/skills/gatos/` and `docs/TUTORIAL_DATA_REFERENCE.md` when program-authoring behavior changes. For MCP, also update `site/src/data/mcp-reference.ts`, the affected `site/src/content/docs/mcp/` pages, and discovery/schema tests whenever a tool, resource, operation, argument, shared logical read, store feature, or intentional exclusion changes.
 - In `gatOS.SimFs.Tests`, cover read-back, write-to-the-exact `SimCommand` (including phase), invalid-input `EINVAL` with no submitted command, and table-driven rules validation. Extend `SimFsTreeTests.ControlEnabledTree_ExposesEveryModuleControlStatusAndDebugPath` for every new path. Finish with the full build and test commands green with zero warnings.
 
 ## Instruction Maintenance Mandate (MUST)
