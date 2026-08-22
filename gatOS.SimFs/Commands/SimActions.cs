@@ -115,6 +115,27 @@ public static class SimActions
     public const string PaintTextureUnbind = "paint.texture_unbind";
     public const string PaintTextureClear = "paint.texture_clear";
 
+    // Stickers (STICKERS_PLAN): user PNG decals projected onto vehicles, terrain and clutter.
+    // Registry-keyed (ordinal = sticker id), vessel-agnostic; token=<image>, aux=<anchor descriptor>.
+    public const string PaintStickerPlace = "paint.sticker_place";
+    public const string PaintStickerSpray = "paint.sticker_spray";
+    public const string PaintStickerRemove = "paint.sticker_remove";
+    public const string PaintStickerClear = "paint.sticker_clear";
+    public const string PaintStickerVisible = "paint.sticker_visible";
+    public const string PaintStickerSize = "paint.sticker_size";
+    public const string PaintStickerDepth = "paint.sticker_depth";
+    public const string PaintStickerRotation = "paint.sticker_rotation";
+    public const string PaintStickerAlpha = "paint.sticker_alpha";
+    public const string PaintStickerBrightness = "paint.sticker_brightness";
+    public const string PaintStickerImage = "paint.sticker_image";
+
+    /// <summary>
+    ///     Global flag: draw every sticker as a magenta checker of its projection box instead of its
+    ///     image, so the decal box, the reverse-Z depth reconstruction and the ego matrices can be
+    ///     verified visually before any art is involved (STICKERS_PLAN S3).
+    /// </summary>
+    public const string PaintStickerDebug = "paint.sticker_debug";
+
     // Feature families with their own game-free parsers/catalogues.
     public const string AudioPlay = "audio.play";
     public const string AudioSet = "audio.set";

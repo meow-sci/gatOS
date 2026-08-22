@@ -512,3 +512,53 @@ pixels so an ordinary sRGB PNG renders at its authored colours in every biome �
 the shader's own conventions apply (modulation map centred on mid-grey `0.5`; alpha selects
 colour-space and terrain-tint reach, not opacity) — the mode for replacing a stock texture
 like-for-like. See `SPEC_9P_FILESYSTEM.md` for the grammar and errno list.
+
+# Sticker correspondence
+
+`/sim/paint/stickers` is entirely ordinary text leaves — there is **no** sticker-specific binary
+surface, because a sticker's image *is* an entry of `/sim/paint/textures/file/`. A tutorial therefore
+teaches the texture upload once (`cat meow.png > /sim/paint/textures/file/meow.png`, or
+`PUT /v1/paint/texture/file/<name>`, or `gatos.paint_texture(operation:"upload")`; **MQTT carries no
+binary upload**) and everything after that mirrors normally:
+`echo '<line>' > /sim/paint/stickers/spray` corresponds to `POST /v1/fs/paint/stickers/spray` and an
+MQTT publish to `gatos/sim/paint/stickers/spray/set`, and MCP uses `gatos.paint_sticker`.
+
+The two create grammars, which are also the two things a tutorial must get exactly right:
+
+```
+spray: <image> [aim=camera|cursor] [range=] [roll=] [w=] [h=] [d=] [alpha=] [brightness=]
+place: <image> vessel <vessel_id> <part_iid> <x> <y> <z> <nx> <ny> <nz> [roll=] [w=] [h=] [d=] [alpha=] [brightness=]
+place: <image> body <body_id> <lat> <lon> [heading=] [w=] [h=] [d=] [alpha=] [brightness=]
+```
+
+Ranges and defaults, all validated before the write returns: `w`/`h` in `(0, 1000]` metres, default
+`1`; `d` (projection-box depth) in `(0, 100]` metres, default **`0.3` on a vessel anchor and `1` on a
+body anchor**; `alpha` in `[0, 1]`, default `1`; `brightness` in `(0, 8]`, default `1`; `range` in
+`(0, 1e6]` metres, default `2000`; `roll`/`heading` any finite degrees, default `0`. On `spray`,
+`roll=` **adds to** the orientation that makes the image read upright from where you are standing,
+rather than replacing it. Omitting `d=` on a `spray` is not the same as passing a number — the depth
+default is chosen after the ray reports whether it hit a hull or the ground.
+
+Facts a tutorial needs that are not guessable from the grammar:
+
+- **Ids are the smallest free slot** (`0`, `1`, `2`, …) and are **reused** after `remove`/`clear`, so
+  they track the live set rather than counting placements. Read `last` (`<id> vessel <target> part
+  <iid> hit <dist>m`, or `<id> body <target> <lat> <lon> placed`) instead of assuming.
+- **`<id>/spec` is exactly a `place` line.** `cat /sim/paint/stickers/0/spec` round-trips: echo it
+  into `place` and you get the same sticker under a new id. This is the entire save/restore story —
+  dump every `spec` to the guest's own disk and replay it at boot.
+- **A vanished anchor makes a sticker dormant, not deleted.** A despawned vessel, a staged part or a
+  deleted image gives `live=0` (and `texture=missing` in `status`); the entry, its `spec` and its
+  settings all survive, and it comes back on its own when the anchor or the image returns.
+  Re-uploading an image under the same name **hot-swaps** it under every sticker using it.
+- **`part_iid` comes from `/sim/vessels/by-id/<id>/parts/<n>/instance_id`** and may be a *sub*-part
+  (`parts/<n>/subparts/<m>/instance_id`) — which is what makes a decal on a gimballing engine bell
+  follow the gimbal. `telemetry_vessel_parts` must be on to read those.
+- **Discover, don't assume, the outcome.** `spray` can miss: `last` reads `no hit within <range>m`
+  and the write returns **ENOENT**. Every successful create also emits a `paint.sticker_placed`
+  event on `/sim/events` (detail = the same line `last` carries, `vessel_id` set only for a vessel
+  anchor), which is the way to learn what a spray hit without polling.
+- `echo 1 > /sim/paint/stickers/debug` draws every sticker as a magenta checker of its projection box
+  instead of its image — a global development aid, not a per-sticker knob.
+
+See `SPEC_9P_FILESYSTEM.md` §Stickers for the full leaf table, formats and errno list.

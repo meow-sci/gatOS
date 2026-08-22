@@ -1,6 +1,6 @@
 ---
 title: Make the Scene Slightly Ridiculous
-description: Scale a vessel, force distant rendering, and attach the obligatory thug-life glasses.
+description: Scale a vessel, force distant rendering, spray your own PNG onto the world, and attach the obligatory thug-life glasses.
 sidebar:
   label: Visual Cheats
   order: 49
@@ -37,10 +37,56 @@ echo 1 > /sim/vessels/by-id/Hunter/scale
 echo 0 > /sim/vessels/by-id/Hunter/always_render
 ```
 
+## Spray a sticker
+
+Upload a PNG once, then spray it wherever the camera is looking. The decal sticks to whatever it
+landed on — the hull as the rocket flies, the ground as the planet turns — until you remove it.
+
+```sh
+cat meow.png > /sim/paint/textures/file/meow.png     # upload; the store is shared with clutter overrides
+echo 'meow.png w=2 h=2' > /sim/paint/stickers/spray  # 2 m decal down the camera's forward axis
+cat /sim/paint/stickers/last                         # 0 vessel Hunter part 7 hit 12.4m
+cat /sim/paint/stickers/status                       # 0 meow.png vessel Hunter live=1 texture=ready
+```
+
+Tune it live, or aim the next one by coordinates instead:
+
+```sh
+echo '3 1.5' > /sim/paint/stickers/0/size            # metres
+echo 0.4 > /sim/paint/stickers/0/alpha
+echo 25 > /sim/paint/stickers/0/rotation             # roll about the surface normal, degrees
+echo 'meow.png body Kerth 12.03 -41.88 heading=90 w=5 h=5' > /sim/paint/stickers/place
+```
+
+If a sticker does not appear where you expected, replace every image with a magenta checker of its
+projection box — that shows you exactly where the box is:
+
+```sh
+echo 1 > /sim/paint/stickers/debug
+echo 0 > /sim/paint/stickers/debug
+```
+
+Then clean up:
+
+```sh
+echo 1 > /sim/paint/stickers/0/remove   # one sticker
+echo 1 > /sim/paint/stickers/clear      # all of them
+```
+
+Nothing is persisted, but every sticker has a write-compatible `spec` line, so the guest's own disk
+is the save file:
+
+```sh
+for d in /sim/paint/stickers/[0-9]*; do cat "$d/spec"; done > ~/specs
+while read -r line; do echo "$line" > /sim/paint/stickers/place; done < ~/specs
+```
+
 :::note[Validation status]
 
 Scale and force-render have an [open validation checklist](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#per-vessel-scale--always_render-nodes--validation-pass--not-yet-run).
 The Vulkan glasses renderer has its [own checklist](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#thug_life-world-space-quad-render-cheat--validation-pass--not-yet-run).
+Stickers are code complete but have not been flown yet: they have an
+[open checklist](https://github.com/meow-sci/gatOS/blob/main/docs/VALIDATION.md#stickers-live-ksa-checklist-20268195261) too.
 
 :::
 

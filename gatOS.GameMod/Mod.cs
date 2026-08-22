@@ -14,6 +14,7 @@ using gatOS.SimFs.Camera;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Display;
 using gatOS.SimFs.Paint;
+using gatOS.SimFs.Paint.Stickers;
 using gatOS.SimFs.Snapshots;
 using gatOS.Ssh;
 using gatOS.Vm;
@@ -109,6 +110,13 @@ public sealed partial class Mod
     // enabled, so merely exposing /sim/paint installs no hooks and allocates no GPU materials.
     private PaintStore? _paintStore;
     private TextureStore? _textureStore;
+
+    // The sticker registry's read model (STICKERS_PLAN §3.1). Game-free: the registry itself lives
+    // game-side (an anchor can only be resolved against live game state), so what lives here is what
+    // the transports read and what the line parsers need. Null when [paint] paint_stickers_enabled
+    // is false, or when the image store is absent — stickers draw uploaded images, so a sticker
+    // surface without /sim/paint/textures would be a dead end.
+    private StickerStore? _stickerStore;
 
     // Timing of one telemetry sample (game thread, written by the sampler; read by the status
     // window). Allocation-free; owned here so the status window can read it before the sampler
@@ -259,9 +267,12 @@ public sealed partial class Mod
                 _textureStore = new TextureStore(_config.PaintTextureMaxBytes,
                     _config.PaintTextureMaxTotalBytes, _config.PaintTextureMaxFiles,
                     _config.PaintTextureMaxBindings, _config.PaintTextureMaxDimension);
+            if (_config.PaintStickersEnabled && _textureStore is not null)
+                _stickerStore = new StickerStore(_config.PaintStickersMaxCount,
+                    _config.PaintStickersMaxViewDistanceM);
             _simRoot = SimFsTree.Build(_simStore, _commandQueue, SimTransportsStatus, _displaySurface,
                 _audioStore, schedules: _scheduleStore, camera: _cameraStore, paint: _paintStore,
-                textures: _textureStore);
+                textures: _textureStore, stickers: _stickerStore);
             StartSimServer(port: 0);
             StartHttpServer();
             StartMqttBroker();
@@ -726,7 +737,7 @@ public sealed partial class Mod
         try
         {
             var registry = new McpRegistry(store, _commandQueue, SimTransportsStatus,
-                _audioStore, _cameraStore, _scheduleStore, _paintStore, _textureStore);
+                _audioStore, _cameraStore, _scheduleStore, _paintStore, _textureStore, _stickerStore);
             var version = typeof(Mod).Assembly.GetName().Version?.ToString() ?? "1.0.0";
             var server = new SimMcpServer(registry, version);
             server.StartAsync(_config.McpPreferredPort, _config.McpBindHost).GetAwaiter().GetResult();

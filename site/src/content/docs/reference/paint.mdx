@@ -1,6 +1,6 @@
 ---
 title: Vehicle and EVA paint
-description: Opt in to gatOS paint shaders, color whole vessels or individual parts, safely tint EVA materials, and bind custom ground-clutter textures.
+description: Opt in to gatOS paint shaders, color whole vessels or individual parts, safely tint EVA materials, bind custom ground-clutter textures, and spray your own PNGs onto the world.
 sidebar:
   order: 11
 ---
@@ -211,6 +211,171 @@ ordered chunks, `GET /v1/paint/texture/files`, and `DELETE /v1/paint/texture/fil
 are capped at 1 MiB and a larger declared `Content-Length` is refused with `413`, so chunking is the
 normal path for real PNGs. MQTT mirrors the text leaves but carries no binary upload.
 
+## Spray a sticker
+
+Stickers are the fourth paint mechanism, and the only one that puts your own artwork _into the
+world_ rather than onto a material: upload a PNG, then **spray** it where the camera is pointing or
+**place** it at exact coordinates. A sticker is a projected decal — it sticks to the rocket as it
+flies and to the ground as the planet turns — and it stays until you remove it.
+
+Images come from the same store the clutter overrides use. There is no second upload surface.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+```sh
+cat meow.png > /sim/paint/textures/file/meow.png     # upload once
+echo 'meow.png w=2 h=2' > /sim/paint/stickers/spray  # 2 m decal where the camera looks
+cat /sim/paint/stickers/last                         # 0 body Kerth 12.03 -41.88 hit 84.2m
+echo 0.4 > /sim/paint/stickers/0/alpha               # tune it live
+cat /sim/paint/stickers/status                       # 0 meow.png body Kerth live=1 texture=ready
+echo 1 > /sim/paint/stickers/0/remove                # or: echo 1 > /sim/paint/stickers/clear
+```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+```sh
+H=http://127.0.0.1:4242/v1
+curl -T meow.png "$H/paint/texture/file/meow.png"
+curl -X POST --data 'meow.png w=2 h=2' "$H/fs/paint/stickers/spray"
+curl -s "$H/fs/paint/stickers/last"
+curl -X POST --data '0.4' "$H/fs/paint/stickers/0/alpha"
+curl -s "$H/fs/paint/stickers/status"
+curl -X POST --data '1' "$H/fs/paint/stickers/0/remove"
+```
+
+  </TabItem>
+</Tabs>
+
+Each create takes the lowest free id — `0`, `1`, `2`, … — and `remove`/`clear` free ids for reuse, so
+the numbering tracks what is live. A successful `place` or `spray` also emits a `paint.sticker_placed`
+event, so a script can watch `/sim/events` instead of polling `last`.
+
+### The two grammars
+
+`spray` aims a ray; `place` states the anchor outright. Both take the image name first, and both
+share the same optional `key=value` tail.
+
+```
+spray: <image> [aim=camera|cursor] [range=] [roll=] [w=] [h=] [d=] [alpha=] [brightness=]
+place: <image> vessel <vessel_id> <part_iid> <x> <y> <z> <nx> <ny> <nz> [roll=] [w=] [h=] [d=] [alpha=] [brightness=]
+place: <image> body <body_id> <lat> <lon> [heading=] [w=] [h=] [d=] [alpha=] [brightness=]
+```
+
+| Key                  | Unit      | Default                                | Range               |
+| -------------------- | --------- | -------------------------------------- | ------------------- |
+| `w`, `h`             | metres    | `1`, `1`                               | each `(0, 1000]`    |
+| `d`                  | metres    | `0.3` on a vessel, `1` on a body       | `(0, 100]`          |
+| `roll` / `heading`   | degrees   | `0`                                    | any finite value    |
+| `alpha`              | —         | `1`                                    | `[0, 1]`            |
+| `brightness`         | —         | `1`                                    | `(0, 8]`            |
+| `range` (spray only) | metres    | `2000`                                 | `(0, 1e6]`          |
+| `aim` (spray only)   | —         | `camera`                               | `camera`, `cursor`  |
+
+`aim=camera` fires down the main camera's forward axis, which works headless and lets a
+[`/sim/camera`](/gatOS/reference/camera/) track do the pointing for you; `aim=cursor` uses the mouse
+cursor's picking ray. The ray hits a vehicle part first and the terrain behind it; nothing hit is
+`ENOENT`, and `last` records the miss. On `spray`, `roll=` is **added to** the orientation the picker
+chose to make the image read upright from where you are standing, rather than replacing it — so
+`roll=0` is upright and `roll=90` is a quarter turn from upright.
+
+A duplicate key, an unknown key, a value out of range, or a malformed line fails the `write(2)` with
+`EINVAL` before anything is queued. `d` is the one slot with a two-valued default: omit it on `spray`
+and the anchor kind the ray resolved picks it.
+
+### The two anchors
+
+- **`vessel <id> <part_iid>`** stores the decal in that part's local frame and re-resolves it every
+  frame, so it follows the part — including a sub-part, which is what `spray` picks, and which is why
+  a gimballing nozzle carries its decal through the gimbal. Part instance ids come from
+  `/sim/vessels/by-id/<id>/parts/<n>/instance_id`.
+- **`body <id> <lat> <lon>`** stores it geodetically, so it rides the planet's rotation for free and
+  survives time warp.
+
+Neither anchor is ever stored in world coordinates, which is what lets a sticker survive a scene
+reload, a vessel switch, and a floating-origin shift. A vehicle that despawns — or a part that stages
+away — makes its sticker **dormant, not deleted**: `live` reads `0` until the anchor comes back, the
+entry stays in the registry, and `<id>/spec` stays readable. Only `remove`, `clear`, and mod unload
+delete entries.
+
+### Read and control the sticker registry
+
+| Leaf                             | Read / write                                                                                                              |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `paint/stickers/help`            | The grammars, the anchors, the tuning knobs, and worked examples, in the filesystem.                                       |
+| `paint/stickers/info`            | `enabled= stickers= stickers_max= live= images= vram_bytes= patch=0\|1 renderer= max_view_distance_m=`.                     |
+| `paint/stickers/status`          | One row per sticker: `id image vessel\|body target live=0\|1 texture=ready\|missing\|uploading\|failed`.                       |
+| `paint/stickers/last`            | The outcome of the last `place`/`spray`: id, anchor, target, and either `placed` or `hit <distance>m`.                     |
+| `paint/stickers/last_error`      | Renderer or texture fault text; empty when healthy.                                                                        |
+| `paint/stickers/count`           | How many stickers exist.                                                                                                   |
+| `paint/stickers/place`           | Write an exact-anchor line.                                                                                                |
+| `paint/stickers/spray`           | Write an aimed line.                                                                                                       |
+| `paint/stickers/clear`           | Write `1` for the global teardown: every sticker removed, uploads kept.                                                    |
+| `paint/stickers/debug`           | Write `0\|1`. Draws every sticker as a magenta checker of its projection box instead of its image.                          |
+| `paint/stickers/<id>/spec`       | The write-compatible `place` line. `cat` it into `place` to clone the sticker under a new id.                              |
+| `paint/stickers/<id>/anchor`     | `vessel <id> <iid> x y z nx ny nz`, or `body <id> lat lon`.                                                                |
+| `paint/stickers/<id>/live`       | `1` while the anchor resolves and the image is resident.                                                                   |
+| `paint/stickers/<id>/image`      | Write another uploaded image name to hot-swap what this sticker draws.                                                     |
+| `paint/stickers/<id>/visible`    | Write `0\|1`. `0` hides it without removing the entry.                                                                     |
+| `paint/stickers/<id>/size`       | Write `w h` in metres.                                                                                                     |
+| `paint/stickers/<id>/depth`      | Write the projection-box depth in metres.                                                                                  |
+| `paint/stickers/<id>/rotation`   | Write degrees — roll about the normal on a vessel anchor, compass heading on a body anchor.                                |
+| `paint/stickers/<id>/alpha`      | Write `[0, 1]`.                                                                                                            |
+| `paint/stickers/<id>/brightness` | Write `(0, 8]`.                                                                                                            |
+| `paint/stickers/<id>/remove`     | Write `1` to delete this one sticker.                                                                                      |
+
+`spec` round-trips: it is exactly the form `place` accepts, so reading it and echoing it back
+recreates the sticker as a new id — which is also how a guest-side save/restore script works, since
+nothing about stickers is persisted.
+
+```sh
+# The unix toolbox is the save format.
+for d in /sim/paint/stickers/[0-9]*; do cat "$d/spec"; done > ~/specs
+while read -r line; do echo "$line" > /sim/paint/stickers/place; done < ~/specs
+```
+
+Re-uploading the same file name hot-swaps the image under every sticker using it; `rm`-ing it from
+`/sim/paint/textures/file/` makes those stickers dormant, and re-uploading brings them back. Images
+are capped at 2048 px on the longest edge for stickers specifically — larger uploads are downscaled,
+not rejected — because a decal a few metres across does not need a 4096² mip chain.
+
+:::note[What the renderer does, and what it does not]
+
+A sticker is a **projection box**, not a decal quad. gatOS reconstructs the scene position under each
+pixel inside the box from the depth buffer and projects it into the sticker's own space, which is why
+a decal conforms to hull curvature and tessellated terrain instead of floating flat over it.
+
+- It covers **whatever opaque geometry falls inside the box**, ground clutter included. Clutter is hit
+  by the projection, never by the aim: a `spray` ray passes through a rock to the terrain behind it,
+  and the box then paints the rock anyway. Widen `d` to reach more geometry, narrow it to stop a
+  terrain decal bleeding onto a nearby rock.
+- It draws in the **main viewport only** — not crew portraits, not secondary windows. It is in the
+  colour image before display capture, so `/sim/display` shows it.
+- Lighting is an **approximation** of the surface it sits on: sun direction and colour, plus a small
+  ambient term so a night-side sticker does not go black. `brightness` is the manual override.
+- At grazing angles the projection stretches without bound, so a sticker fades out and stops drawing
+  as the receiving surface turns away from it.
+- Past `paint_stickers_max_view_distance_m` (5000 m by default) a sticker is not drawn at all.
+- `echo 1 > debug` replaces every image with a magenta box checker. That is the fastest way to see
+  where a sticker's box actually is when it is not appearing where you expected.
+
+:::
+
+### Sticker configuration
+
+| Key                                  | Default  | Effect                                                                    |
+| ------------------------------------ | -------- | ------------------------------------------------------------------------- |
+| `paint_stickers_enabled`             | `true`   | Whether `/sim/paint/stickers` exists at all. `false` removes the subtree.  |
+| `paint_stickers_max_count`           | `256`    | Maximum simultaneous stickers, clamped to `1..4096`.                       |
+| `paint_stickers_max_view_distance_m` | `5000.0` | Metres past which a sticker is not drawn, clamped to `10..1000000`.        |
+
+Like clutter textures there is **no runtime master**: with nothing placed the feature is one
+emptiness branch per frame, and the Vulkan pipeline and the render hook do not exist until the first
+sticker goes live — they are torn down again when the last one goes away. The subtree also requires
+`paint_textures_enabled`, because a sticker draws an uploaded image; with no image store there is
+nothing to draw and the subtree is absent.
+
 ## Other interfaces
 
 - MQTT reads retained `gatos/sim/<path>` topics and writes the same raw values to
@@ -223,10 +388,16 @@ normal path for real PNGs. MQTT mirrors the text leaves but carries no binary up
   bindings. The bind mode rides `value`: `0` is `faithful` (the default) and `1` is `raw`. Read
   complete texture state with `gatos.get_runtime_state({"feature":"paint_textures"})` or
   `gatos://runtime/paint_textures`.
+- Stickers use [`gatos.paint_sticker`](/gatOS/mcp/tools/paint-sticker/), whose `operation` selects
+  `place`, `spray`, `set`, `remove`, `clear`, `list`, or `debug`; images still upload through
+  `gatos.paint_texture`. Read complete sticker state with
+  `gatos.get_runtime_state({"feature":"paint_stickers"})` or `gatos://runtime/paint_stickers`.
 - Generic HTTP and MQTT command envelopes accept every canonical `paint.*` action listed by
   capabilities.
 
 All paint actions are Frame phase and honor `control_enabled`, but visual by-id operations do not
 require the target to be the controlled vessel. Texture actions carry their own gate — the store has
-to be enabled, not either paint master — and answer `EOPNOTSUPP` when `paint_textures_enabled=false`. Rules are never written into a save game. Mod unload
-clears them and restores stock rendering.
+to be enabled, not either paint master — and answer `EOPNOTSUPP` when `paint_textures_enabled=false`.
+Sticker actions carry a third gate of their own and are vessel-agnostic: the registry id rides the
+command ordinal, so they resolve before any vessel lookup. Rules are never written into a save game.
+Mod unload clears them and restores stock rendering.

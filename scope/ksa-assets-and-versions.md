@@ -346,6 +346,7 @@ and the fastest way to confirm a rename actually landed. Concrete files (current
 | **Substance / propellant display names** (`tanks/<n>/substance`, `srb/<n>/substance`) | `Core/Volatiles.xml`, `Core/SolidPropellants.xml` | `<Substance Id="Kerosene" DefaultPhase="Liquid">`, `<Substance Id="He" DefaultPhase="Gas">`, `<Substance Id="APCP" DefaultPhase="Solid">`, plus the new `<Color>` element | **rev 5095 changed the published strings.** The new `DefaultPhase` attribute drives `SubstanceTemplate.BuildPhaseName`: the default phase renders **bare** and non-default phases take a qualifier (`Gas` → `"X Vapor"`, `Liquid` → `"Liquid X"`, `Solid` → `"X Ice"`), replacing the old unconditional `"Solid "`/`"Liquid "`/`"Gaseous "` prefixes. Net: `"Liquid Kerosene"` → `"Kerosene"`, `"Solid APCP"` → `"APCP"`; gas-default substances keep `"Liquid O2"`/`"Liquid H2"`/`"Liquid CH4"`. gatOS passes the string through verbatim — no code change, but string-matching guest programs break. |
 | Part template ids (dynamic add) | `Core/Core*GameData.xml` `PartGameData Id="…"` | e.g. `CoreCouplingA_Prefab_DockingPort1WA` | the string ids `ModLibrary.Get<PartTemplate>(id)` resolves (not used by `/sim` reads; reference). |
 | **`thug_life` quad shaders** | `Core/Shaders/Mesh/UnlitMesh.{vert,frag}` | the `"UnlitMeshVert"`/`"UnlitMeshFrag"` `ShaderReference` keys `ThugLifeQuadRenderer.BuildPipeline` resolves via `ModLibrary.Get<ShaderReference>(...)` | the world-space quad reuses KSA's stock unlit-mesh shaders; if these keys/assets are renamed/removed the pipeline build fails (caught, feature self-disables). |
+| **Sticker decal shader includes** | `Core/DefaultAssets.xml:367` (`<Shader Id="GridFrag" Path="Shaders/Grid.frag" />`); `Core/Shaders/Common/{Camera,Global,TextureSet,Extensions}.glsl` | `StickerDecalRenderer.ShaderIncludeDirectory()` resolves `ModLibrary.Get<ShaderReference>("GridFrag").ModPath` and takes only its **directory** — the shaders themselves are gatOS C# string constants, compiled by `ShaderModuleUtils.FromString` | gatOS writes its own GLSL but **includes KSA's**: `#include "Common/Camera.glsl"` (which includes `Global.glsl`) and `#include "Common/TextureSet.glsl"`. `shaderc` resolves an `#include` relative to the **directory of the debug name**, so the debug name must be a real path next to `Grid.frag`; the `GridFrag` asset is used purely to **discover that directory from the install** rather than hard-coding it. Renaming/removing the asset fails the pipeline build (caught, `renderer=degraded`); moving the `Common/` headers or changing their contents is a **silent** compile failure at the same point. |
 
 ---
 
@@ -473,6 +474,7 @@ When a changelog line mentions a subsystem, open these. (Decomp paths relative t
 | Camera / menu hooks | `KSA/Program.cs`, `KSA/Camera.cs` | — | writes, runtime |
 | **Audio (FMOD playback — `/sim/audio`)** | `KSA/GameAudio.cs` (`System`, `GetChannelGroup`, the in-memory `CreateFmodSound` recipe), `KSA/ChannelGroupType.cs`; `Brutal.FmodApi/{Fmod,Mode,TimeUnit,CreateSoundExInfo,Sound,Channel,ChannelGroup}.cs` — **new `Brutal.Fmod.dll` reference** (`<Private>false</Private>`, condition-guarded like the rest) | — | writes ([`ksa-write-surface.md#audio`](ksa-write-surface.md#audio)); Low churn (FMOD Core P/Invoke mirrors upstream FMOD 5) |
 | **Render internals (`thug_life` quad)** | `KSA/SuperMeshRenderSystem.cs`, `KSA/Program.cs` (`GetRenderer`/`OffScreenPass`/`SetViewport`), `KSA/Camera.cs`, `KSA/Part.cs` (ego transforms); **Planet.Render.Core**, **Brutal.Vulkan(.Abstractions/.Vma)**, **Brutal.Core.Memory** | `Core/Shaders/Mesh/UnlitMesh.{vert,frag}` | reads (anchor math), writes (actions), runtime (render postfix) — **deepest / highest-churn coupling**; see [render refs](#render-refs) |
+| **Render internals (sticker decals — `/sim/paint/stickers`)** | `KSA.Rendering/RenderTarget.cs` (`ResolveAttachments`, `DepthImage`, `ColorImage`, `Extent`), `KSA/GridPass.cs` (the pass this is a port of), `KSA/Program.cs` (`OffscreenTarget`/`RenderedViewport`/`MainViewport`/`SetViewport`/`ResourceFrameIndex`/`PointClampedSampler`/`ColorFormat`/`GetRenderer`), `KSA/GlobalShaderBindings.cs`, `KSA.Rendering/{BarrierBatch,ImageBarrierInfo}.cs`, `RenderCore.Systems/BindlessTextureLibrary.cs`, `RenderCore/{ShaderModuleUtils,VkUtils}.cs`, `KSA/{Celestial,Vehicle,Part,Camera,Cursor,Ray}.cs` (anchors + picking) | `Core/DefaultAssets.xml` (`GridFrag`, for the include directory only), `Core/Shaders/Common/{Camera,Global,TextureSet}.glsl` | reads ([`ksa-read-surface.md`](ksa-read-surface.md)), writes ([`ksa-write-surface.md#stickers`](ksa-write-surface.md#stickers)), runtime ([`ksa-runtime-coupling.md#stickers-patch`](ksa-runtime-coupling.md#stickers-patch)) — gatOS's **second** render-thread draw injection; see [sticker assets](#sticker-assets) |
 | **IVA cabin physics (`/sim/debug/iva`)** | `KSA/Part.cs` (SubPart transforms + `MatrixAsmb2VehicleAsmb`), `KSA/PartModelModule.cs` + `KSA/PartModel.cs` (the `Internal` interior classifier), `KSA/MeshReference.cs` (`PositionCompare` triangle soup), `KSA/Vehicle.cs` (accelerometer/rates/CoM), `KSA/IVASeat.cs`, `KSA/Viewport.cs`; **BepuPhysics + BepuUtilities** (gatOS's own `Simulation`, never `ConstraintSim`). Context for *why* not the game's solver: `KSA/ConstraintSim.cs`, `KSA/NarrowPhaseCallbacks.cs`, `KSA/VehicleUpdateTask.cs` | `Core/CoreIVASpaceAGameData.xml`, `Core/CoreIVAPropAAssets.xml`, `Core/CoreCommandAGameData.xml` (the collider blob that rules out the game's sim), `Core/defaultvehicles/Gemini7/vehicle.xml` (the shipped prop set) | reads ([`ksa-read-surface.md#iva-physics`](ksa-read-surface.md#iva-physics)), writes ([`ksa-write-surface.md#iva-physics`](ksa-write-surface.md#iva-physics)), runtime ([`ksa-runtime-coupling.md#iva-cabin-sim`](ksa-runtime-coupling.md#iva-cabin-sim)) — **no Harmony patch, no game-solver mutation** |
 | Numerics | `Brutal.Core.Numerics/` (decomp), `Brutal.Core.Numerics.dll` | — | runtime |
 
@@ -544,3 +546,64 @@ GenericRock, EarthTrees), authored as `.ktx2` there and `.dds` in `Astronomicals
 content, not API: a rename breaks saved bindings (ENOENT at bind time, never a crash). Re-audit with
 the checklist in
 [`plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`](../plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md).
+
+# Sticker assets at 2026.8.19.5261 {#sticker-assets}
+
+Sticker decals ship **no asset of their own**: both shaders are C# string constants in
+`StickerDecalRenderer` (`VertexShader`, `FragmentShader`), compiled at pipeline build by
+`ShaderModuleUtils.FromString(device, utf8, stage, null, debugName)`. A null `CompileOptions` uses
+`ShaderModuleUtils`' own defaults, which already carry the device's Vulkan/SPIR-V target **and the
+default include callbacks** (`RenderCore/ShaderModuleUtils.cs:16-22`). What they depend on is
+therefore KSA's *shipped GLSL headers and descriptor-set layout*, not KSA's shipped shader programs.
+
+**The `GridFrag` trick.** `shaderc` resolves an `#include` relative to the **directory of the
+requesting source's debug name** (`Brutal.ShaderCApi/ShaderC.cs:253`,
+`Utf8.Path.Combine(GetDirectoryName(requestingSource), source)`), and gatOS's shaders are strings
+with no file on disk. `StickerDecalRenderer.ShaderIncludeDirectory()` therefore resolves
+`ModLibrary.Get<ShaderReference>("GridFrag")` (declared at
+`Content/Core/DefaultAssets.xml:367` — `<Shader Id="GridFrag" Path="Shaders/Grid.frag" />`) and takes
+**only `Path.GetDirectoryName(reference.ModPath)`**, i.e. the install's real `…/Shaders/` directory.
+The debug names passed to the compiler are then `…/Shaders/gatos_sticker.vert` and `.frag` — files
+that do not exist, but whose *directory* does. The asset's content is never read. The name must also
+be **NUL-terminated**, because the include resolver reads it as a C string (the same requirement
+`Game/Ksa/Paint/PartPaintPatches.cs:56-59` documents). If the `GridFrag` id is renamed or dropped,
+the pipeline build throws at install and the feature reports `renderer=degraded` — it does not crash.
+
+**GLSL headers included from KSA** (a content change here is a *silent* compile failure at the same
+point, so re-read them on any shader-asset churn):
+
+| Header (`Content/Core/Shaders/Common/`) | What the sticker shaders take from it | Break impact |
+|---|---|---|
+| `Camera.glsl` (→ `#include "Global.glsl"`) | `global.camera.{viewProjection,inverseProjection,inverseView}` for the vertex transform and the reverse-Z scene-position reconstruction; `global.lighting.{sunPosition,sunColor,planetColor}` for the shading term | a member rename/reorder inside the `Camera`/`GlobalLighting` UBO structs breaks the compile (caught) or, worse, silently reinterprets a field |
+| `Global.glsl:144` | the `layout(set = SET_GLOBAL, binding = 0) uniform Global { Camera camera; GlobalLighting lighting; Celestial celestial; Vessel vessel; } global;` block — **set 0 with a dynamic offset per viewport** | the pipeline layout's set 0 is `GlobalShaderBindings.DescriptorSetLayout` and the draw binds it with `GlobalShaderBindings.DynamicOffset(Program.MainViewport.Index)`; a layout change desynchronises both |
+| `TextureSet.glsl` | `SAMPLE_TEXTURE(texID, samplerID, uv)` over `globalTextures[]`/`samplers[]`. gatOS `#define SET_TEXTURE 2` **before** the include (the header defaults it to 1), so the bindless table is set 2 | the macro/array names and the `SET_TEXTURE` override are load-bearing; sampler slot **0** is assumed to be the library's linear-clamped, full-mip sampler (`BindlessTextureLibrary.cs:127-130`) |
+| `Extensions.glsl` (via `TextureSet.glsl`) | the non-uniform-indexing extension pragmas the bindless table needs | transitive; breaks the compile if removed |
+
+**Descriptor-set order is baked into the GLSL** — set 0 = KSA's global UBO block (`SET_GLOBAL`
+defaults to 0), set 1 = our scene-depth `sampler2D`, set 2 = KSA's bindless table (`SET_TEXTURE` is
+`#define`d to 2) — so `BuildPipelineLayout`'s three-element `setLayouts` span must stay in exactly
+that order. The bindless table is declared `UpdateAfterBind | PartiallyBound`
+(`RenderCore.Systems/BindlessTextureLibrary.cs:95-99`), which is what makes it legal for our shader
+to index a slot the game never touches, and for the binder to write a slot while command buffers
+referencing other slots are in flight.
+
+**Other build-time assumptions** (all in `BuildPipeline`, any of them moving silently breaks the
+draw — re-verify live): `Program.Instance.ColorFormat` is the format the main offscreen target is
+constructed with (`KSA/Program.cs:1427`), i.e. **`R16G16B16A16_SFLOAT`**, and the pass declares it
+itself rather than calling `SetupGraphicsPipeline` — it draws *after* the resolve, into the
+single-sample output image, with **no depth attachment at all**;
+`Presets.{InputAssembly.TriangleList,Rasterization.Fill.CullFront}` (front faces culled so the box
+still covers its footprint when the camera is **inside** it — the same reason KSA draws the planet
+with `CullFront`, `KSA/PlanetRenderer.cs:1528`); `RenderingPresets.{ReverseZDepthStencil.NoDepthTest,
+BlendState.BlendColorAlphaOver}`; `Renderer.{Device,DynamicStateInfo,ViewportState}`. The push block
+is fixed at **112 bytes** and asserted against `sizeof(StickerPush)` at build time, inside the 128-byte
+Vulkan minimum. Modules gatOS compiles are **gatOS's** to destroy (unlike `ModLibrary`'s), which
+happens as soon as the pipeline holds the code.
+
+**No new reference DLL and no csproj change at all.** Stickers reuse the
+`Brutal.Vulkan(.Abstractions/.Vma)`, `Planet.Render.Core`, `Brutal.Core.Memory` and
+`<AllowUnsafeBlocks>` set the `thug_life` quad already pulled in ([render refs](#render-refs)), the
+`Brutal.ShaderC` reference vehicle paint already needed (namespace `Brutal.ShaderCApi`, for
+`ShaderException`), and the `Brutal.Texture`/`Brutal.Ktx` decode set the clutter overrides added.
+Re-audit with the checklist in [`plans/STICKERS_PLAN.md`](../plans/STICKERS_PLAN.md) and the shared
+paint audit in [`plans/PAINT_ASBUILT.md`](../plans/PAINT_ASBUILT.md).

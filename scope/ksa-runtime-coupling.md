@@ -22,7 +22,7 @@ contract, not KSA game state):
 | `[StarMapAfterGui]` | `OnAfterUi(dt)` | `DrivePostSolver(dt)` = `DriveWelds(dt)` → `DriveIvaPhysics(dt)` (both **game-thread mutations**, run first and independently of the UI, each self-gated to a no-op when its registry is empty) then `DrawGameUi()` (ImGui status window) | weld `Teleport` + IVA SubPart poses + ImGui |
 | `[StarMapAfterOnFrame]` | `OnAfterFrame(t, dtPlayer)` | **the F2 fallback hook (C0.1)** — a postfix on `Program.OnFrame`: when GUI hooks were skipped it completes the per-frame non-camera drivers. The main-viewport prefix has already sampled/ticked/drained when available, so the latch prevents a double step | F2 fallback only; no camera pose write |
 | Harmony prefix/postfix: `Viewport.OnFrame(double)` | `CameraViewportPatch` | Bound strictly by `ReferenceEquals(viewport, Program.MainViewport)`. Prefix samples, advances schedules, drains frame commands and applies the camera after simulation advance; original method runs controller + `Camera.OnFrame`; postfix publishes the final clamped transform | same-render camera ownership + applied read-back |
-| `[StarMapUnload]` | `Unload` | `TeardownGameCheats` (clear welds, restore/unpatch IVA + thug_life + always_render, FX pristine restore, audio shutdown, `ScheduleStore.Clear()`, `CameraDirector.Shutdown()`), remove hooks, stop serial, dispose broker/servers (bounded) | cheat/camera/schedule teardown + uninstall |
+| `[StarMapUnload]` | `Unload` | `TeardownGameCheats` (dispose `PaintManager` — which restores every clutter-texture slot and drops every sticker, unpatching `gatos.stickers` and freeing its pipeline/mesh/descriptors/bindless slots after a `WaitIdle` — then clear welds, restore/unpatch IVA + thug_life + always_render, FX pristine restore, audio shutdown, `ScheduleStore.Clear()`, `CameraDirector.Shutdown()`), remove hooks, stop serial, dispose broker/servers (bounded) | cheat/camera/schedule teardown + uninstall |
 
 The game-coupled hook bodies live in the partial `Game/Mod.Game.cs` and are `[MethodImpl(NoInlining)]`
 partial methods, so a missing KSA assembly fails at the *call site* (caught) rather than JIT of the
@@ -66,9 +66,12 @@ change is safe in both directions.
 
 gatOS installs **three permanent** Harmony patches, all via `AccessTools.Method(...)` with a null-check
 and try/catch (or a degrade-to-no-injection transpiler) so a missing/renamed target **disables that one
-feature with a logged warning instead of crashing** (three further dynamic instances — `gatos.iva` for
-the IVA cheat, `gatos.thug_life` for the world-space quad cheat, and `gatos.always_render` for the
-per-vessel render-distance override — are each installed only while their feature is active; see below):
+feature with a logged warning instead of crashing** (**four** further dynamic instances — `gatos.iva`
+for the IVA cheat, `gatos.thug_life` for the world-space quad cheat, `gatos.always_render` for the
+per-vessel render-distance override, and `gatos.stickers` for the projected-decal pass — are each
+installed only while their feature is active; see below. `gatos.thug_life` and `gatos.stickers` are
+gatOS's **two** render-thread draw injections and are deliberately separate Harmony instances on
+separate methods, so an unpatch of one cannot disturb the other):
 
 | Patch | KSA target | Decomp file | Purpose | If target moves |
 |---|---|---|---|---|
@@ -363,6 +366,115 @@ seven `debug.thug_life_*` control writes are ordinary Frame-phase commands — s
 [`ksa-write-surface.md#thug-life`](ksa-write-surface.md#thug-life). Welds, IVA, and thug_life are all
 **runtime-only** (never persisted).
 
+### Dynamic stickers render patch (`gatos.stickers`) — second render-thread draw injection {#stickers-patch}
+
+Projected PNG decals (`/sim/paint/stickers`, `Game/Ksa/Paint/Stickers/`) are gatOS's **second — and
+only other — custom GPU rendering**, and share **nothing** with `thug_life`: a different method, a
+different Harmony instance, a different pass shape, and their own pipeline, mesh, descriptor pool and
+texture ring. `StickerRenderPatches.Apply` installs a **dynamic Harmony postfix on
+`KSA.Rendering.RenderTarget.ResolveAttachments(CommandBuffer)`** (`KSA.Rendering/RenderTarget.cs:315`)
+on its **own** `Harmony("gatos.stickers")` instance, and throws `MissingMethodException` if the seam
+moved (caught by `StickerManager.EnsurePatch` → `Degrade`, so the feature reports
+`renderer=degraded` + `last_error` instead of crashing).
+
+**Why that seam.** `Program.RenderGame` calls `RenderedViewport.OffscreenTarget.ResolveAttachments(
+commandBuffer)` **unconditionally** at `KSA/Program.cs:4418` (and at `:4174` for secondary viewports).
+The method *body* is MSAA-gated — it does nothing when neither attachment is multisampled — but a
+**postfix fires either way**, which is what makes this reliable at every MSAA setting. Immediately
+after it, the resolved single-sample `DepthImage` and `ColorImage` are both current and neither is
+bound as an attachment: the one window in the frame where a decal can read full scene depth. It is
+also exactly the window KSA's own `GridPass` draws the map grid in, and the pass is a near-verbatim
+port of `GridPass.Run` (`KSA/GridPass.cs:427-471`).
+
+**Four gates before anything is recorded.** (1) the static `StickerManager.Active` volatile — false
+whenever the draw path is not live or has faulted, so the postfix is a single branch; (2)
+`ReferenceEquals(__instance, Program.OffscreenTarget)` — the target being resolved must be the main
+viewport's (the main viewport's *is* literally `Program.OffscreenTarget`, `Program.cs:432`, assigned
+to `MainViewport.OffscreenTarget` at `:1442`); (3) `ReferenceEquals(Program.RenderedViewport,
+Program.MainViewport)`; (4) `!Program.EditorFlag` (`Program.cs:201`). **All three identity/state
+checks are required** — crew-portrait viewports have their own targets *and* their own cameras, the
+decal matrices were composed against the main camera this frame, and `Program.RenderEditor`
+(`Program.cs:4527`) calls `ResolveAttachments` on the *same* target after setting the rendered
+viewport index to the main one (`:4468`), so without (4) a body-anchored sticker would be projected
+over the VAB. Stickers are main-viewport, flight-scene-only in v1.
+
+**Installed only while it can draw.** The patch and every GPU object come up on the **`0 → 1` live**
+transition (`StickerManager.Tick` → `EnsureGpu()` → `EnsurePatch()`) and go away on **`1 → 0`**, so
+with nothing placed there is no patch, no pipeline, no descriptor pool and no texture — the
+`thug_life`/welds/IVA "only active while toggled on" discipline. *Live* means anchor resolved **and**
+texture resident: dormant entries (vessel despawned, part staged away, image evicted) keep the
+registry non-empty but do **not** keep the patch installed. The steady-state idle cost is
+`StickerManager.Tick`'s retire-drain plus one `IsEmpty` branch.
+
+**What the pass records** (`StickerDecalRenderer.RecordPass`, one call per frame): rewrite this
+frame's depth descriptor; a two-image `BarrierBatch` moving depth to
+`ImageBarrierInfo.Presets.DepthSampledReadF` and colour to `ColorAttachmentReadWrite` (the latter
+with `inForceBarrier: true`); `BeginRendering` on the **resolved single-sample** `ColorImage` with
+`LoadOp.Load`/`StoreOp.Store`, `ResolveMode.None` and **no depth attachment at all**; bind
+`Program.SetViewport`, then descriptor sets **0/1/2** = KSA's global Camera/GlobalLighting/Celestial/
+Vessel UBO block *with the per-viewport dynamic offset* (`GlobalShaderBindings.{DescriptorSet,
+DynamicOffset(Program.MainViewport.Index)}`) / our scene-depth combined-image-sampler /
+`Program.Instance.BindlessTextures.DescriptorSet`; then one `DrawIndexed(36, …)` of the shared unit
+cube per drawable sticker, each preceded by a 112-byte `PushConstants` block
+(`VertexBit | FragmentBit`: two 3×4 matrices as six `vec4` columns, plus `texId`, `alpha`,
+`brightness`, `normalCutoffCos`); finally `EndRendering` in a `finally`. "Drawable" is
+`Visible && Live && TextureHandle >= 0 && DistanceEgo <= paint_stickers_max_view_distance_m`.
+Depth is left in `DepthSampledReadF`, exactly as `GridPass` leaves it — the engine's tracked-state
+barriers tolerate that for the rest of the frame. Scene depth is **reverse-Z**, so `0` is the far
+plane and "nothing was drawn".
+
+**Descriptor ring.** One depth descriptor set per frame in flight, allocated up front from a private
+pool, indexed by `Program.Instance.ResourceFrameIndex % ring.Length` and **rewritten every frame**
+from the live `DepthImage.ImageView` with `DepthReadOnlyOptimal` + `Program.PointClampedSampler`
+(both copied from `GridPass.UpdateDescriptorSet`). Rewriting is safe because the engine has already
+waited on that slot's fence before advancing `ResourceFrameIndex` (`Program.cs:2123-2138`) — the same
+argument `FrameCapture` makes. This is also what makes a resize, an MSAA change or a CMAA2 toggle a
+non-event: the ring picks up whatever `DepthImage` currently is, so there is no `GridPass.Rebuild`
+equivalent to miss.
+
+**Threading.** The postfix runs on the **main thread**, inside `Program.RenderGame`'s recording — the
+same thread as the Frame command drain and `StickerManager.Tick`. So the registry, the published
+`StickerEntry[]` and the render pass are all one thread and nothing here needs a lock (`.agents/
+skills/ksa/quad.md`). The entries are mutated **in place** and the published array holds the same
+objects, so an edit is visible to the next recorded pass immediately.
+
+**Fault latch.** A throw inside `RecordPass` sets `Active = false` (bailing the postfix on the very
+next frame), `_gpuFailed`, `renderer=degraded`, publishes `last_error`, faults the
+`paint.sticker_renderer` health latch and logs **once** — never per frame, never a crashed frame. The
+postfix itself also has an outer try/catch that logs once. Init failures (`EnsureGpu`,
+`EnsurePatch`) go through the same `Degrade`.
+
+**Teardown is two-stage.** `Deactivate()` runs on the `1 → 0` **live** edge (the last sticker went
+dormant — vessel despawned, image evicted, or the anchor failed): clear `Active` **first** so an
+in-flight postfix bails before any handle goes away → blank `_instance` (only if this manager owns
+it) → `StickerRenderPatches.Remove(harmony)`. The pipeline is deliberately **kept**: a bubble switch
+or scene load would otherwise pay a device-wide `WaitIdle`, two shaderc compiles and a blocking
+staging submit every time a sticker blinked. `FreeGpu()` runs only when the **registry** empties
+(`remove` of the last entry, `clear`, unload): `Program.GetRenderer().GraphicsAndCompute.WaitIdle()`
+→ dispose the pipeline, layouts, mesh buffers and descriptor pool in reverse creation order,
+best-effort. `Teardown()` = `Deactivate()` then `FreeGpu()`. KSA has **no deferred-destroy helper at
+all**, so the queue drain is the only way to know no recorded frame can still reference them. The
+binder's images are deliberately **left alone** by both — they retire on their own rules and a
+re-placement should not have to decode them again. A `RecordPass` fault (`_gpuFailed`) also
+unpatches on the next tick, since the postfix cannot remove itself from inside the patched method.
+At unload (`PaintManager.Dispose` → `StickerManager.Dispose`, reached from `Mod.TeardownGameCheats`):
+drop every entry → `Teardown()` →
+`WaitIdle()` again → `binder.DisposeAll()` → publish an empty read model. Bindless slots are always
+released with `FreeTexture` *before* their image is destroyed, and `FreeTexture` rewrites the slot to
+the library's 1×1 empty texture, so a draw already recorded against a freed slot samples white
+instead of a destroyed image; the image itself still rides the shared
+`UserTextureGpu.RetireQueue` for `MaxFramesInFlight + 1` ticks.
+
+**Known unvalidated item**, shared with the clutter-texture path: the one-shot unit-cube upload uses a
+private `CreateStagingPool` + `Submit().Wait()` out of band — the shape `ThugLifeQuadRenderer.
+BuildGeometry` already ships — while `FrameCapture`'s header states that out-of-band GPU work
+alongside the engine's in-flight frames corrupts the device. It happens exactly once, when the first
+sticker goes live. Reasoning, not evidence; the stickers card in `docs/VALIDATION.md` is the check.
+
+The twelve `paint.sticker_*` control writes are ordinary Frame-phase commands — see
+[`ksa-write-surface.md#stickers`](ksa-write-surface.md#stickers). Stickers are **runtime-only**
+(never persisted).
+
 ### Screen-stream capture (`DisplayRenderPatch` + `FrameCapture`) — in-band GPU readback {#display-capture}
 
 The `/sim/display` screen stream (STREAM_PLAN.md; `Game/Ksa/{DisplayRenderPatch,FrameCapture}.cs`, both
@@ -540,6 +652,17 @@ Full inventory: [`non-ksa-surface.md#scheduler`](non-ksa-surface.md#scheduler).
   `gatos.thug_life` render postfix on `SuperMeshRenderSystem.RenderMainPass`, plus a per-frame
   `UpdateThugLife()` anchor-revalidation in `OnBeforeUi` (the fourth game-thread work site,
   [`#thug-life-patch`](#thug-life-patch) above). All on the main thread.
+- **Paint driver (`DrivePaint`)** — *not* a `CommandQueue` phase: one game-thread tick in
+  `DrivePerFrame`, **after** the Frame drain and **before the scene renders**, running three
+  independently self-gated sub-drivers — part/EVA paint bindings, the clutter-texture reconcile, and
+  `StickerManager.Tick` (anchor re-resolution + texture reconcile + the GPU/patch live edges). Each
+  costs one branch when its registry is empty, so the whole tick is free while nothing is painted,
+  bound or placed. The `paint.*` writes themselves are ordinary Frame-phase commands.
+- **Sticker draw** — *not* a `CommandQueue` phase: a per-frame projected-decal pass recorded in the
+  `gatos.stickers` render postfix on `RenderTarget.ResolveAttachments`, gated to the main viewport and
+  installed only while ≥ 1 sticker is live ([`#stickers-patch`](#stickers-patch) above). Its per-frame
+  anchor composition happens in `DrivePaint` above, before the scene renders — that ordering is what
+  the composition needs. All on the main thread.
 - **IVA cabin-physics driver** — *not* a `CommandQueue` phase: a per-frame step of a gatOS-owned physics
   world plus `Part.PositionParentAsmb`/`Asmb2ParentAsmb` writes on driven SubParts, in `OnAfterUi` (the
   sixth game-thread work site, [`#iva-cabin-sim`](#iva-cabin-sim) above). Off by default; the

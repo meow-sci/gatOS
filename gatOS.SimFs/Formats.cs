@@ -380,6 +380,24 @@ public static class Formats
            + $"{c.UsedBy.ToString(CultureInfo.InvariantCulture)} "
            + (c.Ecotypes.Count == 0 ? "-" : string.Join(',', c.Ecotypes));
 
+    /// <summary>
+    ///     The canonical sticker spec line — the read-back of
+    ///     <c>/sim/paint/stickers/&lt;id&gt;/spec</c> and exactly the form
+    ///     <c>/sim/paint/stickers/place</c> accepts, so a read can be echoed straight back to
+    ///     recreate the sticker (as a new id). The grammar owns the rendering, so the two cannot drift.
+    /// </summary>
+    public static string StickerSpec(Paint.Stickers.StickerSnapshot s)
+        => Paint.Stickers.StickerCommands.FormatSpec(s);
+
+    /// <summary>
+    ///     One <c>/sim/paint/stickers/status</c> row — space-separated, stable column order:
+    ///     <c>id image vessel|body target live=0|1 texture=ready|missing|uploading|failed</c>.
+    /// </summary>
+    public static string StickerStatusRow(Paint.Stickers.StickerSnapshot s)
+        => $"{s.Id.ToString(CultureInfo.InvariantCulture)} {s.Image} "
+           + $"{s.Kind.ToString().ToLowerInvariant()} {s.TargetId} "
+           + $"live={Flag(s.Live)} texture={s.Texture.ToString().ToLowerInvariant()}";
+
     private static void WriteVec3(Utf8JsonWriter json, string name, double3Snap v)
     {
         json.WriteStartArray(name);

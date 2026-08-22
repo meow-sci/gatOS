@@ -36,6 +36,7 @@ public sealed record CommandDescriptor(string Action, CommandTargetKind Target, 
             => "gatos.module_control",
         _ when Action.StartsWith("camera.", StringComparison.Ordinal) => "gatos.camera_control",
         _ when Action.StartsWith("audio.", StringComparison.Ordinal) => "gatos.audio_control",
+        _ when Action.StartsWith("paint.sticker_", StringComparison.Ordinal) => "gatos.paint_sticker",
         _ when Action.StartsWith("paint.", StringComparison.Ordinal) => "gatos.paint_control",
         _ when Action.StartsWith("schedule.", StringComparison.Ordinal) => "gatos.schedule_control",
         _ when Action.StartsWith("debug.engineplume", StringComparison.Ordinal)
@@ -52,6 +53,8 @@ public sealed record CommandDescriptor(string Action, CommandTargetKind Target, 
         _ when Action.StartsWith("audio.", StringComparison.Ordinal) => "audio_enabled",
         _ when Action.StartsWith("schedule.", StringComparison.Ordinal) => "schedule_enabled",
         _ when Action.StartsWith("camera.", StringComparison.Ordinal) && Action != SimActions.CameraFocus => "camera_enabled",
+        _ when Action.StartsWith("paint.sticker_", StringComparison.Ordinal)
+            => "control_enabled + paint stickers",
         _ when Action.StartsWith("paint.texture_", StringComparison.Ordinal)
             => "control_enabled + paint textures store",
         _ when Action.StartsWith("paint.", StringComparison.Ordinal) => "control_enabled + paint runtime master",
@@ -265,6 +268,18 @@ public static class CommandCatalog
         Global(SimActions.PaintTextureBind, "Draw a stock ground-clutter texture with an uploaded image."),
         Global(SimActions.PaintTextureUnbind, "Restore one stock ground-clutter texture."),
         Global(SimActions.PaintTextureClear, "Restore every stock ground-clutter texture (global teardown)."),
+        Global(SimActions.PaintStickerPlace, "Place a sticker decal at explicit anchor coordinates."),
+        Global(SimActions.PaintStickerSpray, "Spray a sticker decal where the camera or cursor points."),
+        Global(SimActions.PaintStickerRemove, "Remove one sticker decal."),
+        Global(SimActions.PaintStickerClear, "Remove every sticker decal."),
+        Global(SimActions.PaintStickerVisible, "Show or hide one sticker decal."),
+        Global(SimActions.PaintStickerSize, "Set one sticker decal's width and height."),
+        Global(SimActions.PaintStickerDepth, "Set one sticker decal's projection depth."),
+        Global(SimActions.PaintStickerRotation, "Set one sticker decal's roll or heading."),
+        Global(SimActions.PaintStickerAlpha, "Set one sticker decal's opacity."),
+        Global(SimActions.PaintStickerBrightness, "Set one sticker decal's brightness."),
+        Global(SimActions.PaintStickerImage, "Point one sticker decal at another uploaded image."),
+        Global(SimActions.PaintStickerDebug, "Draw sticker decals as projection-box checkers instead of images."),
     ];
 
     private static readonly IReadOnlyDictionary<string, CommandDescriptor> ByAction =

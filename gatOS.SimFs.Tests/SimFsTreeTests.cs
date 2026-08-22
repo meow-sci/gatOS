@@ -157,9 +157,16 @@ public sealed class SimFsTreeTests
         var textures = new gatOS.SimFs.Paint.TextureStore();
         textures.HttpUpload("crawl.png", 0,
             [0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A], complete: true);
+        var stickers = new gatOS.SimFs.Paint.Stickers.StickerStore();
+        stickers.Publish([
+            new gatOS.SimFs.Paint.Stickers.StickerSnapshot(0, "crawl.png",
+                gatOS.SimFs.Paint.Stickers.StickerAnchorKind.Vessel, "test-1", 42,
+                new double3Snap(0, 1, 0), new double3Snap(0, 0, 1), 0, 1, 1, 0.3, 1, 1, true, true,
+                gatOS.SimFs.Paint.Stickers.StickerTextureState.Ready),
+        ], gatOS.SimFs.Paint.Stickers.StickerRuntime.Empty);
         await using var server = new NinePServer(
             SimFsTree.Build(store, sink, () => "9p 1", schedules: schedules, camera: camera,
-                textures: textures));
+                textures: textures, stickers: stickers));
         await server.StartAsync();
         await using var client = await NinePTestClient.ConnectAsync(server.Port);
         await client.VersionAsync();
@@ -186,6 +193,15 @@ public sealed class SimFsTreeTests
             "paint/textures/status", "paint/textures/info", "paint/textures/help",
             "paint/textures/bindings", "paint/textures/applied", "paint/textures/clutter",
             "paint/textures/bind", "paint/textures/unbind", "paint/textures/clear",
+            // stickers (STICKERS_PLAN): the registry surface plus one live sticker's subtree
+            "paint/stickers/help", "paint/stickers/info", "paint/stickers/status",
+            "paint/stickers/last", "paint/stickers/last_error", "paint/stickers/count",
+            "paint/stickers/place", "paint/stickers/spray", "paint/stickers/clear",
+            "paint/stickers/debug",
+            "paint/stickers/0/spec", "paint/stickers/0/anchor", "paint/stickers/0/live",
+            "paint/stickers/0/image", "paint/stickers/0/visible", "paint/stickers/0/size",
+            "paint/stickers/0/depth", "paint/stickers/0/rotation", "paint/stickers/0/alpha",
+            "paint/stickers/0/brightness", "paint/stickers/0/remove",
             // vessel control surface
             "vessels/by-id/test-1/ctl/ignite", "vessels/by-id/test-1/ctl/shutdown",
             "vessels/by-id/test-1/ctl/engine",

@@ -182,6 +182,9 @@ public sealed record TextureRuntime
 ///     binding actually changes (or a bound file's bytes change). The game-side bridge compares it
 ///     against its last-reconciled value and returns immediately when equal — so with no bindings
 ///     ever made, the feature costs one integer comparison per frame and never touches KSA at all.</para>
+///     <para><see cref="ContentRevision"/> is the same contract for consumers that cache <i>decoded</i>
+///     bytes rather than bindings (stickers): it bumps on every commit, delete and non-empty clear,
+///     whether or not anything is bound.</para>
 ///     <para>Committed byte arrays are immutable: re-upload installs a fresh array and bumps the
 ///     version, so the bridge can hold a reference without ever observing a mutation.</para>
 /// </remarks>
@@ -194,6 +197,7 @@ public sealed class TextureStore
         new(StringComparer.Ordinal);
     private long _pendingBytes;
     private int _revision;
+    private int _contentRevision;
 
     private volatile IReadOnlyList<TextureBinding> _bindingList = [];
     private volatile IReadOnlyList<ClutterTextureInfo> _catalog = [];
@@ -244,6 +248,24 @@ public sealed class TextureStore
             lock (_lock)
             {
                 return _revision;
+            }
+        }
+    }
+
+    /// <summary>
+    ///     Bumps whenever committed bytes change or a file disappears: every commit, every
+    ///     <see cref="Delete"/>, and a <see cref="Clear"/> that actually removed something. Consumers
+    ///     that cache decoded images (stickers) reconcile only when this moves. Unlike
+    ///     <see cref="Revision"/> it is <i>not</i> binding-scoped — an unbound file's upload moves this
+    ///     and leaves <see cref="Revision"/> alone.
+    /// </summary>
+    public int ContentRevision
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _contentRevision;
             }
         }
     }
@@ -389,6 +411,21 @@ public sealed class TextureStore
         }
     }
 
+    /// <summary>
+    ///     The committed content version of one upload, or <c>null</c> when there is no such file or
+    ///     it has never been committed. Allocation-free: the eviction probe a cache runs over its own
+    ///     entries once <see cref="ContentRevision"/> moves, without materialising a listing.
+    /// </summary>
+    public int? CurrentVersion(string name)
+    {
+        lock (_lock)
+        {
+            return _entries.TryGetValue(name, out var entry) && entry.Ready is not null
+                ? entry.Version
+                : null;
+        }
+    }
+
     /// <summary>The committed bytes for read-back (empty when absent or not yet committed).</summary>
     public byte[] SnapshotBytes(string name)
     {
@@ -454,6 +491,7 @@ public sealed class TextureStore
             // unreachable, matching write-after-unlink; a later re-create starts a fresh entry.
             if (_httpUploads.Remove(name, out var orphan))
                 orphan.Abort();
+            _contentRevision++;
             DropBindingsForLocked(name);
         }
     }
@@ -466,7 +504,12 @@ public sealed class TextureStore
             foreach (var upload in _httpUploads.Values)
                 upload.Abort();
             _httpUploads.Clear();
-            _entries.Clear();
+            if (_entries.Count > 0)
+            {
+                _entries.Clear();
+                _contentRevision++;
+            }
+
             _pendingBytes = 0;
             if (_bindings.Count > 0)
             {
@@ -846,7 +889,8 @@ public sealed class TextureStore
 
         /// <summary>
         ///     Commits the upload: installs the bytes as the file's committed content, sniffs its
-        ///     container and bumps the version (the 9p clunk / HTTP <c>complete=1</c>). Idempotent.
+        ///     container and bumps the version (the 9p clunk / HTTP <c>complete=1</c>). Idempotent —
+        ///     a re-entry moves neither revision counter.
         /// </summary>
         public void Commit()
         {
@@ -861,6 +905,8 @@ public sealed class TextureStore
                 _entry.Version++;
                 _buffer = [];
                 _length = 0;
+                // Any cache of decoded bytes must notice the new content, bound or not.
+                _store._contentRevision++;
                 // Re-uploading a file that is currently bound must reach the GPU.
                 _store.BumpIfBoundLocked(Name);
             }

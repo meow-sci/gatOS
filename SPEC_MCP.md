@@ -51,8 +51,10 @@ result inspection limit. Audio, camera-track, and clutter-texture uploads are de
 chunkable; upload chunks should stay well below that framing limit. Binary uploads (`gatos.audio_clip`
 and `gatos.paint_texture`) travel as base64, which inflates the payload by **4/3**: budget a chunk
 against the 24 MiB framing cap *after* that expansion, not against the decoded byte count. Existing
-domain limits still apply: for example, audio/track/texture store capacity, schedule entry and
-live-player caps, and the game's command-per-frame limit are unchanged.
+domain limits still apply: for example, audio/track/texture store capacity, the sticker registry's
+`paint_stickers_max_count`, schedule entry and live-player caps, and the game's command-per-frame
+limit are unchanged. **Stickers add no upload path of their own**: a sticker draws an image from the
+clutter-texture store, so `gatos.paint_texture` remains the only binary paint upload.
 
 ### 1.2 Errors and availability
 
@@ -61,7 +63,7 @@ a human-readable `message`, and a `retryable` indication. The errno vocabulary i
 
 | errno | Meaning |
 |---|---|
-| `EINVAL` | Invalid type, shape, arity, range, or semantic combination. |
+| `EINVAL` | Invalid type, shape, arity, range, or semantic combination — including a **full sticker registry**, which has no `ENOSPC` spelling in the command envelope and instead reports the cap in `message`. |
 | `ENOENT` | A requested live entity, module, object, or asset does not exist. |
 | `EACCES` | Control/debug access is disabled or the authority gate rejected the target. |
 | `EBUSY` | The action cannot run now, such as a full channel table or an already-fired trigger. |
@@ -122,8 +124,8 @@ sectioned response always includes identity/control fields (`id`, `name`, `situa
 velocity, attitude, altitude, and navball data.
 
 The `feature` input to `gatos.get_runtime_state` is one of `camera`, `schedules`, `audio`, `paint`,
-`paint_textures`, `welds`, `thug_life`, `face_fx`, `iva`, `engine_plume`, `plume_trail`, `clouds`,
-or `terrain`. It exposes the corresponding logical snapshot/read-back state, including configuration
+`paint_textures`, `paint_stickers`, `welds`, `thug_life`, `face_fx`, `iva`, `engine_plume`,
+`plume_trail`, `clouds`, or `terrain`. It exposes the corresponding logical snapshot/read-back state, including configuration
 and pristine/reset diagnostics where the underlying feature provides them.
 
 `gatos.wait` requires at least one of:
@@ -196,6 +198,7 @@ sample at which it was accepted. Failed commands use the error fields in §1.2.
 | `gatos.render_fx_control` | `{family, operation, entity?, field?, value?, values?, token?}`. Reads, sets, clears where applicable, or restores pristine values for engine plume, plume trail, clouds, and terrain editor state. Its entity scope remains explicit: template, global renderer, body/layer/type, or body/global terrain. |
 | `gatos.paint_control` | `{operation, vessel_id?:"", value?:0, color?, target?, file?}`. Controls paint runtime masters, global/template/vessel/part/shared-EVA/individual-EVA rules, and the `texture_bind`/`texture_unbind`/`texture_clear` ground-clutter texture overrides. Flags use `value`; colors use normalized `color:[r,g,b]`; `target` names the blend, template, part instance, semantic EVA material, or — for the texture operations — the stock clutter texture id; `file` names the uploaded image consumed by `texture_bind`, whose render mode also rides `value` (`0` = `faithful`, the default; `1` = `raw`). |
 | `gatos.paint_texture` | `{operation, name?, offset?:0, complete?:true, data_base64?}`. `operation` is `list`, `catalog`, `bindings`, `retrieve`, `upload`, or `delete`. Upload data is JSON base64 and can be chunked at a decoded byte `offset`; `complete` commits it. Keep each request below the 24 MiB framing limit while the configured file-count, per-file, total-byte, and binding limits remain enforced. `catalog` enumerates the overridable stock clutter textures (including the `used_by` share count); `bindings` returns the desired and applied binding rows. Retrieval returns metadata plus the stored image as an embedded binary resource at `gatos://paint/textures/<name>`. |
+| `gatos.paint_sticker` | `{operation, image?, anchor?, vessel_id?, part_iid?:0, position?, normal?, body?, lat?, lon?, heading?, roll?, width?, height?, depth?, alpha?, brightness?, aim?:"camera", range?, id?:-1, value?}`. `operation` is `place`, `spray`, `set`, `remove`, `clear`, `list`, or `debug`. Sticker decals projected from an uploaded image onto vehicles, terrain and ground clutter: `place` takes an explicit `vessel`/`body` anchor, `spray` takes whatever the camera or cursor is pointing at, `set` takes `id` plus exactly one knob, and `list` is a read of the live registry. Images come from `gatos.paint_texture` — there is no second upload surface. |
 | `gatos.command` | The canonical command envelope in §4. Complete action coverage without filesystem paths. |
 | `gatos.execute_batch` | `{commands:[<canonical command>, ...]}`. Atomically submits one same-tick group. |
 | `gatos.schedule_batch` | `{id?, group?, clock, rate, loop, entries:[{at_ms, command:<canonical command>}, ...]}`. Registers a non-blocking timed command player. |
@@ -319,6 +322,44 @@ filesystem's: `EINVAL` for a bad name or an unrecognised image container, `ENOEN
 stock texture id or missing upload, `EBUSY` for an upload that has not committed, `ENOSPC` for the
 file-count/total-byte/binding caps, and `EFBIG` for the per-file byte cap.
 
+`gatos.paint_sticker` is likewise operation-shaped. Every mutating operation authors exactly one
+canonical `paint.sticker_*` command — the same one the `/sim/paint/stickers` line grammars build —
+and every argument is validated against the shared sticker rules *before* submission, so a bad call
+returns `EINVAL` without reaching the game thread. All of it is gated by
+`control_enabled + paint stickers`:
+
+| Tool operation | Complete operation payload | Meaning / accepted values |
+|---|---|---|
+| `place` (vessel anchor) | `{operation:"place",image,anchor?:"vessel",vessel_id,part_iid,position:[x,y,z],normal:[nx,ny,nz],roll?,width?,height?,depth?,alpha?,brightness?}` | Exact placement in a part's local frame. `part_iid` is a part **or sub-part** `instance_id` from `gatos.get_vessel(include:["parts"])`; `position` is part-local metres and `normal` the outward surface normal (finite, non-zero). `anchor` may be omitted — it is inferred from whichever of `vessel_id`/`body` is filled. |
+| `place` (body anchor) | `{operation:"place",image,anchor?:"body",body,lat,lon,heading?,width?,height?,depth?,alpha?,brightness?}` | Geodetic placement that rides the planet's rotation. `lat` ∈ `[-90, 90]`, `lon` ∈ `[-360, 360]`, `heading` in degrees from north. |
+| `spray` | `{operation:"spray",image,aim?:"camera"\|"cursor",range?,roll?,width?,height?,depth?,alpha?,brightness?}` | Place where the main camera (headless-friendly, and steerable with `gatos.camera_control`) or the mouse cursor is pointing. `range` defaults to `2000` m; `roll` **adds to** the "reads upright from here" rotation the picker computes; an omitted `depth` takes the hit anchor kind's default. Nothing hit is `ENOENT`. |
+| `set` | `{operation:"set",id, …exactly one of…}` | One knob per call, mirroring the one-file-one-action filesystem shape: `width`+`height` (both, `paint.sticker_size`), `depth`, `roll` or `heading` (`paint.sticker_rotation`), `alpha`, `brightness`, `image` (hot-swap), or `value` `0\|1` (visibility). Zero or two or more knobs is `EINVAL`. |
+| `remove` | `{operation:"remove",id}` | Remove one sticker and free its id. An unknown id is `ENOENT`. |
+| `clear` | `{operation:"clear"}` | Remove every sticker. The uploaded images are kept. |
+| `list` | `{operation:"list"}` | A **read**, not a command: `{stickers, runtime, last}` straight from the published registry. |
+| `debug` | `{operation:"debug",value:0\|1}` | Global development aid — draw every sticker as a magenta checker of its projection box instead of its image, proving the box, the depth reconstruction and the anchor matrices without any art. |
+
+Defaults and ranges are the filesystem's: `width`/`height` ∈ `(0, 1000]` m (default `1`), `depth` ∈
+`(0, 100]` m (default `0.3` on a vessel anchor and `1` on a body anchor), `alpha` ∈ `[0, 1]`
+(default `1`), `brightness` ∈ `(0, 8]` (default `1`), `range` ∈ `(0, 1e6]` m (default `2000`), and
+rotation is any finite degree value (default `0`). A complete upload → spray → tune → teardown:
+
+```json
+{"tool":"gatos.paint_texture","arguments":{"operation":"upload","name":"meow.png","data_base64":"<png bytes>","complete":true}}
+{"tool":"gatos.paint_sticker","arguments":{"operation":"spray","image":"meow.png","aim":"camera","width":2,"height":2}}
+{"tool":"gatos.paint_sticker","arguments":{"operation":"list"}}
+{"tool":"gatos.paint_sticker","arguments":{"operation":"place","image":"meow.png","anchor":"vessel","vessel_id":"Kitten-1","part_iid":41,"position":[0,0.5,-1.4],"normal":[0,1,0],"roll":15,"width":0.6,"height":0.3}}
+{"tool":"gatos.paint_sticker","arguments":{"operation":"place","image":"meow.png","anchor":"body","body":"Mun","lat":12.03,"lon":-41.88,"heading":90,"width":5,"height":5}}
+{"tool":"gatos.paint_sticker","arguments":{"operation":"set","id":0,"alpha":0.4}}
+{"tool":"gatos.paint_sticker","arguments":{"operation":"debug","value":1}}
+{"tool":"gatos.paint_sticker","arguments":{"operation":"remove","id":0}}
+{"tool":"gatos.paint_sticker","arguments":{"operation":"clear"}}
+```
+
+A successful `place`/`spray` emits a `paint.sticker_placed` event, which is how a `spray` reports
+what it actually hit to an agent that is not re-reading the registry: wait for it with
+`gatos.wait(event_type:"paint.sticker_placed")`.
+
 ### 5.2 Batches
 
 `gatos.execute_batch` is the JSON counterpart of `/sim/ctl/batch`, not a serialized batch-file upload.
@@ -413,6 +454,22 @@ store is wired at all) and advertises the three `paint.texture_*` actions with l
 `gatos.paint_control` and gate **`control_enabled + paint textures store`** — a distinct gate from
 paint's, because the texture overrides have no runtime master to enable.
 
+**Stickers** are a third paint feature document with a third gate.
+`gatos.get_runtime_state(feature:"paint_stickers")` and `gatos://runtime/paint_stickers` return
+`{runtime, stickers, last, debug, limits}`: the subsystem health line (availability, sticker count,
+how many currently resolve their anchor and draw, distinct GPU images, VRAM bytes, whether the lazy
+render patch is installed, `renderer` ∈ `idle`/`active`/`degraded`, and the last fault text), the
+published sticker array (id, image, anchor kind, target id, part `instance_id`, position, normal,
+rotation, size, depth, alpha, brightness, `visible`, `live`, and the image's GPU state ∈
+`ready`/`missing`/`uploading`/`failed`), the result line of the last `place`/`spray`, the global
+box-checker flag, and the configured `max_count` / `max_view_distance_m`. `gatos.paint_sticker` owns
+every operation. `gatos.get_capabilities` reports `features.paint_stickers` (whether the registry is
+wired at all — it requires the texture store too, since a sticker draws an uploaded image) and
+advertises all twelve `paint.sticker_*` actions with logical tool `gatos.paint_sticker` and gate
+**`control_enabled + paint stickers`**. A sticker whose vessel despawns, whose part stages away or
+whose image is deleted goes **dormant** (`live:false`) rather than being removed, so an agent may
+find an entry that is listed but not drawing; that is the state to re-check before re-placing.
+
 ## 7. Coverage and maintenance mandate
 
 MCP v1 must be complete for all current **logical** gatOS reads and commands, without duplicating the
@@ -420,7 +477,7 @@ filesystem's per-leaf UX. The implementation owns a declarative MCP capability r
 
 1. every `SimJson`/snapshot projection needed by a logical resource or read tool;
 2. every public `SimCommand.Action` to either one logical MCP control tool or `gatos.command`;
-3. every special store capability (audio clip, camera track, clutter-texture store, scheduler, and FX); and
+3. every special store capability (audio clip, camera track, clutter-texture store, sticker registry, scheduler, and FX); and
 4. the intentional `/sim/display` exclusion.
 
 Tests must fail if a public action or covered logical projection is absent from this registry. They

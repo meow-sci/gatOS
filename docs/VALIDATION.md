@@ -817,3 +817,85 @@ listed with their card.
 - [ ] Soak: bind/unbind/re-upload churn across scene changes, vessel switches, time warp, and
   `/sim/display` streaming for an extended session while watching Vulkan validation, `vram_bytes`,
   `retiring`, the two health latches, and frame time for drift.
+
+# Stickers live KSA checklist (2026.8.19.5261)
+
+`/sim/paint/stickers` is code complete and **entirely unvalidated in a live session**. It is gatOS's
+second render-thread draw injection and its first pass that samples the scene depth buffer, so
+almost every item here is about the renderer rather than the surface.
+
+**Run `echo 1 > /sim/paint/stickers/debug` first on any failure below.** It draws every sticker as a
+magenta 8×8 checker of its projection box instead of its image: if the checker lands in the right
+place at the right size, the box, the reverse-Z depth reconstruction, the NDC convention and the ego
+matrices are all correct, and whatever is wrong is in sampling or lighting instead.
+
+- [ ] **Zero-sticker steady state.** With `paint_stickers_enabled = true` and nothing ever placed,
+  `cat /sim/paint/stickers/info` reads `stickers=0 live=0 images=0 vram_bytes=0 patch=0
+  renderer=idle`: no Harmony patch on `RenderTarget.ResolveAttachments`, no pipeline, no descriptor
+  pool, no image. The whole per-frame cost is `StickerManager.IsEmpty`. Confirm frame time is
+  indistinguishable from a build with `paint_stickers_enabled = false` (which removes the subtree
+  entirely), and that `/sim/status/accessors` shows no `paint.sticker_renderer` or
+  `paint.sticker_texture` latch. **In the same pass, re-run the clutter-texture checklist's
+  bind/unbind/re-upload items**: S0 moved the decode → `SimpleVkTexture` → retire-ring path out of
+  `ClutterTextureBridge` into the shared `UserTextureGpu`, and `/sim/paint/textures` behaviour must
+  be *unchanged* by that refactor. The out-of-band `stagingPool.Submit().Wait()` flagged as item #1
+  of that checklist is now shared by both consumers — and stickers add a second instance of it in
+  `StickerDecalRenderer.BuildGeometry` — so a device loss there indicts both features at once.
+- [ ] Upload a 512² PNG **with a real alpha channel** through
+  `cat meow.png > /sim/paint/textures/file/meow.png`. `cat /sim/paint/textures/files` shows it
+  `ready`, and once a sticker uses it `cat /sim/paint/stickers/info` reads `images=1` with a
+  plausible `vram_bytes` (RGBA8 + mips). Sticker images are capped at **2048** on the longest edge
+  independent of `paint_texture_max_dimension`, and are uploaded **uncorrected** — the clutter
+  `faithful` colour correction would be actively wrong here, because the decal shader decodes sRGB
+  itself and alpha is real opacity.
+- [ ] **Body anchor at the pad.** `echo 'meow.png body Earth <lat> <lon> w=5 h=5' >
+  /sim/paint/stickers/place` puts a decal on the ground that hugs the terrain rather than floating
+  or z-fighting. Then: it **rides the planet's rotation** (watch it stay put relative to the pad
+  across a long time warp, not relative to the camera), it survives a vessel switch and a scene
+  reload, and `cat /sim/paint/stickers/0/live` stays `1` throughout. The CPU terrain sample is
+  `accurate: false` and the GPU adds tessellation displacement the CPU never sees, so the
+  projection-box depth is what absorbs the difference — check the default `d=1` is enough on rough
+  ground and that raising it fixes any decal that punches through.
+- [ ] **Vessel anchor by spray.** Aim at a fuel tank and `echo 'meow.png w=2 h=2' >
+  /sim/paint/stickers/spray`. The decal **conforms to the cylinder** (it is a projection, not a
+  quad), `cat last` reports `<id> vessel <vessel-id> part <iid> hit <dist>m`, it stays welded to the
+  hull through flight, rotation and staging of *other* parts, and a decal sprayed onto a **gimballing
+  engine bell or a robotics segment follows that sub-part** — `spray` anchors to the sub-part
+  `RayCastEgo` returns, which is exactly what makes that work. Confirm `aim=cursor` hits what the
+  mouse is over and that a miss returns **ENOENT** with `last` reading `no hit within <range>m`.
+- [ ] **Ground clutter is painted by the projection.** Place a wide sticker across a rock/scree
+  field. The rocks and grass standing inside the projection box are painted too, even though clutter
+  has no CPU-addressable transform and **cannot be aimed at** — a `spray` ray passes through a rock
+  to the terrain behind it. This is the single best proof that the depth reconstruction is right.
+- [ ] **Image lifecycle.** Re-upload the same name with different bytes → every sticker using it
+  hot-swaps on the next tick (the binder is keyed by content version) and the old GPU image goes
+  through the retire queue, not an inline destroy. `rm /sim/paint/textures/file/meow.png` → the
+  stickers go **dormant, not deleted**: `live=0`, `texture=missing`, the entries and their `spec`
+  lines survive, and `info` reports `patch=0` once the last live one goes. Re-upload → they come
+  back on their own.
+- [ ] **Teardown on the last live sticker.** `echo 1 > /sim/paint/stickers/0/remove` (or
+  `echo 1 > clear`) with nothing else live: `patch=0 renderer=idle`, the Harmony postfix is gone,
+  and the pipeline/mesh/descriptor pool are destroyed only after `GraphicsAndCompute.WaitIdle()`.
+  Run the whole place/remove cycle **under the Vulkan validation layers** and confirm zero
+  destroyed-while-in-use errors, then place again and confirm the GPU path comes back up cleanly.
+- [ ] **Render-target churn.** With a sticker live, toggle MSAA on and off, change resolution, and
+  switch CMAA2 on and off mid-session. `ResolveAttachments` does nothing when neither attachment is
+  multisampled but the postfix fires either way, and the depth descriptor is a per-frame ring
+  rewritten from the live `DepthImage.ImageView` — so the decal must stay aligned and nothing may
+  crash. This is the item most likely to find a bug.
+- [ ] **Lighting sanity.** The shader's lighting is an approximation: sun dot product plus
+  `0.12 * planetColor + 0.02` ambient, times `brightness`. Check a sticker on the night side or in a
+  planet's shadow is dim but not pure black, that one in direct sun is not blown out, and that
+  `brightness` in `(0, 8]` is a usable correction either way. `planetColor` is zero for an airless
+  body or a camera in shadow — the small constant is what keeps those readable.
+- [ ] **F2 (UI hidden) still draws the sticker.** The pass injects into the scene's colour image
+  before any UI compositing, so hiding the game UI must not hide decals.
+- [ ] **Crew-cam portraits and secondary viewports are unaffected.** The postfix filters on both
+  `__instance == Program.OffscreenTarget` and `Program.RenderedViewport == Program.MainViewport`;
+  stickers are main-viewport-only in v1 and a portrait rendering a sticker (or crashing) means the
+  identity check is wrong. Also confirm the map view and any extra window are clean.
+- [ ] **Unload with stickers present.** Tear the mod down with several live stickers on both anchor
+  kinds: `Active` clears, the postfix unpatches, the device idles, the pipeline and every sticker
+  image are destroyed, the bindless slots are returned with `FreeTexture`, and KSA keeps rendering
+  with no leak and no validation error. Repeat while `/sim/display` is streaming and during heavy
+  scene load.

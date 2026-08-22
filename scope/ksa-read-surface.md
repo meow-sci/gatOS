@@ -874,3 +874,61 @@ is captured directly before the first swap rather than reconstructed — a re-bi
 capture, so restore always returns to stock and never to a previous override. Nothing is read back
 from the GPU. Exact members and baseline are in
 [`plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`](../plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md).
+
+# Sticker reads
+
+Stickers read game state on the game thread in three places, all of them per-frame or per-placement
+and none of them going through `SnapshotStore`.
+
+**Aiming (`StickerPicker`, `spray` only, one call per placement).** The aim ray is
+`Program.GetMainCamera()` + `Camera.ScreenToEgoRay(FramebufferSize * 0.5f)` for `aim=camera`, or
+`Cursor.InputRay` for `aim=cursor`. Both are in **ego** space (origin at the camera, ecliptic axes)
+and `Ray`'s constructor normalizes `Direction`; `ScreenToEgoRay` takes framebuffer **pixels, not
+NDC**. `Cursor.InputRay` is refreshed once per frame, so it is the previous frame's ray when the
+cursor has not moved — which is exactly what the player last saw. Camera aim is the default because
+it works headless and `/sim/camera` can point it. The vehicle sweep then walks
+`Universe.CurrentSystem.All.UnsafeAsList()`, broad-phasing on `Vehicle.BoundingSphereRadiusBody`
+scaled by `ScaleTotal` and then calling `Part.RayCastEgo(in double4x4, Ray, out …)` over
+`Vehicle.Parts.Parts` with `Vehicle.GetMatrixAsmb2Ego(Camera)` — the **identical** sweep KSA's own
+flight-mode hover picking runs (`Vehicle.cs:2745-2773`), a watertight raycast over the view mesh's
+de-indexed `double3[]` triangle soup, so the hit lands on the **art surface**. Bepu raycasts are
+deliberately not used: KSA never does, and its colliders are coarse primitives. The hit is anchored
+to a **sub-part**'s `InstanceId`. Only if nothing is hit does the terrain march run
+(`Camera.NearbyCelestial`, 64 coarse steps + 24 bisections over `Celestial.
+GetTerrainHeightFromDirCcf`, the `TerrainImpactFinder.cs:64` shape) with `Celestial.{GetCce2Ccf,
+GetCcf2Cce,GetCci2Cce,MeanRadius,GetLatitudeFromCcf,GetLongitudeFromCcf}` and
+`Vehicle.ComputeEnu2Cce` to convert the hit to geodetic degrees and a heading; `accurate:false` for
+the march (4 bilinear taps, the physics hot path) and `accurate:true` for the final sample (bicubic
++ the CPU procedural-modifier chain). **Ground clutter cannot be aimed at** — it exists only on the
+GPU — so a ray passes through a rock to the terrain behind it and the decal box then projects onto
+the rock anyway.
+
+**Anchor re-resolution (`StickerManager.ResolveAnchor`, every frame, every entry).**
+`Universe.CurrentSystem.Get(string)` → `Vehicle` or `Celestial` — the same id lookup `/sim/camera`
+and the game's own follow/control actions use, returning **null for a despawned target rather than
+throwing**; then `Vehicle.Parts.Parts` and each `Part.SubParts`, matched on `Part.InstanceId`.
+Sub-parts are searched because `Part.RayCastEgo` anchors to one. A null result makes the sticker
+dormant (`live=0`) for that frame; it is never pruned, so a vessel that comes back or a staged part
+that returns brings the decal back with it.
+
+**Per-frame composition (`StickerAnchors`, every live entry).** Vessel:
+`Vehicle.GetMatrixAsmb2Ego(Camera)` then `Part.MatrixAsmb2Ego(in double4x4)`, which **includes the
+part's own scale and walks the whole sub-part parent chain** — that is what makes a sub-part
+instance id a valid anchor. Body: `Celestial.{GetDirCcfFromLatLon,GetTerrainHeightFromDirCcf,
+GetCcf2Cce,GetCci2Cce,MeanRadius}` + `Vehicle.ComputeEnu2Cce(double3, doubleQuat)` +
+`Camera.GetPositionEgo(IPosition)`. `GetTerrainHeightFromDirCcf` returns **metres above
+`MeanRadius`** and `0` for a body with no heightmap; `ComputeEnu2Cce` builds its quaternion from a
+matrix whose **rows** are east/north/up (so under the row-vector convention `UnitX/UnitY/UnitZ`
+transform to east/north/up) and returns null **on the spin axis**, where ENU is undefined. The ego
+position is composed exactly like KSA's own terrain debug overlay (`Vehicle.cs:4511-4523`) — the
+body's ego position plus the body-fixed offset rotated into ecliptic axes, **never an absolute
+ecliptic point**. Everything is recomputed every frame and nothing derived is cached across frames,
+because ego space is camera-relative and the planet turns; all of it is `double`, including the
+inverse, with only the final 3×4 rows packed to `float` for the push constant (inverting the packed
+float matrix would lose the surface point to cancellation at kilometre distances).
+
+Nothing is read back from the GPU. The CPU terrain height the composition uses omits the GPU's
+tessellation displacement, so the surface point can be off by decimetres near the camera — the
+projection box's depth absorbs that entirely, which is exactly why this is a projected decal and not
+a flat quad. Exact members and baseline are in
+[`plans/STICKERS_PLAN.md`](../plans/STICKERS_PLAN.md).

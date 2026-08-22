@@ -7,6 +7,7 @@ using gatOS.GameMod.Game.Ksa.Camera;
 using gatOS.GameMod.Game.Ksa.Fx;
 using gatOS.GameMod.Game.Ksa.Iva;
 using gatOS.GameMod.Game.Ksa.Paint;
+using gatOS.GameMod.Game.Ksa.Paint.Stickers;
 using gatOS.GameMod.Game.Ksa.Render;
 using gatOS.GameMod.Game.Ksa.ThugLife;
 using gatOS.GameMod.Game.Ksa.Welds;
@@ -233,7 +234,7 @@ public sealed partial class Mod
             EnsureControlObjects();
             _telemetry ??= new TelemetrySampler(store, _telemetrySettings, _health!, _sampleStats,
                 _sampleAllocStats, _weldManager!, _thugLife!, _ivaPhysics!, _ivaStats, _audioStore,
-                _scheduleStore, _cameraDirector, Config.DebugNamespace, _faceFx);
+                _scheduleStore, _cameraDirector, Config.DebugNamespace, _faceFx, _stickerStore);
             // Sample only while something can actually read /sim: the VM is up, or a host-side
             // transport client is connected (9p / HTTP / MQTT). Otherwise the sampler idles for free.
             var state = CurrentVmStatus.State;
@@ -317,7 +318,14 @@ public sealed partial class Mod
             var textures = _textureStore is { } textureStore
                 ? new ClutterTextureBridge(textureStore, _health, Config.PaintTextureMaxDimension)
                 : null;
-            _paintManager = new PaintManager(paintStore, textures);
+            // Stickers need both stores: the image store holds the PNGs and the sticker store is the
+            // read model. Constructing the manager touches no KSA type and allocates no GPU object —
+            // it stays one IsEmpty branch per frame until something is placed.
+            var stickers = _textureStore is { } stickerTextures && _stickerStore is { } stickerStore
+                ? new StickerManager(stickerStore, stickerTextures, _health,
+                    Config.PaintTextureMaxDimension)
+                : null;
+            _paintManager = new PaintManager(paintStore, textures, stickers);
             if (Config.PaintPartsEnabled)
                 _paintManager.Execute(new SimCommand("", SimActions.PaintPartsEnabled, SimCommand.NoOrdinal, 1));
             if (Config.PaintKittensEnabled)

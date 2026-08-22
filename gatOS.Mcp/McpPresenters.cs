@@ -3,6 +3,7 @@ using gatOS.SimFs;
 using gatOS.SimFs.Audio;
 using gatOS.SimFs.Camera;
 using gatOS.SimFs.Paint;
+using gatOS.SimFs.Paint.Stickers;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
 using gatOS.Paint;
@@ -23,10 +24,12 @@ public sealed class McpPresenters
     private readonly ScheduleStore? _schedules;
     private readonly PaintStore? _paint;
     private readonly TextureStore? _textures;
+    private readonly StickerStore? _stickers;
 
     public McpPresenters(SnapshotStore snapshots, ICommandSink? commands = null,
         Func<string>? transports = null, AudioStore? audio = null, CameraStore? camera = null,
-        ScheduleStore? schedules = null, PaintStore? paint = null, TextureStore? textures = null)
+        ScheduleStore? schedules = null, PaintStore? paint = null, TextureStore? textures = null,
+        StickerStore? stickers = null)
     {
         _snapshots = snapshots;
         _commands = commands;
@@ -36,6 +39,7 @@ public sealed class McpPresenters
         _schedules = schedules;
         _paint = paint;
         _textures = textures;
+        _stickers = stickers;
     }
 
     public SimSnapshot Current => _snapshots.Current;
@@ -161,6 +165,21 @@ public sealed class McpPresenters
                     _textures.MaxBindings, _textures.MaxDimension,
                 },
             },
+            // Stickers publish a live registry rather than a store of bytes: the array, the
+            // subsystem health line, the last place/spray result, the global box-checker flag, and
+            // the two configured limits the parsers and the renderer honour.
+            "paint_stickers" => _stickers is null ? null : new
+            {
+                runtime = _stickers.Runtime,
+                stickers = _stickers.Stickers,
+                last = _stickers.Last,
+                debug = _stickers.Debug,
+                limits = new
+                {
+                    max_count = _stickers.MaxCount,
+                    max_view_distance_m = _stickers.MaxViewDistanceMetres,
+                },
+            },
             _ => MissingSentinel.Value,
         };
         if (ReferenceEquals(data, MissingSentinel.Value)) return Invalid($"unknown runtime feature '{feature}'", s);
@@ -178,7 +197,7 @@ public sealed class McpPresenters
             json = new { size_limit = (int?)null, truncation = false },
             control_enabled = _commands?.ControlEnabled ?? false,
             debug_enabled = _commands?.DebugEnabled ?? false,
-            features = new { audio = _audio is not null, camera = _camera is not null, schedules = _schedules is not null, paint = _paint is not null, paint_textures = _textures is not null },
+            features = new { audio = _audio is not null, camera = _camera is not null, schedules = _schedules is not null, paint = _paint is not null, paint_textures = _textures is not null, paint_stickers = _stickers is not null },
             actions = CommandCatalog.All.Select(d => new
             {
                 action = d.Action,
@@ -333,6 +352,7 @@ public sealed class McpPresenters
         "schedule_enabled" => _schedules is not null,
         "control_enabled + paint runtime master" => _paint is not null && (_commands?.ControlEnabled ?? false),
         "control_enabled + paint textures store" => _textures is not null && (_commands?.ControlEnabled ?? false),
+        "control_enabled + paint stickers" => _stickers is not null && (_commands?.ControlEnabled ?? false),
         "debug_namespace" => _commands?.DebugEnabled ?? false,
         _ => _commands?.ControlEnabled ?? false,
     };

@@ -1,6 +1,4 @@
-using Brutal.TextureApi;
 using Brutal.VulkanApi;
-using Brutal.VulkanApi.Abstractions;
 using gatOS.GameMod.Game.Ksa.Fx;
 using gatOS.Logging;
 using gatOS.SimFs.Commands;
@@ -52,7 +50,7 @@ internal sealed class ClutterTextureBridge : IDisposable
     ///     in flight. Destroying one early corrupts the device, so each waits out
     ///     <c>MaxFramesInFlight + 1</c> ticks. This is the single real hazard in the feature.
     /// </summary>
-    private readonly List<Retired> _retiring = [];
+    private readonly UserTextureGpu.RetireQueue _retire = new();
 
     private int _appliedRevision = -1;
     private long _catalogTicks;
@@ -67,11 +65,6 @@ internal sealed class ClutterTextureBridge : IDisposable
     private sealed record Override(
         string TargetId, string FileName, int Version, int Handle,
         VkImageView StockView, SimpleVkTexture Image, int Width, int Height, int Mips, long VramBytes);
-
-    private sealed record Retired(SimpleVkTexture Image, int TicksRemaining)
-    {
-        internal int TicksRemaining { get; set; } = TicksRemaining;
-    }
 
     /// <summary>
     ///     Routes the three <c>paint.texture_*</c> actions. Desired state lives in the game-free store;
@@ -129,7 +122,7 @@ internal sealed class ClutterTextureBridge : IDisposable
     /// </summary>
     internal void Tick()
     {
-        DrainRetired();
+        _retire.Drain();
 
         // The whole no-op contract: nothing desired and nothing applied ⇒ never touch KSA.
         var revision = _store.Revision;
@@ -205,23 +198,18 @@ internal sealed class ClutterTextureBridge : IDisposable
     }
 
     /// <summary>
-    ///     Decodes, uploads and installs one override, capturing the stock slot first — the pristine
-    ///     capture that makes teardown exact.
+    ///     Installs one override: the shared <see cref="UserTextureGpu.Upload"/> produces the image,
+    ///     and this captures the stock slot before the first swap — the pristine capture that makes
+    ///     teardown exact — then re-points the slot and retires whatever it replaced.
     /// </summary>
     [KsaAnchor("Program.Instance.BindlessTextures (public field) → BindlessTextureLibrary.SetTexture; "
-            + "TextureLoader.LoadFromMemory; TextureAsset.LoadOptions(R8G8B8A8UNorm, Rgba32); "
-            + "new SimpleVkTexture(Allocator, StagingPool, TextureAsset, CreateOptions); "
-            + "Renderer.Allocator.CreateStagingPool(Renderer.Graphics, 1); TextureReference.ImageView",
+            + "TextureReference.ImageView",
         SourceFile = "KSA/Program.cs:89 / RenderCore.Systems/BindlessTextureLibrary.cs:174 / "
-            + "Brutal.TextureApi/TextureLoader.cs:130 / RenderCore/TextureAsset.cs:35 / "
-            + "RenderCore/SimpleVkTexture.cs:245 / KSA/TextureReference.cs:66",
+            + "KSA/TextureReference.cs:66",
         Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
-        Notes = "All public; no reflection. Three non-obvious contracts: TextureAsset.FilePath must be "
-            + "non-empty or the SimpleVkTexture ctor throws ArgumentException; LoadOptions' stb format "
-            + "forces 4 channels (a 3-channel PNG would otherwise decode to the widely unsupported "
-            + "R8G8B8_UNorm); and the decoded ITexture is neither IDisposable nor finalized, so its "
-            + "public Destroy() must be called or the native buffer leaks. Mips are generated "
-            + "automatically when the source has one level and FillMipChain is set.")]
+        Notes = "All public; no reflection. Nothing in KSA calls SetTexture, so gatOS is the sole "
+            + "writer of an existing slot. The decode/upload half of this path lives in "
+            + "UserTextureGpu.Upload, which carries its own anchor.")]
     private Override Apply(string targetId, TextureFile file, TextureBindMode mode)
     {
         if (Program.GetRenderer() is not { } renderer)
@@ -231,40 +219,8 @@ internal sealed class ClutterTextureBridge : IDisposable
         if (ResolveStock(targetId) is not { } stock)
             throw new InvalidOperationException($"stock texture '{targetId}' is gone");
 
-        var kind = file.Kind switch
-        {
-            TextureImageKind.Png => TextureLoader.FormatType.Png,
-            TextureImageKind.Jpeg => TextureLoader.FormatType.Jpg,
-            TextureImageKind.Bmp => TextureLoader.FormatType.Bmp,
-            TextureImageKind.Hdr => TextureLoader.FormatType.Hdr,
-            TextureImageKind.Dds => TextureLoader.FormatType.Dds,
-            TextureImageKind.Ktx => TextureLoader.FormatType.Ktx,
-            TextureImageKind.Ktx2 => TextureLoader.FormatType.Ktx2,
-            _ => throw new InvalidOperationException($"'{file.Name}' is not a recognised image"),
-        };
-
-        // R8G8B8A8UNorm forces stb to 4 channels; Rgba32 is the ktx transcode target. This is the
-        // exact settings pair TextureReference.DoLoad uses for the game's own assets.
-        var decoded = TextureLoader.LoadFromMemory(file.Bytes, kind,
-            TextureAsset.LoadOptions(VkFormat.R8G8B8A8UNorm, Brutal.KtxApi.KtxTranscodeFmt.Rgba32));
-        if (mode == TextureBindMode.Faithful)
-            MakeFaithful(decoded, file.Name);
-
-        SimpleVkTexture image;
-        try
-        {
-            // FilePath must be non-empty (the ctor throws otherwise) and names the Vulkan image.
-            var asset = new TextureAsset(decoded, $"gatos:paint/textures/{file.Name}");
-            using var pool = renderer.Allocator.CreateStagingPool(renderer.Graphics, 1);
-            image = new SimpleVkTexture(renderer.Allocator, pool, asset,
-                new SimpleVkTexture.CreateOptions(_maxDimension,
-                    SimpleVkTexture.CreateOptions.ReductionMethod.Downsample, fillMipChain: true));
-            pool.Submit().Wait();
-        }
-        finally
-        {
-            DestroyDecoded(decoded);
-        }
+        var image = UserTextureGpu.Upload(renderer, file, _maxDimension,
+            faithful: mode == TextureBindMode.Faithful, "gatos:paint/textures/");
 
         // Capture the pristine slot BEFORE the first swap. A re-bind over an existing override keeps
         // the original capture, so restore always returns to stock and never to a previous override.
@@ -272,11 +228,10 @@ internal sealed class ClutterTextureBridge : IDisposable
         var handle = _live.TryGetValue(targetId, out var prior) ? prior.Handle : stock.BindlessHandle;
 
         bindless.SetTexture(handle, image.ImageView);
-        RetireImage(previous?.Image);
+        _retire.Retire(previous?.Image);
 
         var live = new Override(targetId, file.Name, file.Version, handle, stockView, image,
-            image.Width, image.Height, image.MipMapCount,
-            (long)image.ImageEx.AllocationInfo.MemAllocationInfo.AllocSize);
+            image.Width, image.Height, image.MipMapCount, UserTextureGpu.VramBytes(image));
         _live[targetId] = live;
         return live;
     }
@@ -295,42 +250,7 @@ internal sealed class ClutterTextureBridge : IDisposable
             ModLog.Log.Debug($"gatOS clutter texture restore of '{targetId}' failed: {ex.Message}");
         }
 
-        RetireImage(live.Image);
-    }
-
-    // ---- deferred destroy -----------------------------------------------------------------------
-
-    /// <summary>
-    ///     Queues one of our images for destruction. Never destroy inline: the slot was only just
-    ///     re-pointed, and frames already recorded may still sample the old image.
-    /// </summary>
-    private void RetireImage(SimpleVkTexture? image)
-    {
-        if (image is null)
-            return;
-        var frames = Program.GetRenderer()?.MaxFramesInFlight ?? 3;
-        _retiring.Add(new Retired(image, frames + 1));
-    }
-
-    private void DrainRetired()
-    {
-        if (_retiring.Count == 0)
-            return;
-        for (var i = _retiring.Count - 1; i >= 0; i--)
-        {
-            var retired = _retiring[i];
-            if (--retired.TicksRemaining > 0)
-                continue;
-            _retiring.RemoveAt(i);
-            try
-            {
-                retired.Image.Dispose();
-            }
-            catch (Exception ex)
-            {
-                ModLog.Log.Debug($"gatOS clutter texture disposal failed: {ex.Message}");
-            }
-        }
+        _retire.Retire(live.Image);
     }
 
     // ---- discovery ------------------------------------------------------------------------------
@@ -472,7 +392,7 @@ internal sealed class ClutterTextureBridge : IDisposable
             Available = available,
             AppliedCount = _live.Count,
             VramBytes = vram,
-            RetiringCount = _retiring.Count,
+            RetiringCount = _retire.Count,
             Error = error,
         });
     }
@@ -480,58 +400,6 @@ internal sealed class ClutterTextureBridge : IDisposable
     private TextureBindStatus Status(Override live, TextureBindState state, string error)
         => new(live.TargetId, live.FileName, state, live.Width, live.Height, live.Mips,
             live.VramBytes, error);
-
-    /// <summary>
-    ///     Rewrites the decoded pixels so the image renders as authored rather than as a modulation
-    ///     map. Two independent corrections, both required (<c>Solid.frag:284-300</c>):
-    ///     <list type="number">
-    ///         <item>RGB is scaled by <c>2^(-1/2.2)</c> to cancel the shader's <c>×2</c>.</item>
-    ///         <item>Alpha is cleared, which selects the shader's sRGB-decode path <i>and</i> collapses
-    ///         the per-instance terrain tint to exactly 1 — without this an ordinary PNG is also
-    ///         recoloured by whatever biome the clutter stands in.</item>
-    ///     </list>
-    ///     In place, over the decoder's own native buffer: no copy, no allocation. The channel
-    ///     mapping itself lives game-free in <see cref="TextureStore.FaithfulScale"/>. Uniform alpha also keeps the generated mip chain honest — a mixed-alpha
-    ///     image would have its mips average between the two decode conventions.
-    /// </summary>
-    private static void MakeFaithful(Brutal.TextureApi.ITexture decoded, string name)
-    {
-        if (decoded.Format != TextureFormat.R8G8B8A8_UNorm)
-            throw new InvalidOperationException(
-                $"'{name}' decoded as {decoded.Format}, which gatOS cannot correct; "
-                + "bind it with mode 'raw' to upload it untouched");
-
-        var pixels = decoded.Data;
-        for (var i = 0; i + 3 < pixels.Length; i += 4)
-        {
-            pixels[i] = TextureStore.FaithfulScale(pixels[i]);
-            pixels[i + 1] = TextureStore.FaithfulScale(pixels[i + 1]);
-            pixels[i + 2] = TextureStore.FaithfulScale(pixels[i + 2]);
-            pixels[i + 3] = 0;
-        }
-    }
-
-    /// <summary>
-    ///     Frees the decoded CPU-side image. <c>ITexture</c> is neither <c>IDisposable</c> nor
-    ///     finalized — only the concrete loaders expose a public <c>Destroy()</c> — so without this
-    ///     every upload leaks its native decode buffer for the life of the process.
-    /// </summary>
-    private static void DestroyDecoded(Brutal.TextureApi.ITexture texture)
-    {
-        try
-        {
-            switch (texture)
-            {
-                case Brutal.TextureApi.Stb.StbTexture stb: stb.Destroy(); break;
-                case Brutal.TextureApi.Ktx.KtxTexture ktx: ktx.Destroy(); break;
-                case Brutal.TextureApi.Gli.GliTexture gli: gli.Destroy(); break;
-            }
-        }
-        catch (Exception ex)
-        {
-            ModLog.Log.Debug($"gatOS clutter texture decode cleanup failed: {ex.Message}");
-        }
-    }
 
     private static double SafeUt()
     {
@@ -555,7 +423,7 @@ internal sealed class ClutterTextureBridge : IDisposable
             Restore(targetId);
         _store.PublishApplied([]);
 
-        if (_retiring.Count == 0)
+        if (_retire.Count == 0)
             return;
         try
         {
@@ -567,18 +435,6 @@ internal sealed class ClutterTextureBridge : IDisposable
             ModLog.Log.Debug($"gatOS clutter texture teardown wait failed: {ex.Message}");
         }
 
-        foreach (var retired in _retiring)
-        {
-            try
-            {
-                retired.Image.Dispose();
-            }
-            catch (Exception ex)
-            {
-                ModLog.Log.Debug($"gatOS clutter texture teardown disposal failed: {ex.Message}");
-            }
-        }
-
-        _retiring.Clear();
+        _retire.DrainAll();
     }
 }

@@ -6,6 +6,7 @@ using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
 using gatOS.Paint;
 using gatOS.SimFs.Paint;
+using gatOS.SimFs.Paint.Stickers;
 using MQTTnet;
 using MQTTnet.Client;
 
@@ -21,6 +22,7 @@ public sealed class MqttBrokerTests
 {
     private SnapshotStore _store = null!;
     private TextureStore _textures = null!;
+    private StickerStore _stickers = null!;
     private RecordingSink _sink = null!;
     private SimMqttBroker _broker = null!;
     private IMqttClient _client = null!;
@@ -34,7 +36,9 @@ public sealed class MqttBrokerTests
         // Share the real /sim tree (built with the sink, so ctl/ exists) so the field-level
         // gatos/sim/<path> mirror runs; a high field cadence keeps the tests prompt.
         _textures = new TextureStore();
-        var simRoot = SimFsTree.Build(_store, _sink, null, paint: new PaintStore(), textures: _textures);
+        _stickers = new StickerStore();
+        var simRoot = SimFsTree.Build(_store, _sink, null, paint: new PaintStore(), textures: _textures,
+            stickers: _stickers);
         _broker = new SimMqttBroker(_store, _sink, simRoot: simRoot, fieldFeedHz: 50);
         await _broker.StartAsync(0); // ephemeral
 
@@ -212,6 +216,27 @@ public sealed class MqttBrokerTests
 
         await SetAsync("paint/textures/unbind", "all");
         Assert.That(_sink.Last!.Action, Is.EqualTo(SimActions.PaintTextureClear));
+    }
+
+    [Test]
+    public async Task Field_StickerPlaceUsesTheSameTopicMirror()
+    {
+        // The whole sticker surface reaches MQTT for free through the tree; only the binary image
+        // upload is a documented transport exception (HTTP only), exactly like clutter textures.
+        await SetAsync("paint/stickers/place", "meow.png body Mun 12.03 -41.88 heading=90");
+        var placed = _sink.Last!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(placed.Action, Is.EqualTo(SimActions.PaintStickerPlace));
+            Assert.That(placed.Ordinal, Is.EqualTo(SimCommand.NoOrdinal));
+            Assert.That(placed.Token, Is.EqualTo("meow.png"));
+            Assert.That(placed.Aux, Is.EqualTo("body Mun"));
+            Assert.That(placed.Values, Is.EqualTo(new[] { 12.03, -41.88, 0d, 0d, 0d, 0d, 90d, 1d, 1d, 1d, 1d, 1d }));
+        });
+
+        await SetAsync("paint/stickers/spray", "meow.png aim=cursor");
+        Assert.That(_sink.Last!.Action, Is.EqualTo(SimActions.PaintStickerSpray));
+        Assert.That(_sink.Last!.Aux, Is.EqualTo("cursor"));
     }
 
     [Test]

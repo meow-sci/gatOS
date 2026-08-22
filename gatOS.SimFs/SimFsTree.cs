@@ -9,6 +9,7 @@ using gatOS.SimFs.Commands;
 using gatOS.SimFs.Display;
 using gatOS.SimFs.Fx;
 using gatOS.SimFs.Paint;
+using gatOS.SimFs.Paint.Stickers;
 using gatOS.SimFs.Snapshots;
 
 namespace gatOS.SimFs;
@@ -115,10 +116,18 @@ public static class SimFsTree
     ///     bind/unbind/clear surface. Null removes it entirely so the SPEC stays truthful. Supplying
     ///     the store alone uploads nothing and overrides nothing.
     /// </param>
+    /// <param name="stickers">
+    ///     Optional sticker read model (STICKERS_PLAN): when supplied <b>alongside</b>
+    ///     <paramref name="textures"/> — stickers draw uploaded images, so a sticker surface without
+    ///     the image store would be a dead end — the tree gains <c>/sim/paint/stickers/</c>: the
+    ///     <c>place</c>/<c>spray</c> grammars, the per-sticker registry dirs, and the status reads.
+    ///     Null removes it entirely so the SPEC stays truthful.
+    /// </param>
     public static VfsDirectory Build(SnapshotStore store, ICommandSink? commands, Func<string>? transports,
         DisplaySurface? display = null, AudioStore? audio = null, ScheduleStore? schedules = null,
-        CameraStore? camera = null, PaintStore? paint = null, TextureStore? textures = null)
-        => new Builder(store, commands, transports, display, audio, schedules, camera, paint, textures)
+        CameraStore? camera = null, PaintStore? paint = null, TextureStore? textures = null,
+        StickerStore? stickers = null)
+        => new Builder(store, commands, transports, display, audio, schedules, camera, paint, textures, stickers)
             .BuildRoot();
 
     private sealed class Builder
@@ -132,6 +141,7 @@ public static class SimFsTree
         private readonly CameraStore? _camera;
         private readonly PaintStore? _paint;
         private readonly TextureStore? _textures;
+        private readonly StickerStore? _stickers;
         private readonly ConcurrentDictionary<string, ulong> _qids = new();
         private long _nextQid;
 
@@ -175,7 +185,7 @@ public static class SimFsTree
 
         internal Builder(SnapshotStore store, ICommandSink? commands, Func<string>? transports,
             DisplaySurface? display, AudioStore? audio, ScheduleStore? schedules, CameraStore? camera,
-            PaintStore? paint, TextureStore? textures)
+            PaintStore? paint, TextureStore? textures, StickerStore? stickers)
         {
             _store = store;
             _commands = commands;
@@ -186,6 +196,7 @@ public static class SimFsTree
             _camera = camera;
             _paint = paint;
             _textures = textures;
+            _stickers = stickers;
         }
 
         internal VfsDirectory BuildRoot()
@@ -281,6 +292,13 @@ public static class SimFsTree
             // is wired. It needs no runtime master — with no bindings the feature costs nothing.
             if (_textures is not null)
                 children.Add(TexturePaintRootDir());
+
+            // Stickers (STICKERS_PLAN): user images projected onto the world. They draw from the
+            // texture store, so the surface only exists when BOTH stores are wired — no images, no
+            // stickers. Like textures it needs no runtime master: with nothing placed it costs one
+            // emptiness branch per frame.
+            if (_textures is not null && _stickers is not null)
+                children.Add(StickerPaintRootDir());
             return DelegateDirectory.Fixed("paint", Qid("paint"), children.ToArray());
         }
 
@@ -545,6 +563,247 @@ public static class SimFsTree
             mode 'raw' uploads the decoded bytes untouched, for replacing a stock texture like-for-like.
             HTTP mirrors these leaves at /v1/fs/paint/textures/...; MQTT at gatos/sim/paint/textures/... and .../set.
             Uploads use PUT /v1/paint/texture/file/<name>; MQTT carries no binary uploads.
+            """;
+
+        // ---- paint/stickers (user images projected onto vehicles, terrain and clutter) ----
+
+        /// <summary>
+        ///     The sticker registry: <c>place</c>/<c>spray</c> create (the new entry appears under its
+        ///     id), <c>clear</c> removes all, <c>count</c> reports how many exist, and each live
+        ///     sticker is an editable <c>&lt;id&gt;/</c> subdir. Entries are keyed by an integer id —
+        ///     the smallest free slot at create, reused after remove/clear — carried in the command
+        ///     <c>Ordinal</c>. Every read is a <c>LiveLine</c>: the game-side manager publishes into
+        ///     the store between telemetry snapshots, so none of this may be snapshot-memoized.
+        /// </summary>
+        private VfsDirectory StickerPaintRootDir()
+        {
+            var store = _stickers!;
+            const string q = "paint/stickers";
+            var children = new List<VfsNode>
+            {
+                new StaticTextFile("help", Qid($"{q}/help"), () => StickerHelp),
+                LiveLine($"{q}/info", "info", () => StickerInfoLine(store)),
+                LiveLine($"{q}/status", "status",
+                    () => string.Join('\n', store.Stickers.Select(Formats.StickerStatusRow))),
+                LiveLine($"{q}/last", "last", () => store.Last.Replace('\n', ' ')),
+                LiveLine($"{q}/last_error", "last_error", () => store.Runtime.Error.Replace('\n', ' ')),
+                LiveLine($"{q}/count", "count",
+                    () => store.Stickers.Count.ToString(CultureInfo.InvariantCulture)),
+            };
+            if (_commands is { } sink)
+            {
+                children.Add(LineControlFile.Create("place", Qid($"{q}/place"), sink,
+                    () => "", StickerCommands.ParsePlace));
+                children.Add(LineControlFile.Create("spray", Qid($"{q}/spray"), sink,
+                    () => "", StickerCommands.ParseSpray));
+                children.Add(new TriggerFile("clear", Qid($"{q}/clear"), sink,
+                    new SimCommand("", SimActions.PaintStickerClear, SimCommand.NoOrdinal, 1)));
+            }
+
+            // Global development aid, not a per-sticker knob: it makes every decal draw its
+            // projection box as a checker, which is how the box, the depth reconstruction and the
+            // ego matrices are verified without involving any art.
+            children.Add(FlagControl($"{q}/debug", "debug", "", SimActions.PaintStickerDebug,
+                SimCommand.NoOrdinal, () => Formats.Flag(store.Debug)));
+
+            var fixedChildren = children.ToArray();
+            return new DelegateDirectory("stickers", Qid(q),
+                () =>
+                {
+                    var listing = new List<VfsNode>(fixedChildren);
+                    listing.AddRange(store.Stickers.Select(s => (VfsNode)StickerEntryDir(s.Id)));
+                    return listing.ToArray();
+                },
+                name => FindByName(fixedChildren, name)
+                        ?? (int.TryParse(name, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)
+                            && store.Find(id) is not null
+                            ? StickerEntryDir(id)
+                            : null));
+        }
+
+        /// <summary>One sticker's editable subtree; every leaf answers ENOENT once the id is gone.</summary>
+        private VfsDirectory StickerEntryDir(int id)
+        {
+            var key = id.ToString(CultureInfo.InvariantCulture);
+            var q = $"paint/stickers/{key}";
+            var nodes = new List<VfsNode>
+            {
+                // The write-compatible place line (echo it to place to clone the sticker).
+                LiveLine($"{q}/spec", "spec", () => Formats.StickerSpec(Sticker(id))),
+                LiveLine($"{q}/anchor", "anchor", () => StickerAnchorLine(Sticker(id))),
+                LiveLine($"{q}/live", "live", () => Formats.Flag(Sticker(id).Live)),
+                // Hot-swap the image: any committed /sim/paint/textures/file/ entry.
+                LineControl($"{q}/image", "image", () => Sticker(id).Image,
+                    line => StickerRules.IsValidImage(line)
+                        ? new SimCommand("", SimActions.PaintStickerImage, id, 0) { Token = line }
+                        : null),
+                FlagControl($"{q}/visible", "visible", "", SimActions.PaintStickerVisible, id,
+                    () => Formats.Flag(Sticker(id).Visible)),
+                StickerSizeControl(q, id),
+                // depth and brightness carry EXCLUSIVE lower bounds, which no fixed archetype can
+                // express, so they parse their scalar against StickerRules — EINVAL before enqueue.
+                StickerScalarControl(q, "depth", id, SimActions.PaintStickerDepth,
+                    StickerRules.IsValidDepth, () => Sticker(id).Depth),
+                NumberControl($"{q}/rotation", "rotation", "", SimActions.PaintStickerRotation, id,
+                    () => Formats.Scalar(Sticker(id).RotationDeg)),
+                RangedControl($"{q}/alpha", "alpha", "", SimActions.PaintStickerAlpha, id, 0, 1,
+                    () => Formats.Scalar(Sticker(id).Alpha)),
+                StickerScalarControl(q, "brightness", id, SimActions.PaintStickerBrightness,
+                    StickerRules.IsValidBrightness, () => Sticker(id).Brightness),
+            };
+            if (_commands is { } sink)
+                nodes.Add(new TriggerFile("remove", Qid($"{q}/remove"), sink,
+                    new SimCommand("", SimActions.PaintStickerRemove, id, 1)));
+            return DelegateDirectory.Fixed(key, Qid(q), nodes.ToArray());
+        }
+
+        /// <summary>A sticker scalar knob validated by <c>StickerRules</c> (exclusive bounds).</summary>
+        private VfsFile StickerScalarControl(string q, string name, int id, string action,
+            Func<double, bool> valid, Func<double> read)
+            => LineControl($"{q}/{name}", name, () => Formats.Scalar(read()),
+                line => double.TryParse(line, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+                        && valid(value)
+                    ? new SimCommand("", action, id, value)
+                    : null);
+
+        /// <summary>
+        ///     <c>&lt;id&gt;/size</c> — <c>"&lt;width&gt; &lt;height&gt;"</c> in metres. Both carry the
+        ///     same EXCLUSIVE lower bound as the scalar knobs, which the fixed-arity vector archetype
+        ///     cannot express (it validates arity and finiteness only), so this parses the pair
+        ///     against <c>StickerRules</c> and returns EINVAL before anything is enqueued.
+        /// </summary>
+        private VfsFile StickerSizeControl(string q, int id)
+            => LineControl($"{q}/size", "size",
+                () => $"{Formats.Scalar(Sticker(id).Width)} {Formats.Scalar(Sticker(id).Height)}",
+                line =>
+                {
+                    var parts = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                    return parts.Length == 2
+                           && double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture,
+                               out var width)
+                           && double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture,
+                               out var height)
+                           && StickerRules.IsValidWidth(width) && StickerRules.IsValidHeight(height)
+                        ? new SimCommand("", SimActions.PaintStickerSize, id, 0)
+                            { Values = new[] { width, height } }
+                        : null;
+                });
+
+        /// <summary>The published sticker with that id; ENOENT once it is removed.</summary>
+        private StickerSnapshot Sticker(int id)
+            => _stickers!.Find(id)
+               ?? throw new VfsErrorException(LinuxErrno.ENOENT, $"sticker {id} is gone");
+
+        /// <summary>
+        ///     <c>&lt;id&gt;/anchor</c>: <c>vessel &lt;id&gt; &lt;iid&gt; x y z nx ny nz</c> (part-local
+        ///     metres) or <c>body &lt;id&gt; lat lon</c> (degrees).
+        /// </summary>
+        private static string StickerAnchorLine(StickerSnapshot s)
+            => s.Kind == StickerAnchorKind.Body
+                ? $"body {s.TargetId} {Formats.Scalar(s.Position.X)} {Formats.Scalar(s.Position.Y)}"
+                : $"vessel {s.TargetId} {Formats.UInt(s.PartInstanceId)} "
+                  + $"{Formats.Vector(s.Position)} {Formats.Vector(s.Normal)}";
+
+        private static string StickerInfoLine(StickerStore store)
+        {
+            var runtime = store.Runtime;
+            return $"enabled=1 stickers={store.Stickers.Count.ToString(CultureInfo.InvariantCulture)} "
+                   + $"stickers_max={store.MaxCount.ToString(CultureInfo.InvariantCulture)} "
+                   + $"live={runtime.Live.ToString(CultureInfo.InvariantCulture)} "
+                   + $"images={runtime.Images.ToString(CultureInfo.InvariantCulture)} "
+                   + $"vram_bytes={runtime.VramBytes.ToString(CultureInfo.InvariantCulture)} "
+                   + $"patch={Formats.Flag(runtime.PatchInstalled)} renderer={runtime.Renderer} "
+                   + $"max_view_distance_m={Formats.Scalar(store.MaxViewDistanceMetres)}";
+        }
+
+        /// <summary>The console-friendly readme behind <c>/sim/paint/stickers/help</c>.</summary>
+        private const string StickerHelp =
+            """
+            stickers - spray your own PNGs onto vehicles, terrain and ground clutter. A sticker is a
+            projected decal: it sticks to the rocket as it flies and to the ground as the planet
+            turns, until you remove it. Session-only; nothing is written to disk.
+
+            CREATE  (both take the image name from /sim/paint/textures/file/)
+              echo '<image> [aim=camera|cursor] [range=] [roll=] [w=] [h=] [d=] [alpha=] [brightness=]' > spray
+              echo '<image> vessel <vessel_id> <part_iid> <x> <y> <z> <nx> <ny> <nz> [roll=] [w=] [h=] [d=] [alpha=] [brightness=]' > place
+              echo '<image> body <body_id> <lat> <lon> [heading=] [w=] [h=] [d=] [alpha=] [brightness=]' > place
+                w h         decal size, metres            (default 1 1;  each in (0, 1000])
+                d           projection depth, metres      (default 0.3 on a vessel, 1 on terrain; (0, 100])
+                roll        spin about the surface normal, degrees   (default 0)
+                heading     compass heading on a body, degrees       (default 0)
+                alpha       opacity                       (default 1; [0, 1])
+                brightness  exposure multiplier           (default 1; (0, 8])
+                range       spray ray length, metres      (default 2000; (0, 1e6])
+              Each create takes the lowest free id (0, 1, 2, ...) under stickers/<id>/;
+              remove/clear free ids for reuse, so the numbering tracks what is live.
+              cat last        the result of the last place/spray (id, anchor, target, distance)
+              cat last_error  renderer/texture faults; empty when healthy
+
+            AIM  (spray only)
+              aim=camera   (default) the main camera's forward axis - works headless, and the
+                           /sim/camera surface can point it for you.
+              aim=cursor   the mouse cursor's picking ray.
+              The ray hits a vehicle part first, then the terrain behind it; nothing hit = ENOENT.
+
+            ANCHORS
+              vessel <id> <part_iid>   the decal is stored in that part's local frame and follows the
+                                       part every frame (see /sim/vessels/by-id/<id>/parts/<n>/instance_id).
+              body <id> <lat> <lon>    the decal is stored geodetically and rides the planet's spin.
+              A vehicle that despawns (or a part that stages away) makes its sticker dormant, not
+              deleted: live=0 until the anchor comes back.
+
+            TUNE  (per sticker <id>; write a file to set it, read it to see the current value)
+              size        "w h"     2 numbers, metres
+              depth       m         projection box depth along the normal
+              rotation    deg       roll (vessel anchor) or heading (body anchor)
+              alpha       [0,1]     opacity
+              brightness  (0,8]     exposure multiplier
+              visible     0 | 1     0 hides it (the entry is kept); 1 shows it
+              image       <name>    point it at another uploaded image
+
+            INSPECT
+              cat info        enabled/count/live/images/vram/patch/renderer/max view distance
+              cat status      one row per sticker: <id> <image> <vessel|body> <target> live= texture=
+              cat count       how many exist
+              cat <id>/spec   the write-compatible place line; echo it to place to clone the sticker
+              cat <id>/anchor "vessel <id> <iid> x y z nx ny nz" | "body <id> lat lon"
+              cat <id>/live   1 while the anchor resolves and the image is ready
+              echo 1 > debug   draw every sticker as a magenta checker of its projection box
+                               instead of its image (0 turns it off) - the visual check that the
+                               box, the depth reconstruction and the anchor maths are right
+
+            REMOVE
+              echo 1 > <id>/remove    # one sticker
+              echo 1 > clear          # every sticker
+
+            IMAGES  (the same store the clutter overrides use - there is no second upload surface)
+              cat meow.png > /sim/paint/textures/file/meow.png    upload
+              cat            /sim/paint/textures/files            what is uploaded, with sizes
+              rm             /sim/paint/textures/file/meow.png    evict: stickers using it go dormant
+              Re-uploading the same name hot-swaps the image under every sticker using it.
+
+            EXAMPLES
+              # Spray a 2 m logo where the camera is looking, then fade it:
+              cat meow.png > /sim/paint/textures/file/meow.png
+              echo 'meow.png w=2 h=2' > /sim/paint/stickers/spray
+              cat /sim/paint/stickers/last
+              echo 0.4 > /sim/paint/stickers/0/alpha
+
+              # Stick one on a part, upright, 60 cm wide:
+              iid=$(cat /sim/vessels/by-id/Kitten-1/parts/0/instance_id)
+              echo "meow.png vessel Kitten-1 $iid 0 0.5 -1.4 0 1 0 roll=15 w=0.6 h=0.3" \
+                > /sim/paint/stickers/place
+
+              # Tag a spot on the Mun and clone it 10 degrees east:
+              echo 'meow.png body Mun 12.03 -41.88 heading=90 w=5 h=5' > /sim/paint/stickers/place
+              cat /sim/paint/stickers/0/spec | awk '{$5=$5+10; print}' > /sim/paint/stickers/place
+
+            Notes: stickers draw only in the main viewport (not the crew portraits or extra windows)
+            and their lighting is an approximation of the surface they sit on. A sticker covers
+            whatever falls inside its projection box, so ground clutter under a terrain sticker is
+            painted too - clutter is hit by the projection, never by the aim. Nothing is persisted:
+            every sticker is dropped at mod unload. The same actions work over HTTP /v1 and MQTT.
+
             """;
 
         // ---- time (KSA_GAME_INTEGRATION_PLAN §4.2) ----------------------------------------
@@ -1509,6 +1768,17 @@ public static class SimFsTree
             => _commands is { } sink
                 ? ControlFile.Ranged(name, Qid(qidPath), sink, read, min, max,
                     v => new SimCommand(vesselId, action, SimCommand.NoOrdinal, v))
+                : new StaticTextFile(name, Qid(qidPath), () => read() + "\n");
+
+        /// <summary>
+        ///     A ranged numeric STATE control addressed by a registry ordinal (a sticker id), or its
+        ///     read-only twin when control is unwired.
+        /// </summary>
+        private VfsFile RangedControl(string qidPath, string name, string vesselId, string action,
+            int ordinal, double min, double max, Func<string> read)
+            => _commands is { } sink
+                ? ControlFile.Ranged(name, Qid(qidPath), sink, read, min, max,
+                    v => new SimCommand(vesselId, action, ordinal, v))
                 : new StaticTextFile(name, Qid(qidPath), () => read() + "\n");
 
         /// <summary>A free-form token STATE control, or its read-only twin when control is unwired.</summary>

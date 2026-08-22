@@ -304,7 +304,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         type: "string",
         required: true,
         description:
-          "camera, schedules, audio, paint, paint_textures, welds, thug_life, face_fx, iva, engine_plume, plume_trail, clouds, or terrain.",
+          "camera, schedules, audio, paint, paint_textures, paint_stickers, welds, thug_life, face_fx, iva, engine_plume, plume_trail, clouds, or terrain.",
       },
     ],
     returns:
@@ -1604,6 +1604,230 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
       'Bind with gatos.paint_control(operation:"texture_bind", target, file, value:0|1); binding re-points a shared texture asset, so check used_by in the catalog first.',
     ],
   },
+  "gatos.paint_sticker": {
+    name: "gatos.paint_sticker",
+    kind: "tool",
+    category: "Debug and rendering",
+    summary:
+      "Place, spray, tune, hide, and remove projected sticker decals drawn from uploaded images.",
+    useWhen:
+      "Putting your own artwork into the world — on a vehicle part, on terrain, or across ground clutter — rather than recoloring an existing material.",
+    gate: "control_enabled plus paint_stickers_enabled, which itself requires paint_textures_enabled.",
+    fields: [
+      {
+        name: "operation",
+        type: "string",
+        required: true,
+        description: "place, spray, set, remove, clear, list, or debug.",
+      },
+      {
+        name: "image",
+        type: "string | null",
+        default: "null",
+        description:
+          "Uploaded image name from gatos.paint_texture. Required by place and spray, and by set when re-pointing a sticker at another image.",
+      },
+      {
+        name: "anchor",
+        type: "string | null",
+        default: "null",
+        description:
+          "place anchor frame: vessel (part-local metres) or body (geodetic degrees). Inferred from whichever of vessel_id or body is filled when omitted.",
+      },
+      {
+        name: "vessel_id",
+        type: "string | null",
+        default: "null",
+        description: "Raw vessel id for a vessel anchor.",
+      },
+      {
+        name: "part_iid",
+        type: "integer",
+        default: "0",
+        description:
+          'Anchor part or sub-part instance_id, from gatos.get_vessel(include:["parts"]).',
+      },
+      {
+        name: "position",
+        type: "number[3] | null",
+        default: "null",
+        description: "Vessel anchor position [x,y,z] in part-local metres.",
+      },
+      {
+        name: "normal",
+        type: "number[3] | null",
+        default: "null",
+        description:
+          "Vessel anchor outward surface normal [x,y,z]; finite and non-zero. Normalized game-side.",
+      },
+      {
+        name: "body",
+        type: "string | null",
+        default: "null",
+        description: "Raw celestial body id for a body anchor.",
+      },
+      {
+        name: "lat",
+        type: "number | null",
+        default: "null",
+        description: "Body anchor geodetic latitude in degrees. Valid range: -90 to 90.",
+      },
+      {
+        name: "lon",
+        type: "number | null",
+        default: "null",
+        description: "Body anchor geodetic longitude in degrees. Valid range: -360 to 360.",
+      },
+      {
+        name: "heading",
+        type: "number | null",
+        default: "null (0)",
+        description:
+          "Body anchor compass heading in degrees; also the rotation payload for set. Any finite value.",
+      },
+      {
+        name: "roll",
+        type: "number | null",
+        default: "null (0)",
+        description:
+          "Vessel anchor roll about the normal in degrees; also the rotation payload for set. On spray it is added to the upright orientation the picker chose rather than replacing it.",
+      },
+      {
+        name: "width",
+        type: "number | null",
+        default: "null (1)",
+        description: "Decal width in metres. Valid range: greater than 0 through 1000.",
+      },
+      {
+        name: "height",
+        type: "number | null",
+        default: "null (1)",
+        description: "Decal height in metres. Valid range: greater than 0 through 1000.",
+      },
+      {
+        name: "depth",
+        type: "number | null",
+        default: "null (0.3 vessel, 1 body)",
+        description:
+          "Projection-box depth along the normal in metres. Valid range: greater than 0 through 100. Omitting it on spray lets the anchor kind the ray resolved pick the default.",
+      },
+      {
+        name: "alpha",
+        type: "number | null",
+        default: "null (1)",
+        description: "Opacity. Valid range: 0 through 1.",
+      },
+      {
+        name: "brightness",
+        type: "number | null",
+        default: "null (1)",
+        description: "Exposure multiplier. Valid range: greater than 0 through 8.",
+      },
+      {
+        name: "aim",
+        type: "string",
+        default: '"camera"',
+        description:
+          "spray aim: camera (the main camera's forward axis, headless-friendly) or cursor (the mouse picking ray).",
+      },
+      {
+        name: "range",
+        type: "number | null",
+        default: "null (2000)",
+        description: "spray ray length in metres. Valid range: greater than 0 through 1e6.",
+      },
+      {
+        name: "id",
+        type: "integer",
+        default: "-1",
+        description: 'Sticker id from operation:"list". Required by set and remove.',
+      },
+      {
+        name: "value",
+        type: "number | null",
+        default: "null",
+        description:
+          "Flag 0|1: sticker visibility for set, and the projection-box checker for debug.",
+      },
+    ],
+    operations: [
+      {
+        name: "place",
+        action: "paint.sticker_place",
+        callShape:
+          '{ operation: "place", image, anchor: "vessel", vessel_id, part_iid, position, normal, roll?, width?, height?, depth?, alpha?, brightness? } | { operation: "place", image, anchor: "body", body, lat, lon, heading?, width?, height?, depth?, alpha?, brightness? }',
+        example:
+          '{"operation":"place","image":"meow.png","anchor":"vessel","vessel_id":"Kitten-1","part_iid":7,"position":[0,0.5,-1.4],"normal":[0,1,0],"roll":15,"width":0.6,"height":0.3}',
+        description:
+          "Create a sticker at an exact anchor. A vessel anchor is stored in the part's local frame and follows the part; a body anchor is stored geodetically and rides the planet's rotation. The new sticker takes the lowest free id.",
+      },
+      {
+        name: "spray",
+        action: "paint.sticker_spray",
+        callShape:
+          '{ operation: "spray", image, aim?: "camera"|"cursor", range?, roll?, width?, height?, depth?, alpha?, brightness? }',
+        example: '{"operation":"spray","image":"meow.png","width":2,"height":2}',
+        description:
+          "Create a sticker on whatever the camera or cursor is pointing at. The ray hits a vehicle part first and the terrain behind it; nothing hit is ENOENT. Ground clutter cannot be aimed at, but the projection box still paints it.",
+      },
+      {
+        name: "set",
+        action:
+          "paint.sticker_size | paint.sticker_depth | paint.sticker_rotation | paint.sticker_alpha | paint.sticker_brightness | paint.sticker_image | paint.sticker_visible",
+        callShape:
+          '{ operation: "set", id, and exactly one of (width + height) | depth | roll|heading | alpha | brightness | image | value }',
+        example: '{"operation":"set","id":0,"alpha":0.4}',
+        description:
+          "Change one knob on one sticker. Exactly one knob per call, which is what selects the canonical action; width and height must be given together. value carries visibility as 0|1 and keeps the entry when hiding it.",
+      },
+      {
+        name: "remove",
+        action: "paint.sticker_remove",
+        callShape: '{ operation: "remove", id }',
+        example: '{"operation":"remove","id":0}',
+        description: "Delete one sticker and free its id for reuse.",
+      },
+      {
+        name: "clear",
+        action: "paint.sticker_clear",
+        callShape: '{ operation: "clear" }',
+        example: '{"operation":"clear"}',
+        description:
+          "Global teardown: every sticker removed, uploaded images kept. The render hook and GPU pipeline go away with the last live sticker.",
+      },
+      {
+        name: "list",
+        callShape: '{ operation: "list" }',
+        example: '{"operation":"list"}',
+        description:
+          "Read the published sticker array, the subsystem runtime line, and the last place/spray result. Submits no command.",
+      },
+      {
+        name: "debug",
+        action: "paint.sticker_debug",
+        callShape: '{ operation: "debug", value: 0|1 }',
+        example: '{"operation":"debug","value":1}',
+        description:
+          "Global development aid: draw every sticker as a magenta checker of its projection box instead of its image, which shows where the box actually is.",
+      },
+    ],
+    returns:
+      "For list, the sticker array plus runtime health and the last placement line; every other operation returns the standard command envelope.",
+    example: '{"operation":"spray","image":"meow.png","width":2,"height":2}',
+    errors: [
+      "EINVAL for an unknown operation, a missing or out-of-range argument, a set call naming zero or more than one knob, a remove/set without an id, or a registry already at paint_stickers_max_count.",
+      "ENOENT when a spray ray hits nothing within range, when place names a vessel, part instance, or body that is not in the current system, or when set/remove names a sticker id that is gone.",
+      "EOPNOTSUPP when paint_stickers_enabled or paint_textures_enabled is false.",
+    ],
+    notes: [
+      "Images upload through gatos.paint_texture — there is no sticker-specific upload surface. Re-uploading the same name hot-swaps every sticker using it; deleting it makes them dormant.",
+      "Stickers are registry-keyed and vessel-agnostic: the sticker id rides the command ordinal, so they resolve before any vessel lookup. Only the vessel anchor of place names a vessel at all.",
+      "A vessel that despawns or a part that stages away makes its sticker dormant (live=0), not deleted, so it comes back when the anchor does. Only remove, clear, and mod unload delete entries.",
+      "Every successful place or spray emits a paint.sticker_placed event, so gatos.wait(event_type:\"paint.sticker_placed\") is the alternative to polling.",
+      "Nothing is persisted. Each sticker publishes a write-compatible spec line in the filesystem (/sim/paint/stickers/<id>/spec) that can be echoed back into place to recreate it.",
+      "The decal draws in the main viewport only, projects onto whatever opaque geometry falls inside its box including ground clutter, uses an approximation of the scene lighting, and is not drawn past paint_stickers_max_view_distance_m.",
+    ],
+  },
   "gatos.command": {
     name: "gatos.command",
     kind: "tool",
@@ -1833,7 +2057,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         type: "URI template variable",
         required: true,
         description:
-          "camera, schedules, audio, paint, paint_textures, welds, thug_life, face_fx, iva, engine_plume, plume_trail, clouds, or terrain.",
+          "camera, schedules, audio, paint, paint_textures, paint_stickers, welds, thug_life, face_fx, iva, engine_plume, plume_trail, clouds, or terrain.",
       },
     ],
     returns: "Complete store/runtime state correlated with the current simulation sequence.",

@@ -13,7 +13,21 @@ Paint is a vertical slice with a deliberately narrow game boundary:
 - `gatOS.Mcp/` presents the same store through `gatos.paint_control`, `feature="paint"`, and
   `gatos://runtime/paint`.
 - `gatOS.GameMod/Game/Ksa/Paint/` is the only KSA-aware layer. `PaintManager` is the lifecycle owner;
-  `PartPaintPatches` contains every Harmony seam; `EvaPaintBridge` owns material clones/bindings.
+  `PartPaintPatches` contains every Harmony seam for part paint; `EvaPaintBridge` owns material
+  clones/bindings.
+
+Paint has since grown two further subsystems that `PaintManager` owns and ticks the same way but
+which share no state with the two colour mechanisms above:
+
+- **Ground-clutter texture overrides** (`/sim/paint/textures`, `TextureStore` +
+  `ClutterTextureBridge`) — one bindless descriptor write per bind, no patch and no pipeline.
+- **Stickers** (`/sim/paint/stickers`, `StickerStore` + `Game/Ksa/Paint/Stickers/`) — see below.
+  `Game/Ksa/Paint/UserTextureGpu.cs` is the decode → `SimpleVkTexture` → retire-ring helper both of
+  them share; neither owns its own decoder.
+
+Neither has a runtime master, because both cost nothing when nothing is bound or placed. Both carry
+their **own** capability gate (`control_enabled + paint textures store`,
+`control_enabled + paint stickers`) rather than either paint master.
 
 Rules are session-only. Disabling a runtime master retains desired rules for re-enable; explicit
 `clear` removes them. Mod unload clears all rules and restores stock rendering.
@@ -86,6 +100,47 @@ EVA precedence is:
 “Shared” therefore means one rule applied to every live EVA through safe clones—not mutation of a
 game-wide shared material. An avatar rebuilt by KSA is detected by reference identity and rebound.
 
+## Stickers
+
+Stickers project a user PNG onto whatever opaque geometry is inside a box anchored to a vessel part
+or a geodetic point — vehicles, terrain and ground clutter alike. The registry is game-side
+(`StickerManager`), because an anchor can only be resolved against live game state; `StickerStore` in
+SimFs is the game-free read model the transports render.
+
+`Game/Ksa/Paint/Stickers/` is the only KSA-aware layer and holds **15** `[KsaAnchor]` sites across
+seven files: `StickerManager` (registry, per-frame driver, lazy GPU/patch lifecycle, teardown),
+`StickerEntry` (one mutable registry row), `StickerTextureBinder` (`(name, version)` → a bindless
+slot via `AddTexture`/`FreeTexture` + a retire queue), `StickerAnchors` (per-frame decal-space
+composition, all in `double`), `StickerPicker` (the `spray` ray: vehicle raycast first, terrain
+march+bisect behind it), `StickerDecalRenderer` (pipeline, unit-cube mesh, depth-descriptor ring and
+the pass itself) and `StickerRenderPatches` (the Harmony seam).
+
+Two lifecycle invariants make it free when unused and safe when torn down:
+
+1. **Nothing runs while nothing is live.** `StickerManager.Tick` is one drain call and one `IsEmpty`
+   branch with an empty registry. The pipeline, the descriptor pool, the unit cube and the Harmony
+   patch all come up on the `0 → 1` live transition and go away on `1 → 0`. Dormant entries (vessel
+   despawned, image evicted) keep the registry non-empty but do **not** keep the patch installed.
+2. **Dormant, never pruned.** Only `remove`, `clear` and unload delete entries, so `<id>/spec` stays
+   readable and a guest-side save/restore script keeps working.
+
+The draw is gatOS's **second** render-thread injection (thug_life's is the first, on a different
+method with a different Harmony instance): a postfix on `RenderTarget.ResolveAttachments` under the
+Harmony id `gatos.stickers`, filtered to `Program.OffscreenTarget` **and**
+`Program.RenderedViewport == Program.MainViewport`. It is the same post-resolve window KSA's own
+`GridPass` draws in, and the pass is a near-verbatim port of it: barrier depth to sampled-read and
+colour to attachment read/write, `BeginRendering` on the resolved single-sample colour image with
+`LoadOp.Load`, bind set 0 (KSA's global UBO block with the per-viewport dynamic offset), set 1 (our
+scene-depth sampler, from a `MaxFramesInFlight` ring indexed by `Program.Instance.ResourceFrameIndex`)
+and set 2 (KSA's bindless table), then one 36-index unit-cube draw per drawable sticker with a
+112-byte push block. There is no depth attachment and no depth test: occlusion is decided per
+fragment from the sampled reverse-Z scene depth, which is exactly what lets the decal conform to
+hull curvature, tessellated terrain and ground clutter that has no CPU-addressable transform at all.
+
+Faults latch like part paint's: one log, `StickerManager.Active = false`, `renderer=degraded` and the
+text in `last_error`. Teardown clears `Active` first, unpatches, then `GraphicsAndCompute.WaitIdle()`
+before destroying anything — KSA has no deferred-destroy helper.
+
 ## Public surface
 
 Core files:
@@ -98,12 +153,20 @@ Core files:
 /sim/vessels/by-id/<eva-id>/paint/kitten/{default/... ,materials/<name>/...}
 /sim/vessels/by-id/<id>/parts/<n>/paint/{enabled,color,clear}
 /sim/vessels/by-id/<id>/parts/<n>/subparts/<m>/paint/{enabled,color,clear}
+/sim/paint/textures/{file/,files,bind,unbind,clear,bindings,applied,clutter,status,info,help}
+/sim/paint/stickers/{help,info,status,last,last_error,count,place,spray,clear,debug}
+/sim/paint/stickers/<id>/{spec,anchor,live,image,visible,size,depth,rotation,alpha,brightness,remove}
 ```
 
 Colours are `r g b`, finite normalized sRGB. HTTP is `GET|POST /v1/fs/<path>`. MQTT is retained
 `gatos/sim/<path>` plus writes to `gatos/sim/<path>/set`. MCP uses `gatos.paint_control` with the
 stable action suffix as `operation`, optional `vessel_id`, `target`, scalar `value`, and `color`.
 The advanced `gatos.command` envelope accepts every `paint.*` action unchanged.
+
+The two later subsystems have their own MCP tools and runtime feature documents — `gatos.paint_texture`
+/ `feature="paint_textures"` and `gatos.paint_sticker` / `feature="paint_stickers"` — because neither
+fits the colour-rule shape of `gatos.paint_control`. Sticker **images** are entries of the texture
+store, so there is no sticker upload route on any transport.
 
 ## KSA upgrade audit (mandatory)
 
@@ -127,6 +190,27 @@ On every KSA baseline change, re-audit all of these even if compilation is green
    barrier behavior, and the fur-material construction recipe.
 8. Live-test conflict refusal with humble-arteest, disable/enable cycles, scene changes, EVA avatar
    replacement, clone-cap failure, and conditional restore beside another material-rebinding mod.
+9. **Stickers, render seam:** `RenderTarget.ResolveAttachments(CommandBuffer)` still exists, is still
+   called unconditionally for the main viewport in `Program.RenderGame`, and `Program.OffscreenTarget`
+   is still the main viewport's target; `Program.{RenderedViewport,MainViewport,SetViewport,
+   PointClampedSampler,ColorFormat}` and `Program.Instance.ResourceFrameIndex` unchanged;
+   `RenderTarget.{DepthImage,ColorImage,Extent}`, `BarrierBatch` and
+   `ImageBarrierInfo.Presets.{DepthSampledReadF,ColorAttachmentReadWrite}` unchanged. Compare against
+   `GridPass` — if the engine's own post-resolve overlay moved, this pass moves with it.
+10. **Stickers, shader layout:** the descriptor-set order is baked into the GLSL (set 0 = the global
+   Camera/GlobalLighting/Celestial UBO block with its dynamic per-viewport offset, set 1 = ours,
+   set 2 = the bindless table via `SET_TEXTURE`). Re-verify `GlobalShaderBindings.DescriptorSetLayout`
+   and `.DynamicOffset`, `BindlessTextureLibrary.{DescriptorSetLayout,DescriptorSet,AddTexture,
+   FreeTexture}`, and the field layouts of `Common/{Global,Camera,TextureSet}.glsl` — in particular
+   `camera.inverseProjection`/`inverseView`, the reverse-Z convention (0 = far plane) and
+   `lighting.{sunPosition,sunColor,planetColor}`. Also confirm the `GridFrag` asset still resolves a
+   real path next to `Grid.frag` (`Content/Core/DefaultAssets.xml:367`), because that is how our
+   `#include` directory is derived rather than hard-coded, and that the 112-byte push block still
+   fits the device's push-constant limit.
+11. **Stickers, image path:** `TextureLoader.LoadFromMemory`, `TextureAsset.LoadOptions`,
+   `SimpleVkTexture`'s constructor and `Renderer.Allocator.CreateStagingPool` — shared with the
+   clutter overrides through `UserTextureGpu`, so a break there breaks both. The one-shot
+   `stagingPool.Submit().Wait()` remains the shared unvalidated risk (`docs/VALIDATION.md`).
 
 Any failed reflection/anchor preflight must degrade the relevant master without partial patches,
 stock-material mutation, leaked clone handles, or a render-thread exception.

@@ -184,6 +184,15 @@ paint_texture_max_bindings = 32
 # Longest GPU edge kept for an override; larger uploads are downscaled, not rejected (16..16384).
 paint_texture_max_dimension = 4096
 
+# Whether /sim/paint/stickers exists at all. false removes the subtree entirely.
+paint_stickers_enabled = true
+
+# Maximum simultaneous sticker decals (clamped 1..4096).
+paint_stickers_max_count = 256
+
+# Metres past which a sticker is not drawn at all (clamped 10..1000000).
+paint_stickers_max_view_distance_m = 5000.0
+
 # ===== AUDIO — userland playback through the game's speakers (/sim/audio) =====
 
 # Serve /sim/audio: upload clips (cat x.mp3 > /sim/audio/file/x.mp3) and play

@@ -1253,3 +1253,98 @@ like-for-like. The correction is game-free and unit-tested against a reduced mod
 Plan and live checklist: [`plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`](../plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md)
 and [`docs/VALIDATION.md`](VALIDATION.md). The unvalidated risk carried into that checklist is the
 out-of-band `stagingPool.Submit().Wait()` upload while frames are in flight.
+
+# Stickers (post-clutter-textures, code complete; live validation pending)
+
+`/sim/paint/stickers` is the "spray a logo on the world" feature: a userland program uploads a PNG,
+then **sprays** it where the camera or cursor is pointing, or **places** it by explicit coordinates.
+The decal sticks to the rocket as it flies and to the ground as the planet turns, until it is
+removed. Many stickers, many images, all ad-hoc, all cleanable — and **nothing runs at all while no
+sticker exists**.
+
+```sh
+cat meow.png > /sim/paint/textures/file/meow.png   # the SAME store the clutter overrides use
+echo 'meow.png w=2 h=2' > /sim/paint/stickers/spray
+cat /sim/paint/stickers/last                       # 0 vessel Kitten-1 part 41 hit 8.42m
+echo 0.4 > /sim/paint/stickers/0/alpha
+```
+
+Stickers are the **second consumer** of everything the clutter-texture slice landed and add **no
+second upload surface**: the image store, the HTTP upload routes, the `gatos.paint_texture` MCP tool
+and the `paint_texture_*` caps are all reused verbatim. S0 refactored the decode →
+`SimpleVkTexture` → retire-ring path out of `ClutterTextureBridge` into a shared
+`Game/Ksa/Paint/UserTextureGpu.cs`; the two consumers then use KSA's bindless table differently —
+the clutter bridge **re-points an existing** stock slot with `SetTexture`, while stickers
+**allocate** new slots with `AddTexture` — and keep separate GPU images and separate retire queues.
+
+## The mechanism, and why it is a box
+
+A sticker is a **projected decal**, not a quad. `StickerRenderPatches` installs a dynamic
+`Harmony("gatos.stickers")` **postfix on `RenderTarget.ResolveAttachments(CommandBuffer)`** — the one
+moment in `Program.RenderGame` where the resolved single-sample scene depth and the scene colour are
+both current and neither is bound as an attachment, which is exactly the window KSA's own `GridPass`
+draws its map grid in. `StickerDecalRenderer` is a near-verbatim port of that pass. It draws a unit
+cube per sticker with `CullFront` and no depth test; the fragment shader reconstructs the scene
+position under each pixel from the reverse-Z depth, projects it into decal space, and discards
+anything outside the `[-0.5, 0.5]³` box or facing away past a `0.2` cosine cutoff.
+
+That is what makes the decal conform to hull curvature and to tessellated terrain — and it is the
+**only** way to reach ground clutter at all, which exists purely on the GPU and has no
+CPU-addressable transform. A `spray` ray therefore passes *through* a rock to the terrain behind it,
+and the projection box then paints the rock anyway.
+
+This is gatOS's **second render-thread draw injection**, alongside `thug_life`'s. They share
+nothing: a different Harmony id, a different hook method, a different pipeline. Both install lazily
+and tear down completely, so default state is zero patches and zero GPU objects.
+
+## Anchors, and why they survive everything
+
+Nothing is ever stored in ecliptic or ego coordinates. A **vessel** anchor lives in its part's local
+frame (metres, plus a surface normal and a roll); a **body** anchor lives in geodetic lat/lon plus a
+compass heading. Both are recomposed into ego every frame, so both survive bubble-frame switches,
+floating-origin shifts, planet rotation and time warp — a body sticker rides the planet's spin for
+free, and a vessel sticker follows the part, including a **sub-part**, so a decal sprayed onto a
+gimballing engine bell tracks the gimbal. All of it is composed in `double`, including the inverse,
+with only the final 3×4 rows packed to `float` for the push constant; inverting the packed float
+matrix would lose the surface point to cancellation at kilometre distances.
+
+A sticker whose anchor vanishes is **dormant, never pruned** — unlike thug-life quads. A vessel can
+come back, a staged part can return, and an evicted image can be re-uploaded, so `live=0` is a state,
+not a death sentence; only `remove`, `clear` and unload delete entries. That is what keeps
+`<id>/spec` readable, which matters because **`spec` is exactly a `place` line**: reading it and
+echoing it back re-creates the sticker, and that is the whole persistence story (§9 of the plan —
+the guest's own disk is the save game, no host-side autosave in v1).
+
+## Surface
+
+`/sim/paint/stickers/` exposes `help`, `info`, `status`, `last`, `last_error`, `count`, the global
+`debug` flag, the `place`/`spray` line grammars and the `clear` trigger; each live sticker is an
+editable `<id>/` directory with `spec`, `anchor`, `live`, `image`, `visible`, `size`, `depth`,
+`rotation`, `alpha`, `brightness` and `remove`. Ids are the smallest free slot, reused after
+remove/clear. Both grammars parse fully in the game-free
+`gatOS.SimFs/Paint/Stickers/{StickerStore,StickerRules,StickerCommands}.cs`, so a bad line fails the
+guest's `write(2)` with EINVAL and the whole grammar is unit-testable with no game DLLs present —
+and because `POST /v1/command`, MQTT and MCP author a `SimCommand` directly and bypass the parsers
+entirely, `StickerManager` re-validates every argument against the same `StickerRules`.
+
+Twelve `paint.sticker_*` actions, all Frame phase and all **vessel-agnostic** (registry-keyed: the
+sticker id rides `Ordinal`, the image rides `Token`, the anchor descriptor rides `Aux`), gated on
+`control_enabled + paint stickers`. Position edits are deliberately not a leaf in v1 — the two anchor
+kinds have different arities; re-`place` from `spec` instead. 9P, HTTP and MQTT get the whole surface
+for free from `SimFsTree`; MCP adds `gatos.paint_sticker` (`place`/`spray`/`set`/`remove`/`clear`/
+`list`/`debug`, tool count 27 → 28) and the `paint_stickers` runtime feature document. Every
+successful create emits a `paint.sticker_placed` event, so a script that is not polling `last` still
+learns what a `spray` actually hit.
+
+Config sits beside the texture keys in `[paint]`: `paint_stickers_enabled` (on; off removes the
+subtree), `paint_stickers_max_count` (256, clamped 1..4096) and
+`paint_stickers_max_view_distance_m` (5000, clamped 10..1e6). The subtree additionally requires
+`paint_textures_enabled` — without the image store a sticker surface would be a dead end. Health
+latches are `paint.sticker_texture` (decode/upload/bindless) and `paint.sticker_renderer`
+(pipeline/patch/draw); a draw fault clears `Active`, logs once and reports `renderer=degraded` with
+the reason in `last_error` rather than spamming or crashing the frame.
+
+Fifteen new `[KsaAnchor]` sites, most of them `ChurnRisk.High` — this reaches deeper into KSA's
+renderer than anything gatOS has done before. Plan and live checklist:
+[`plans/STICKERS_PLAN.md`](../plans/STICKERS_PLAN.md) and [`docs/VALIDATION.md`](VALIDATION.md).
+**Nothing here has been run in a live KSA session yet.**

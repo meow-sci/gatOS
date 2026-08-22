@@ -33,9 +33,15 @@ update's blast radius is small and discoverable. The procedure:
    (electrical, docking, flight computer, staging/sequences, parts/modules, numerics/Brutal, Situation,
    Vehicle control, **and render internals** — `SuperMeshRenderSystem`, `Program.OffScreenPass`/the render
    pass, the Vulkan/`Planet.Render.Core` surface, or the `UnlitMesh` shaders, which back the `thug_life`
-   quad and are gatOS's **highest-churn** coupling; render internals churn faster than the gameplay APIs
-   and are not as reliably changelog-covered, so re-verify the `thug_life` quad in a live flight on any
-   update — see [`ksa-assets-and-versions.md#render-refs`](ksa-assets-and-versions.md#render-refs)). See
+   quad and are gatOS's **highest-churn** coupling; **plus the sticker seam** —
+   `KSA.Rendering.RenderTarget.{ResolveAttachments,DepthImage,ColorImage}`, `GridPass` (the pass
+   stickers are a port of), `BarrierBatch`/`ImageBarrierInfo.Presets`, `GlobalShaderBindings`,
+   `BindlessTextureLibrary`, `Program.{OffscreenTarget,RenderedViewport,MainViewport,SetViewport,
+   ResourceFrameIndex,PointClampedSampler,ColorFormat}` and the `Common/*.glsl` UBO/texture-set
+   layouts; render internals churn faster than the gameplay APIs
+   and are not as reliably changelog-covered, so re-verify **both** the `thug_life` quad and a live
+   sticker in flight on any update — see
+   [`ksa-assets-and-versions.md#render-refs`](ksa-assets-and-versions.md#render-refs)). See
    [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md) for how versions and the decomp/dll/Content
    layout are organized.
 
@@ -300,6 +306,7 @@ KSA game update have any chance of breaking it.
 | W | `/sim/debug` cheats: teleport, one-shot impulse (N·s or Δv kick, CCI or body frame), refill fuel/battery, warp set, control-vessel, pushoff | **Yes** | [`ksa-write-surface.md`](ksa-write-surface.md#debug) |
 | W | `/sim/debug` welds (weld/weld_here/unweld/enable/clear) + `always_render_iva` render cheat (ported from `unscience`) | **Yes** (High: per-frame `Teleport`; dynamic `gatos.iva` Harmony) | [`ksa-write-surface.md`](ksa-write-surface.md#welds) |
 | W | `/sim/debug/thug_life` world-space quad cheat (add/clear/per-entry position/rotation/size/visible/remove; ported from `unscience`) — gatOS's **first custom GPU rendering** | **Yes** (⚠️ **highest-churn**: render-pipeline internals + Vulkan; dynamic `gatos.thug_life` Harmony postfix on `SuperMeshRenderSystem.RenderMainPass`) | [`ksa-write-surface.md`](ksa-write-surface.md#thug-life) |
+| W | `/sim/paint/stickers` projected PNG decals on vehicles, terrain and ground clutter (`place`/`spray` + per-sticker `size`/`depth`/`rotation`/`alpha`/`brightness`/`visible`/`image`/`remove`, global `clear`/`debug`; images ride the `/sim/paint/textures` store) — gatOS's **second custom GPU rendering** | **Yes** (⚠️ render-pipeline internals + Vulkan + GLSL; dynamic `gatos.stickers` Harmony postfix on `RenderTarget.ResolveAttachments`, installed only while ≥ 1 sticker is live) | [`ksa-write-surface.md#stickers`](ksa-write-surface.md#stickers) |
 | W | First-class per-vessel nodes `vessels/by-id/<id>/{scale,always_render}` (model scaling + render-distance override; ported from `unscience` garrys-torch/i-feel-seen) — authority-exempt, outside `/sim/debug` | **Yes** (High: `Part.Scale` + KittenEva reflection; Medium: dynamic `gatos.always_render` Harmony prefixes on `Vehicle.GetWorldMatrix`/`UpdateRenderData`) | [`ksa-write-surface.md`](ksa-write-surface.md#per-vessel-nodes) |
 | W | `/sim/debug/iva` free-floating cabin objects with real inertial physics (master `enabled` switch + `adopt`/`adopt_all`/`release`/`clear`/`nudge`; a **gatOS-owned BepuPhysics 2.5 `Simulation`** in the vessel assembly frame, driving shipped IVA prop **SubPart** transforms; plans/IVA_MOVEMENTS.md) — **off by default; off means no simulation exists at all** | **Yes** (Medium: `MeshReference.PositionCompare` triangle soup + `PartModelModule.Template.Internal` classifier for interior geometry; `Part.{PositionParentAsmb,Asmb2ParentAsmb}` per-frame driver; `Vehicle.{AccelerationBody,AngularAccelerationBody,BodyRates,CenterOfMassAsmb}` forcing terms. **No Harmony patch**, no game-solver mutation) + a new **`BepuPhysics`/`BepuUtilities` DLL reference** | [`ksa-write-surface.md`](ksa-write-surface.md#iva-physics) |
 | W | `/sim/audio` userland audio playback (`file/` clip uploads + `play`/`set`/`stop` through the game's FMOD mixer; `audio.*` actions, vessel-agnostic, gated by `audio_enabled`) | **Yes** (Low: `GameAudio.System`/`GetChannelGroup` public statics + the FMOD Core `Brutal.FmodApi` P/Invoke surface — new `Brutal.Fmod.dll` reference) | [`ksa-write-surface.md`](ksa-write-surface.md#audio) |
@@ -339,6 +346,15 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/Ksa/Welds/{WeldEngine,WeldManager}.cs` | 4 `[KsaAnchor]` (per-frame `Teleport` driver + registry/liveness) | per-weld try/catch in the driver; `_weldsDead` session latch |
 | `Game/Ksa/Iva/*.cs` (`InteriorGeometry`×1, `FloatingObject`×3, `IvaPhysicsManager`×6; `CabinSim`/`CabinCallbacks`/`CabinTuning` touch **Bepu only**, no KSA type) | 10 `[KsaAnchor]` (IVA cabin physics: the interior-mesh walk, the per-frame SubPart transform driver, adopt-time measurement/lookup, the forcing-term reads + park gates) | master switch off by default (nothing constructed); per-vessel try/catch in the driver → that cabin dropped; `_ivaDead` session latch releases everything and disables the feature |
 | `Game/Ksa/ThugLife/*.cs` (`ThugLifeTextureFactory`×1, `ThugLifeQuadRenderer`×2, `ThugLifeRenderPatches`×1, `ThugLifeManager`×3; `ThugLifeEntry`/`ThugLifeTexturePattern` have none) | 7 `[KsaAnchor]` render-internals (`thug_life` cheat: Vulkan GPU build, per-frame anchor math, dynamic `gatos.thug_life` Harmony postfix on `SuperMeshRenderSystem.RenderMainPass`) — **deepest / highest-churn coupling** | per-frame try/catch; self-disables (`Active=false`) on any GPU fault; unpatched + GPU freed on disable/unload |
+| `Game/Ksa/Paint/{PaintManager,EvaPaintBridge}.cs` | 4 `[KsaAnchor]` (vehicle shader lifecycle + EVA material clones) | dynamic `gatos.paint` Harmony only while `paint/parts/enabled=1`; conditional restore |
+| `Game/Ksa/Paint/ClutterTextureBridge.cs` | 2 `[KsaAnchor]` (one High `BindlessTextureLibrary.SetTexture` re-point of an **existing** stock slot, one Medium ground-clutter catalog walk reusing `FxReflect.Terrain`) | revision-gated tick; every slot restored before anything of ours is destroyed |
+| `Game/Ksa/Paint/UserTextureGpu.cs` | 1 `[KsaAnchor]` (the shared decode → `SimpleVkTexture` upload idiom + the deferred-destroy `RetireQueue`; **both** the clutter bridge and stickers use it, so there is one implementation and one anchor) | per-upload try/catch → the feature's health latch; images destroyed only after `MaxFramesInFlight + 1` ticks |
+| `Game/Ksa/Paint/Stickers/StickerRenderPatches.cs` | 1 `[KsaAnchor]` (dynamic `gatos.stickers` Harmony **postfix** on `RenderTarget.ResolveAttachments`) | `MissingMethodException` at install → feature degrades; per-postfix try/catch logs once; main-viewport identity filters |
+| `Game/Ksa/Paint/Stickers/StickerDecalRenderer.cs` | 4 `[KsaAnchor]` render-internals (pipeline layout / set order, pipeline + GLSL compile, unit-cube staging upload, the recorded pass) | `RecordPass` fault → `Active=false` + `renderer=degraded` + `last_error`, one log; pipeline destroyed only after a queue drain |
+| `Game/Ksa/Paint/Stickers/StickerTextureBinder.cs` | 2 `[KsaAnchor]` (`BindlessTextureLibrary.AddTexture` **allocates** a slot per `(name, version)`; `FreeTexture` returns it) | failed `(name, version)` pairs latched so a broken image is retried once per version, not per frame; `paint.sticker_texture` health latch |
+| `Game/Ksa/Paint/Stickers/StickerAnchors.cs` | 2 `[KsaAnchor]` (per-frame geodetic→ego and part-local→ego decal composition) | returns false → that sticker is dormant for the frame rather than drawing garbage |
+| `Game/Ksa/Paint/Stickers/StickerPicker.cs` | 3 `[KsaAnchor]` (the aim ray, KSA's own watertight part raycast sweep, the terrain march+bisect) | no hit → `ENOENT`, nothing placed |
+| `Game/Ksa/Paint/Stickers/StickerManager.cs` | 3 `[KsaAnchor]` (per-frame anchor re-resolution, lazy `Program.GetRenderer()` init, the teardown `WaitIdle`) | a despawned target yields null → dormant, never pruned; `paint.sticker_renderer` health latch |
 | `Game/Ksa/Fx/*.cs` (`FxReflect`×8, `PlumeActuator`×4, `TrailActuator`×2, `CloudActuator`×4, `TerrainActuator`×3, `FxEditorReader`×4; `FxPristine` has none — no KSA types) | 25 `[KsaAnchor]` (the four FX editors: the reflective handles in `FxReflect` incl. the terrain UBO rings, the per-family read/write/apply pairs, the plume propagation loop, the sampler's rosters) | per-command try/catch in `KsaCatalog`; per-capability `KsaHealth` latches (`fx.*` keys) → `EOPNOTSUPP`; sampler-level try/catch (logged once); pristine restore at unload |
 | `Game/Ksa/Camera/*.cs` | Programmable-camera anchors plus `CameraViewportPatch`'s `Viewport.OnFrame(double)` prefix/postfix. Main viewport is selected by identity; the controller's public `Camera`/viewport camera is used, never unscience's obsolete `___Transform` injector | idle director is one branch; hook faults latch once; driver fault restores camera; unresolvable frames hold last good pose |
 | `Game/Ksa/{DisplayRenderPatch,FrameCapture}.cs` | 2 `[KsaAnchor]` (the `/sim/display` capture: the `Program.RenderGame` transpiler + the in-band Vulkan blit/readback) | transpiler degrades to **no injection**; a capture-time fault latches the feature off for the session (`_faulted`) |
@@ -349,7 +365,7 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/BrutalModLogger.cs` | `Brutal.Logging` sink | try/catch at install |
 | `Mod.cs`, `ModAssets.cs` | StarMap.API attributes, purrTTY contract — **no KSA game types** | n/a (mod-ecosystem ABI, not KSA) |
 
-Detail and per-member break-impact: the four `ksa-*.md` pages. **The census totals 147 `[KsaAnchor]`s**
+Detail and per-member break-impact: the four `ksa-*.md` pages. **The census totals 174 `[KsaAnchor]`s**
 (the one further occurrence in `Game/Ksa/KsaAnchor.cs` is the attribute's own doc comment, not a
 binding). It grew with each ported cheat: the sampler's `Universe`/`VersionInfo` reads were anchored in
 the 4750 fix-pass (G4); the `unscience`-ported welds/IVA/parts feature added 6 (PartsReader,
@@ -363,13 +379,18 @@ the IVA cabin-physics feature added the 10 `Game/Ksa/Iva/` anchors (`InteriorGeo
 IsInteriorProp,FindSubPart,IsLive}`); the **FX editors** (2026-08-01) added the `Game/Ksa/Fx/` set (25,
 the largest single addition — the reflective handles are catalogued in
 [`ksa-runtime-coupling.md#fx-accessors`](ksa-runtime-coupling.md#fx-accessors)); and the **programmable
-camera** (2026-08-06) added the `Game/Ksa/Camera/` set (**21**, the second-largest —
+camera** (2026-08-06) added the `Game/Ksa/Camera/` set (**21**, the third-largest —
 `CameraDirector.{Take,Restore,Apply,ApplyTimeScale,RestorePositionEcl,SetMode,SetFollow,SetTidal,
 SetMapScope}`, `CameraTargets.{TryResolve,PositionEcl,VelocityEcl,BodyFixed2Ecl,UpEcl,Describe,IsLive}`,
 `CameraFrames.{TryFrame2Ecl,GeoToEcl,TryEclToGeo}`, `CameraReader.{Sample,ModeOf}`) while **rebinding**
 one existing anchor (`CameraActuator.Focus`, C1.4) rather than adding it. The **generic timed
 scheduler** landed in the same window and added **no anchor at all** — it is game-free end to end
-([`non-ksa-surface.md#scheduler`](non-ksa-surface.md#scheduler)).
+([`non-ksa-surface.md#scheduler`](non-ksa-surface.md#scheduler)). The **custom clutter textures**
+(2026-08-22, `12dfa43`) added 2 in `ClutterTextureBridge`; **stickers** (2026-08-22) then split the
+decode/upload half into the shared `UserTextureGpu` (**+1**) and added the **15**
+`Game/Ksa/Paint/Stickers/` anchors — the second-largest single addition, and after `thug_life` the
+second set that binds render-pipeline internals rather than gameplay APIs. Both sticker groups fail
+the **build**, not a health latch, when a member moves, which is the intended alarm.
 
 So the only remaining un-anchored KSA touch-points are the two `Mod.Game.cs` Harmony hook targets (the
 `gatos.iva`/`gatos.thug_life`/`gatos.always_render` patch targets and the weld/IVA drivers'
@@ -417,9 +438,11 @@ shader/state-bit/material-clone audit and the paint checklist in `docs/VALIDATIO
 # Clutter texture surface
 
 Custom ground-clutter textures add a second, game-free store (`gatOS.SimFs/Paint/TextureStore.cs`,
-`TextureDirectory.cs`, `TextureCommands.cs`) and a second KSA adapter file
-(`Game/Ksa/Paint/ClutterTextureBridge.cs`, **2** `[KsaAnchor]`s — one High bind/upload site, one
-Medium catalog walk that reuses `FxReflect.Terrain` and so adds no reflection site). The store owns
+`TextureDirectory.cs`, `TextureCommands.cs`) and two KSA adapter files
+(`Game/Ksa/Paint/ClutterTextureBridge.cs`, **2** `[KsaAnchor]`s — one High bindless-slot bind site,
+one Medium catalog walk that reuses `FxReflect.Terrain` and so adds no reflection site; and the
+shared `Game/Ksa/Paint/UserTextureGpu.cs`, **1** High `[KsaAnchor]` for the decode/upload idiom plus
+the deferred-destroy retire queue, factored out so stickers reuse one implementation). The store owns
 the in-memory upload set (`TextureFile`/`TextureFileInfo`, magic-byte container sniffing for
 png/jpeg/bmp/hdr/dds/ktx/ktx2), the desired-binding set (`TextureBinding`), the published
 `ClutterTextureInfo` catalog, `TextureBindStatus` applied rows, `TextureRuntime`, the file/byte/
@@ -430,3 +453,39 @@ clear}` is the whole tree; HTTP adds dedicated binary routes at `/v1/paint/textu
 transport-parity exception after audio), MQTT mirrors the scalars, and MCP projects the same store
 through `gatos.paint_texture` plus three `gatos.paint_control` operations. Its authoritative
 maintenance map is [`plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`](../plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md).
+
+# Sticker surface
+
+Projected PNG decals (`/sim/paint/stickers`) are the **second consumer** of the clutter feature's
+image store and GPU path, and add **no** second upload surface. The game-free half is
+`gatOS.SimFs/Paint/Stickers/{StickerStore,StickerRules,StickerCommands}.cs`: the published
+`StickerSnapshot[]` + `StickerRuntime` read model with its bounded `paint.sticker_placed` event
+queue, the pure `StickerRules` bounds every transport re-checks (`POST /v1/command`, MQTT
+`gatos/command` and MCP author a `SimCommand` directly and never touch the parsers), and the
+`place`/`spray` line grammars whose `FormatSpec` output is exactly what `place` accepts — so
+`cat <id>/spec` round-trips. The KSA half is **seven** files under
+`gatOS.GameMod/Game/Ksa/Paint/Stickers/` carrying **15** `[KsaAnchor]`s (`StickerDecalRenderer`×4,
+`StickerManager`×3, `StickerPicker`×3, `StickerAnchors`×2, `StickerTextureBinder`×2,
+`StickerRenderPatches`×1; `StickerEntry` has none — it holds no KSA call, only resolved handles).
+
+The authoritative registry lives **game-side**, not in the store, because an anchor can only be
+resolved against live game state: a vessel anchor is part-local metres against a `Part.InstanceId`
+(sub-parts included) and a body anchor is geodetic lat/lon, both re-resolved every frame so they
+survive bubble-frame switches, floating-origin shifts, time warp and planet rotation. A vanished
+anchor or an evicted image makes a sticker **dormant, never pruned** — only `remove`/`clear`/unload
+delete entries, which is what keeps `<id>/spec` readable and the guest's own save/restore script
+working (v1 persists nothing host-side).
+
+**Nothing runs while nothing is placed.** `StickerManager.Tick` — the paint tick's third self-gated
+driver, beside part/EVA paint and the clutter bridge — is one retire-drain and one `IsEmpty` branch
+in that state: no Harmony patch, no pipeline, no descriptor pool, no texture. The GPU path and the
+`gatos.stickers` postfix come up on the `0 → 1` **live** transition and go away on `1 → 0`; dormant
+entries keep the registry non-empty but do not keep the patch installed. Config is three flat keys
+(`paint_stickers_enabled`, `paint_stickers_max_count`, `paint_stickers_max_view_distance_m`); the
+subtree also requires `paint_textures_enabled`, since without the image store the surface would be a
+dead end. Gate string `control_enabled + paint stickers`; health latches `paint.sticker_texture` and
+`paint.sticker_renderer`. 9P, HTTP and MQTT get the whole surface from the tree as field mirrors,
+and MCP projects it through `gatos.paint_sticker` plus a `paint_stickers` runtime feature document.
+Its authoritative maintenance map is [`plans/STICKERS_PLAN.md`](../plans/STICKERS_PLAN.md), and the
+KSA upgrade audit is shared with [`plans/PAINT_ASBUILT.md`](../plans/PAINT_ASBUILT.md); the live
+checklist is the stickers card in `docs/VALIDATION.md`.

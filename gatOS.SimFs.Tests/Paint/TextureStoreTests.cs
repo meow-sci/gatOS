@@ -7,7 +7,8 @@ namespace gatOS.SimFs.Tests.Paint;
 /// <summary>
 ///     The <see cref="TextureStore"/> semantics (GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN): name rules,
 ///     container sniffing, ready-on-commit visibility, versioning, the caps with their errnos, the
-///     binding table and its revision contract, delete-unbinds-first, and the session-less HTTP
+///     binding table and its two revision contracts (binding-scoped <c>Revision</c> vs content-scoped
+///     <c>ContentRevision</c>), <c>CurrentVersion</c>, delete-unbinds-first, and the session-less HTTP
 ///     chunked upload. Game-free by construction.
 /// </summary>
 [TestFixture]
@@ -348,6 +349,97 @@ public sealed class TextureStoreTests
 
         Assert.That(store.Unbind("nope"), Is.False);
         Assert.That(store.Revision, Is.EqualTo(afterRecommit), "a failed unbind changes nothing");
+    }
+
+    // ---- the content revision (the sticker cache contract) --------------------------------------
+
+    [Test]
+    public void ContentRevision_MovesOnEveryCommittedByteChange()
+    {
+        var store = new TextureStore();
+        var start = store.ContentRevision;
+        var binding = store.Revision;
+
+        Upload(store, "rock.png", Png());
+        var committed = store.ContentRevision;
+        Assert.That(committed, Is.GreaterThan(start), "a commit changes the bytes a cache decoded");
+        Assert.That(store.Revision, Is.EqualTo(binding),
+            "an unbound commit leaves the binding revision alone");
+
+        store.HttpUpload("moss.png", 0, Png(), complete: true);
+        var http = store.ContentRevision;
+        Assert.That(http, Is.GreaterThan(committed), "the HTTP path commits through the same seam");
+
+        store.Delete("moss.png");
+        var deleted = store.ContentRevision;
+        Assert.That(deleted, Is.GreaterThan(http), "a file that disappears must be noticed");
+
+        store.Clear();
+        Assert.That(store.ContentRevision, Is.GreaterThan(deleted), "clear removed rock.png");
+    }
+
+    [Test]
+    public void ContentRevision_IsNotBindingScoped()
+    {
+        var store = new TextureStore();
+        Upload(store, "rock.png", Png());
+        var revision = store.Revision;
+        var content = store.ContentRevision;
+
+        store.Bind("Stock/A", "rock.png");
+        store.Unbind("Stock/A");
+        store.Bind("Stock/A", "rock.png");
+        store.UnbindAll();
+        Assert.That(store.ContentRevision, Is.EqualTo(content), "bindings do not change any bytes");
+        Assert.That(store.Revision, Is.GreaterThan(revision), "…but they are exactly what Revision tracks");
+
+        store.Clear();
+        var emptied = store.ContentRevision;
+        store.Clear();
+        Assert.That(store.ContentRevision, Is.EqualTo(emptied), "an empty clear removes nothing");
+    }
+
+    [Test]
+    public void ContentRevision_IgnoresAnIdempotentRecommit()
+    {
+        var store = new TextureStore();
+        var upload = store.OpenUpload("rock.png", mustCreate: true);
+        upload.Write(0, Png());
+        Assert.That(store.ContentRevision, Is.Zero, "an open handle has committed nothing");
+
+        upload.Commit();
+        var committed = store.ContentRevision;
+        Assert.That(committed, Is.GreaterThan(0));
+
+        upload.Commit();
+        Assert.That(store.ContentRevision, Is.EqualTo(committed), "Commit is idempotent");
+    }
+
+    // ---- CurrentVersion (the allocation-free eviction probe) -------------------------------------
+
+    [Test]
+    public void CurrentVersion_IsNullUntilCommittedAndTracksTheCommittedVersion()
+    {
+        var store = new TextureStore();
+        Assert.That(store.CurrentVersion("rock.png"), Is.Null, "no such file");
+
+        var upload = store.OpenUpload("rock.png", mustCreate: true);
+        upload.Write(0, Png());
+        Assert.That(store.CurrentVersion("rock.png"), Is.Null, "opened but never committed");
+
+        upload.Commit();
+        store.TryGet("rock.png", out var file);
+        Assert.That(store.CurrentVersion("rock.png"), Is.EqualTo(file!.Version));
+
+        Upload(store, "rock.png", Png(32));
+        Assert.Multiple(() =>
+        {
+            Assert.That(store.CurrentVersion("rock.png"), Is.EqualTo(file.Version + 1), "a re-commit bumps it");
+            Assert.That(store.CurrentVersion("nope.png"), Is.Null);
+        });
+
+        store.Delete("rock.png");
+        Assert.That(store.CurrentVersion("rock.png"), Is.Null, "deleted");
     }
 
     // ---- HTTP chunked upload -------------------------------------------------------------------

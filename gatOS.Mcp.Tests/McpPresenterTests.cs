@@ -1,6 +1,7 @@
 using gatOS.SimFs;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Paint;
+using gatOS.SimFs.Paint.Stickers;
 using gatOS.SimFs.Snapshots;
 using gatOS.Paint;
 using NUnit.Framework;
@@ -20,9 +21,10 @@ public sealed class McpPresenterTests
             Assert.That(names, Does.Contain("gatos.get_world"));
             Assert.That(names, Does.Contain("gatos.execute_batch"));
             Assert.That(names, Does.Contain("gatos.schedule_batch"));
-            Assert.That(names, Has.Length.EqualTo(27));
+            Assert.That(names, Has.Length.EqualTo(28));
             Assert.That(names, Does.Contain("gatos.paint_control"));
             Assert.That(names, Does.Contain("gatos.paint_texture"));
+            Assert.That(names, Does.Contain("gatos.paint_sticker"));
             Assert.That(names, Has.None.Contains("display"));
             Assert.That(registry.Resources.Select(r => r.ProtocolResource?.Name ?? ""), Has.None.Contains("display"));
         });
@@ -206,6 +208,193 @@ public sealed class McpPresenterTests
         ], CancellationToken.None);
         Assert.That(mixed.Errno, Is.EqualTo("EINVAL"));
         Assert.That(sink.BatchCalls, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void PaintSticker_AdvertisesItsOperationsAndAnchorVocabulary()
+    {
+        var registry = new McpRegistry(new SnapshotStore());
+        var sticker = registry.Tools.Single(t => t.ProtocolTool.Name == "gatos.paint_sticker").ProtocolTool;
+        var properties = sticker.InputSchema.GetProperty("properties");
+        Assert.Multiple(() =>
+        {
+            Assert.That(sticker.Description, Does.Contain("place/spray/set/remove/clear/list/debug"));
+            Assert.That(sticker.Description, Does.Contain("gatos.paint_texture"),
+                "images upload through the texture tool; there is no second upload surface");
+            Assert.That(properties.GetProperty("operation").GetProperty("description").GetString(),
+                Does.Contain("spray"));
+            Assert.That(properties.GetProperty("anchor").GetProperty("description").GetString(),
+                Does.Contain("vessel").And.Contain("body"));
+            Assert.That(properties.GetProperty("aim").GetProperty("description").GetString(),
+                Does.Contain("cursor"));
+            Assert.That(properties.GetProperty("depth").GetProperty("description").GetString(),
+                Does.Contain("0.3"), "the anchor-kind depth defaults are discoverable from the schema");
+            Assert.That(sticker.Annotations?.ReadOnlyHint, Is.Not.True);
+            Assert.That(sticker.OutputSchema?.GetProperty("required").EnumerateArray()
+                .Select(x => x.GetString()), Does.Contain("ok"));
+        });
+    }
+
+    [Test]
+    public void PaintStickers_IsAFirstClassRuntimeFeatureAndCapability()
+    {
+        var stickers = new StickerStore(64, 1234);
+        var presenters = new McpPresenters(new SnapshotStore(), new RecordingSink(), stickers: stickers);
+
+        var runtime = presenters.GetRuntimeState("paint_stickers");
+        Assert.That(runtime.Ok, Is.True);
+        var runtimeJson = SimJson.Serialize(runtime.Data);
+        Assert.Multiple(() =>
+        {
+            Assert.That(runtimeJson, Does.Contain("max_count"));
+            Assert.That(runtimeJson, Does.Contain("max_view_distance_m"));
+            Assert.That(runtimeJson, Does.Contain("\"debug\""));
+            Assert.That(runtimeJson, Does.Contain("\"last\""));
+            Assert.That(runtimeJson, Does.Contain("\"runtime\""));
+        });
+
+        var json = SimJson.Serialize(presenters.GetCapabilities().Data);
+        Assert.Multiple(() =>
+        {
+            Assert.That(json, Does.Contain("paint_stickers"));
+            Assert.That(json, Does.Contain("paint.sticker_spray"));
+            Assert.That(json, Does.Contain("gatos.paint_sticker"));
+            Assert.That(json, Does.Contain("control_enabled + paint stickers"));
+        });
+
+        var disabled = new McpPresenters(new SnapshotStore(), new RecordingSink())
+            .GetRuntimeState("paint_stickers");
+        Assert.That(disabled.Errno, Is.EqualTo("EOPNOTSUPP"), "an absent registry reports unsupported");
+    }
+
+    [Test]
+    public async Task PaintSticker_PlaceAndSpray_MatchTheLineGrammarsExactly()
+    {
+        var (sink, handlers) = StickerHandlers();
+
+        await handlers.PaintSticker("place", "meow.png", "vessel", "Kitten-1", 7,
+            position: [0, 0.5, -1.4], normal: [0, 1, 0], roll: 15, width: 0.6, height: 0.3);
+        AssertSameCommand(sink.Commands[0],
+            StickerCommands.ParsePlace("meow.png vessel Kitten-1 7 0 0.5 -1.4 0 1 0 roll=15 w=0.6 h=0.3"));
+
+        await handlers.PaintSticker("place", "meow.png", "body", body: "Mun", lat: 12.03, lon: -41.88,
+            heading: 90, width: 5, height: 5);
+        AssertSameCommand(sink.Commands[1],
+            StickerCommands.ParsePlace("meow.png body Mun 12.03 -41.88 heading=90 w=5 h=5"));
+
+        // The anchor keyword is inferred from which target slot is filled, so `body` alone is enough.
+        await handlers.PaintSticker("place", "meow.png", body: "Mun", lat: 0, lon: 0);
+        Assert.That(sink.Commands[2].Aux, Is.EqualTo("body Mun"));
+
+        await handlers.PaintSticker("spray", "meow.png");
+        AssertSameCommand(sink.Commands[3], StickerCommands.ParseSpray("meow.png"));
+        Assert.That(sink.Commands[3].Values![4], Is.EqualTo(StickerCommands.DepthUnset),
+            "an omitted depth stays the sentinel so the game picks the anchor kind's default");
+
+        await handlers.PaintSticker("spray", "meow.png", aim: "cursor", range: 50, roll: 30, width: 2,
+            height: 2, depth: 0.5, alpha: 0.4, brightness: 2);
+        AssertSameCommand(sink.Commands[4],
+            StickerCommands.ParseSpray("meow.png aim=cursor range=50 roll=30 w=2 h=2 d=0.5 alpha=0.4 brightness=2"));
+    }
+
+    [Test]
+    public async Task PaintSticker_SetRemoveClearAndDebug_EmitOneCanonicalActionEach()
+    {
+        var (sink, handlers) = StickerHandlers();
+
+        await handlers.PaintSticker("set", id: 3, width: 2, height: 1.5);
+        await handlers.PaintSticker("set", id: 3, depth: 0.75);
+        await handlers.PaintSticker("set", id: 3, roll: 45);
+        await handlers.PaintSticker("set", id: 3, heading: 90);
+        await handlers.PaintSticker("set", id: 3, alpha: 0.4);
+        await handlers.PaintSticker("set", id: 3, brightness: 2);
+        await handlers.PaintSticker("set", "other.png", id: 3);
+        await handlers.PaintSticker("set", id: 3, value: 0);
+        await handlers.PaintSticker("remove", id: 3);
+        await handlers.PaintSticker("clear");
+        await handlers.PaintSticker("debug", value: 1);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sink.Commands.Select(c => c.Action), Is.EqualTo(new[]
+            {
+                SimActions.PaintStickerSize, SimActions.PaintStickerDepth, SimActions.PaintStickerRotation,
+                SimActions.PaintStickerRotation, SimActions.PaintStickerAlpha,
+                SimActions.PaintStickerBrightness, SimActions.PaintStickerImage,
+                SimActions.PaintStickerVisible, SimActions.PaintStickerRemove,
+                SimActions.PaintStickerClear, SimActions.PaintStickerDebug,
+            }));
+            Assert.That(sink.Commands[0].Values, Is.EqualTo(new[] { 2d, 1.5 }));
+            Assert.That(sink.Commands[0].Ordinal, Is.EqualTo(3));
+            Assert.That(sink.Commands[3].Value, Is.EqualTo(90), "heading is the body spelling of rotation");
+            Assert.That(sink.Commands[6].Token, Is.EqualTo("other.png"));
+            Assert.That(sink.Commands[7].Value, Is.EqualTo(0), "value carries visibility for set");
+            Assert.That(sink.Commands[9].Ordinal, Is.EqualTo(SimCommand.NoOrdinal), "clear is global");
+            Assert.That(sink.Commands[10].Ordinal, Is.EqualTo(SimCommand.NoOrdinal), "debug is global");
+        });
+    }
+
+    [Test]
+    public async Task PaintSticker_ListReadsTheRegistry_AndBadInputNeverReachesTheSink()
+    {
+        var (sink, handlers) = StickerHandlers();
+
+        var list = await handlers.PaintSticker("list");
+        Assert.Multiple(() =>
+        {
+            Assert.That(list.Ok, Is.True);
+            Assert.That(SimJson.Serialize(list.Data), Does.Contain("stickers").And.Contain("runtime"));
+            Assert.That(sink.Commands, Is.Empty, "list is a read, not a command");
+        });
+
+        var bad = new[]
+        {
+            await handlers.PaintSticker("place", "meow.png", "vessel", "Kitten-1", 7,
+                position: [0, 0, 0], normal: [0, 0, 0]),
+            await handlers.PaintSticker("place", "meow.png", "body", body: "Mun", lat: 91, lon: 0),
+            await handlers.PaintSticker("place", "meow.png", "hull", vessel_id: "Kitten-1"),
+            await handlers.PaintSticker("spray", "meow.png", aim: "eyeballs"),
+            await handlers.PaintSticker("spray", "meow.png", width: 0),
+            await handlers.PaintSticker("spray", "meow.png", brightness: 9),
+            await handlers.PaintSticker("set", id: 3, alpha: 0.5, depth: 1),
+            // roll and heading are two spellings of ONE knob: asking for both is ambiguous, and
+            // folding them before the count would have let this through and dropped heading.
+            await handlers.PaintSticker("set", id: 3, heading: 90, roll: 45),
+            await handlers.PaintSticker("set", alpha: 0.5),
+            await handlers.PaintSticker("remove"),
+            await handlers.PaintSticker("wat"),
+        };
+        Assert.Multiple(() =>
+        {
+            foreach (var envelope in bad)
+                Assert.That(envelope.Errno, Is.EqualTo("EINVAL"), envelope.Message);
+            Assert.That(sink.Commands, Is.Empty, "every rejection happened before the sink");
+        });
+
+        var off = new McpToolHandlers(new McpPresenters(new SnapshotStore(), sink), null, null, null);
+        Assert.That((await off.PaintSticker("list")).Errno, Is.EqualTo("EOPNOTSUPP"));
+    }
+
+    private static (RecordingSink Sink, McpToolHandlers Handlers) StickerHandlers()
+    {
+        var sink = new RecordingSink();
+        var stickers = new StickerStore();
+        var presenters = new McpPresenters(new SnapshotStore(), sink, stickers: stickers);
+        return (sink, new McpToolHandlers(presenters, null, null, null, new TextureStore(), stickers));
+    }
+
+    private static void AssertSameCommand(SimCommand actual, SimCommand? expected)
+    {
+        Assert.That(expected, Is.Not.Null, "the line grammar must accept the reference line");
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual.Action, Is.EqualTo(expected!.Action));
+            Assert.That(actual.VesselId, Is.EqualTo(expected.VesselId));
+            Assert.That(actual.Ordinal, Is.EqualTo(expected.Ordinal));
+            Assert.That(actual.Token, Is.EqualTo(expected.Token));
+            Assert.That(actual.Aux, Is.EqualTo(expected.Aux));
+            Assert.That(actual.Values, Is.EqualTo(expected.Values));
+        });
     }
 
     private static SimSnapshot Snapshot(long sequence, int count) => new(

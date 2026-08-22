@@ -11,6 +11,7 @@ using gatOS.Logging;
 using gatOS.SimFs;
 using gatOS.SimFs.Audio;
 using gatOS.SimFs.Commands;
+using gatOS.SimFs.Paint.Stickers;
 using gatOS.SimFs.Snapshots;
 using gatOS.SimFs.Telemetry;
 using KSA;
@@ -47,6 +48,7 @@ internal sealed class TelemetrySampler
     private readonly AudioStore? _audio;
     private readonly ScheduleStore? _schedules;
     private readonly CameraDirector? _camera;
+    private readonly StickerStore? _stickers;
     private readonly bool _debugNamespace;
     private int _appliedRateHz;
     private IReadOnlyList<double> _warpSpeeds = [];
@@ -96,6 +98,11 @@ internal sealed class TelemetrySampler
     ///     audio's and the scheduler's do, and its captured follow target is pruned against the vessel
     ///     list this sampler just enumerated. Null when the camera surface is disabled.
     /// </param>
+    /// <param name="stickers">
+    ///     The sticker registry's read model — its pending <c>paint.sticker_placed</c> events fold
+    ///     into each snapshot the same way audio's and the camera's do. Null when stickers are
+    ///     disabled.
+    /// </param>
     /// <param name="debugNamespace">
     ///     <c>[control] debug_namespace</c>: gates the FX-editor sample (<c>/sim/debug/{engineplume,
     ///     plumetrail,clouds,terrain}</c>). Off ⇒ the families are never read and
@@ -105,7 +112,7 @@ internal sealed class TelemetrySampler
         PerfStat sampleStats, ValueStat allocStats, WeldManager welds, ThugLifeManager thugLife,
         IvaPhysicsManager iva, PerfStat ivaStats, AudioStore? audio = null,
         ScheduleStore? schedules = null, CameraDirector? camera = null, bool debugNamespace = false,
-        FaceFxManager? faceFx = null)
+        FaceFxManager? faceFx = null, StickerStore? stickers = null)
     {
         _faceFx = faceFx;
         _debugNamespace = debugNamespace;
@@ -123,6 +130,7 @@ internal sealed class TelemetrySampler
         _audio = audio;
         _schedules = schedules;
         _camera = camera;
+        _stickers = stickers;
     }
 
     /// <summary>
@@ -237,6 +245,10 @@ internal sealed class TelemetrySampler
         // track player lands; the queue is drained unconditionally so it can never pile up meanwhile).
         if (_camera?.DrainEvents() is { Count: > 0 } cameraEvents && _settings.Events)
             events = events.Count == 0 ? cameraEvents : [.. events, .. cameraEvents];
+        // Same for the sticker registry's paint.sticker_placed events (the only way a spray reports
+        // what it actually hit to a script that is not polling /sim/paint/stickers/last).
+        if (_stickers?.DrainEvents() is { Count: > 0 } stickerEvents && _settings.Events)
+            events = events.Count == 0 ? stickerEvents : [.. events, .. stickerEvents];
         var snapshot = new SimSnapshot(++_sequence, ut, warp, activeId, vessels, events,
             GameVersion(), _appliedRateHz, _health.Snapshot())
         {

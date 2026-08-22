@@ -60,7 +60,11 @@ tags:
   - name: control
     description: The single command endpoint and field writes.
   - name: textures
-    description: Custom ground-clutter texture uploads (the dedicated binary image routes).
+    description: >-
+      Custom ground-clutter texture uploads (the dedicated binary image routes). These are also the
+      upload routes for sticker decal images — a sticker draws an entry of this same store, so there
+      is no second binary surface. Everything else about stickers (`/sim/paint/stickers/*`) is an
+      ordinary field mirror under `/v1/fs/`.
   - name: meta
     description: Health and the live OpenAPI document.
 
@@ -503,6 +507,9 @@ paths:
         otherwise `404`). `kind` is the container sniffed from the magic bytes (`png`, `jpeg`,
         `bmp`, `hdr`, `dds`, `ktx`, `ktx2`, or `unknown`); `ready=false` marks an upload that has
         not committed yet. `/v1/paint/textures/files` is accepted as an alias.
+
+        This listing is also what sticker decals draw from: `/v1/fs/paint/stickers/place` and
+        `.../spray` name an image by the `name` column here.
       responses:
         "200":
           description: The image list.
@@ -617,7 +624,9 @@ paths:
       summary: Evict an uploaded image
       description: |
         The name frees immediately; any binding using it is unbound first, so the stock texture is
-        restored rather than left pointing at freed bytes.
+        restored rather than left pointing at freed bytes. Sticker decals drawing this image go
+        **dormant** (`live=0`, `texture=missing` in `/v1/fs/paint/stickers/status`) rather than being
+        deleted, and come back if the same name is re-uploaded.
       responses:
         "200": { $ref: "#/components/responses/CommandOk" }
         "404": { $ref: "#/components/responses/CommandError" }

@@ -1084,3 +1084,50 @@ game-free (`paint.texture_bind` / `texture_unbind` / `texture_clear`, all Frame 
 and the GPU follows on the next tick; the actions never touch Vulkan. `Dispose` restores every slot
 before anything of ours is destroyed. See
 [`plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`](../plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md).
+
+## Stickers — `paint.sticker_*` (Frame phase) {#stickers}
+
+Projected PNG decals on vehicles, terrain and ground clutter (`/sim/paint/stickers`). Like
+`paint.texture_*` and `debug.thug_life_*` the family is **vessel-agnostic**: `PaintManager.Execute`
+routes any action whose key starts with `paint.sticker_` straight to `StickerManager.Execute`
+**before** any vehicle resolution, because the anchor travels in the command's own `Aux`/`Ordinal`
+and the registry is keyed by sticker id, not by vessel. `VesselId` is therefore always empty. Gate
+string `control_enabled + paint stickers` (its own gate — neither paint runtime master applies);
+absent registry ⇒ `Unsupported` ("stickers are disabled").
+
+As with `thug_life`, **the write path below is small** — every action only edits the game-side
+registry's desired state, and no Vulkan call happens in the command drain. The deep coupling is the
+per-frame anchor composition and the recorded draw, which is **runtime coupling**, not a write
+command — see [`ksa-runtime-coupling.md#stickers-patch`](ksa-runtime-coupling.md#stickers-patch).
+
+| `/sim` path | action key | payload slots | actuator | Risk |
+|---|---|---|---|---|
+| `paint/stickers/place` | `paint.sticker_place` | `Token` = image name; `Aux` = `vessel <vessel_id> <part_iid>` or `body <body_id>`; `Values` = **12** doubles `[x y z, nx ny nz, rotation, w, h, d, alpha, brightness]`. A body anchor puts `(lat, lon, 0)` in the position slots, leaves the normal zero and reads `rotation` as a **heading** | `StickerManager.Place` → `Universe.CurrentSystem.Get` + `FindPart` (sub-parts included); registry insert at the smallest free id | Low (write); **High** (the draw it enables) |
+| `paint/stickers/spray` | `paint.sticker_spray` | `Token` = image name; `Aux` = `camera` \| `cursor`; `Values` = **7** doubles `[range, roll, w, h, d, alpha, brightness]`, where `d == -1` is the **"caller said nothing" sentinel** so the anchor kind's default (0.3 m vessel / 1 m body) is substituted once the ray reports what it hit. The picker's `RotationDeg` is the "reads upright from here" default and the caller's `roll` **adds** to it | `StickerManager.Spray` → `StickerPicker.TryPick` (parts first, terrain behind); registry insert | Low (write); **High** (the draw it enables) |
+| `paint/stickers/<id>/remove` | `paint.sticker_remove` | `Ordinal` = sticker id; `Value` = `1` (trigger) | `StickerManager.Remove(id)` — registry op, no KSA write | Low |
+| `paint/stickers/clear` | `paint.sticker_clear` | `Ordinal` = `-1` (global); `Value` = `1` (trigger) | `StickerManager.Clear()`; the patch and GPU objects tear down on the resulting `1 → 0` live edge | Low |
+| `paint/stickers/<id>/visible` | `paint.sticker_visible` | `Ordinal` = sticker id; `Value` = `0` \| `1` | `StickerEntry.Visible` (entry kept either way) | Low |
+| `paint/stickers/<id>/size` | `paint.sticker_size` | `Ordinal` = sticker id; `Values` = **2** doubles `[width, height]`, metres, each in `(0, 1000]` | `StickerEntry.{Width,Height}` | Low |
+| `paint/stickers/<id>/depth` | `paint.sticker_depth` | `Ordinal` = sticker id; `Value` = metres in `(0, 100]` | `StickerEntry.Depth` (the projection box's extent along the normal) | Low |
+| `paint/stickers/<id>/rotation` | `paint.sticker_rotation` | `Ordinal` = sticker id; `Value` = degrees, any finite (wraps game-side) | `StickerEntry.RotationDeg` — roll about the normal (vessel) or compass heading (body) | Low |
+| `paint/stickers/<id>/alpha` | `paint.sticker_alpha` | `Ordinal` = sticker id; `Value` = `[0, 1]` | `StickerEntry.Alpha` (multiplied into the sampled alpha) | Low |
+| `paint/stickers/<id>/brightness` | `paint.sticker_brightness` | `Ordinal` = sticker id; `Value` = `(0, 8]` | `StickerEntry.Brightness` (gain on the lighting term) | Low |
+| `paint/stickers/<id>/image` | `paint.sticker_image` | `Ordinal` = sticker id; `Token` = an uploaded image name | `StickerEntry.Image`; the binder hot-swaps the bindless slot on the next tick | Low |
+| `paint/stickers/debug` | `paint.sticker_debug` | `Ordinal` = `-1` (global); `Value` = `0` \| `1` | draws every decal as a magenta projection-box checker (`texId = 0xFFFFFFFF`) instead of its image — the visual proof that the box, the reverse-Z reconstruction and the ego matrices are right, with no art involved | Low |
+
+**Every argument is re-validated game-side against `StickerRules`**, even though the 9p line grammars
+already validated it: `POST /v1/command`, MQTT `gatos/command` and MCP `gatos.paint_sticker` author a
+`SimCommand` directly and never touch the parsers. Errnos: `EINVAL` (bad arity/range/anchor keyword,
+**and a full registry** — there is no `ENOSPC` in `CommandOutcome`, so the cap is reported like any
+other out-of-range argument, with the limit in the message), `ENOENT` (vessel/part/body/id gone, or a
+`spray` that hit nothing within `range`), `EOPNOTSUPP` (stickers disabled). There is deliberately no
+**position** leaf: the two anchor kinds have different arities, so a move is `cat <id>/spec` →
+edit → `> place`, which is also how the guest's save/restore script works.
+
+Every successful `place`/`spray` publishes the `last` line and emits a `paint.sticker_placed` event
+(vessel-anchored placements carry the vessel id) so a script that is not polling still learns what
+the ray hit. Entries are **runtime-only** — never persisted, dropped at unload
+(`PaintManager.Dispose` → `StickerManager.Dispose`). Anchors verified `2026-08-22` against
+`2026.8.19.5261`; **the live draw is unvalidated** — see the stickers card in `docs/VALIDATION.md`.
+Pipeline, shader and GLSL-layout assumptions:
+[`ksa-assets-and-versions.md`](ksa-assets-and-versions.md).

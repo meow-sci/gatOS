@@ -150,6 +150,9 @@ by the write itself, mid-stream — not by a command):
 | `paint_texture_max_files` | `32` | uploaded-image count cap (`ENOSPC`; clamped 1..256) |
 | `paint_texture_max_bindings` | `32` | simultaneous stock-texture overrides (`ENOSPC`; clamped 1..256) |
 | `paint_texture_max_dimension` | `4096` | longest GPU edge kept for an override; a larger upload is **downscaled, not rejected** (clamped 16..16384) |
+| `paint_stickers_enabled` | `true` | serve `/sim/paint/stickers` (*Paint*) — user images projected onto vehicles, terrain and ground clutter; `false` removes the subtree entirely and answers every `paint.sticker_*` action `EOPNOTSUPP`. It also needs `paint_textures_enabled`, because a sticker draws an image from that store. No runtime master: idle cost is one emptiness branch per frame |
+| `paint_stickers_max_count` | `256` | simultaneous sticker decals; the registry refuses past it (`EINVAL`, the cap in the message — see *Stickers* below; clamped 1..4096) |
+| `paint_stickers_max_view_distance_m` | `5000.0` | metres past which a sticker is not drawn at all (clamped 10..1e6) |
 | `audio_enabled` | `true` | serve `/sim/audio` (§3.9) — userland audio playback; `false` removes the surface (and the `/v1/audio` routes) entirely |
 | `audio_max_clip_bytes` | `16777216` | per-clip upload cap (`EFBIG` past it; clamped 4 KiB..256 MiB) |
 | `audio_max_total_bytes` | `67108864` | store-wide byte cap (`ENOSPC`; clamped ≥ clip cap..1 GiB) |
@@ -577,6 +580,13 @@ Playback completion emits **`audio.finished`** (global; `detail` = `<id> <clip> 
 reason ∈ `ended` (played out or hit `end=`) | `stopped` (explicit `stop`) | `replaced` (its `id=`
 was reused)) — so a program can `grep -m1` for completion instead of polling `audio/status` (§3.9).
 Audio events ride the next telemetry sample, so they honor the `telemetry_events` gate.
+
+A successful sticker placement emits **`paint.sticker_placed`** (*Stickers*; `vessel` = the anchor
+vessel id for a vessel anchor and **omitted** for a body anchor). `detail` is the same line
+`/sim/paint/stickers/last` publishes: `<id> vessel <vessel> part <iid> <placed|hit <d>m>` or
+`<id> body <body> <lat> <lon> <placed|hit <d>m>` — `placed` for a `place`, `hit <d>m` for a `spray`.
+It is the only way a `spray` reports what it actually hit to a program that is not polling
+`stickers/last`. Like audio's, these ride the next telemetry sample and honor `telemetry_events`.
 
 The **schedule registry** (§3.10) emits five global types, all with `vessel` omitted:
 
@@ -1523,6 +1533,18 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `paint.texture_bind` | — | token = stock texture id; aux = uploaded file name; value `0` = `faithful` (default), `1` = `raw` | Frame | `paint/textures/bind` | vessel-agnostic; **its own gate**, `control_enabled + paint textures store` (`EOPNOTSUPP` when the store is off) — not either paint master |
 | `paint.texture_unbind` | — | token = stock texture id | Frame | `paint/textures/unbind` | vessel-agnostic; the token `all` normalizes to `paint.texture_clear` |
 | `paint.texture_clear` | — | value `1`; **no** token | Frame | `paint/textures/clear`, `paint/textures/unbind` (`all`) | vessel-agnostic; global teardown — restores every stock texture, keeps the uploads |
+| `paint.sticker_place` | — | token = uploaded image; aux = `vessel <vessel_id> <part_iid>` \| `body <body_id>`; values (12) `[x,y,z, nx,ny,nz, rotation, w, h, d, alpha, brightness]` — a body anchor puts `(lat, lon, 0)` in the position slots, leaves the normal zero and reads `rotation` as a heading | Frame | `paint/stickers/place` | vessel-agnostic; **its own gate**, `control_enabled + paint stickers` (`EOPNOTSUPP` when the subtree is off) — not either paint master and not the textures gate. `ENOENT` when the vessel/part/body is gone |
+| `paint.sticker_spray` | — | token = uploaded image; aux = `camera` \| `cursor`; values (7) `[range, roll, w, h, d, alpha, brightness]` — `d = -1` is the "caller said nothing" sentinel, replaced game-side by the anchor kind's default | Frame | `paint/stickers/spray` | vessel-agnostic; `roll` **adds to** the picker's upright default; `ENOENT` when the ray hit nothing within `range` |
+| `paint.sticker_remove` | sticker id | value `1` | Frame | `paint/stickers/<id>/remove` | vessel-agnostic; id in `ordinal`; `ENOENT` when it is already gone |
+| `paint.sticker_clear` | — | value `1` | Frame | `paint/stickers/clear` | vessel-agnostic; removes every sticker, keeps the uploads |
+| `paint.sticker_visible` | sticker id | value `0`/`1` | Frame | `paint/stickers/<id>/visible` | vessel-agnostic; `0` hides without removing |
+| `paint.sticker_size` | sticker id | values `[w, h]` metres, each `(0, 1000]` | Frame | `paint/stickers/<id>/size` | vessel-agnostic |
+| `paint.sticker_depth` | sticker id | value metres, `(0, 100]` | Frame | `paint/stickers/<id>/depth` | vessel-agnostic; exclusive lower bound, so the leaf parses it against the sticker rules rather than a fixed archetype |
+| `paint.sticker_rotation` | sticker id | value degrees (roll on a vessel anchor, heading on a body anchor), any finite | Frame | `paint/stickers/<id>/rotation` | vessel-agnostic |
+| `paint.sticker_alpha` | sticker id | value `[0, 1]` | Frame | `paint/stickers/<id>/alpha` | vessel-agnostic |
+| `paint.sticker_brightness` | sticker id | value `(0, 8]` | Frame | `paint/stickers/<id>/brightness` | vessel-agnostic; exclusive bounds, parsed against the sticker rules |
+| `paint.sticker_image` | sticker id | token = uploaded image name | Frame | `paint/stickers/<id>/image` | vessel-agnostic; hot-swaps the image under this sticker |
+| `paint.sticker_debug` | — | value `0`/`1` | Frame | `paint/stickers/debug` | vessel-agnostic; **global** development aid — draws every sticker as a magenta checker of its projection box instead of its image |
 
 ### 5.2 Writing over each transport
 
@@ -1561,7 +1583,9 @@ Response `200 {"outcome":"ok"}`, or `{ "errno": "...", "message": "..." }` with 
 > present **and to be a JSON string**; omitting it, or sending `null`, is `400 EINVAL`
 > `missing 'vessel_id'`. Actions that do not address a vehicle at all — the whole `camera.*`,
 > `schedule.*` and `audio.*` families, plus `debug.warp`, `debug.weld_clear`, `debug.thug_life_*`,
-> `debug.iva_*` and the `debug.*` FX-editor actions — take the **empty string**, which is what the
+> `debug.iva_*`, the `debug.*` FX-editor actions and the two globally addressed paint families
+> (`paint.texture_*`, which names a stock texture in `token`, and `paint.sticker_*`, which names a
+> registry id in `ordinal`) — take the **empty string**, which is what the
 > `/sim` control files themselves author and what `examples/sdk-ts` sends:
 > ```json
 > { "vessel_id": "", "action": "camera.fov", "value": 24 }
@@ -1699,6 +1723,19 @@ curl -X POST --data 'EarthGrassClutterDiffuse rock.png' "$H/fs/paint/textures/bi
 curl -s "$H/fs/paint/textures/applied"                                  # …and what reached the GPU
 ```
 
+**Stickers add no dedicated routes either.** Every `/sim/paint/stickers` leaf — `place`, `spray`,
+`clear`, `debug`, the listings and every `<id>/` knob — is an ordinary field mirror at
+`GET|POST /v1/fs/paint/stickers/<leaf>` (or `POST /v1/command` with the canonical action), because
+sticker writes are all short UTF-8 lines. Sticker **images** are uploaded through the texture routes
+above, since a sticker's image is an entry of that same store:
+
+```sh
+curl -T meow.png "$H/paint/texture/file/meow.png"                       # the only binary step
+curl -X POST --data 'meow.png w=2 h=2' "$H/fs/paint/stickers/spray"
+curl -s "$H/fs/paint/stickers/last"
+curl -X POST --data '0.4' "$H/fs/paint/stickers/0/alpha"
+```
+
 The **schedule** (§3.10) and **camera** (§3.11) surfaces add **no dedicated routes at all** — every
 one of their leaves is an ordinary VFS node, so the `/v1/fs/<path>` mirror and `POST /v1/command`
 already reach all of it. Note the path spelling: the segment after `/v1/fs/` is the `/sim`-relative
@@ -1797,8 +1834,8 @@ material > individual default > shared material > shared default > stock. The cu
 EVA material names are `body[.n]`, `fur[.n]`, `helmet[.n]`, `visor[.n]`, and `mmu[.n]`; absent
 attachments do not appear. Sclera/cosmetics and part glass remain stock.
 
-All actions above are Frame phase and use the ordinary `control_enabled` gate (the texture actions
-below carry their own). Visual by-id operations do not require the target to be the controlled
+All actions above are Frame phase and use the ordinary `control_enabled` gate (the texture and
+sticker actions below carry their own). Visual by-id operations do not require the target to be the controlled
 vessel. Invalid flags/tokens/non-finite or out-of-range
 RGB fail `EINVAL`; missing live targets fail `ENOENT`; a shader-prefix conflict returns `EBUSY`;
 incompatible audited render internals return `EOPNOTSUPP` and leave stock rendering active.
@@ -1887,3 +1924,123 @@ HTTP mirrors every leaf at `GET|POST /v1/fs/paint/textures/<leaf>` except the bi
 which have dedicated upload routes (§7) — one of the two transport-parity exceptions, alongside audio
 clips. MQTT publishes retained `gatos/sim/paint/textures/<leaf>` and accepts writes at `.../set`;
 there is **no** binary upload over MQTT, the same documented exception audio takes.
+
+---
+
+## Stickers (`/sim/paint/stickers`)
+
+Spray your own PNGs onto vehicles, terrain and ground clutter. A sticker is a **projected decal**: it
+sticks to the rocket as it flies and to the ground as the planet turns, until you remove it. The
+image comes from the **same** upload store the clutter overrides use (`/sim/paint/textures/file/`) —
+there is no second upload surface — and the subtree therefore exists only when **both**
+`paint_stickers_enabled` and `paint_textures_enabled` are true (both default `true`). Like textures
+there is **no runtime master**: with nothing placed the whole feature is one emptiness branch per
+frame, no Harmony patch, no pipeline, no descriptor pool and no GPU image.
+
+```sh
+cat meow.png > /sim/paint/textures/file/meow.png            # upload once (commits on close)
+echo 'meow.png w=2 h=2' > /sim/paint/stickers/spray         # 2 m decal where the camera is looking
+cat /sim/paint/stickers/last                                # 0 vessel Kitten-1 part 41 hit 8.31m
+cat /sim/paint/stickers/status                              # 0 meow.png vessel Kitten-1 live=1 texture=ready
+echo 0.4 > /sim/paint/stickers/0/alpha                      # fade it
+echo 'meow.png body Mun 12.03 -41.88 heading=90 w=5 h=5' \
+  > /sim/paint/stickers/place                               # …or place one geodetically
+echo 1 > /sim/paint/stickers/0/remove                       # one sticker
+echo 1 > /sim/paint/stickers/clear                          # all of them
+```
+
+| Path | R/W | Value / semantics | Action |
+|---|---|---|---|
+| `paint/stickers/help` | R | the console readme: both grammars, every knob with its default and range, the anchor semantics, and the image workflow | — |
+| `paint/stickers/info` | R | `enabled=1 stickers=<n> stickers_max=<n> live=<n> images=<n> vram_bytes=<n> patch=<0\|1> renderer=<idle\|active\|degraded> max_view_distance_m=<m>`. `patch` is the **lazy render hook**: `1` only while ≥ 1 sticker is live | — |
+| `paint/stickers/status` | R | one row per sticker, stable column order: `<id> <image> <vessel\|body> <target> live=<0\|1> texture=<ready\|missing\|uploading\|failed>` | — |
+| `paint/stickers/last` | R | the outcome of the last `place`/`spray`: `<id> body <body> <lat> <lon> placed`, `<id> vessel <vessel> part <iid> placed`, `… hit <d>m` for a `spray`, or `no hit within <range>m` when the ray missed | — |
+| `paint/stickers/last_error` | R | the renderer/texture fault text; empty when healthy (the same string `info`'s `renderer=degraded` refers to) | — |
+| `paint/stickers/count` | R | how many stickers exist (dormant ones included) | — |
+| `paint/stickers/place` | R/W | write `<image> vessel <vessel_id> <part_iid> <x> <y> <z> <nx> <ny> <nz> [roll=] [w=] [h=] [d=] [alpha=] [brightness=]` or `<image> body <body_id> <lat> <lon> [heading=] [w=] [h=] [d=] [alpha=] [brightness=]`; read = empty | `paint.sticker_place` |
+| `paint/stickers/spray` | R/W | write `<image> [aim=camera\|cursor] [range=] [roll=] [w=] [h=] [d=] [alpha=] [brightness=]`; read = empty | `paint.sticker_spray` |
+| `paint/stickers/clear` | R/W trigger | write `1`; removes every sticker (the uploads stay) | `paint.sticker_clear` |
+| `paint/stickers/debug` | R/W flag | write `1` to draw **every** sticker as a magenta 8×8 checker of its projection box instead of its image — the visual proof that the box, the reverse-Z depth reconstruction and the anchor matrices are right, with no art involved. Global, not per sticker | `paint.sticker_debug` |
+| `paint/stickers/<id>/spec` | R | the **write-compatible `place` line** for this sticker; `cat`ting it into `place` recreates it (as a new id). Body: `<image> body <body> <lat> <lon> heading=<deg> w= h= d= alpha= brightness=`. Vessel: `<image> vessel <vessel> <iid> <x> <y> <z> <nx> <ny> <nz> roll=<deg> w= h= d= alpha= brightness=` | — |
+| `paint/stickers/<id>/anchor` | R | `vessel <vessel_id> <part_iid> <x> <y> <z> <nx> <ny> <nz>` (part-local metres) or `body <body_id> <lat> <lon>` (degrees) | — |
+| `paint/stickers/<id>/live` | R | `1` while the anchor resolves **and** the image is resident on the GPU — the only state that draws | — |
+| `paint/stickers/<id>/image` | R/W | the uploaded image this sticker draws; write another `/sim/paint/textures/file/` name to hot-swap it | `paint.sticker_image` |
+| `paint/stickers/<id>/visible` | R/W flag | `0` hides the sticker without removing it (the entry, and its `spec`, are kept) | `paint.sticker_visible` |
+| `paint/stickers/<id>/size` | R/W | `"<w> <h>"` in metres, each in `(0, 1000]`; default `1 1` | `paint.sticker_size` |
+| `paint/stickers/<id>/depth` | R/W | projection-box depth along the normal, metres, `(0, 100]`; default `0.3` on a vessel anchor and `1` on a body anchor | `paint.sticker_depth` |
+| `paint/stickers/<id>/rotation` | R/W | degrees — roll about the surface normal (vessel anchor) or compass heading (body anchor); any finite value, it wraps game-side; default `0` | `paint.sticker_rotation` |
+| `paint/stickers/<id>/alpha` | R/W | opacity, `[0, 1]`; default `1` | `paint.sticker_alpha` |
+| `paint/stickers/<id>/brightness` | R/W | exposure multiplier on the lighting term, `(0, 8]`; default `1` | `paint.sticker_brightness` |
+| `paint/stickers/<id>/remove` | R/W trigger | write `1`; removes this sticker and frees its id | `paint.sticker_remove` |
+
+`place`, `spray`, `clear` and `<id>/remove` exist only when the command sink is wired. Every read is
+live (the game-side manager publishes between telemetry snapshots), so none of it is snapshot-memoized.
+Ids are the **smallest free slot** at create and are reused after `remove`/`clear`, so the numbering
+tracks what is live. `<id>` directories appear and vanish with the registry: a walk to a removed id
+is `ENOENT`, and so is every leaf under one that vanishes while open. A position edit is deliberately
+**not** a leaf — the two anchor kinds have different arities — so re-`place` from `spec` instead.
+
+**Anchors.** A `vessel` anchor is stored in the anchor **part's local frame** and re-resolved by the
+part's stable `instance_id` every frame, so the decal follows the part through staging, gimballing and
+docking (`/sim/vessels/by-id/<id>/parts/<n>/instance_id`; **sub-parts count**, and a `spray` hit
+normally names a sub-part). A `body` anchor is stored geodetically and rides the planet's rotation
+for free. Nothing is ever stored in ecliptic or camera-relative coordinates, which is what makes both
+kinds survive bubble-frame switches, floating-origin shifts and time warp.
+
+**Dormancy, never deletion.** A vessel that despawns, a part that stages away, or an image evicted
+from `/sim/paint/textures/file/` makes its sticker **dormant** — `live=0`, `texture=missing`, nothing
+drawn — but the entry is kept, because the vessel can come back and the image can be re-uploaded.
+Only `remove`, `clear` and mod unload delete entries, so `<id>/spec` stays readable and a guest-side
+save/restore script keeps working. Re-uploading the same file name **hot-swaps** the image under every
+sticker using it on the next frame.
+
+**Aiming (`spray` only).** `aim=camera` (the default) fires down the main camera's forward axis, which
+works headless and lets `/sim/camera` point it for you; `aim=cursor` fires down the mouse cursor's
+picking ray. The ray tests vehicle parts first with KSA's own mesh-precise raycast, then marches the
+terrain behind them; nothing hit within `range=` is `ENOENT` and `last` records `no hit within <r>m`.
+Ground clutter cannot be *aimed* at — it exists only on the GPU — but it is very much *painted*,
+because the projection box covers whatever falls inside it. `spray`'s `roll=` **adds to** the
+"reads upright from here" rotation the picker computes rather than replacing it, and an omitted `d=`
+takes the anchor kind's default once the ray has said what it hit.
+
+**What the renderer does, and what it does not.** Stickers draw in the **main viewport only** — crew
+portraits and any secondary viewport resolve their own targets with their own cameras and are
+untouched. The decal is projected onto whatever opaque geometry is inside its box, which is why it
+conforms to hull curvature, tessellated terrain and ground clutter alike; at grazing angles it fades
+out and then stops drawing (a projected decal stretches without bound there). Its lighting is an
+**approximation** — a sun lambert term plus a small ambient from the nearby body's lit colour, scaled
+by `brightness` — not the receiving surface's own shading, so it has no shadows and no aerial
+perspective. Past `paint_stickers_max_view_distance_m` (default 5000) a sticker is not drawn at all.
+`/sim/display` captures stickers, because the pass runs before the display capture reads the colour
+image. Nothing is persisted: every sticker is dropped at mod unload.
+
+Errnos: `EINVAL` a malformed, duplicate-keyed, unknown-keyed or out-of-range token in `place`/`spray`,
+a bad scalar on a knob, an image name the upload store would not accept, **or a full registry**
+(`paint_stickers_max_count`; there is no `ENOSPC` in the command outcome vocabulary, so the cap
+reports as `EINVAL` with the limit in the message); `ENOENT` an unknown sticker id, a vessel/part/body
+that is gone, or a `spray` that hit nothing. Every argument is re-validated game-side, because
+`POST /v1/command`, MQTT `gatos/command` and MCP author a command directly and never touch the
+line grammars.
+
+All twelve `paint.sticker_*` actions are Frame phase with a Global target and their **own** gate —
+`control_enabled + paint stickers`, not either paint master and not the textures gate; with the
+subtree absent every one of them answers `EOPNOTSUPP`. A successful `place`/`spray` emits a
+`paint.sticker_placed` event (§3.5).
+
+HTTP mirrors **every** sticker leaf at `GET|POST /v1/fs/paint/stickers/<leaf>` — there are no
+dedicated sticker routes, because images ride the existing `PUT|POST|DELETE
+/v1/paint/texture/file/{name}` upload routes (§7). MQTT publishes retained
+`gatos/sim/paint/stickers/<leaf>` and accepts writes at `.../set`, with the same no-binary-upload
+exception textures and audio clips take.
+
+**Saving stickers.** v1 keeps nothing across a session, but `<id>/spec` is a `place` line and every
+image is a plain file, so the guest's own disk is the save game:
+
+```sh
+mkdir -p ~/stickers/img
+for f in /sim/paint/textures/file/*; do cp "$f" ~/stickers/img/; done
+for d in /sim/paint/stickers/[0-9]*; do cat "$d/spec"; done > ~/stickers/specs
+# …and to restore, once /sim is mounted again:
+for f in ~/stickers/img/*; do cat "$f" > "/sim/paint/textures/file/$(basename "$f")"; done
+while read -r line; do echo "$line" > /sim/paint/stickers/place; done < ~/stickers/specs
+```

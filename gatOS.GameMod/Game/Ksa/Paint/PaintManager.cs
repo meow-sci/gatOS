@@ -23,11 +23,14 @@ internal sealed class PaintManager : IDisposable
     private bool _cleanupPatches;
 
     private readonly ClutterTextureBridge? _textures;
+    private readonly Stickers.StickerManager? _stickers;
 
-    internal PaintManager(PaintStore store, ClutterTextureBridge? textures = null)
+    internal PaintManager(PaintStore store, ClutterTextureBridge? textures = null,
+        Stickers.StickerManager? stickers = null)
     {
         _store = store;
         _textures = textures;
+        _stickers = stickers;
         PaintRuntime.Current = this;
     }
 
@@ -41,6 +44,13 @@ internal sealed class PaintManager : IDisposable
             return _textures is { } bridge
                 ? bridge.Execute(command)
                 : new CommandResult(CommandOutcome.Unsupported, "custom clutter textures are disabled");
+
+        // Stickers are registry-keyed and vessel-agnostic (the anchor lives in the command's own
+        // Aux/Ordinal), so they route before any vehicle resolution too.
+        if (command.Action.StartsWith("paint.sticker_", StringComparison.Ordinal))
+            return _stickers is { } stickers
+                ? stickers.Execute(command)
+                : new CommandResult(CommandOutcome.Unsupported, "stickers are disabled");
 
         if (!Validate(command, out var color, out var error))
             return new CommandResult(CommandOutcome.Invalid, error);
@@ -108,6 +118,8 @@ internal sealed class PaintManager : IDisposable
         if (_cleanupPatches) RemovePatches();
         // Independent of both paint masters, and a no-op until something is actually bound.
         _textures?.Tick();
+        // Likewise: one IsEmpty branch per frame until a sticker exists.
+        _stickers?.Tick();
         var state = _store.Current;
         if (!state.PartsEnabled && !state.KittensEnabled) return;
         if (state.PartsEnabled) RebuildPartIndex();
@@ -325,6 +337,7 @@ internal sealed class PaintManager : IDisposable
 
     public void Dispose()
     {
+        _stickers?.Dispose();
         _textures?.Dispose();
         PartsArmed = false;
         RemovePatches();

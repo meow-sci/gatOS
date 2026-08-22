@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using gatOS.NineP.Protocol;
@@ -7,6 +8,7 @@ using gatOS.SimFs;
 using gatOS.SimFs.Audio;
 using gatOS.SimFs.Camera;
 using gatOS.SimFs.Paint;
+using gatOS.SimFs.Paint.Stickers;
 using gatOS.SimFs.Commands;
 using ModelContextProtocol.Protocol;
 
@@ -17,16 +19,18 @@ internal sealed class McpToolHandlers
     private readonly McpPresenters _presenters;
     private readonly AudioStore? _audio;
     private readonly TextureStore? _textures;
+    private readonly StickerStore? _stickers;
     private readonly CameraStore? _camera;
     private readonly ScheduleStore? _schedules;
 
-    internal McpToolHandlers(McpPresenters presenters, AudioStore? audio, CameraStore? camera, ScheduleStore? schedules, TextureStore? textures = null)
+    internal McpToolHandlers(McpPresenters presenters, AudioStore? audio, CameraStore? camera, ScheduleStore? schedules, TextureStore? textures = null, StickerStore? stickers = null)
     {
         _presenters = presenters;
         _audio = audio;
         _camera = camera;
         _schedules = schedules;
         _textures = textures;
+        _stickers = stickers;
     }
 
     public McpEnvelope GetWorld([Description("summary or full")] string detail = "summary") => _presenters.GetWorld(detail);
@@ -46,7 +50,7 @@ internal sealed class McpToolHandlers
         [Description("Opaque next_cursor from an earlier gatos.list_kittens result")] string? cursor = null) => _presenters.ListKittens(limit, cursor);
     public McpEnvelope GetKitten([Description("Raw id of a vessel whose is_kitten is true")] string id,
         [Description("Omit for all, or choose flight, orbit, environment, propulsion, resources, power, control, modules, encounters, parts, paint, all")] IReadOnlyList<string>? include = null) => _presenters.GetVessel(id, include, true);
-    public McpEnvelope GetRuntimeState([Description("camera, schedules, audio, paint, paint_textures, welds, thug_life, face_fx, iva, engine_plume, plume_trail, clouds, or terrain")] string feature) => _presenters.GetRuntimeState(feature);
+    public McpEnvelope GetRuntimeState([Description("camera, schedules, audio, paint, paint_textures, paint_stickers, welds, thug_life, face_fx, iva, engine_plume, plume_trail, clouds, or terrain")] string feature) => _presenters.GetRuntimeState(feature);
     public McpEnvelope GetCapabilities() => _presenters.GetCapabilities();
     public Task<McpEnvelope> Wait([Description("Return after snapshot_sequence becomes greater than this value")] long? after_sequence = null,
         [Description("Return on the next event with this exact type")] string? event_type = null,
@@ -190,6 +194,244 @@ internal sealed class McpToolHandlers
         {
             return ToolResult(StoreFailure(ex, s.Sequence, s.UtSeconds));
         }
+    }
+
+    /// <summary>
+    ///     <c>/sim/paint/stickers</c> as one operation-shaped tool. Every mutating operation authors
+    ///     the same canonical <c>paint.sticker_*</c> command the 9p line grammars build, and every
+    ///     argument is checked against <see cref="StickerRules"/> first so a bad call fails here with
+    ///     an <c>EINVAL</c> envelope instead of reaching the game thread.
+    /// </summary>
+    public Task<McpEnvelope> PaintSticker(
+        [Description("place, spray, set, remove, clear, list, or debug")] string operation,
+        [Description("Uploaded image name from gatos.paint_texture; required by place and spray, and by set when re-pointing a sticker at another image")] string? image = null,
+        [Description("place anchor frame: vessel (part-local metres) or body (geodetic degrees); inferred from vessel_id/body when omitted")] string? anchor = null,
+        [Description("Raw vessel id for a vessel anchor")] string? vessel_id = null,
+        [Description("Anchor part or sub-part instance_id, from gatos.get_vessel(include:[\"parts\"])")] long part_iid = 0,
+        [Description("Vessel anchor position [x,y,z] in part-local metres")] IReadOnlyList<double>? position = null,
+        [Description("Vessel anchor outward surface normal [x,y,z]; finite and non-zero")] IReadOnlyList<double>? normal = null,
+        [Description("Raw celestial body id for a body anchor")] string? body = null,
+        [Description("Body anchor geodetic latitude in degrees, -90..90")] double? lat = null,
+        [Description("Body anchor geodetic longitude in degrees, -360..360")] double? lon = null,
+        [Description("Body anchor compass heading in degrees; also the rotation payload for set")] double? heading = null,
+        [Description("Vessel anchor roll about the normal in degrees; on spray it adds to the upright default; also the rotation payload for set")] double? roll = null,
+        [Description("Decal width in metres, 0 < width <= 1000; defaults to 1")] double? width = null,
+        [Description("Decal height in metres, 0 < height <= 1000; defaults to 1")] double? height = null,
+        [Description("Projection box depth in metres, 0 < depth <= 100; defaults to 0.3 on a vessel anchor and 1 on a body anchor")] double? depth = null,
+        [Description("Opacity 0..1; defaults to 1")] double? alpha = null,
+        [Description("Exposure multiplier, 0 < brightness <= 8; defaults to 1")] double? brightness = null,
+        [Description("spray aim: camera (the main camera's forward axis, headless-friendly) or cursor")] string aim = "camera",
+        [Description("spray ray length in metres, 0 < range <= 1e6; defaults to 2000")] double? range = null,
+        [Description("Sticker id from gatos.paint_sticker(operation:\"list\"); required by set and remove")] int id = -1,
+        [Description("Flag 0|1: sticker visibility for set, the projection-box checker for debug")] double? value = null,
+        CancellationToken cancellationToken = default)
+    {
+        var s = _presenters.Current;
+        if (_stickers is null) return Task.FromResult(Unsupported("stickers", s.Sequence, s.UtSeconds));
+        switch (operation.ToLowerInvariant())
+        {
+            case "list":
+                return Task.FromResult(McpEnvelope.Success(
+                    new { stickers = _stickers.Stickers, runtime = _stickers.Runtime, last = _stickers.Last },
+                    s.Sequence, s.UtSeconds));
+            case "clear":
+                return _presenters.SubmitAsync(new(SimActions.PaintStickerClear, Value: 1), cancellationToken);
+            case "debug":
+                return _presenters.SubmitAsync(new(SimActions.PaintStickerDebug, Value: value ?? 1), cancellationToken);
+            case "remove":
+                return id < 0
+                    ? StickerInvalid("remove needs the sticker id")
+                    : _presenters.SubmitAsync(new(SimActions.PaintStickerRemove, Ordinal: id, Value: 1), cancellationToken);
+            case "place":
+                return PlaceSticker(image, anchor, vessel_id, part_iid, position, normal, body, lat, lon,
+                    heading, roll, width, height, depth, alpha, brightness, cancellationToken);
+            case "spray":
+                return SpraySticker(image, aim, range, roll, width, height, depth, alpha, brightness,
+                    cancellationToken);
+            case "set":
+                return SetSticker(id, image, heading, roll, width, height, depth, alpha, brightness, value,
+                    cancellationToken);
+            default:
+                return StickerInvalid("operation must be place, spray, set, remove, clear, list, or debug");
+        }
+    }
+
+    /// <summary>
+    ///     Builds the 12-slot <c>paint.sticker_place</c> payload exactly as
+    ///     <see cref="StickerCommands.ParsePlace"/> does: <c>Token</c> = image,
+    ///     <c>Aux</c> = the anchor descriptor, <c>Values</c> = <c>[x y z, nx ny nz, rotation, w, h, d,
+    ///     alpha, brightness]</c> (a body anchor puts <c>lat, lon, 0</c> in the position slots, leaves
+    ///     the normal zero and reads the rotation slot as a heading).
+    /// </summary>
+    private Task<McpEnvelope> PlaceSticker(string? image, string? anchor, string? vesselId, long partIid,
+        IReadOnlyList<double>? position, IReadOnlyList<double>? normal, string? body, double? lat, double? lon,
+        double? heading, double? roll, double? width, double? height, double? depth, double? alpha,
+        double? brightness, CancellationToken ct)
+    {
+        if (image is null || !StickerRules.IsValidImage(image))
+            return StickerInvalid("place needs the name of an image uploaded through gatos.paint_texture");
+        var kind = (anchor ?? (body is null ? StickerCommands.VesselAnchor : StickerCommands.BodyAnchor))
+            .ToLowerInvariant();
+        var values = new double[12];
+        if (kind == StickerCommands.BodyAnchor)
+        {
+            if (body is null || !StickerRules.IsValidTarget(body))
+                return StickerInvalid("a body anchor needs body=<celestial id>");
+            if (lat is not { } latitude || !StickerRules.IsValidLatitude(latitude))
+                return StickerInvalid("lat must be in [-90, 90] degrees");
+            if (lon is not { } longitude || !StickerRules.IsValidLongitude(longitude))
+                return StickerInvalid("lon must be in [-360, 360] degrees");
+            values[0] = latitude;
+            values[1] = longitude;
+            if (!TryStickerTail(heading, width, height, depth, alpha, brightness,
+                    StickerRules.DefaultDepthBody, values, 6, out var bodyError))
+                return StickerInvalid(bodyError);
+            return _presenters.SubmitAsync(
+                new(SimActions.PaintStickerPlace, Values: values, Token: image,
+                    Aux: $"{StickerCommands.BodyAnchor} {body}"), ct);
+        }
+
+        if (kind != StickerCommands.VesselAnchor)
+            return StickerInvalid($"anchor must be '{StickerCommands.VesselAnchor}' or '{StickerCommands.BodyAnchor}'");
+        if (vesselId is null || !StickerRules.IsValidTarget(vesselId))
+            return StickerInvalid("a vessel anchor needs vessel_id=<vessel id>");
+        if (partIid is < 0 or > uint.MaxValue)
+            return StickerInvalid("part_iid must be a part or sub-part instance_id");
+        if (position is not { Count: 3 } p || !StickerRules.IsValidPosition(p[0])
+            || !StickerRules.IsValidPosition(p[1]) || !StickerRules.IsValidPosition(p[2]))
+            return StickerInvalid("position must be three finite part-local metres [x,y,z]");
+        if (normal is not { Count: 3 } n || !StickerRules.IsValidNormal(n[0], n[1], n[2]))
+            return StickerInvalid("normal must be a finite, non-zero [x,y,z]");
+        for (var i = 0; i < 3; i++)
+        {
+            values[i] = p[i];
+            values[3 + i] = n[i];
+        }
+
+        if (!TryStickerTail(roll, width, height, depth, alpha, brightness,
+                StickerRules.DefaultDepthVessel, values, 6, out var error))
+            return StickerInvalid(error);
+        return _presenters.SubmitAsync(
+            new(SimActions.PaintStickerPlace, Values: values, Token: image,
+                Aux: $"{StickerCommands.VesselAnchor} {vesselId} {partIid.ToString(CultureInfo.InvariantCulture)}"), ct);
+    }
+
+    /// <summary>
+    ///     Builds the 7-slot <c>paint.sticker_spray</c> payload exactly as
+    ///     <see cref="StickerCommands.ParseSpray"/> does: <c>Values</c> = <c>[range, roll, w, h, d,
+    ///     alpha, brightness]</c> with <c>d</c> left at the <c>-1</c> sentinel when the caller passed
+    ///     no depth, so the game side substitutes the anchor kind's default once the ray reports what
+    ///     it hit.
+    /// </summary>
+    private Task<McpEnvelope> SpraySticker(string? image, string aim, double? range, double? roll, double? width,
+        double? height, double? depth, double? alpha, double? brightness, CancellationToken ct)
+    {
+        if (image is null || !StickerRules.IsValidImage(image))
+            return StickerInvalid("spray needs the name of an image uploaded through gatos.paint_texture");
+        if (!StickerRules.TryParseAim(aim.ToLowerInvariant(), out var cursor))
+            return StickerInvalid($"aim must be '{StickerRules.AimCamera}' or '{StickerRules.AimCursor}'");
+        var rayLength = range ?? StickerRules.DefaultRange;
+        if (!StickerRules.IsValidRange(rayLength))
+            return StickerInvalid("range must be in (0, 1e6] metres");
+        var values = new double[7];
+        values[0] = rayLength;
+        if (!TryStickerTail(roll, width, height, depth, alpha, brightness,
+                StickerCommands.DepthUnset, values, 1, out var error))
+            return StickerInvalid(error);
+        return _presenters.SubmitAsync(
+            new(SimActions.PaintStickerSpray, Values: values, Token: image,
+                Aux: StickerRules.FormatAim(cursor)), ct);
+    }
+
+    /// <summary>
+    ///     One sticker knob per call — the same one-file-one-action shape
+    ///     <c>/sim/paint/stickers/&lt;id&gt;/</c> has, so exactly one <c>paint.sticker_*</c> action is
+    ///     emitted and a caller can never smuggle two edits into one ambiguous envelope.
+    /// </summary>
+    private Task<McpEnvelope> SetSticker(int id, string? image, double? heading, double? roll, double? width,
+        double? height, double? depth, double? alpha, double? brightness, double? value, CancellationToken ct)
+    {
+        if (id < 0)
+            return StickerInvalid("set needs the sticker id from gatos.paint_sticker(operation:\"list\")");
+        // roll and heading are two spellings of the same knob but two distinct parameters, so they
+        // are counted separately — folding them first would let set(roll:…, heading:…) through and
+        // silently drop one of them.
+        var chosen = (width is not null || height is not null ? 1 : 0) + (depth is not null ? 1 : 0)
+            + (roll is not null ? 1 : 0) + (heading is not null ? 1 : 0)
+            + (alpha is not null ? 1 : 0) + (brightness is not null ? 1 : 0)
+            + (image is not null ? 1 : 0) + (value is not null ? 1 : 0);
+        var rotation = roll ?? heading;
+        if (chosen != 1)
+            return StickerInvalid("set takes the sticker id and exactly one of width+height, depth, "
+                + "roll/heading, alpha, brightness, image, or value (0|1 visibility)");
+
+        if (width is not null || height is not null)
+            return width is not { } w || height is not { } h
+                   || !StickerRules.IsValidWidth(w) || !StickerRules.IsValidHeight(h)
+                ? StickerInvalid("size needs both width and height, each in (0, 1000] metres")
+                : _presenters.SubmitAsync(
+                    new(SimActions.PaintStickerSize, Ordinal: id, Values: new[] { w, h }), ct);
+        if (depth is { } d)
+            return StickerRules.IsValidDepth(d)
+                ? _presenters.SubmitAsync(new(SimActions.PaintStickerDepth, Ordinal: id, Value: d), ct)
+                : StickerInvalid("depth must be in (0, 100] metres");
+        if (rotation is { } rot)
+            return StickerRules.IsValidRotation(rot)
+                ? _presenters.SubmitAsync(new(SimActions.PaintStickerRotation, Ordinal: id, Value: rot), ct)
+                : StickerInvalid("rotation must be a finite number of degrees");
+        if (alpha is { } a)
+            return StickerRules.IsValidAlpha(a)
+                ? _presenters.SubmitAsync(new(SimActions.PaintStickerAlpha, Ordinal: id, Value: a), ct)
+                : StickerInvalid("alpha must be in [0, 1]");
+        if (brightness is { } b)
+            return StickerRules.IsValidBrightness(b)
+                ? _presenters.SubmitAsync(new(SimActions.PaintStickerBrightness, Ordinal: id, Value: b), ct)
+                : StickerInvalid("brightness must be in (0, 8]");
+        if (image is { } name)
+            return StickerRules.IsValidImage(name)
+                ? _presenters.SubmitAsync(new(SimActions.PaintStickerImage, Ordinal: id, Token: name), ct)
+                : StickerInvalid("image must name a file uploaded through gatos.paint_texture");
+        return _presenters.SubmitAsync(
+            new(SimActions.PaintStickerVisible, Ordinal: id, Value: value!.Value), ct);
+    }
+
+    /// <summary>Applies and validates the shared numeric tail: rotation, w, h, d, alpha, brightness.</summary>
+    private static bool TryStickerTail(double? rotation, double? width, double? height, double? depth,
+        double? alpha, double? brightness, double defaultDepth, double[] values, int start, out string error)
+    {
+        var rot = rotation ?? StickerRules.DefaultRotation;
+        var w = width ?? StickerRules.DefaultWidth;
+        var h = height ?? StickerRules.DefaultHeight;
+        var d = depth ?? defaultDepth;
+        var a = alpha ?? StickerRules.DefaultAlpha;
+        var b = brightness ?? StickerRules.DefaultBrightness;
+        error = "";
+        if (!StickerRules.IsValidRotation(rot))
+            error = "rotation must be a finite number of degrees";
+        else if (!StickerRules.IsValidWidth(w) || !StickerRules.IsValidHeight(h))
+            error = "width and height must each be in (0, 1000] metres";
+        else if (!StickerRules.IsValidDepth(d) && d != StickerCommands.DepthUnset)
+            error = "depth must be in (0, 100] metres";
+        else if (!StickerRules.IsValidAlpha(a))
+            error = "alpha must be in [0, 1]";
+        else if (!StickerRules.IsValidBrightness(b))
+            error = "brightness must be in (0, 8]";
+        if (error.Length != 0)
+            return false;
+        values[start] = rot;
+        values[start + 1] = w;
+        values[start + 2] = h;
+        values[start + 3] = d;
+        values[start + 4] = a;
+        values[start + 5] = b;
+        return true;
+    }
+
+    private Task<McpEnvelope> StickerInvalid(string message)
+    {
+        var s = _presenters.Current;
+        return Task.FromResult(new McpEnvelope(false, null, s.Sequence, s.UtSeconds, "invalid", "EINVAL",
+            message, false));
     }
 
     public Task<McpEnvelope> Command(

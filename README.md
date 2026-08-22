@@ -708,3 +708,28 @@ comes out at its authored colours in every biome; add a third token, `raw`, when
 uploaded untouched and read exactly as one of the game's own clutter textures.
 HTTP uploads go to `PUT /v1/paint/texture/file/<name>` (chunk anything over 1 MiB), MQTT mirrors
 every control leaf, and MCP agents get `gatos.paint_texture` plus `gatos.paint_control`.
+
+### Spray your own stickers on the world
+
+`/sim/paint/stickers` is the spray-tag feature: upload a PNG and stick it on things. Point the camera
+at a fuel tank and spray it, or place one by coordinates on a mountainside — the decal stays where
+you put it, riding the rocket as it flies and the planet as it turns, until you remove it.
+
+```sh
+cat meow.png > /sim/paint/textures/file/meow.png   # same image store the clutter overrides use
+echo 'meow.png w=2 h=2' > /sim/paint/stickers/spray # ...where the camera is looking
+cat /sim/paint/stickers/last                        # 0 vessel Kitten-1 part 41 hit 8.42m
+echo 0.4 > /sim/paint/stickers/0/alpha              # tune it live: size, depth, rotation, alpha, brightness
+echo 'meow.png body Mun 12.03 -41.88 w=5 h=5' > /sim/paint/stickers/place
+echo 1 > /sim/paint/stickers/0/remove               # ...or 'echo 1 > clear' for all of them
+```
+
+A sticker is a *projected* decal, not a flat billboard, so it wraps around whatever it lands on —
+curved hulls, tessellated terrain, and even the grass and rocks scattered on the ground, which
+nothing else in the game can address. Anchors are stored in the part's own frame or in geodetic
+lat/lon, so they survive vessel switches, time warp and the planet's rotation; a decal on a
+gimballing engine bell follows the gimbal. If the vessel despawns or you delete the image, the
+sticker goes dormant rather than disappearing, and comes back when they do. Each one's `spec` file
+reads back as the exact line that created it, so `cat` every `spec` to a file in the guest and replay
+it later — that's the save game. HTTP and MQTT mirror the whole surface, and MCP agents get
+`gatos.paint_sticker`.

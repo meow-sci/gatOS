@@ -2,6 +2,7 @@ using gatOS.SimFs;
 using gatOS.SimFs.Audio;
 using gatOS.SimFs.Camera;
 using gatOS.SimFs.Paint;
+using gatOS.SimFs.Paint.Stickers;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
 using gatOS.Paint;
@@ -33,10 +34,10 @@ public sealed class McpRegistry
     });
     public McpRegistry(SnapshotStore snapshots, ICommandSink? commands = null, Func<string>? transports = null,
         AudioStore? audio = null, CameraStore? camera = null, ScheduleStore? schedules = null,
-        PaintStore? paint = null, TextureStore? textures = null)
+        PaintStore? paint = null, TextureStore? textures = null, StickerStore? stickers = null)
     {
-        Presenters = new(snapshots, commands, transports, audio, camera, schedules, paint, textures);
-        var h = new McpToolHandlers(Presenters, audio, camera, schedules, textures);
+        Presenters = new(snapshots, commands, transports, audio, camera, schedules, paint, textures, stickers);
+        var h = new McpToolHandlers(Presenters, audio, camera, schedules, textures, stickers);
         Tools = new McpServerPrimitiveCollection<McpServerTool>();
         AddRead("gatos.get_world", h.GetWorld, "Read simulation time, status, indexes, or the complete current world.");
         AddRead("gatos.list_celestials", h.ListCelestials, "List celestial summaries with deterministic cursor pagination.");
@@ -63,6 +64,7 @@ public sealed class McpRegistry
         AddWrite("gatos.render_fx_control", h.RenderFxControl, "Runtime FX editor. family is engine_plume/plume_trail/clouds/terrain; operation is set/reset or plume_trail clear; entity scope and field path vary by family.");
         AddWrite("gatos.paint_control", h.PaintControl, "Opt-in paint family. operation selects master/global/template/vessel/part/EVA rule; flags use value, colors use normalized color=[r,g,b], and target names a template, part instance, blend, or EVA material.");
         AddWrite("gatos.paint_texture", h.PaintTexture, "Custom ground-clutter texture store. operation selects list/catalog/bindings/retrieve/upload/delete; upload takes base64 bytes chunkable by decoded byte offset. Bind an uploaded image over a stock texture with gatos.paint_control(operation:\"texture_bind\").", outputSchema: EnvelopeOutputSchema);
+        AddWrite("gatos.paint_sticker", h.PaintSticker, "Sticker decals projected from uploaded images onto vehicles, terrain and ground clutter. operation selects place/spray/set/remove/clear/list/debug; place takes an explicit vessel or body anchor, spray takes whatever the camera or cursor is pointing at, and set takes id plus exactly one knob. Images upload through gatos.paint_texture.", outputSchema: EnvelopeOutputSchema);
         AddWrite("gatos.command", h.Command, "Advanced canonical action envelope covering every catalog action.", destructive: true);
         AddWrite("gatos.execute_batch", h.ExecuteBatch, "Validate and submit an ordered same-phase same-tick command batch.", destructive: true);
         AddWrite("gatos.schedule_batch", h.ScheduleBatch, "Create a typed render, wall, or UT timed command sequence.", destructive: true);

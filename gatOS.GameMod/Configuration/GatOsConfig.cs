@@ -125,6 +125,9 @@ public sealed class GatOsConfig
             ("paint_texture_max_files", "Uploaded image count cap (ENOSPC; clamped 1..256)."),
             ("paint_texture_max_bindings", "Simultaneous texture override cap (ENOSPC; clamped 1..256)."),
             ("paint_texture_max_dimension", "Longest GPU edge; larger uploads downscale (clamped 16..16384)."),
+            ("paint_stickers_enabled", "Whether /sim/paint/stickers exists. false removes the subtree entirely."),
+            ("paint_stickers_max_count", "Maximum simultaneous sticker decals (clamped 1..4096)."),
+            ("paint_stickers_max_view_distance_m", "Metres past which a sticker is not drawn (clamped 10..1e6)."),
         }),
         ("AUDIO — userland playback through the game's speakers (/sim/audio)", new[]
         {
@@ -391,6 +394,15 @@ public sealed class GatOsConfig
 
     /// <summary>Longest GPU edge; larger uploads are downscaled at bind rather than rejected.</summary>
     public int PaintTextureMaxDimension { get; set; } = 4096;
+
+    /// <summary>Whether /sim/paint/stickers exists at all. false removes the subtree entirely.</summary>
+    public bool PaintStickersEnabled { get; set; } = true;
+
+    /// <summary>Maximum simultaneous sticker decals (the registry refuses past it).</summary>
+    public int PaintStickersMaxCount { get; set; } = 256;
+
+    /// <summary>Metres past which a sticker is culled from the draw list entirely.</summary>
+    public double PaintStickersMaxViewDistanceM { get; set; } = 5000.0;
 
     // ---- AUDIO: userland playback through the game's FMOD (/sim/audio; GATOS_CUSTOM_AUDIO_PLAN). ----
 
@@ -741,6 +753,9 @@ public sealed class GatOsConfig
         PaintTextureMaxBindings = Clamp(nameof(PaintTextureMaxBindings), PaintTextureMaxBindings, 1, 256);
         PaintTextureMaxDimension = Clamp(nameof(PaintTextureMaxDimension), PaintTextureMaxDimension,
             16, 16384);
+        PaintStickersMaxCount = Clamp(nameof(PaintStickersMaxCount), PaintStickersMaxCount, 1, 4096);
+        PaintStickersMaxViewDistanceM = Clamp(nameof(PaintStickersMaxViewDistanceM),
+            PaintStickersMaxViewDistanceM, 10, 1e6);
         AudioMaxClipBytes = Clamp(nameof(AudioMaxClipBytes), AudioMaxClipBytes, 4096, 256 * 1024 * 1024);
         AudioMaxTotalBytes = Clamp(nameof(AudioMaxTotalBytes), AudioMaxTotalBytes,
             AudioMaxClipBytes, 1024 * 1024 * 1024);

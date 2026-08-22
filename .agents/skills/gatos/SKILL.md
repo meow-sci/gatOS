@@ -440,3 +440,76 @@ Rules a program must follow:
   the `faithful` binding lands `failed` in `applied`, its error naming `raw` as the fix. Real cutout
   opacity is a separate `opacity` slot either way. Mips are generated automatically and are mandatory
   — without them the texture aliases badly at range.
+
+# Spray your own images onto the world (stickers)
+
+`/sim/paint/stickers` projects an uploaded image onto a vehicle part, onto terrain, or onto the
+ground clutter standing on it. **There is no sticker upload surface** — a sticker's image *is* an
+entry of `/sim/paint/textures/file/`, so upload once and reuse it for as many stickers as you like.
+Session-only, no master switch: with nothing placed the feature is one branch per frame.
+
+```sh
+cat meow.png > /sim/paint/textures/file/meow.png    # the shared image store (png|jpeg|bmp|...)
+echo 'meow.png w=2 h=2' > /sim/paint/stickers/spray  # aim=camera by default; aim=cursor also works
+cat /sim/paint/stickers/last        # 0 vessel Kitten-1 part 41 hit 8.42m   (or: no hit within 2000m)
+cat /sim/paint/stickers/status      # <id> <image> vessel|body <target> live=0|1 texture=ready|missing|...
+cat /sim/paint/stickers/info        # enabled= stickers= stickers_max= live= images= vram_bytes= patch= renderer= max_view_distance_m=
+echo 0.4 > /sim/paint/stickers/0/alpha        # size "w h" | depth | rotation | alpha | brightness | visible | image
+cat /sim/paint/stickers/0/spec      # meow.png vessel Kitten-1 41 0.1 0.5 -1.4 0 1 0 roll=15 w=2 h=2 d=0.3 alpha=0.4 brightness=1
+echo 1 > /sim/paint/stickers/0/remove         # one; 'echo 1 > clear' for all
+```
+
+Place by coordinates instead of aiming, when you want it exact and scriptable:
+
+```sh
+iid=$(cat /sim/vessels/by-id/Kitten-1/parts/0/instance_id)      # needs telemetry_vessel_parts=1
+echo "meow.png vessel Kitten-1 $iid 0 0.5 -1.4 0 1 0 roll=15 w=0.6 h=0.3" > /sim/paint/stickers/place
+echo 'meow.png body Mun 12.03 -41.88 heading=90 w=5 h=5'                   > /sim/paint/stickers/place
+```
+
+Rules a program must follow:
+
+- **Two grammars, one shared tail.** `spray` takes `<image> [aim=camera|cursor] [range=] [roll=] [w=]
+  [h=] [d=] [alpha=] [brightness=]`; `place` takes `<image> vessel <vessel_id> <part_iid> x y z nx ny
+  nz [roll=…]` or `<image> body <body_id> <lat> <lon> [heading=…]`. `w`/`h` ∈ `(0,1000]` m default
+  `1`; `d` ∈ `(0,100]` m default **`0.3` on a vessel, `1` on a body**; `alpha` ∈ `[0,1]` default `1`;
+  `brightness` ∈ `(0,8]` default `1`; `range` ∈ `(0,1e6]` m default `2000`; `roll`/`heading` any
+  finite degrees, default `0`. The rotation key is anchor-specific — `roll` for a vessel, `heading`
+  for a body — so neither spelling can be used against the wrong anchor. Duplicate, unknown or
+  out-of-range keys are **EINVAL on the `write(2)`**, before anything reaches the game.
+- **`spray` can miss.** No hit within `range` ⇒ **ENOENT**, and `last` reads `no hit within <range>m`.
+  It hits vehicle parts first and the terrain behind them; **ground clutter cannot be aimed at** (it
+  exists only on the GPU) — but the decal box then projects onto the rock anyway, which is the point.
+  On `spray`, `roll=` *adds to* the orientation that reads upright from where you are, and omitting
+  `d=` is not the same as passing a number: the default is chosen after the ray says what it hit.
+- **Ids are the smallest free slot and are reused** after `remove`/`clear`. Never assume the id of a
+  create — read `last`, or wait for the `paint.sticker_placed` event on `/sim/events` (its detail is
+  the same line, and `vessel_id` is set only for a vessel anchor).
+- **`<id>/spec` is exactly a `place` line.** Echo it back to clone the sticker under a new id. That is
+  also the save game: `for d in /sim/paint/stickers/[0-9]*; do cat "$d/spec"; done > ~/specs`, plus a
+  copy of the images, replayed at boot. Nothing is persisted host-side.
+- **Dormant, not deleted.** A despawned vessel, a staged-away part or an evicted image gives
+  `live=0` (`texture=missing`) and the entry survives with its settings and `spec` intact; it draws
+  again when the anchor or the image comes back. Re-uploading an image under the same name
+  **hot-swaps** it under every sticker using it.
+- **Sub-parts are valid anchors.** `part_iid` may come from `parts/<n>/subparts/<m>/instance_id`, and
+  `spray` naturally anchors to the sub-part it hit — which is why a decal on a gimballing bell or a
+  robotics segment tracks it.
+- **What the renderer will and will not do.** Main viewport only (not crew portraits or extra
+  windows). Beyond `paint_stickers_max_view_distance_m` (5000 m) a sticker is not drawn at all. The
+  decal fades out at grazing angles (normal cutoff) and its lighting is an approximation of the
+  surface it sits on — use `brightness` ∈ `(0,8]` to compensate rather than expecting exact scene
+  lighting. `echo 1 > /sim/paint/stickers/debug` draws every sticker as a magenta checker of its
+  projection box: use it first whenever a sticker is missing or misplaced.
+- **Health, not exit status.** A create only queues a Frame-phase command. `info` carries
+  `patch=0|1 renderer=idle|active|degraded` and `last_error` carries any renderer/texture fault; the
+  latches are `paint.sticker_renderer` and `paint.sticker_texture` in `/sim/status/accessors`.
+- **Caps and gates:** `paint_stickers_max_count` (256) — a full registry is **EINVAL** naming the
+  limit, not ENOSPC. The subtree exists only when both `paint_stickers_enabled` and
+  `paint_textures_enabled` are on. Gate string `control_enabled + paint stickers`.
+- **Transports.** Everything above mirrors to `/v1/fs/paint/stickers/...` and
+  `gatos/sim/paint/stickers/...` normally. MCP uses one tool,
+  `gatos.paint_sticker(operation:"place"|"spray"|"set"|"remove"|"clear"|"list"|"debug")` — `set`
+  takes `id` plus exactly **one** knob (`width`+`height`, `depth`, `roll`/`heading`, `alpha`,
+  `brightness`, `image`, or `value` for visibility) — plus the `paint_stickers` runtime feature
+  document. Images still upload through `gatos.paint_texture`.

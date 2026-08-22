@@ -265,8 +265,9 @@ The cheats ported from the sibling `unscience` mod are exposed **only** on gatOS
   `Harmony("gatos.iva")` instance only while enabled** (a `PartModel` ctor postfix + an editor-only
   `AddInstance` postfix) and bulk-flips the internal-template flag over `PartModel.Instances`; disabling
   restores the templates and unpatches. Default-off ⇒ zero patches.
-- **`thug_life`** (`Game/Ksa/ThugLife/`): gatOS's **first custom GPU rendering** — anchors a flat,
-  world-space textured quad (the "thug life" sunglasses meme) to a part on a vehicle, tracked each frame.
+- **`thug_life`** (`Game/Ksa/ThugLife/`): gatOS's **first custom GPU rendering** (sticker decals are the
+  second — see [Sticker decals](#sticker-decals) below; the two share nothing but the pattern) — anchors a
+  flat, world-space textured quad (the "thug life" sunglasses meme) to a part on a vehicle, tracked each frame.
   This is a **render-thread draw injection**: `ThugLifeRenderPatches` installs a dynamic
   `Harmony("gatos.thug_life")` **postfix on `SuperMeshRenderSystem.RenderMainPass(CommandBuffer)`** (the
   one injection point for a world-space draw). The Vulkan pipeline/texture/buffers (`ThugLifeQuadRenderer`
@@ -462,3 +463,48 @@ binding. Config lives in the `[paint]` section: `paint_textures_enabled` (on; of
 `paint_texture_max_bytes` (16 MiB), `paint_texture_max_total_bytes` (128 MiB),
 `paint_texture_max_files` (32), `paint_texture_max_bindings` (32), and `paint_texture_max_dimension`
 (4096 — larger uploads are downscaled, not rejected).
+
+## Sticker decals
+
+`/sim/paint/stickers` projects an uploaded image onto vehicles, terrain and ground clutter. It reuses
+the clutter-texture slice wholesale — same image store, same HTTP upload routes, same
+`gatos.paint_texture` MCP tool — and adds no second upload surface. The game-free half is
+`gatOS.SimFs/Paint/Stickers/`: `StickerStore` (the volatile read model plus the two configured
+limits and the event queue), `StickerRules` (defaults and range checks, applied on **both** the
+line-parse path and the direct-`SimCommand` path that HTTP `/v1/command`, MQTT and MCP use), and
+`StickerCommands` (the `place`/`spray` grammars, and `FormatSpec`, so `<id>/spec` and what `place`
+accepts cannot drift). Unlike `TextureStore` it owns no bytes: the registry itself lives game-side,
+because an anchor can only be resolved against live game state.
+
+`Game/Ksa/Paint/Stickers/` is the KSA-aware half, owned and ticked by `PaintManager`, which now
+drives **three** independently self-gated things per frame: parts/EVA paint (behind its two runtime
+masters), the clutter-texture bridge (one revision compare), and `StickerManager.Tick` (one
+`IsEmpty` branch). `StickerManager` is a port of `ThugLifeManager`'s registry/lazy-GPU/lazy-patch
+shape: it re-resolves every anchor and texture each frame, recomposes the live decals, and brings the
+GPU path up on the `0 → 1` live transition and down on `1 → 0`. Dormant entries — despawned vessel,
+staged part, evicted image — keep the registry non-empty but do **not** keep the patch installed, and
+are never pruned.
+
+The draw is gatOS's **second render-thread draw injection**. `StickerRenderPatches` installs a
+dynamic `Harmony("gatos.stickers")` **postfix on `RenderTarget.ResolveAttachments(CommandBuffer)`**,
+filtered to `Program.OffscreenTarget` **and** `Program.RenderedViewport == Program.MainViewport`
+(crew-portrait viewports have their own targets and cameras; stickers are main-viewport-only in v1).
+That is the one point in `RenderGame` where the resolved single-sample depth and colour are both
+current and unbound — the window KSA's own `GridPass` uses, and `StickerDecalRenderer` is a
+near-verbatim port of it: a unit cube per sticker, `CullFront`, no depth test, and a fragment shader
+that reconstructs the scene position from the reverse-Z depth and projects it into decal space. That
+projection is what conforms the decal to hull curvature and terrain, and the only way to reach ground
+clutter, which has no CPU-addressable transform at all. `StickerAnchors` recomposes decal space every
+frame in `double` (a vessel anchor from the part's local frame, a body anchor from geodetic lat/lon),
+and `StickerPicker` turns a camera or cursor ray into an anchor using KSA's own watertight part
+raycast, falling back to a march-and-bisect against the terrain height field.
+
+`StickerTextureBinder` allocates a bindless slot per `(image, content-version)` with `AddTexture`
+(the clutter bridge re-points an existing slot instead) and uploads **uncorrected** — the clutter
+`faithful` correction would be wrong here, because the decal shader decodes sRGB itself and alpha is
+real opacity. Sticker images are additionally capped at 2048 on the longest edge. Freeing a slot is
+immediate (`FreeTexture` rewrites it to the engine's empty texture, so a recorded draw samples a 1×1
+white texel), while the image itself rides the shared retire queue. Teardown clears `Active` first,
+unpatches, then waits for device idle before destroying anything. Config lives in `[paint]`:
+`paint_stickers_enabled` (on; off removes the subtree — which also needs `paint_textures_enabled`),
+`paint_stickers_max_count` (256) and `paint_stickers_max_view_distance_m` (5000).

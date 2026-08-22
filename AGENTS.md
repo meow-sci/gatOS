@@ -43,11 +43,12 @@ and the decisions locked in (Part 1).
 transport, host folder mounts (`/mnt/<name>`), the welds / `always_render_iva` / parts-listing
 cheats ported from `unscience`, the `/sim/audio` userland playback feature, the `/sim/debug/iva`
 free-floating cabin-object physics, the generic timed command scheduler (`/sim/ctl/timed_batch`)
-the programmable camera (`/sim/camera`), opt-in vehicle/EVA paint (`/sim/paint`), and custom
-ground-clutter textures (`/sim/paint/textures`), are code-complete.** The only pending work is a set of in-game
+the programmable camera (`/sim/camera`), opt-in vehicle/EVA paint (`/sim/paint`), custom
+ground-clutter textures (`/sim/paint/textures`), and sticker decals (`/sim/paint/stickers`), are
+code-complete.** The only pending work is a set of in-game
 passes (T6.6/T9.3/G1–G4, plus the welds/IVA/parts, thug_life, per-vessel scale/always_render, debug
-impulse, `ctl/translate`, `/sim/audio`, IVA-cabin-physics, FX-editor, **timed-scheduler, camera, paint
-and clutter-texture**
+impulse, `ctl/translate`, `/sim/audio`, IVA-cabin-physics, FX-editor, **timed-scheduler, camera, paint,
+clutter-texture and sticker**
 checklists) that require a live KSA flight; checklists are in [`docs/VALIDATION.md`](docs/VALIDATION.md). The purrTTY tip release is now
 cut.
 
@@ -188,6 +189,7 @@ cut.
 | Programmable camera (`/sim/camera/**` — ownership take/release, six frames, aim-with-offset, geodetic placement, JSON tracks, the interpolated `time` channel, `map/scope`; `plans/CAMERA_ASBUILT.md`) | Code DONE; same-frame fix pending live recheck | `gatOS.SimFs/Camera/**` (game-free math/compositor/tracks + anchor-relative smoother) + `gatOS.SimFs/SimFsTree.cs`; `Game/Ksa/Camera/{CameraDirector,CameraFrames,CameraTargets,CameraReader,CameraViewportPatch}.cs` + `CameraActuator.cs`. A main-viewport-identity Harmony prefix applies after simulation advance and before `Camera.OnFrame`; the postfix publishes KSA's final applied transform. Shared schedules/drain run before the prefix's camera apply; anchor translation is exact, only the relative component smooths, and aim is exact. Gated by `[camera] camera_enabled`. **IVA/Map ownership contexts remain unsupported** (`scope/ksa-runtime-coupling.md#camera-driver`) |
 | Vehicle + EVA paint (`/sim/paint`) | Code DONE; in-game pending | `gatOS.Paint/` game-free rules/state/GLSL transform; `Game/Ksa/Paint/` transactional opt-in shader hooks + reversible EVA material clones; 9P/HTTP/MQTT/MCP parity. Part precedence instance > live vessel > template > global; EVA precedence individual material/default > shared material/default. Full high-churn maintenance contract: `plans/PAINT_ASBUILT.md`. |
 | Custom ground-clutter textures (`/sim/paint/textures` — user PNGs drawn over stock clutter texture assets; `plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`) | Code DONE; in-game pending | `gatOS.SimFs/Paint/{TextureStore,TextureDirectory,TextureCommands}.cs` (game-free in-memory upload store, writable `file/` dir, `bind`/`unbind`/`clear` grammar, three `paint.texture_*` actions); `Game/Ksa/Paint/ClutterTextureBridge.cs` is the **only** KSA-aware file — decode via `TextureLoader.LoadFromMemory` + `SimpleVkTexture`, then re-point one existing slot with `BindlessTextureLibrary.SetTexture(stockHandle, ourImageView)` and restore the captured stock `ImageView` on unbind. **No Harmony patch, no shader transform, no renderer rebuild, no new bindless slots, and no new reflection anchor** (reuses the existing `FxReflect.Terrain` handle). Destruction is deferred through a retire queue (`MaxFramesInFlight + 1`), never inline. Dedicated binary HTTP routes `/v1/paint/texture/file/<name>` (413/EFBIG on an oversize body) — the second transport-parity exception after audio; no MQTT binary upload. MCP adds `gatos.paint_texture` plus `paint_control` `texture_bind`/`texture_unbind`/`texture_clear`. Gated by `[paint] paint_textures_enabled`; deliberately **no runtime master** — idle cost is one revision comparison per frame. |
+| Sticker decals (`/sim/paint/stickers` — user PNGs projected onto vehicles, terrain and ground clutter; `plans/STICKERS_PLAN.md`) | Code DONE; in-game pending | `gatOS.SimFs/Paint/Stickers/{StickerStore,StickerRules,StickerCommands}.cs` (game-free read model, defaults/validation, the `place`/`spray` line grammars, twelve `paint.sticker_*` actions); `Game/Ksa/Paint/Stickers/` is the **only** KSA-aware layer — `StickerManager` (registry + per-frame driver + lazy GPU/patch lifecycle), `StickerEntry`, `StickerTextureBinder` (`AddTexture`/`FreeTexture` into KSA's bindless table + a retire queue), `StickerAnchors` (all-`double` decal-space composition), `StickerPicker` (vehicle raycast, then a terrain march+bisect), `StickerDecalRenderer` (pipeline, unit cube, depth-descriptor ring, the pass) and `StickerRenderPatches`. **15 `[KsaAnchor]` sites.** The draw is gatOS's **second** render-thread injection: a dynamic `Harmony("gatos.stickers")` postfix on `RenderTarget.ResolveAttachments`, installed only while ≥ 1 sticker is live, filtered to the main viewport's `Program.OffscreenTarget` — a near-verbatim port of KSA's own post-resolve `GridPass`, with occlusion decided per fragment from the resolved reverse-Z scene depth so the decal conforms to hull curvature, tessellated terrain **and** ground clutter that has no CPU-addressable transform at all. Anchors are stored part-local or geodetic, never ecliptic, so they survive bubble switches, floating-origin shifts and warp; a despawned vessel or evicted image makes a sticker **dormant, not deleted**. Images are entries of the clutter-texture store — **no** second upload surface on any transport, and `Game/Ksa/Paint/UserTextureGpu.cs` is the decode/upload helper both features share. MCP adds `gatos.paint_sticker` + the `paint_stickers` runtime feature. Gated by `[paint] paint_stickers_enabled` (and `paint_textures_enabled`); deliberately **no runtime master** — idle cost is one emptiness branch per frame. |
 | Cinematic camera editor (`examples/photog-rs`) | DONE (standalone API consumer) | Rust/ratatui ordered-shot editor + versioned project JSON; compiles render-rate native camera tracks with a shared-clock `timed_batch` sidecar for smoothing/projection/release cues; direct `/sim` + HTTP `/v1`, live target discovery, hybrid playback controls, golden/compiler/transport/TUI tests. No `/sim` contract change. |
 | Screen stream (`/sim/display`) | Code DONE; misrender **root-caused + fixed** (purrTTY libghostty `o=z` corruption → default `rgba`, + purrTTY content-hash re-decode; STREAM_PLAN.md §11); **perf/stability P0–P7 of [`plans/PERF_IMPROVEMENT_PLAN.md`](plans/PERF_IMPROVEMENT_PLAN.md) landed 2026-07-02, confirmed working in-game (informal pass)** (SSH read-pump, a=t keyframes, GPU blit downscale, zero-alloc encoder, demand pacing, 9p pooling + msize 512 KiB/guest v15, purrtty consumption fixes, P6: the purrTTY native rebuilt from ghostty main + `purrtty/vt-video-fixes` — the zig-0.15.2 `o=z` flate corruption and the placement-pin leak are FIXED, so `display_encoding` defaults to `rgba-zlib` again, 3–10× less wire; and P7: the native APC bulk lane, 82→1185 MiB/s consumption throughput); formal S6/S9 + P8 soak checklists still open | `SimFs/Display/`, `Game/Ksa/FrameCapture.cs` + `DisplayRenderPatch.cs` (in-band render-hook capture), `STREAM_PLAN.md` |
 | `ctl/rotate` (W1, AGC_PLAN §7.4) | Code DONE; in-game pending | `Game/Ksa/Actuators/RotateActuator.cs`, `SimFs/Commands/RotateRules.cs` — manual RCS rotation signs, the translate sibling; full authority needs `attitude_mode=manual` (auto strips rotation bits) |
@@ -358,7 +360,16 @@ gatOS.SimFs    → NineP, Logging, Paint                /sim tree, snapshots, st
                                                    Audio/ (the /sim/audio clip store: AudioStore caps/versioning,
                                                       writable AudioDirectory + upload handles, AudioCommands
                                                       play/set/stop grammar — GATOS_CUSTOM_AUDIO_PLAN, built;
-                                                      the FMOD calls live in GameMod's AudioActuator)
+                                                      the FMOD calls live in GameMod's AudioActuator);
+                                                      Paint/ (the two later paint features' game-free
+                                                      halves: TextureStore/TextureDirectory/TextureCommands
+                                                      — the /sim/paint/textures upload store and bind
+                                                      grammar; Paint/Stickers/ StickerStore (the published
+                                                      sticker read model + limits + event queue),
+                                                      StickerRules, StickerCommands (the place/spray line
+                                                      grammars and the canonical spec rendering) —
+                                                      STICKERS_PLAN.md, built; every KSA call lives in
+                                                      GameMod's Game/Ksa/Paint/)
 gatOS.Http     → SimFs, Logging                       magic HTTP /v1 server (raw TcpListener; G5, built)
 gatOS.Bus      → SimFs, Logging                       serial/bus framing CCSDS/NMEA/SCPI + the gatos.serial
                                                       SerialBridge/Connector over QEMU virtio-serial (G7, built)
@@ -371,8 +382,9 @@ gatOS.Ssh      → Vm, Logging, vendor/purrTTY, SSH.NET SshShellSession : ICusto
 gatOS.GameMod  → Ssh, SimFs, Http, Mqtt, Mcp, Bus, Vm, Logging, vendor/purrTTY,
                   KSA DLLs, StarMap.API, Lib.Harmony, ModMenu.Attributes, Tomlyn   the KSA mod (M6, built)
                   (+ the Brutal.Vulkan(.Abstractions/.Vma) + Planet.Render.Core + Brutal.Core.Memory game
-                   DLLs and AllowUnsafeBlocks, for the Game/Ksa/ThugLife GPU quad renderer and the
-                   Game/Ksa/FrameCapture screen-stream readback; + Brutal.Fmod for the
+                   DLLs and AllowUnsafeBlocks, for the Game/Ksa/ThugLife GPU quad renderer, the
+                   Game/Ksa/Paint/Stickers decal renderer (pipeline + GLSL + the ResolveAttachments
+                   postfix) and the Game/Ksa/FrameCapture screen-stream readback; + Brutal.Fmod for the
                    Game/Ksa/Actuators/AudioActuator FMOD playback; + BepuPhysics/BepuUtilities — KSA's own
                    embedded rigid-body engine — for the Game/Ksa/Iva cabin simulation)
 ```
@@ -395,7 +407,7 @@ client), plus `gatOS.Vm`/`gatOS.Ssh` for its in-VM integration fixture.
 >
 > **Stronger form for KSA integration (G2):** a KSA type name may appear **only under
 > `gatOS.GameMod/Game/Ksa/`** (`Readers/`, `Actuators/`, `Welds/`, `Render/`, `ThugLife/`, `Iva/`, `Fx/`,
-> `Camera/`, `KsaCatalog`, annotated with `[KsaAnchor]`). ⚠️ The `Game/Ksa/Camera/` folder's namespace
+> `Camera/`, `Paint/` — including `Paint/Stickers/` — `KsaCatalog`, annotated with `[KsaAnchor]`). ⚠️ The `Game/Ksa/Camera/` folder's namespace
 > **shadows the simple name `Camera` for every file under `Game/Ksa/`** — any file there that names the
 > game's type must alias it (`using KsaCamera = KSA.Camera;`). Transports (9p/HTTP/serial), the `/sim` tree, formats and the command pipeline
 > never see one — they speak `SimSnapshot` (reads) and `SimCommand`/`ICommandExecutor` (writes).
@@ -517,7 +529,26 @@ host.
    only enqueue `SimCommand`s (no camera action is in `SimCommand.SolverActions`) and read the volatile
    `CameraStore.Status` the director publishes with one swap. Despawn pruning rides the sampler's vehicle
    enumeration (`CameraDirector.Prune`, beside `VesselForceRender.Prune`). Camera teardown rides
-   `Mod.TeardownGameCheats`. All cheats are torn down by `Mod.TeardownGameCheats` at `Unload`.
+   `Mod.TeardownGameCheats`. A **ninth game-thread work site** is the **paint tick**
+   (`Mod.DrivePaint` → `PaintManager.Tick`, run in `DrivePerFrame` right after `DriveAudio` and
+   before the scene renders — the ordering the sticker anchors need). It drives **three**
+   independently self-gated things: the part/EVA paint rebuild (gated by its two runtime masters),
+   the clutter-texture bridge (`ClutterTextureBridge.Tick`, one revision comparison while nothing is
+   bound) and the sticker registry (`StickerManager.Tick`, one drain call and one `IsEmpty` branch
+   while nothing is placed). Neither of the latter two has a runtime master, because in their idle
+   state they own no GPU object, no patch and no allocation. The sticker driver is also where gatOS's
+   **second render-thread draw injection** comes and goes: a dynamic `Harmony("gatos.stickers")`
+   postfix on `RenderTarget.ResolveAttachments` (KSA's own post-resolve overlay window, the one
+   `GridPass` uses — main thread, same as the GUI hooks and the command drain) installed on the
+   `0 → 1` live-sticker edge and removed on `1 → 0`, so with nothing placed there is **no patch at
+   all**. It is a separate Harmony instance from `gatos.thug_life`, hooks a different method and
+   shares nothing with it; the postfix bails unless `__instance` is `Program.OffscreenTarget` **and**
+   `Program.RenderedViewport` is `Program.MainViewport`, which is what keeps crew-portrait viewports
+   untouched. It reads only the manager's published immutable entry array — same thread, no locks —
+   and self-disables on the first fault (`Active=false`, `renderer=degraded`, `last_error`, one log).
+   Teardown clears `Active` first, unpatches, then `GraphicsAndCompute.WaitIdle()` before destroying
+   anything. Paint teardown (all three) rides `PaintManager.Dispose`. All cheats are torn down by
+   `Mod.TeardownGameCheats` at `Unload`.
 
    **The F2 / `DrawUI` fix (C0.1) — why a third StarMap hook exists.** StarMap implements
    `[StarMapBeforeGui]`/`[StarMapAfterGui]` as patches on `Program.OnDrawUiFrame`/`OnDrawUiViewports`,
