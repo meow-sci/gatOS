@@ -146,6 +146,7 @@ export default defineConfig({
                 { label: "Batches and schedules", link: "/reference/batches-and-schedules/" },
                 { label: "Camera", link: "/reference/camera/" },
                 { label: "Audio and display", link: "/reference/audio-and-display/" },
+                { label: "Vehicle and EVA paint", link: "/reference/paint/" },
                 { label: "Debug and visual tools", link: "/reference/debug-and-visual-tools/" },
               ],
             },
