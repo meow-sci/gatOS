@@ -237,6 +237,26 @@
             <HintPath>$(KSAFolder)/Planet.Render.Core.dll</HintPath>
             <Private>false</Private>
         </Reference>
+        <!-- Image decoding for the custom clutter textures (Game/Ksa/Paint/ClutterTextureBridge):
+             Brutal.Texture carries Brutal.TextureApi.TextureLoader (the stb/ktx/gli dispatcher that
+             already decodes PNG/JPEG/BMP/HDR/DDS/KTX) and the concrete StbTexture/KtxTexture/GliTexture
+             types whose public Destroy() frees the decoded native buffer; Brutal.Ktx carries the
+             KtxTranscodeFmt that TextureAsset.LoadOptions takes. Planet.Render.Core references
+             Brutal.Texture itself, so both are already loaded in-process — but a transitively visible
+             type cannot be NAMED without an explicit reference. Game-provided (Private=false) and
+             condition-guarded like the rest. -->
+        <Reference Include="Brutal.Texture" Condition="Exists('$(KSAFolder)/Brutal.Texture.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Texture.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Brutal.Texture.Abstractions" Condition="Exists('$(KSAFolder)/Brutal.Texture.Abstractions.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Texture.Abstractions.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Brutal.Ktx" Condition="Exists('$(KSAFolder)/Brutal.Ktx.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Ktx.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
         <Reference Include="KSA" Condition="Exists('$(KSAFolder)/KSA.dll')">
             <HintPath>$(KSAFolder)/KSA.dll</HintPath>
             <Private>false</Private>

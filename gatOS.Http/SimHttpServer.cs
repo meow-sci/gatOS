@@ -10,6 +10,7 @@ using gatOS.NineP.Vfs;
 using gatOS.SimFs;
 using gatOS.SimFs.Audio;
 using gatOS.SimFs.Commands;
+using gatOS.SimFs.Paint;
 using gatOS.SimFs.Snapshots;
 
 namespace gatOS.Http;
@@ -37,6 +38,7 @@ public sealed class SimHttpServer : IAsyncDisposable
     private readonly Func<string>? _transports;
     private readonly VfsDirectory? _simRoot;
     private readonly AudioStore? _audio;
+    private readonly TextureStore? _textures;
     private readonly CancellationTokenSource _cts = new();
     private TcpListener? _listener;
     private Task? _acceptLoop;
@@ -52,17 +54,24 @@ public sealed class SimHttpServer : IAsyncDisposable
     /// </param>
     /// <param name="audio">
     ///     The audio clip store (GATOS_CUSTOM_AUDIO_PLAN), enabling the dedicated binary
-    ///     <c>/v1/audio/…</c> routes — the one transport-specific surface, because the field-write
-    ///     path is UTF-8 text and bodies cap at 1 MiB. Null (audio disabled) = 404.
+    ///     <c>/v1/audio/…</c> routes — one of the two transport-specific upload surfaces, because the
+    ///     field-write path is UTF-8 text and bodies cap at 1 MiB. Null (audio disabled) = 404.
+    /// </param>
+    /// <param name="textures">
+    ///     The custom clutter-texture store (GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN), enabling the
+    ///     dedicated binary <c>/v1/paint/texture/…</c> routes for the same reason audio has them:
+    ///     image bytes are binary and routinely exceed the 1 MiB field-write body cap. Null
+    ///     (textures disabled) = 404.
     /// </param>
     public SimHttpServer(SnapshotStore store, ICommandSink? commands = null, Func<string>? transports = null,
-        VfsDirectory? simRoot = null, AudioStore? audio = null)
+        VfsDirectory? simRoot = null, AudioStore? audio = null, TextureStore? textures = null)
     {
         _store = store;
         _commands = commands;
         _transports = transports;
         _simRoot = simRoot;
         _audio = audio;
+        _textures = textures;
     }
 
     /// <summary>The bound TCP port (valid after <see cref="StartAsync"/>).</summary>
@@ -220,6 +229,13 @@ public sealed class SimHttpServer : IAsyncDisposable
         if (seg.Length >= 2 && seg[1] == "audio")
         {
             await HandleAudioAsync(stream, request, ct).ConfigureAwait(false);
+            return;
+        }
+
+        // /v1/paint/texture/… — the dedicated binary image routes, the audio upload surface's twin.
+        if (seg.Length >= 3 && seg[1] == "paint" && seg[2] is "texture" or "textures")
+        {
+            await HandleTextureAsync(stream, request, ct).ConfigureAwait(false);
             return;
         }
 
@@ -551,6 +567,105 @@ public sealed class SimHttpServer : IAsyncDisposable
                 }
                 case "DELETE":
                     audio.Delete(name);
+                    await WriteRawJsonAsync(stream, 200, "{\"outcome\":\"ok\"}", ct).ConfigureAwait(false);
+                    return;
+                default:
+                    await WriteJsonAsync(stream, 405, Error("EINVAL", "method not allowed"), ct)
+                        .ConfigureAwait(false);
+                    return;
+            }
+        }
+        catch (VfsErrorException ex)
+        {
+            await WriteJsonAsync(stream, StatusForErrno(ex.Errno), Error(LinuxErrno.Name(ex.Errno), ex.Message), ct)
+                .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    ///     The dedicated binary texture routes — the twin of the audio upload surface, and for the
+    ///     same reason (field writes are UTF-8-only and bodies cap at 1 MiB, so images get raw-body
+    ///     routes):
+    ///     <list type="bullet">
+    ///         <item><c>GET /v1/paint/texture/files</c> — JSON upload list (name, bytes, kind,
+    ///             version, ready).</item>
+    ///         <item><c>PUT|POST /v1/paint/texture/file/&amp;lt;name&amp;gt;[?offset=N][&amp;amp;complete=0|1]</c> —
+    ///             raw body appended at <c>offset</c> (default 0 = start fresh). <c>complete</c>
+    ///             defaults to 1 (single-shot upload); chunked uploads pass <c>complete=0</c> on
+    ///             every chunk but the last. Bodies stay under the server's 1 MiB request cap, so a
+    ///             PNG over that <b>must</b> be chunked.</item>
+    ///         <item><c>DELETE /v1/paint/texture/file/&amp;lt;name&amp;gt;</c> — evict (unbinding it first).</item>
+    ///     </list>
+    ///     Everything else about textures (bind/unbind/clear, status/info/listings) rides the shared
+    ///     surfaces: the <c>/v1/fs/paint/textures/…</c> field mirror and <c>POST /v1/command</c>.
+    /// </summary>
+    private async Task HandleTextureAsync(Stream stream, HttpRequestLine request, CancellationToken ct)
+    {
+        if (_textures is not { } textures)
+        {
+            await WriteJsonAsync(stream, 404, Error("ENOENT", "custom clutter textures are not enabled"), ct)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        var seg = request.Segments;
+        if (request.Method == "GET" && seg.Length == 4 && seg[3] == "files")
+        {
+            var files = textures.List().Select(f => new
+            {
+                name = f.Name, bytes = f.Bytes, kind = TextureStore.FormatKind(f.Kind),
+                version = f.Version, ready = f.Ready,
+            });
+            await WriteRawJsonAsync(stream, 200, Serialize(files), ct).ConfigureAwait(false);
+            return;
+        }
+
+        if (seg.Length != 5 || seg[3] != "file")
+        {
+            await WriteJsonAsync(stream, 404, Error("ENOENT", "not found"), ct).ConfigureAwait(false);
+            return;
+        }
+
+        var name = seg[4];
+        try
+        {
+            switch (request.Method)
+            {
+                case "PUT" or "POST":
+                {
+                    long offset = 0;
+                    if (request.Query.TryGetValue("offset", out var offsetText)
+                        && (!long.TryParse(offsetText, NumberStyles.Integer, CultureInfo.InvariantCulture,
+                                out offset) || offset < 0))
+                    {
+                        await WriteJsonAsync(stream, 400, Error("EINVAL", "invalid 'offset'"), ct)
+                            .ConfigureAwait(false);
+                        return;
+                    }
+
+                    // A body past the server's 1 MiB request cap arrives empty (Content-Length is
+                    // rejected, not drained), which would silently commit a truncated upload. Refuse
+                    // it explicitly so the caller is told to chunk instead of getting a broken image.
+                    if (request.DeclaredContentLength > HttpRequestLine.MaximumBody)
+                    {
+                        await WriteJsonAsync(stream, 413, Error("EFBIG",
+                            $"body exceeds the {HttpRequestLine.MaximumBody}-byte request cap; upload in chunks "
+                            + "with ?offset=&complete=0"), ct).ConfigureAwait(false);
+                        return;
+                    }
+
+                    var complete = !request.Query.TryGetValue("complete", out var completeText)
+                                   || completeText != "0";
+                    textures.HttpUpload(name, offset, request.Body, complete);
+                    var json = Serialize(new
+                    {
+                        outcome = "ok", name, bytes = offset + request.Body.Length, ready = complete,
+                    });
+                    await WriteRawJsonAsync(stream, 200, json, ct).ConfigureAwait(false);
+                    return;
+                }
+                case "DELETE":
+                    textures.Delete(name);
                     await WriteRawJsonAsync(stream, 200, "{\"outcome\":\"ok\"}", ct).ConfigureAwait(false);
                     return;
                 default:

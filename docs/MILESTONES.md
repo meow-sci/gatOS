@@ -1186,3 +1186,70 @@ global/template/live-vessel/part precedence and shared/individual EVA semantic-m
 and owns a transactional shader patch lifecycle plus reversible GPU material clones. Maintenance
 contract and live checklist: [`plans/PAINT_ASBUILT.md`](../plans/PAINT_ASBUILT.md) and
 [`docs/VALIDATION.md`](VALIDATION.md).
+
+# Custom ground-clutter textures (post-paint, code complete; live validation pending)
+
+`/sim/paint/textures` lets a userland program draw any stock ground-clutter texture (rocks, trees,
+grass, shrubs) with its own image — upload bytes, bind them over a stock texture id, restore on
+unbind. Uploads are session-only and in-memory; nothing is ever written to the game's asset
+directories. Supported containers are PNG (first class) plus JPEG, BMP, HDR, DDS, KTX and KTX2.
+
+The mechanism is deliberately the smallest one that works:
+`BindlessTextureLibrary.SetTexture(stockHandle, ourImageView)` re-points an **existing** bindless
+slot, and unbind writes the captured stock `ImageView` back. That means no Harmony patch, no shader
+transform, no pipeline or renderer rebuild, and **no new bindless slots consumed** — the 1024-entry
+`MaxTextures` ceiling is untouched and the only budget that matters is VRAM. Nothing in KSA calls
+`SetTexture` (only `AddTexture`/`FreeTexture`), so gatOS is the sole writer of an existing slot.
+
+Layering follows the paint slice. `gatOS.SimFs/Paint/{TextureStore,TextureDirectory,TextureCommands}.cs`
+is the game-free half: name validation, the in-memory upload store with per-file/total/file-count
+caps, container sniffing at commit, the binding table, and the `bind`/`unbind`/`clear` grammar that
+parses fully in SimFs so a bad line fails the guest's `write(2)` with EINVAL. It lives in `SimFs`
+rather than `gatOS.Paint` because `gatOS.Paint` deliberately has **zero project references** and
+every other blob store (audio, camera tracks) already lives in SimFs. `Game/Ksa/Paint/ClutterTextureBridge.cs`
+is the only KSA-aware file: catalog discovery, decode (`TextureLoader.LoadFromMemory` +
+`SimpleVkTexture` with `fillMipChain`), the bindless swap, restore, and the retire queue. It adds
+**no new reflection anchor** — discovery reuses the existing `FxReflect.Terrain` handle already used
+by the FX terrain editor — and latches health under `paint.clutter_catalog` and `paint.texture_upload`.
+
+Three design points are worth recording:
+
+- **Zero cost when idle.** `TextureStore.Revision` bumps only on a real desired-state change
+  (bind, unbind, clear, delete-of-bound, re-commit-of-bound). The bridge's tick compares it against
+  the last applied value and returns before touching any KSA API, so with nothing bound the feature
+  is one integer comparison per frame. There is therefore deliberately **no runtime master switch**,
+  unlike parts/kittens paint; `[paint] paint_textures_enabled` (default `true`) is a boot-time
+  decision that removes the subtree entirely.
+- **Destruction, not creation, is the hazard.** Destroying a `VkImage` still referenced by an
+  in-flight frame corrupts the device, so images are never disposed inline: restore queues them and
+  they are freed after `MaxFramesInFlight + 1` ticks. Teardown restores every slot, waits for device
+  idle, then drains.
+- **Granularity is per-asset, stated honestly.** Re-pointing a slot replaces the texture *asset*, so
+  every clutter material sharing it changes. The `clutter` listing publishes a `used_by` count and
+  the referencing ecotypes so a shared asset is visible before binding, not surprising after.
+
+`/sim/paint/textures/` exposes `file/` (writable uploads, streaming entries excluded from the MQTT
+scalar mirror and bulk walks), `status`, `info`, `help`, `bindings` (rows symmetric with `bind`, so a
+listing line can be echoed straight back), `applied` (what actually reached the GPU, with per-row
+state and error), `clutter` (the overridable stock catalog), and the `bind`/`unbind`/`clear` control
+files. HTTP and MQTT mirror all of it for free; binary uploads take dedicated routes
+`GET/PUT/POST/DELETE /v1/paint/texture/file/<name>` (the second transport-parity exception after
+audio, and unlike audio it answers **413 EFBIG** on an oversize `Content-Length` instead of silently
+committing an empty body). MQTT carries no binary upload. MCP adds the `gatos.paint_texture` store
+tool, the `texture_bind`/`texture_unbind`/`texture_clear` operations on `gatos.paint_control` with a
+new `file` parameter (the render mode rides `value`), and the `paint_textures` runtime feature
+document.
+
+Authoring, not plumbing, was the headline user-facing problem: clutter diffuse maps are **modulation
+maps, not albedo** (`albedo = 2 * decode(t.rgb, t.a) * mix(meanLum, instanceColor, t.a) / meanLum`),
+so the texel is doubled and **alpha is not opacity** — it selects sRGB/linear decoding and how far
+the per-instance terrain tint applies. It was solved in-product rather than documented around:
+`bind` takes an optional third token, and the default `faithful` mode scales RGB by `2^(-1/2.2)` and
+clears alpha before upload, so a plain sRGB PNG renders as authored and identically in every biome.
+`raw` is the opt-out that uploads the decoded bytes untouched, for replacing a stock texture
+like-for-like. The correction is game-free and unit-tested against a reduced model of the shader
+(`TextureStore.FaithfulScale`).
+
+Plan and live checklist: [`plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`](../plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md)
+and [`docs/VALIDATION.md`](VALIDATION.md). The unvalidated risk carried into that checklist is the
+out-of-band `stagingPool.Submit().Wait()` upload while frames are in flight.

@@ -31,6 +31,21 @@ internal sealed class HttpRequestLine
     /// <summary>The path split into non-empty segments (e.g. <c>/v1/vessels/x</c> → [v1, vessels, x]) — computed once (GP7).</summary>
     internal string[] Segments { get; }
 
+    /// <summary>
+    ///     The <c>Content-Length</c> the client declared, whatever its size — unlike
+    ///     <see cref="ContentLength"/>, which returns 0 for a body past the request cap so the
+    ///     oversized body is never buffered. Upload routes read this to answer 413 explicitly
+    ///     instead of silently committing the empty body the reader produced.
+    /// </summary>
+    internal long DeclaredContentLength
+        => Headers.TryGetValue("Content-Length", out var lenText)
+           && long.TryParse(lenText, out var len) && len > 0
+            ? len
+            : 0;
+
+    /// <summary>The largest request body the reader will buffer; larger ones arrive empty.</summary>
+    internal const int MaximumBody = 1 << 20;
+
     /// <summary>Whether the client asked the server to close the connection after this response.</summary>
     internal bool WantsClose
         => Headers.TryGetValue("Connection", out var connection)
@@ -65,7 +80,7 @@ internal sealed class HttpRequestLine
 
     internal static int ContentLength(IReadOnlyDictionary<string, string> headers)
         => headers.TryGetValue("Content-Length", out var lenText)
-           && int.TryParse(lenText, out var len) && len is > 0 and <= 1 << 20
+           && int.TryParse(lenText, out var len) && len is > 0 and <= MaximumBody
             ? len
             : 0;
 
@@ -99,9 +114,31 @@ internal sealed class HttpConnectionReader(Stream stream)
 {
     private const int MaxHeadBytes = 16 * 1024; // same hostile-client head cap as before
 
+    /// <summary>Largest over-cap body we will read and throw away to keep the connection in sync.</summary>
+    private const long MaximumDiscardableBody = 64L * 1024 * 1024;
+
     private readonly byte[] _buffer = new byte[MaxHeadBytes];
     private int _start; // unconsumed region is [_start.._end)
     private int _end;
+
+    private const int MaximumBody = HttpRequestLine.MaximumBody;
+
+    /// <summary>Reads and throws away <paramref name="count"/> body bytes.</summary>
+    private async Task DiscardAsync(long count, CancellationToken ct)
+    {
+        var buffered = Math.Min(count, _end - _start);
+        _start += (int)buffered;
+        var remaining = count - buffered;
+        var scratch = new byte[Math.Min(remaining, 64 * 1024)];
+        while (remaining > 0)
+        {
+            var n = await stream.ReadAsync(scratch.AsMemory(0, (int)Math.Min(remaining, scratch.Length)), ct)
+                .ConfigureAwait(false);
+            if (n == 0)
+                return;
+            remaining -= n;
+        }
+    }
 
     /// <summary>
     ///     Reads one request (head + <c>Content-Length</c> body). Returns null on a clean EOF
@@ -121,7 +158,17 @@ internal sealed class HttpConnectionReader(Stream stream)
 
         var length = HttpRequestLine.ContentLength(request.Headers);
         if (length == 0)
+        {
+            // A body past the buffering cap yields length 0. Left unread its bytes would be parsed
+            // as the next request's head on this keep-alive connection, so discard exactly as many
+            // as the client declared: the handler can then answer 413 on a still-synchronized
+            // connection instead of the caller seeing a broken pipe mid-send. Bounded, so a bogus
+            // Content-Length cannot make us read forever.
+            var declared = request.DeclaredContentLength;
+            if (declared > MaximumBody && declared <= MaximumDiscardableBody)
+                await DiscardAsync(declared, ct).ConfigureAwait(false);
             return request;
+        }
 
         var body = new byte[length];
         var copied = Math.Min(length, _end - _start);

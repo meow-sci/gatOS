@@ -413,3 +413,20 @@ Paint adds a game-free rule/transform domain (`gatOS.Paint`) and one high-churn 
 EVA coloration across 9P, HTTP, MQTT, and MCP. Its authoritative maintenance map is
 [`plans/PAINT_ASBUILT.md`](../plans/PAINT_ASBUILT.md); every KSA upgrade must run that document's
 shader/state-bit/material-clone audit and the paint checklist in `docs/VALIDATION.md`.
+
+# Clutter texture surface
+
+Custom ground-clutter textures add a second, game-free store (`gatOS.SimFs/Paint/TextureStore.cs`,
+`TextureDirectory.cs`, `TextureCommands.cs`) and a second KSA adapter file
+(`Game/Ksa/Paint/ClutterTextureBridge.cs`, **2** `[KsaAnchor]`s — one High bind/upload site, one
+Medium catalog walk that reuses `FxReflect.Terrain` and so adds no reflection site). The store owns
+the in-memory upload set (`TextureFile`/`TextureFileInfo`, magic-byte container sniffing for
+png/jpeg/bmp/hdr/dds/ktx/ktx2), the desired-binding set (`TextureBinding`), the published
+`ClutterTextureInfo` catalog, `TextureBindStatus` applied rows, `TextureRuntime`, the file/byte/
+binding/dimension caps, and the `Revision` counter that gates the bridge's per-frame reconcile — with
+nothing bound the feature costs one integer comparison per frame, which is why it has no runtime
+master switch. `/sim/paint/textures/{file/,status,info,help,bindings,applied,clutter,bind,unbind,
+clear}` is the whole tree; HTTP adds dedicated binary routes at `/v1/paint/texture/…` (the second
+transport-parity exception after audio), MQTT mirrors the scalars, and MCP projects the same store
+through `gatos.paint_texture` plus three `gatos.paint_control` operations. Its authoritative
+maintenance map is [`plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`](../plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md).

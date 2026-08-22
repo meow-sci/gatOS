@@ -432,3 +432,33 @@ filesystem definition, automatically mirrored by HTTP and MQTT; MCP presents the
 logical tool/resource. Only `gatOS.GameMod/Game/Ksa/Paint` references KSA: one manager owns dynamic
 Harmony installation, deferred renderer rebuilds, live part identity, EVA material clones, and
 unload restoration. Disabled steady state is one branch with no patches, scans, clones, or GPU work.
+
+## Ground-clutter texture overrides
+
+`/sim/paint/textures` obeys the same one-model/many-transports rule. The game-free half is
+`gatOS.SimFs/Paint/` — `TextureStore` (in-memory uploads, caps, container sniff, binding table,
+revision counter), `TextureDirectory` (the writable `file/` dir), and `TextureCommands` (the
+`bind`/`unbind` grammar, parsed in SimFs so a malformed line fails `write(2)` with EINVAL). It sits
+in `SimFs` and not in `gatOS.Paint` because `gatOS.Paint` keeps zero project references by design and
+every other blob store already lives there. `SimFsTree` defines the subtree once; HTTP and MQTT
+mirror it automatically, and MCP presents the same store as `gatos.paint_texture` plus three
+`gatos.paint_control` operations. Binary uploads are the one exception, taking dedicated
+`/v1/paint/texture/file/<name>` routes exactly as audio does.
+
+`Game/Ksa/Paint/ClutterTextureBridge.cs` is the only KSA-aware file. It walks the ground-clutter
+renderer through the **existing** `FxReflect.Terrain` handle (the feature adds no reflection anchor),
+decodes an upload with `TextureLoader.LoadFromMemory` into a mip-filled `SimpleVkTexture`, and binds
+by re-pointing one existing bindless slot —
+`BindlessTextureLibrary.SetTexture(stockHandle, ourImageView)` — with the stock `ImageView` captured
+first for restore. No Harmony patch, no shader transform, no renderer rebuild, no new bindless slots.
+Reconciliation is driven by a revision comparison, so the idle steady state with nothing bound is one
+integer compare per frame and there is no runtime master switch. The one real hazard is destroying a
+`VkImage` a frame still references, so restore queues images and disposes them `MaxFramesInFlight + 1`
+ticks later; teardown restores every slot, waits for device idle, then drains.
+
+Because a slot holds a texture *asset*, an override is shared by every clutter material referencing
+it; the `clutter` listing publishes `used_by` and the referencing ecotypes so that is visible before
+binding. Config lives in the `[paint]` section: `paint_textures_enabled` (on; off removes the subtree),
+`paint_texture_max_bytes` (16 MiB), `paint_texture_max_total_bytes` (128 MiB),
+`paint_texture_max_files` (32), `paint_texture_max_bindings` (32), and `paint_texture_max_dimension`
+(4096 — larger uploads are downscaled, not rejected).

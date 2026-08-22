@@ -683,3 +683,28 @@ KSA shaders in memory during a deferred renderer rebuild, while EVA paint uses b
 material clones. The same controls are available through HTTP field endpoints, MQTT field topics,
 and the first-class MCP `gatos.paint_control` tool. See
 [`plans/PAINT_ASBUILT.md`](plans/PAINT_ASBUILT.md) for semantics and maintenance.
+
+### Repaint the ground itself
+
+`/sim/paint/textures` lets you draw any of the game's ground-clutter textures — the rocks, trees,
+grass and shrubs scattered over the terrain — with your own image. Upload it, bind it, and it's live
+that frame; nothing is ever written to the game's asset folders and everything restores on unbind.
+
+```sh
+cat /sim/paint/textures/clutter          # what can I override? (id, slot, size, mips, used_by, ecotypes)
+cat mossy-rock.png > /sim/paint/textures/file/mossy-rock.png
+echo 'RockDiffuseA mossy-rock.png' > /sim/paint/textures/bind
+cat /sim/paint/textures/applied          # did it actually reach the GPU?
+echo 'RockDiffuseA' > /sim/paint/textures/unbind   # ...or 'all', or: echo 1 > clear
+```
+
+PNG, JPEG, BMP, HDR, DDS, KTX and KTX2 all work, mip chains are generated for you, and there's no
+switch to flip first — with nothing bound the feature does nothing at all. Two things worth knowing:
+a binding replaces a texture *asset*, so if the `clutter` listing says `used_by 3` then all three
+materials change together; and clutter diffuse maps are **modulation maps, not photographs** — the
+shader doubles the texel, and alpha is not opacity but a picker for colour space and for how much of
+the terrain's own tint bleeds through. gatOS corrects for both by default, so an ordinary sRGB PNG
+comes out at its authored colours in every biome; add a third token, `raw`, when you want the bytes
+uploaded untouched and read exactly as one of the game's own clutter textures.
+HTTP uploads go to `PUT /v1/paint/texture/file/<name>` (chunk anything over 1 MiB), MQTT mirrors
+every control leaf, and MCP agents get `gatos.paint_texture` plus `gatos.paint_control`.

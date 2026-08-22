@@ -22,9 +22,12 @@ internal sealed class PaintManager : IDisposable
     private readonly List<(System.Reflection.MethodBase Target, System.Reflection.MethodInfo Patch)> _patches = [];
     private bool _cleanupPatches;
 
-    internal PaintManager(PaintStore store)
+    private readonly ClutterTextureBridge? _textures;
+
+    internal PaintManager(PaintStore store, ClutterTextureBridge? textures = null)
     {
         _store = store;
+        _textures = textures;
         PaintRuntime.Current = this;
     }
 
@@ -32,6 +35,13 @@ internal sealed class PaintManager : IDisposable
 
     internal CommandResult Execute(SimCommand command)
     {
+        // Custom clutter textures are vessel-agnostic and independent of both paint masters, so they
+        // route before any vehicle/part resolution.
+        if (command.Action.StartsWith("paint.texture_", StringComparison.Ordinal))
+            return _textures is { } bridge
+                ? bridge.Execute(command)
+                : new CommandResult(CommandOutcome.Unsupported, "custom clutter textures are disabled");
+
         if (!Validate(command, out var color, out var error))
             return new CommandResult(CommandOutcome.Invalid, error);
         var targetsVessel = command.Action.StartsWith("paint.vessel_", StringComparison.Ordinal)
@@ -96,6 +106,8 @@ internal sealed class PaintManager : IDisposable
     internal void Tick()
     {
         if (_cleanupPatches) RemovePatches();
+        // Independent of both paint masters, and a no-op until something is actually bound.
+        _textures?.Tick();
         var state = _store.Current;
         if (!state.PartsEnabled && !state.KittensEnabled) return;
         if (state.PartsEnabled) RebuildPartIndex();
@@ -313,6 +325,7 @@ internal sealed class PaintManager : IDisposable
 
     public void Dispose()
     {
+        _textures?.Dispose();
         PartsArmed = false;
         RemovePatches();
         EvaPaintBridge.Disable(_store);

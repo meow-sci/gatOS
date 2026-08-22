@@ -8,6 +8,7 @@ using gatOS.SimFs.Camera;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Display;
 using gatOS.SimFs.Fx;
+using gatOS.SimFs.Paint;
 using gatOS.SimFs.Snapshots;
 
 namespace gatOS.SimFs;
@@ -107,10 +108,18 @@ public static class SimFsTree
     ///     Optional always-visible paint rule/status store. Its two writable masters are the opt-in
     ///     boundary; supplying the store alone installs no shader hooks and creates no GPU materials.
     /// </param>
+    /// <param name="textures">
+    ///     Optional custom ground-clutter texture store (GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN): when
+    ///     supplied alongside <paramref name="paint"/> the tree gains <c>/sim/paint/textures/</c> —
+    ///     the writable <c>file/</c> upload directory, the <c>clutter/</c> discovery listing, and the
+    ///     bind/unbind/clear surface. Null removes it entirely so the SPEC stays truthful. Supplying
+    ///     the store alone uploads nothing and overrides nothing.
+    /// </param>
     public static VfsDirectory Build(SnapshotStore store, ICommandSink? commands, Func<string>? transports,
         DisplaySurface? display = null, AudioStore? audio = null, ScheduleStore? schedules = null,
-        CameraStore? camera = null, PaintStore? paint = null)
-        => new Builder(store, commands, transports, display, audio, schedules, camera, paint).BuildRoot();
+        CameraStore? camera = null, PaintStore? paint = null, TextureStore? textures = null)
+        => new Builder(store, commands, transports, display, audio, schedules, camera, paint, textures)
+            .BuildRoot();
 
     private sealed class Builder
     {
@@ -122,6 +131,7 @@ public static class SimFsTree
         private readonly ScheduleStore? _schedules;
         private readonly CameraStore? _camera;
         private readonly PaintStore? _paint;
+        private readonly TextureStore? _textures;
         private readonly ConcurrentDictionary<string, ulong> _qids = new();
         private long _nextQid;
 
@@ -165,7 +175,7 @@ public static class SimFsTree
 
         internal Builder(SnapshotStore store, ICommandSink? commands, Func<string>? transports,
             DisplaySurface? display, AudioStore? audio, ScheduleStore? schedules, CameraStore? camera,
-            PaintStore? paint)
+            PaintStore? paint, TextureStore? textures)
         {
             _store = store;
             _commands = commands;
@@ -175,6 +185,7 @@ public static class SimFsTree
             _schedules = schedules;
             _camera = camera;
             _paint = paint;
+            _textures = textures;
         }
 
         internal VfsDirectory BuildRoot()
@@ -230,7 +241,7 @@ public static class SimFsTree
 
             // Paint remains discoverable while disabled: its master switches are the explicit
             // opt-in boundary that installs/removes renderer hooks and EVA material clones.
-            if (_paint is not null)
+            if (_paint is not null || _textures is not null)
                 children.Add(PaintDir());
 
             var fixedChildren = children.ToArray();
@@ -254,10 +265,24 @@ public static class SimFsTree
         // ---- paint (opt-in vehicle shaders + gatOS-owned EVA material clones) ------------
 
         private VfsDirectory PaintDir()
-            => DelegateDirectory.Fixed("paint", Qid("paint"),
-                Line("paint/status", "status", PaintStatusLine),
-                new StaticTextFile("help", Qid("paint/help"), () => PaintHelp),
-                PartPaintRootDir(), KittenPaintRootDir());
+        {
+            var children = new List<VfsNode>();
+            // The rule surface needs the rule store; the texture surface is independent of it, so
+            // either one alone still yields a truthful paint/ directory.
+            if (_paint is not null)
+            {
+                children.Add(Line("paint/status", "status", PaintStatusLine));
+                children.Add(new StaticTextFile("help", Qid("paint/help"), () => PaintHelp));
+                children.Add(PartPaintRootDir());
+                children.Add(KittenPaintRootDir());
+            }
+
+            // Custom clutter textures (GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN): present whenever a store
+            // is wired. It needs no runtime master — with no bindings the feature costs nothing.
+            if (_textures is not null)
+                children.Add(TexturePaintRootDir());
+            return DelegateDirectory.Fixed("paint", Qid("paint"), children.ToArray());
+        }
 
         private string PaintStatusLine()
         {
@@ -445,6 +470,81 @@ public static class SimFsTree
             EVA paint uses gatOS-owned material clones and restores stock bindings on disable.
             EVA precedence: individual material > individual default > shared material > shared default > stock.
             HTTP mirrors these leaves at /v1/fs/paint/...; MQTT at gatos/sim/paint/... and .../set.
+            """;
+
+        // ---- paint/textures (user images over stock ground-clutter textures) --------------
+
+        private VfsDirectory TexturePaintRootDir()
+        {
+            var store = _textures!;
+            var q = "paint/textures";
+            var children = new List<VfsNode>
+            {
+                new TextureDirectory("file", Qid($"{q}/file"), store, Qid),
+                // LiveLine/StaticTextFile throughout: uploads, binds and the game-side publish all
+                // change these without a telemetry publish, so they must never be snapshot-memoized.
+                LiveLine($"{q}/status", "status", () => TextureStatusLine(store)),
+                LiveLine($"{q}/info", "info", () => TextureInfoLine(store)),
+                new StaticTextFile("help", Qid($"{q}/help"), () => TextureHelp),
+                new StaticTextFile("bindings", Qid($"{q}/bindings"),
+                    () => string.Concat(store.Bindings.Select(b => Formats.TextureBindingLine(b) + "\n"))),
+                new StaticTextFile("applied", Qid($"{q}/applied"),
+                    () => string.Concat(store.Applied.Select(a => Formats.TextureAppliedLine(a) + "\n"))),
+                new StaticTextFile("clutter", Qid($"{q}/clutter"),
+                    () => string.Concat(store.Catalog.Select(c => Formats.ClutterTextureLine(c) + "\n"))),
+            };
+            if (_commands is { } sink)
+            {
+                children.Add(LineControlFile.Create("bind", Qid($"{q}/bind"), sink,
+                    () => "", TextureCommands.ParseBind));
+                children.Add(LineControlFile.Create("unbind", Qid($"{q}/unbind"), sink,
+                    () => "", TextureCommands.ParseUnbind));
+                children.Add(new TriggerFile("clear", Qid($"{q}/clear"), sink,
+                    new SimCommand("", SimActions.PaintTextureClear, SimCommand.NoOrdinal, 1)));
+            }
+
+            return DelegateDirectory.Fixed("textures", Qid(q), children.ToArray());
+        }
+
+        private static string TextureStatusLine(TextureStore store)
+        {
+            var runtime = store.Runtime;
+            return $"available={Formats.Flag(runtime.Available)} bound={store.Bindings.Count} "
+                   + $"applied={runtime.AppliedCount} catalog={store.Catalog.Count} "
+                   + $"retiring={runtime.RetiringCount} "
+                   + $"vram_bytes={runtime.VramBytes.ToString(CultureInfo.InvariantCulture)} "
+                   + $"revision={store.Revision.ToString(CultureInfo.InvariantCulture)} "
+                   + $"error={runtime.Error.Replace('\n', ' ')}";
+        }
+
+        private static string TextureInfoLine(TextureStore store)
+        {
+            var (files, bytes) = store.Usage();
+            return $"files={files} files_max={store.MaxFiles} "
+                   + $"bytes={bytes.ToString(CultureInfo.InvariantCulture)} "
+                   + $"bytes_max={store.MaxTotalBytes.ToString(CultureInfo.InvariantCulture)} "
+                   + $"file_bytes_max={store.MaxFileBytes.ToString(CultureInfo.InvariantCulture)} "
+                   + $"bindings_max={store.MaxBindings} max_dimension={store.MaxDimension}";
+        }
+
+        private const string TextureHelp = """
+            Upload an image, then bind it over a stock ground-clutter texture. Session-only; nothing is written to disk.
+              cat rock.png > file/rock.png          upload (png, jpeg, bmp, hdr, dds, ktx, ktx2)
+              cat clutter                           the overridable stock textures, one row each
+              echo '<texture-id> rock.png' > bind   draw that stock texture with your image
+              echo '<texture-id> rock.png raw' > bind  ...uploading the bytes untouched instead
+              echo '<texture-id>' > unbind          restore one; 'all' restores every one
+              echo 1 > clear                        global teardown: restore every stock texture
+              cat bindings                          desired bindings; each row is a valid bind line
+              cat applied                           what actually reached the GPU, with errors
+              rm file/rock.png                      evict an upload (unbinds it first)
+            A bound texture replaces that asset everywhere it is used - check used_by in the clutter listing.
+            Clutter diffuse maps are modulation maps, not albedo: the shader doubles the texel, and alpha
+            selects sRGB (0) vs linear (1) decoding AND how far the terrain tint applies - it is not opacity.
+            Mode 'faithful' (the default) corrects for both, so an ordinary sRGB PNG renders as authored;
+            mode 'raw' uploads the decoded bytes untouched, for replacing a stock texture like-for-like.
+            HTTP mirrors these leaves at /v1/fs/paint/textures/...; MQTT at gatos/sim/paint/textures/... and .../set.
+            Uploads use PUT /v1/paint/texture/file/<name>; MQTT carries no binary uploads.
             """;
 
         // ---- time (KSA_GAME_INTEGRATION_PLAN §4.2) ----------------------------------------

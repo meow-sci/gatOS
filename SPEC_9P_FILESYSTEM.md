@@ -107,15 +107,16 @@ listing order; empty/`.`/`..` become `_`/`_.`/`_..`. In KSA a vessel's **name *i
 | `ETIMEDOUT` | 504 | game thread didn't drain the command within `command_timeout_ms` (paused/loading) |
 | `EOPNOTSUPP` | 501 | accessor latched degraded after a prior fault |
 
-The **audio clip store** (§3.9) and the **camera track store** (§3.11) add four VFS-level errnos on
-their upload surfaces (thrown by the write itself, mid-stream — not by a command):
+The **audio clip store** (§3.9), the **camera track store** (§3.11) and the **clutter texture
+store** (*Paint* → `/sim/paint/textures`) add four VFS-level errnos on their upload surfaces (thrown
+by the write itself, mid-stream — not by a command):
 
 | errno | HTTP | Meaning |
 |---|---|---|
-| `EFBIG` | 413 | a clip write past `audio_max_clip_bytes`, or a track write past `camera_max_track_bytes` |
-| `ENOSPC` | 507 | the store byte cap (`audio_max_total_bytes` / `camera_max_total_bytes`) or the count cap (`audio_max_clips` / `camera_max_tracks`) is full |
-| `EEXIST` | 409 | 9P `Tlcreate` of a clip/track name that is already taken |
-| `EPERM` | 403 | `mkdir`/`rename` inside `audio/file/` or `camera/track/` (flat files only) |
+| `EFBIG` | 413 | a clip write past `audio_max_clip_bytes`, a track write past `camera_max_track_bytes`, or an image write past `paint_texture_max_bytes` |
+| `ENOSPC` | 507 | the store byte cap (`audio_max_total_bytes` / `camera_max_total_bytes` / `paint_texture_max_total_bytes`) or the count cap (`audio_max_clips` / `camera_max_tracks` / `paint_texture_max_files`, plus `paint_texture_max_bindings`) is full |
+| `EEXIST` | 409 | 9P `Tlcreate` of a clip/track/image name that is already taken |
+| `EPERM` | 403 | `mkdir`/`rename` inside `audio/file/`, `camera/track/` or `paint/textures/file/` (flat files only) |
 
 ### 2.5 Config gates (`gatos.default.toml` → live `gatos.toml`)
 
@@ -140,6 +141,15 @@ their upload surfaces (thrown by the write itself, mid-stream — not by a comma
 | `display_enabled` | `false` | boot seed for `/sim/display/enabled` — the screen stream (§3.8); **off by default** |
 | `display_fps` / `display_width` / `display_height` | `15` / `320` / `180` | boot seeds for the stream cadence + downscale size (runtime control is the `/sim/display/*` files) |
 | `display_encoding` | `rgba-zlib` | boot seed for the frame encoding (`rgba-zlib` \| `rgba`; zlib needs purrTTY's 2026-07-02+ native — §3.8) |
+| `paint_parts_enabled` | `false` | boot seed for `/sim/paint/parts/enabled` — the vehicle-part shader master (*Paint*); **off by default**, and off means no shader compiler or part-render patch is installed at all |
+| `paint_kittens_enabled` | `false` | boot seed for `/sim/paint/kittens/enabled` — the EVA material-clone master; **off by default**, and off means no EVA material array is rebound and no GPU clone exists |
+| `paint_max_material_clones` | `64` | hard cap on gatOS-owned EVA material clones (the game's own material pool is fixed at 512); clamped 1..256 |
+| `paint_textures_enabled` | `true` | serve `/sim/paint/textures` (*Paint*) — custom images bound over stock ground clutter; `false` removes the subtree (and the `/v1/paint/texture` routes) entirely and answers every `paint.texture_*` action `EOPNOTSUPP`. There is no runtime master: idle cost is one integer comparison per frame |
+| `paint_texture_max_bytes` | `16777216` | per-image upload cap (`EFBIG` past it; clamped 64 KiB..256 MiB) |
+| `paint_texture_max_total_bytes` | `134217728` | store-wide byte cap across committed **and** in-flight uploads (`ENOSPC`; clamped ≥ the per-image cap..`int.MaxValue`) |
+| `paint_texture_max_files` | `32` | uploaded-image count cap (`ENOSPC`; clamped 1..256) |
+| `paint_texture_max_bindings` | `32` | simultaneous stock-texture overrides (`ENOSPC`; clamped 1..256) |
+| `paint_texture_max_dimension` | `4096` | longest GPU edge kept for an override; a larger upload is **downscaled, not rejected** (clamped 16..16384) |
 | `audio_enabled` | `true` | serve `/sim/audio` (§3.9) — userland audio playback; `false` removes the surface (and the `/v1/audio` routes) entirely |
 | `audio_max_clip_bytes` | `16777216` | per-clip upload cap (`EFBIG` past it; clamped 4 KiB..256 MiB) |
 | `audio_max_total_bytes` | `67108864` | store-wide byte cap (`ENOSPC`; clamped ≥ clip cap..1 GiB) |
@@ -1481,6 +1491,38 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `camera.play` | — | token = track name; aux = `@group` name (optional); values = the **6 slots** `[atSeconds, rate, loop, atPresent, ratePresent, loopPresent]`, defaults `[0,1,0,0,0,0]` | Frame | `camera/play` | vessel-agnostic; **also needs `schedule_enabled`** (`EOPNOTSUPP` otherwise) — a track is a `ctl/schedules` player. A grouped player ignores `at`/`rate`/`loop` |
 | `camera.set` | — | values = flat `[key, value, …]` pairs (keys: `0`=t seconds `1`=rate `2`=loop `3`=paused); **no** token | Frame | `camera/set` | vessel-agnostic; needs `schedule_enabled`; `ENOENT` when nothing is playing |
 | `camera.stop` | — | value `1` | Frame | `camera/stop` | vessel-agnostic; needs `schedule_enabled`; idempotent |
+| `paint.parts_enabled` | — | value `0`/`1` | Frame | `paint/parts/enabled` | vessel-agnostic; the vehicle-shader master. Every `paint.*` row below (textures excepted) is gated by `control_enabled + paint runtime master`, and all of them bypass the active-vessel authority gate |
+| `paint.blend` | — | token ∈ `multiply`\|`tint`\|`replace` | Frame | `paint/parts/blend` | vessel-agnostic; a change while active requests a deferred renderer rebuild |
+| `paint.parts_clear` | — | value `1` | Frame | `paint/parts/clear` | vessel-agnostic; clears the rules, not the master |
+| `paint.global_enabled` | — | value `0`/`1` | Frame | `paint/parts/global/enabled` | vessel-agnostic |
+| `paint.global_color` | — | values `[r,g,b]` normalized sRGB `0..1` | Frame | `paint/parts/global/color` | vessel-agnostic; non-finite / out-of-range ⇒ `EINVAL` |
+| `paint.global_clear` | — | value `1` | Frame | `paint/parts/global/clear` | vessel-agnostic |
+| `paint.template_enabled` | — | value `0`/`1`; token = raw `Part.Template.Id` | Frame | `paint/parts/templates/<template>/enabled` | vessel-agnostic |
+| `paint.template_color` | — | values `[r,g,b]`; token = raw template id | Frame | `paint/parts/templates/<template>/color` | vessel-agnostic |
+| `paint.template_clear` | — | value `1`; token = raw template id | Frame | `paint/parts/templates/<template>/clear` | vessel-agnostic |
+| `paint.vessel_enabled` | — | value `0`/`1` | Frame | `vessels/by-id/<id>/paint/parts/enabled` | `vessel_id` = the painted vessel; the rule is live (new parts inherit it) |
+| `paint.vessel_color` | — | values `[r,g,b]` | Frame | `vessels/by-id/<id>/paint/parts/color` | |
+| `paint.vessel_clear` | — | value `1` | Frame | `vessels/by-id/<id>/paint/parts/clear` | |
+| `paint.part_enabled` | — | value `0`/`1`; token = stable `instance_id` | Frame | `vessels/by-id/<id>/parts/<n>/paint/enabled`, `.../subparts/<m>/paint/enabled` | one ordinal-free token, two views; needs `telemetry_vessel_parts` for the file (not for the action) |
+| `paint.part_color` | — | values `[r,g,b]`; token = `instance_id` | Frame | `vessels/by-id/<id>/parts/<n>/paint/color` | |
+| `paint.part_clear` | — | value `1`; token = `instance_id` | Frame | `vessels/by-id/<id>/parts/<n>/paint/clear` | |
+| `paint.kittens_enabled` | — | value `0`/`1` | Frame | `paint/kittens/enabled` | vessel-agnostic; the EVA master — owns and restores the safe material clones |
+| `paint.kittens_clear` | — | value `1` | Frame | `paint/kittens/clear` | vessel-agnostic; clears every shared **and** individual EVA rule |
+| `paint.kitten_shared_enabled` | — | value `0`/`1` | Frame | `paint/kittens/shared/enabled` | vessel-agnostic |
+| `paint.kitten_shared_color` | — | values `[r,g,b]` | Frame | `paint/kittens/shared/color` | vessel-agnostic |
+| `paint.kitten_shared_clear` | — | value `1` | Frame | `paint/kittens/shared/clear` | vessel-agnostic |
+| `paint.kitten_shared_material_enabled` | — | value `0`/`1`; token = material name | Frame | `paint/kittens/materials/<name>/enabled` | vessel-agnostic; names are `body[.n]`, `fur[.n]`, `helmet[.n]`, `visor[.n]`, `mmu[.n]` |
+| `paint.kitten_shared_material_color` | — | values `[r,g,b]`; token = material name | Frame | `paint/kittens/materials/<name>/color` | vessel-agnostic |
+| `paint.kitten_shared_material_clear` | — | value `1`; token = material name | Frame | `paint/kittens/materials/<name>/clear` | vessel-agnostic |
+| `paint.kitten_enabled` | — | value `0`/`1` | Frame | `vessels/by-id/<eva>/paint/kitten/default/enabled` | `vessel_id` = the EVA kitten |
+| `paint.kitten_color` | — | values `[r,g,b]` | Frame | `vessels/by-id/<eva>/paint/kitten/default/color` | |
+| `paint.kitten_clear` | — | value `1` | Frame | `vessels/by-id/<eva>/paint/kitten/default/clear` | removes every rule for that one EVA |
+| `paint.kitten_material_enabled` | — | value `0`/`1`; token = material name | Frame | `vessels/by-id/<eva>/paint/kitten/materials/<name>/enabled` | |
+| `paint.kitten_material_color` | — | values `[r,g,b]`; token = material name | Frame | `vessels/by-id/<eva>/paint/kitten/materials/<name>/color` | |
+| `paint.kitten_material_clear` | — | value `1`; token = material name | Frame | `vessels/by-id/<eva>/paint/kitten/materials/<name>/clear` | |
+| `paint.texture_bind` | — | token = stock texture id; aux = uploaded file name; value `0` = `faithful` (default), `1` = `raw` | Frame | `paint/textures/bind` | vessel-agnostic; **its own gate**, `control_enabled + paint textures store` (`EOPNOTSUPP` when the store is off) — not either paint master |
+| `paint.texture_unbind` | — | token = stock texture id | Frame | `paint/textures/unbind` | vessel-agnostic; the token `all` normalizes to `paint.texture_clear` |
+| `paint.texture_clear` | — | value `1`; **no** token | Frame | `paint/textures/clear`, `paint/textures/unbind` (`all`) | vessel-agnostic; global teardown — restores every stock texture, keeps the uploads |
 
 ### 5.2 Writing over each transport
 
@@ -1617,18 +1659,44 @@ guest over 9p.
 | GET | `/v1/audio/files` | JSON clip list `[{name,bytes,version,ready}]` (requires `audio_enabled`). |
 | PUT/POST | `/v1/audio/file/{name}[?offset=N][&complete=0\|1]` | **binary** clip upload: the raw body lands at `offset` (default `0` = start a fresh, truncated upload). `complete` defaults to `1` (single-shot commits immediately); chunked uploads send `complete=0` on every chunk but the last, each chunk's `offset` = bytes sent so far (out-of-order ⇒ `EINVAL` 400). Bodies ≤ 1 MiB (the server's request cap) — chunk anything larger. → `{"outcome":"ok","name":…,"bytes":…,"ready":…}`. |
 | DELETE | `/v1/audio/file/{name}` | evict a clip → `{"outcome":"ok"}` (404 when absent). |
+| GET | `/v1/paint/texture/files` | JSON upload list `[{name,bytes,kind,version,ready}]` (requires `paint_textures_enabled`; `404` `ENOENT` when off). |
+| PUT/POST | `/v1/paint/texture/file/{name}[?offset=N][&complete=0\|1]` | **binary** image upload — the same contract as the audio route: the raw body lands at `offset` (default `0` = a fresh, truncated upload), `complete` defaults to `1`, chunked uploads send `complete=0` on every chunk but the last with `offset` = bytes sent so far (out-of-order ⇒ `EINVAL` 400). **Unlike audio**, a declared `Content-Length` past the server's 1 MiB request cap is refused up front with `413` `EFBIG` instead of arriving empty and silently committing a truncated image. → `{"outcome":"ok","name":…,"bytes":…,"ready":…}`. |
+| DELETE | `/v1/paint/texture/file/{name}` | evict an upload, unbinding it first → `{"outcome":"ok"}` (404 when absent). |
 
 The audio **control** surface needs no dedicated routes: `POST /v1/fs/audio/play` (body = the same
 line the 9P file takes), likewise `set`/`stop`; `GET /v1/fs/audio/status|info` (+ `?stream=1` SSE);
 `POST /v1/command` with the `audio.*` actions. MQTT mirrors the same leaves (`gatos/sim/audio/*` +
-`gatos/sim/audio/play/set` etc.) and accepts `audio.*` on `gatos/command`. The dedicated binary
-upload routes above are the **one deliberate transport-parity exception** (the field-write path is
-UTF-8 text with a 1 MiB body cap); MQTT gets **no** upload at all (text payloads + retained-topic
-memory make it a bad fit) — like the display stream, documented rather than mirrored. Example:
+`gatos/sim/audio/play/set` etc.) and accepts `audio.*` on `gatos/command`. There are exactly **two
+deliberate transport-parity exceptions**, and both are binary upload stores: audio clips here and
+clutter-texture images below. Everything else in `/sim` reaches HTTP through the `/v1/fs` field
+mirror, whose write path is UTF-8 text with a 1 MiB body cap — which is precisely why a byte-exact
+image or clip needs its own route. Neither store gets an upload over MQTT at all (text payloads +
+retained-topic memory make it a bad fit) — like the display stream, documented rather than mirrored.
+Example:
 
 ```sh
 curl -T alarm.mp3 "http://127.0.0.1:4242/v1/audio/file/alarm.mp3"       # upload (≤ 1 MiB)
 curl -X POST --data 'alarm.mp3 vol=0.8' "http://127.0.0.1:4242/v1/fs/audio/play"
+```
+
+The **clutter texture** routes are that surface's twin, with one deliberate difference: a body whose
+`Content-Length` exceeds the 1 MiB request cap is answered `413` `EFBIG` rather than arriving empty.
+The audio route pre-dates the check and would commit the empty body; PNGs routinely exceed 1 MiB, so
+for textures chunking is the normal path and silently truncating an image is not an acceptable
+failure mode. `/v1/paint/textures/…` is accepted as an alias for the `texture` segment. Store errnos
+map as everywhere else (§2.4): the per-image cap `EFBIG` → `413`, the file/byte/binding caps
+`ENOSPC` → `507`, a taken name `EEXIST` → `409`, an unknown upload `ENOENT` → `404`. Everything else
+about textures — `bind`/`unbind`/`clear`, `status`/`info`/`help`, and the `bindings`/`applied`/
+`clutter` listings — rides the ordinary field mirror and `POST /v1/command` for free; only the binary
+`file/` entries are excluded from it. Examples:
+
+```sh
+H=http://127.0.0.1:4242/v1
+curl -T rock.png "$H/paint/texture/file/rock.png"                       # upload (≤ 1 MiB per request)
+curl -s "$H/paint/texture/files"                                        # what is uploaded
+curl -s "$H/fs/paint/textures/clutter"                                  # what can be overridden
+curl -X POST --data 'EarthGrassClutterDiffuse rock.png' "$H/fs/paint/textures/bind"
+curl -s "$H/fs/paint/textures/applied"                                  # …and what reached the GPU
 ```
 
 The **schedule** (§3.10) and **camera** (§3.11) surfaces add **no dedicated routes at all** — every
@@ -1729,11 +1797,93 @@ material > individual default > shared material > shared default > stock. The cu
 EVA material names are `body[.n]`, `fur[.n]`, `helmet[.n]`, `visor[.n]`, and `mmu[.n]`; absent
 attachments do not appear. Sclera/cosmetics and part glass remain stock.
 
-All actions are Frame phase and use the ordinary `control_enabled` gate. Visual by-id operations do
-not require the target to be the controlled vessel. Invalid flags/tokens/non-finite or out-of-range
+All actions above are Frame phase and use the ordinary `control_enabled` gate (the texture actions
+below carry their own). Visual by-id operations do not require the target to be the controlled
+vessel. Invalid flags/tokens/non-finite or out-of-range
 RGB fail `EINVAL`; missing live targets fail `ENOENT`; a shader-prefix conflict returns `EBUSY`;
 incompatible audited render internals return `EOPNOTSUPP` and leave stock rendering active.
 
 HTTP mirrors every leaf at `GET|POST /v1/fs/<path>`. MQTT publishes retained
 `gatos/sim/<path>` and accepts writes at `gatos/sim/<path>/set`; canonical HTTP/MQTT command
 envelopes also accept every action above.
+
+## Textures (`/sim/paint/textures`)
+
+Bind a custom image over a **stock ground-clutter texture** — grass, trees, rocks: upload the bytes
+into the writable `file/` directory, then `echo` a bind line. gatOS re-points the existing bindless
+texture slot at the uploaded image and keeps the stock `ImageView` to write back on unbind, so no
+new GPU slot is consumed, no shader is transformed, and no pipeline is rebuilt. Uploads live in mod
+memory only (session-only, like the rest of paint). The subtree is present whenever
+`paint_textures_enabled=true` (the default). Deliberately there is **no runtime master** here,
+unlike the two paint mechanisms above: with nothing bound the whole feature costs one integer
+comparison per frame.
+
+```sh
+cat rock.png > /sim/paint/textures/file/rock.png       # upload (commits on close)
+cat /sim/paint/textures/clutter                        # what can be overridden, and what shares it
+echo 'EarthGrassClutterDiffuse rock.png' > /sim/paint/textures/bind          # renders as authored
+echo 'EarthGrassClutterDiffuse rock.png raw' > /sim/paint/textures/bind      # …or as KSA would read it
+cat /sim/paint/textures/applied                        # …and what actually reached the GPU
+echo all > /sim/paint/textures/unbind                  # restore every stock texture
+```
+
+| Path | R/W | Value / semantics | Action |
+|---|---|---|---|
+| `paint/textures/file/` | R/W dir | the upload store: `Tlcreate` + chunked writes accumulate an image that becomes bindable **on commit (clunk)**; re-upload (`cat >`, O_TRUNC) replaces and bumps the version — re-committing a *bound* file re-uploads it to the GPU; `rm` evicts (unbinding it first); `mkdir`/`mv` inside ⇒ `EPERM` | — |
+| `paint/textures/file/<name>` | R/W | one uploaded image, binary. Name: single component, ≤ 64 chars, `[A-Za-z0-9._-]` (`EINVAL` otherwise). The container is sniffed from the magic bytes — `png`, `jpeg`, `bmp`, `hdr`, `dds`, `ktx`, `ktx2` — so the extension is for humans only. Reads return the committed bytes (`md5sum` both sides matches). Marked `IsStreaming`, so these entries are **excluded** from the MQTT scalar mirror and bulk walks | — |
+| `paint/textures/status` | R | `available=<0\|1> bound=<n> applied=<n> catalog=<n> retiring=<n> vram_bytes=<n> revision=<n> error=<text>` | — |
+| `paint/textures/info` | R | `files=<n> files_max=<n> bytes=<n> bytes_max=<n> file_bytes_max=<n> bindings_max=<n> max_dimension=<n>` | — |
+| `paint/textures/help` | R | the grammar plus what the clutter shader does to a texture and what each bind mode does about it | — |
+| `paint/textures/bindings` | R | one row per desired binding: `<texture-id> <file> <mode>`; `mode` ∈ `faithful`\|`raw` — **symmetric with `bind`**, so a row can be echoed straight back to re-create it | — |
+| `paint/textures/applied` | R | one row per binding as the GPU sees it: `<texture-id> <file> <state> <width> <height> <mips> <vram_bytes> <error>`; `state` ∈ `pending`\|`applied`\|`failed`, an empty error renders `-` | — |
+| `paint/textures/clutter` | R | one row per overridable stock texture: `<texture-id> <slot> <width> <height> <mips> <used_by> <ecotypes>`; `slot` ∈ `diffuse`\|`normal`\|`pbr`\|`opacity`\|`thickness`, `ecotypes` is comma-separated (`-` when none) | — |
+| `paint/textures/bind` | R/W | write `<texture-id> <file> [faithful\|raw]`; read = empty. The mode is optional and defaults to `faithful` — gatOS corrects the decoded pixels so an ordinary sRGB PNG renders as authored; `raw` uploads them untouched (see below) | `paint.texture_bind` |
+| `paint/textures/unbind` | R/W | write `<texture-id>`, or `all` | `paint.texture_unbind` |
+| `paint/textures/clear` | R/W trigger | write `1`; global teardown — restores every stock texture, keeps the uploads | `paint.texture_clear` |
+
+`bind`, `unbind` and `clear` exist only when the command sink is wired. Writing `all` to `unbind`
+normalizes to `paint.texture_clear`, so the two spellings cannot drift. All three actions are Frame
+phase with a Global target and their **own** gate — `control_enabled + paint textures store`, not
+paint's `control_enabled + paint runtime master`; with `paint_textures_enabled=false` the subtree
+does not exist and every `paint.texture_*` action answers `EOPNOTSUPP`.
+
+**Bind modes — a clutter diffuse map is a modulation map, not albedo, and `faithful` handles it.**
+The shader computes `albedo = 2 · decode(t.rgb, t.a) · mix(meanLum, instanceColor, t.a) / meanLum`, so
+the stored texel is **doubled** and its alpha is **not opacity**: it selects sRGB (`0`) vs linear
+(`1`) decoding *and* how far the per-instance terrain tint reaches. `bind`'s optional third token
+says what gatOS does about that:
+
+- **`faithful` (the default)** — gatOS rewrites the decoded pixels before upload, so an ordinary sRGB
+  PNG renders as authored with no hand-correction. Two corrections, both required: RGB is scaled by
+  `2^(-1/2.2)` ≈ `0.7297` to cancel the shader's `×2` (pure white `255` stores as `186`; the
+  round-trip error is under 0.2% and is entirely 8-bit quantization), and alpha is cleared to `0`,
+  which selects the sRGB-decode path **and** collapses the per-instance terrain tint to exactly `1`
+  — without it the image would also be recoloured by whatever biome the clutter stands in. The
+  channel mapping is game-free and unit-tested against a reduced model of the shader
+  (`TextureStore.FaithfulScale`, `gatOS.SimFs.Tests/Paint/TextureStoreTests.cs`).
+- **`raw`** — upload the decoded bytes untouched, so the image is interpreted exactly as one of KSA's
+  own clutter textures: linear, doubled (**mid-grey `0.5` is neutral**), and biome-tinted when alpha
+  is `1`. The mode for replacing a stock texture like-for-like, or for an image already authored
+  against the shader's conventions.
+
+A decode that is not RGBA8 (some `ktx`/`dds`/`hdr`) cannot be corrected: the `faithful` binding lands
+as a `failed` row in `applied`, its error naming `raw` as the fix, and the stock texture keeps
+drawing. Re-binding the same pair in a *different* mode bumps the reconcile revision, because the
+uploaded pixels change.
+
+Real cutout opacity is the separate `opacity` slot in either mode. Mips are mandatory — they are
+generated automatically — or the texture aliases badly at range. An image longer than
+`paint_texture_max_dimension` on either edge is **downscaled, not rejected**. And re-pointing a slot
+replaces the texture *asset*, so every clutter material sharing it changes: that is what the
+`clutter` listing's `used_by` column is for, published before you bind.
+
+Errnos: `EINVAL` a bad file name, an unparseable `bind`/`unbind` line, or an unrecognised image
+container; `ENOENT` an unknown stock texture id, an unknown upload, or `rm` of a missing file;
+`EBUSY` the named upload has not committed yet; `ENOSPC` the file-count, store-byte or binding cap;
+`EFBIG` the per-file byte cap. The caps are enforced **mid-write**, so the failing `write(2)` carries
+the errno; `EEXIST` is a 9P `Tlcreate` of a taken name and `EPERM` a `mkdir`/`rename` inside `file/`.
+
+HTTP mirrors every leaf at `GET|POST /v1/fs/paint/textures/<leaf>` except the binary `file/` entries,
+which have dedicated upload routes (§7) — one of the two transport-parity exceptions, alongside audio
+clips. MQTT publishes retained `gatos/sim/paint/textures/<leaf>` and accepts writes at `.../set`;
+there is **no** binary upload over MQTT, the same documented exception audio takes.

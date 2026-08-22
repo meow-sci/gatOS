@@ -154,8 +154,12 @@ public sealed class SimFsTreeTests
         var schedules = new ScheduleStore();
         var camera = new CameraStore();
         camera.HttpUpload("crawl.json", 0, "{}"u8, complete: true);
+        var textures = new gatOS.SimFs.Paint.TextureStore();
+        textures.HttpUpload("crawl.png", 0,
+            [0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A], complete: true);
         await using var server = new NinePServer(
-            SimFsTree.Build(store, sink, () => "9p 1", schedules: schedules, camera: camera));
+            SimFsTree.Build(store, sink, () => "9p 1", schedules: schedules, camera: camera,
+                textures: textures));
         await server.StartAsync();
         await using var client = await NinePTestClient.ConnectAsync(server.Port);
         await client.VersionAsync();
@@ -178,6 +182,10 @@ public sealed class SimFsTreeTests
         [
             // integration health
             "status/game_version", "status/sampler", "status/accessors", "status/transports",
+            // custom clutter textures (GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN)
+            "paint/textures/status", "paint/textures/info", "paint/textures/help",
+            "paint/textures/bindings", "paint/textures/applied", "paint/textures/clutter",
+            "paint/textures/bind", "paint/textures/unbind", "paint/textures/clear",
             // vessel control surface
             "vessels/by-id/test-1/ctl/ignite", "vessels/by-id/test-1/ctl/shutdown",
             "vessels/by-id/test-1/ctl/engine",

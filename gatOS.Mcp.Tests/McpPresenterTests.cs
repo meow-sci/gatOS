@@ -1,4 +1,6 @@
+using gatOS.SimFs;
 using gatOS.SimFs.Commands;
+using gatOS.SimFs.Paint;
 using gatOS.SimFs.Snapshots;
 using gatOS.Paint;
 using NUnit.Framework;
@@ -18,8 +20,9 @@ public sealed class McpPresenterTests
             Assert.That(names, Does.Contain("gatos.get_world"));
             Assert.That(names, Does.Contain("gatos.execute_batch"));
             Assert.That(names, Does.Contain("gatos.schedule_batch"));
-            Assert.That(names, Has.Length.EqualTo(26));
+            Assert.That(names, Has.Length.EqualTo(27));
             Assert.That(names, Does.Contain("gatos.paint_control"));
+            Assert.That(names, Does.Contain("gatos.paint_texture"));
             Assert.That(names, Has.None.Contains("display"));
             Assert.That(registry.Resources.Select(r => r.ProtocolResource?.Name ?? ""), Has.None.Contains("display"));
         });
@@ -65,6 +68,76 @@ public sealed class McpPresenterTests
         var json = gatOS.SimFs.SimJson.Serialize(capabilities.Data);
         Assert.That(json, Does.Contain("gatos.paint_control"));
         Assert.That(json, Does.Contain("paint.parts_enabled"));
+    }
+
+    [Test]
+    public async Task PaintControl_MapsTextureOperationsIncludingTheFileSlot()
+    {
+        var sink = new RecordingSink();
+        var presenters = new McpPresenters(new SnapshotStore(), sink);
+        var handlers = new McpToolHandlers(presenters, null, null, null, new TextureStore());
+
+        await handlers.PaintControl("texture_bind", target: "Core/Rock.png", file: "rock.png");
+        Assert.Multiple(() =>
+        {
+            Assert.That(sink.Commands[0].Action, Is.EqualTo(SimActions.PaintTextureBind));
+            Assert.That(sink.Commands[0].Token, Is.EqualTo("Core/Rock.png"));
+            Assert.That(sink.Commands[0].Aux, Is.EqualTo("rock.png"), "the file slot rides Aux");
+        });
+
+        await handlers.PaintControl("texture_clear", value: 1);
+        Assert.That(sink.Commands[1].Action, Is.EqualTo(SimActions.PaintTextureClear));
+
+        // The `all` spelling must survive the canonical envelope too — the bridge normalizes it,
+        // so it cannot mean one thing over 9p and another over MCP.
+        await handlers.PaintControl("texture_unbind", target: "all");
+        Assert.That(sink.Commands[2].Token, Is.EqualTo("all"));
+    }
+
+    [Test]
+    public void PaintTexture_UploadsAndReportsThroughTheSameStore()
+    {
+        var textures = new TextureStore();
+        var presenters = new McpPresenters(new SnapshotStore(), new RecordingSink(), textures: textures);
+        var handlers = new McpToolHandlers(presenters, null, null, null, textures);
+
+        var png = Convert.ToBase64String(
+            new byte[] { 0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A });
+        var upload = handlers.PaintTexture("upload", "rock.png", data_base64: png);
+        Assert.That(upload.IsError, Is.Not.True, "upload should succeed");
+        Assert.That(textures.TryGet("rock.png", out _), Is.EqualTo(TextureLookup.Ready));
+
+        Assert.That(handlers.PaintTexture("list").IsError, Is.Not.True);
+        Assert.That(handlers.PaintTexture("catalog").IsError, Is.Not.True);
+        Assert.That(handlers.PaintTexture("bindings").IsError, Is.Not.True);
+
+        var missing = handlers.PaintTexture("retrieve", "nope.png");
+        Assert.Multiple(() =>
+        {
+            Assert.That(missing.IsError, Is.True);
+            Assert.That(SimJson.Serialize(missing.StructuredContent), Does.Contain("ENOENT"));
+        });
+    }
+
+    [Test]
+    public void PaintTextures_IsAFirstClassRuntimeFeatureAndCapability()
+    {
+        var presenters = new McpPresenters(new SnapshotStore(), new RecordingSink(),
+            textures: new TextureStore());
+
+        Assert.That(presenters.GetRuntimeState("paint_textures").Ok, Is.True);
+
+        var json = SimJson.Serialize(presenters.GetCapabilities().Data);
+        Assert.Multiple(() =>
+        {
+            Assert.That(json, Does.Contain("paint_textures"));
+            Assert.That(json, Does.Contain("paint.texture_bind"));
+            Assert.That(json, Does.Contain("control_enabled + paint textures store"));
+        });
+
+        var disabled = new McpPresenters(new SnapshotStore(), new RecordingSink())
+            .GetRuntimeState("paint_textures");
+        Assert.That(disabled.Errno, Is.EqualTo("EOPNOTSUPP"), "an absent store reports unsupported");
     }
 
     [Test]

@@ -6,6 +6,7 @@ using gatOS.NineP.Vfs;
 using gatOS.SimFs;
 using gatOS.SimFs.Audio;
 using gatOS.SimFs.Camera;
+using gatOS.SimFs.Paint;
 using gatOS.SimFs.Commands;
 using ModelContextProtocol.Protocol;
 
@@ -15,15 +16,17 @@ internal sealed class McpToolHandlers
 {
     private readonly McpPresenters _presenters;
     private readonly AudioStore? _audio;
+    private readonly TextureStore? _textures;
     private readonly CameraStore? _camera;
     private readonly ScheduleStore? _schedules;
 
-    internal McpToolHandlers(McpPresenters presenters, AudioStore? audio, CameraStore? camera, ScheduleStore? schedules)
+    internal McpToolHandlers(McpPresenters presenters, AudioStore? audio, CameraStore? camera, ScheduleStore? schedules, TextureStore? textures = null)
     {
         _presenters = presenters;
         _audio = audio;
         _camera = camera;
         _schedules = schedules;
+        _textures = textures;
     }
 
     public McpEnvelope GetWorld([Description("summary or full")] string detail = "summary") => _presenters.GetWorld(detail);
@@ -43,7 +46,7 @@ internal sealed class McpToolHandlers
         [Description("Opaque next_cursor from an earlier gatos.list_kittens result")] string? cursor = null) => _presenters.ListKittens(limit, cursor);
     public McpEnvelope GetKitten([Description("Raw id of a vessel whose is_kitten is true")] string id,
         [Description("Omit for all, or choose flight, orbit, environment, propulsion, resources, power, control, modules, encounters, parts, paint, all")] IReadOnlyList<string>? include = null) => _presenters.GetVessel(id, include, true);
-    public McpEnvelope GetRuntimeState([Description("camera, schedules, audio, paint, welds, thug_life, face_fx, iva, engine_plume, plume_trail, clouds, or terrain")] string feature) => _presenters.GetRuntimeState(feature);
+    public McpEnvelope GetRuntimeState([Description("camera, schedules, audio, paint, paint_textures, welds, thug_life, face_fx, iva, engine_plume, plume_trail, clouds, or terrain")] string feature) => _presenters.GetRuntimeState(feature);
     public McpEnvelope GetCapabilities() => _presenters.GetCapabilities();
     public Task<McpEnvelope> Wait([Description("Return after snapshot_sequence becomes greater than this value")] long? after_sequence = null,
         [Description("Return on the next event with this exact type")] string? event_type = null,
@@ -131,13 +134,63 @@ internal sealed class McpToolHandlers
         [Description("Alternate field token when field is omitted")] string? token = null, CancellationToken cancellationToken = default)
         => Logical("debug." + FxFamily(family), operation, "", -1, value, values, field ?? token, entity, cancellationToken);
     public Task<McpEnvelope> PaintControl(
-        [Description("parts_enabled, blend, parts_clear, global_*, template_*, vessel_*, part_*, kittens_enabled, kittens_clear, kitten_shared_*, kitten_shared_material_*, kitten_*, or kitten_material_*")] string operation,
-        [Description("Raw vessel/EVA id for vessel, part, kitten, and kitten_material operations; empty for global/shared operations")] string vessel_id = "",
-        [Description("0|1 for enabled flags and clear triggers")] double value = 0,
+        [Description("parts_enabled, blend, parts_clear, global_*, template_*, vessel_*, part_*, kittens_enabled, kittens_clear, kitten_shared_*, kitten_shared_material_*, kitten_*, kitten_material_*, texture_bind, texture_unbind, or texture_clear")] string operation,
+        [Description("Raw vessel/EVA id for vessel, part, kitten, and kitten_material operations; empty for global/shared/texture operations")] string vessel_id = "",
+        [Description("0|1 for enabled flags and clear triggers; for texture_bind, 0 = faithful (render the image as authored, the default) and 1 = raw (interpret it as a stock clutter texture would be)")] double value = 0,
         [Description("Normalized sRGB [r,g,b], each 0..1, for *_color operations")] IReadOnlyList<double>? color = null,
-        [Description("Template id, part instance_id, or semantic EVA material name")] string? target = null,
+        [Description("Template id, part instance_id, semantic EVA material name, or — for texture_bind/texture_unbind — the stock clutter texture id from gatos.paint_texture(operation:\"catalog\")")] string? target = null,
+        [Description("Uploaded image name for texture_bind, as uploaded through gatos.paint_texture")] string? file = null,
         CancellationToken cancellationToken = default)
-        => Logical("paint", operation, vessel_id, -1, value, color, target, null, cancellationToken);
+        => Logical("paint", operation, vessel_id, -1, value, color, target, file, cancellationToken);
+
+    // texture_bind carries its render mode in `value`: 0 = faithful (render the image as authored,
+    // the default), 1 = raw (interpret it exactly as one of KSA's own clutter textures).
+
+    public CallToolResult PaintTexture(
+        [Description("list, catalog, bindings, retrieve, upload, or delete")] string operation,
+        [Description("Uploaded image name; required except for list, catalog, and bindings")] string? name = null,
+        [Description("Decoded byte offset for an upload chunk")] long offset = 0,
+        [Description("Finalize the upload after this chunk")] bool complete = true,
+        [Description("Base64-encoded image bytes; required for upload")] string? data_base64 = null)
+    {
+        var s = _presenters.Current;
+        if (_textures is null)
+            return ToolResult(Unsupported("custom clutter textures", s.Sequence, s.UtSeconds));
+        try
+        {
+            if (operation.Equals("retrieve", StringComparison.OrdinalIgnoreCase) && name is not null)
+            {
+                if (!_textures.Exists(name))
+                    throw new VfsErrorException(LinuxErrno.ENOENT, $"paint/textures: no file '{name}'");
+                var bytes = _textures.SnapshotBytes(name);
+                var envelope = McpEnvelope.Success(
+                    new { name, bytes = bytes.Length }, s.Sequence, s.UtSeconds);
+                ContentBlock media = new EmbeddedResourceBlock
+                {
+                    Resource = BlobResourceContents.FromBytes(bytes,
+                        "gatos://paint/textures/" + Uri.EscapeDataString(name), null),
+                };
+                return ToolResult(envelope, media);
+            }
+
+            object? data = operation.ToLowerInvariant() switch
+            {
+                "list" => _textures.List(),
+                "catalog" => _textures.Catalog,
+                "bindings" => new { desired = _textures.Bindings, applied = _textures.Applied },
+                "upload" when name is not null && data_base64 is not null
+                    => UploadTexture(name, offset, complete, data_base64),
+                "delete" when name is not null => DeleteTexture(name),
+                _ => throw new ArgumentException(
+                    "operation must be list, catalog, bindings, retrieve, upload, or delete with required fields"),
+            };
+            return ToolResult(McpEnvelope.Success(data, s.Sequence, s.UtSeconds));
+        }
+        catch (Exception ex) when (ex is ArgumentException or FormatException or VfsErrorException)
+        {
+            return ToolResult(StoreFailure(ex, s.Sequence, s.UtSeconds));
+        }
+    }
 
     public Task<McpEnvelope> Command(
         [Description("Canonical gatOS action key returned by gatos.get_capabilities.actions[].action")] string action,
@@ -318,6 +371,10 @@ internal sealed class McpToolHandlers
     private object UploadCamera(string name, string json, long offset, bool complete) { var bytes = Encoding.UTF8.GetBytes(json); _camera!.HttpUpload(name, offset, bytes, complete); return new { name, bytes = bytes.Length, complete }; }
     private object ReadCamera(string name) { if (!_camera!.Exists(name)) throw new VfsErrorException(LinuxErrno.ENOENT, $"camera: no track '{name}'"); return new { name, json = Encoding.UTF8.GetString(_camera.SnapshotBytes(name)) }; }
     private object DeleteCamera(string name) { _camera!.Delete(name); return new { name, deleted = true }; }
+    private object UploadTexture(string name, long offset, bool complete, string base64) { var bytes = Convert.FromBase64String(base64); _textures!.HttpUpload(name, offset, bytes, complete); return new { name, bytes = bytes.Length, complete }; }
+
+    private object DeleteTexture(string name) { _textures!.Delete(name); return new { name, deleted = true }; }
+
     private object UploadAudio(string name, long offset, bool complete, string base64) { var bytes = Convert.FromBase64String(base64); _audio!.HttpUpload(name, offset, bytes, complete); return new { name, bytes = bytes.Length, complete }; }
     private object DeleteAudio(string name) { _audio!.Delete(name); return new { name, deleted = true }; }
     private static string? AudioMimeType(string name) => Path.GetExtension(name).ToLowerInvariant() switch
@@ -341,5 +398,5 @@ internal sealed class McpToolHandlers
         };
     }
     private static McpEnvelope Unsupported(string feature, long seq, double ut) => new(false, null, seq, ut, "unsupported", "EOPNOTSUPP", $"{feature} is disabled", false);
-    private static McpEnvelope StoreFailure(Exception ex, long seq, double ut) => new(false, null, seq, ut, "invalid", ex is VfsErrorException v ? v.Errno.ToString() : "EINVAL", ex.Message, false);
+    private static McpEnvelope StoreFailure(Exception ex, long seq, double ut) => new(false, null, seq, ut, "invalid", ex is VfsErrorException v ? LinuxErrno.Name(v.Errno) : "EINVAL", ex.Message, false);
 }

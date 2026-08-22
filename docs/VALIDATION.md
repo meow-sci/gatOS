@@ -728,3 +728,92 @@ listed with their card.
   degraded state without exhausting KSA's 512-entry material pool.
 - [ ] Interop: if another mod changes a bound slot, gatOS conditional restore does not overwrite it.
 - [ ] Soak enable/disable/rebuild and EVA churn while watching Vulkan validation and clone counters.
+
+# Custom clutter textures live KSA checklist (2026.8.19.5261)
+
+- [ ] **Risk #1, unvalidated by construction — the out-of-band submit.** A bind decodes and uploads
+  through a discrete `stagingPool.Submit().Wait()` (the same shape `ThugLifeTextureFactory` already
+  ships) while frames are in flight, and `FrameCapture`'s header states that a private command buffer
+  submitted alongside in-flight frames "corrupts the device and crashes the game". The reconciliation
+  — that the rule governs per-frame work touching in-flight frame resources, while this is a one-shot
+  upload to a fresh image nothing has bound yet — is **reasoning, not evidence**. Bind repeatedly
+  during heavy scene load, during time warp, and while `/sim/display` is streaming; watch for device
+  loss. If it proves unsafe, the fallback is to record the upload in-band at the `DisplayRenderPatch`
+  injection point and complete the bind a frame later.
+- [ ] Inert boot: with `paint_textures_enabled = true` but nothing ever bound, the feature costs one
+  `Revision` comparison per frame — no KSA API is touched, `status` reads `bound=0 applied=0`, and
+  frame time is indistinguishable from a build with `paint_textures_enabled = false` (which removes
+  the subtree entirely). There is no runtime master switch to check, by design.
+- [ ] `cat /sim/paint/textures/clutter` on a loaded flight lists real stock textures with plausible
+  `slot`/`WxH`/mip/`used_by`/ecotype columns; on a scene with no ground clutter it is empty rather
+  than an error, and `/sim/status/accessors` shows no new degraded latch
+  (`paint.clutter_catalog`, `paint.texture_upload`).
+- [ ] **Transport parity — bind and unbind the same texture through each of the four transports** and
+  confirm the visual result and the `bindings`/`applied` read-back are identical every time:
+  9P (`echo '<id> rock.png' > /sim/paint/textures/bind`), HTTP field POST to
+  `/v1/fs/paint/textures/bind`, MQTT publish to `gatos/sim/paint/textures/bind/set`, and MCP
+  `gatos.paint_control(operation:"texture_bind", target, file, value)`. Repeat with the explicit
+  `raw` mode (`value:1` over MCP, the third token everywhere else) and confirm the mode survives
+  every transport identically. Uploads themselves are the documented
+  exception: 9P `cat > file/<name>`, HTTP `PUT /v1/paint/texture/file/<name>`, MCP
+  `gatos.paint_texture(operation:"upload")` — **MQTT carries no binary upload**.
+- [ ] The HTTP upload route rejects an oversized body with **413 / EFBIG** when `Content-Length`
+  exceeds the server's 1 MiB request cap, rather than silently committing an empty file; chunked
+  `?offset=N&complete=0|1` uploads of a real multi-MiB PNG commit correctly and `?complete=1` flips
+  `ready`. The `/v1/paint/textures/...` alias behaves identically to `/v1/paint/texture/...`.
+- [ ] Multiple simultaneous bindings: bind three different uploads over three different stock
+  textures (ideally diffuse + normal + PBR of the same material) at once. All three render, `applied`
+  shows three `applied` rows, `vram_bytes` is the sum, and unbinding one leaves the other two intact.
+- [ ] Re-upload of a bound file: overwrite `file/rock.png` with different bytes while it is bound.
+  The version bumps, the new image reaches the GPU without an explicit re-bind, and the previous
+  image goes through the retire queue rather than being destroyed inline.
+- [ ] `rm /sim/paint/textures/file/rock.png` while bound: the binding is torn down first, the stock
+  texture reappears, `bindings` loses the row, and no orphaned VRAM remains in `status`.
+- [ ] Global teardown through **both** spellings: `echo all > unbind` and `echo 1 > clear` each
+  restore every stock texture, leave the uploads in place (so a re-bind needs no re-upload), and
+  produce identical `status`/`bindings`/`applied` state — they normalize to the same
+  `paint.texture_clear` action, and any divergence is a bug.
+- [ ] Mod unload / scene teardown with bindings live: every stock `ImageView` is written back, the
+  device idles, the retire queue drains, and the game keeps rendering stock clutter with no leak and
+  no validation error. Repeat with a bind still `pending` (bound before a renderer existed).
+- [ ] **Deferred destruction under the Vulkan validation layers.** Run the whole bind/unbind/re-bind
+  cycle with validation enabled and confirm zero `VkImage` destroyed-while-in-use errors: images are
+  queued by `Restore` and disposed only after `MaxFramesInFlight + 1` ticks, never inline. Also
+  confirm `retiring` in `status` returns to `0` and does not grow monotonically under churn.
+- [ ] Shared-asset behaviour: pick a catalog row with `used_by` > 1, bind it, and confirm **every**
+  material listed in its `ecotypes` column changes together — the documented granularity, not a bug —
+  and that unbinding restores all of them.
+- [ ] **`faithful` renders the authored colour, in any biome.** Bind a known-colour PNG (flat
+  `#808080`, `#FF0000`, and pure white patches) with the default mode — `echo '<id> swatch.png' >
+  bind`, no third token — and screenshot the clutter it draws in **two different biomes** (for
+  example Earth grassland and a desert/scree ecotype, or two bodies). The rendered swatches must
+  match the authored colours and must match **each other**: identical pixels across the two biomes is
+  what proves the terrain tint really was cancelled by clearing alpha, not merely reduced. The image
+  must not read ~2× too bright. `bindings` shows the row's third column as `faithful`.
+- [ ] **`raw` reproduces the stock convention.** Re-bind the same file with `raw`
+  (`echo '<id> swatch.png raw' > bind`): the revision bumps and the image re-uploads even though the
+  pair is unchanged, the mid-grey `#808080` patch now reads as *unmodulated* rather than as the grey
+  it was authored as, the white patch reads far too bright, and an `A=255`
+  swatch visibly takes the per-instance terrain tint — different in each of the two biomes above.
+  Confirm a genuine stock-texture replacement (a re-exported dump of a stock clutter texture) is
+  visually indistinguishable from stock in `raw` and *not* in `faithful`. `bindings` reads `raw`, and
+  the row is still echo-symmetric with `bind`.
+- [ ] **A decode that cannot be corrected fails loudly and names the fix.** Bind an image whose
+  decode is not RGBA8 (a BC-compressed `dds`, an untranscodable `ktx`, or an `hdr`) in the default
+  `faithful` mode: the reconcile leaves the stock texture drawn and `applied` carries a `failed` row
+  whose error names mode `raw` as the fix. Re-binding the same file with `raw` then succeeds. (The
+  check runs at reconcile, so it surfaces as a `failed` row and a `paint.texture_upload` health
+  fault, **not** as an errno on the `bind` write.)
+- [ ] Remaining shader behaviour, visually: `A=255` in `raw` visibly pulls the per-instance terrain
+  tint in while `A=0` keeps the exact texture colour, and real cutout opacity still comes only from
+  the separate `opacity` slot. Confirm the generated mip chain kills aliasing at distance in both
+  modes.
+- [ ] Cap errnos, each from a real write: `EINVAL` (bad name, unparseable `bind` line — including a
+  third token that is neither `faithful` nor `raw` — non-image bytes), `ENOENT` (unknown stock texture id, or a bind naming no upload), `EBUSY` (bind of an
+  uncommitted upload), `ENOSPC` (file-count, total-byte, and binding caps), `EFBIG` (per-file cap,
+  carried by the failing `write(2)` mid-write), `EEXIST` (9p `Tlcreate` of a taken name), `EPERM`
+  (`mkdir`/`rename` inside `file/`). An upload larger than `paint_texture_max_dimension` is
+  **downscaled**, not rejected.
+- [ ] Soak: bind/unbind/re-upload churn across scene changes, vessel switches, time warp, and
+  `/sim/display` streaming for an extended session while watching Vulkan validation, `vram_bytes`,
+  `retiring`, the two health latches, and frame time for drift.

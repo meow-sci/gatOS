@@ -703,3 +703,21 @@ transactional, foreign compiler prefixes are a hard conflict, failure falls back
 disable/unload removes only the stored gatOS methods before requesting KSA's deferred renderer
 rebuild. EVA paint uses no Harmony patch; its live game-thread tick conditionally rebinds captured
 material-index arrays to owned clones. See `plans/PAINT_ASBUILT.md` for exact seams and upgrade audit.
+
+# Clutter texture runtime coupling
+
+Custom clutter textures install **no Harmony patch at all** — the whole feature is one game-thread
+tick (`ClutterTextureBridge.Tick`, driven by `PaintManager`, the same Frame drain `TerrainActuator`
+runs in). That tick is revision-gated: `TextureStore.Revision` bumps only on a real desired-state
+change (bind/unbind/clear/delete-of-bound/re-commit-of-bound), and the tick returns before touching
+any KSA API when it matches the last reconciled value, so idle cost is one integer comparison and
+there is deliberately no runtime master switch. Transport threads only ever mutate the game-free
+store. The single real hazard is lifetime, not binding: destroying a `VkImage` still referenced by a
+frame in flight corrupts the device, so nothing is ever disposed inline — `Restore` re-points the
+slot and queues the image for `MaxFramesInFlight + 1` ticks (`DrainRetired`), and `Dispose` restores
+every slot, calls `GraphicsAndCompute.WaitIdle()`, then drains. **Unvalidated risk:** the upload path
+takes a discrete `Renderer.Allocator.CreateStagingPool(...)` + `Submit().Wait()` — the same shape
+`ThugLifeTextureFactory` already ships — while `FrameCapture`'s header states that GPU work submitted
+out-of-band alongside the engine's in-flight frames corrupts the device. The reconciliation is
+reasoning, not evidence, and needs a live check. See
+[`plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`](../plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md).

@@ -1,6 +1,6 @@
 ---
 title: Vehicle and EVA paint
-description: Opt in to gatOS paint shaders, color whole vessels or individual parts, and safely tint EVA materials.
+description: Opt in to gatOS paint shaders, color whole vessels or individual parts, safely tint EVA materials, and bind custom ground-clutter textures.
 sidebar:
   order: 11
 ---
@@ -101,6 +101,116 @@ stock**. “Shared” means the rule applies to every live EVA through safe clon
 one material used by unrelated characters. The clone pool defaults to 64 and is capped by
 `paint_max_material_clones`.
 
+## Override a ground-clutter texture
+
+Ground-clutter textures are a third, independent paint mechanism: upload an image and bind it over a
+stock clutter texture — grass, trees, rocks. gatOS re-points the existing bindless texture slot at
+your image and keeps the stock view to write back on unbind, so nothing is patched, no shader is
+transformed, and no new GPU slot is consumed. Uploads live in mod memory for the session only.
+
+Unlike vehicle and EVA paint there is **no runtime master to enable**: with nothing bound the whole
+feature costs one integer comparison per frame. The subtree exists whenever
+`paint_textures_enabled=true`, which is the default.
+
+Read `paint/textures/clutter` first — it lists every stock texture you can override, one row per
+texture, and it is the only place the texture ids come from.
+
+<Tabs syncKey="transport">
+  <TabItem label="/sim (in guest)">
+
+```sh
+cat /sim/paint/textures/clutter                        # texture-id slot w h mips used_by ecotypes
+cat rock.png > /sim/paint/textures/file/rock.png       # upload; commits on close
+echo 'EarthGrassClutterDiffuse rock.png' > /sim/paint/textures/bind      # renders as authored
+echo 'EarthGrassClutterDiffuse rock.png raw' > /sim/paint/textures/bind  # …or as KSA reads its own
+cat /sim/paint/textures/applied                        # what actually reached the GPU
+echo all > /sim/paint/textures/unbind                  # restore every stock texture
+```
+
+  </TabItem>
+  <TabItem label="HTTP (host)">
+
+```sh
+H=http://127.0.0.1:4242/v1
+curl -s "$H/fs/paint/textures/clutter"
+curl -T rock.png "$H/paint/texture/file/rock.png"
+curl -X POST --data 'EarthGrassClutterDiffuse rock.png' "$H/fs/paint/textures/bind"
+curl -X POST --data 'EarthGrassClutterDiffuse rock.png raw' "$H/fs/paint/textures/bind"
+curl -s "$H/fs/paint/textures/applied"
+curl -X POST --data 'all' "$H/fs/paint/textures/unbind"
+```
+
+  </TabItem>
+</Tabs>
+
+:::note[A clutter diffuse map is a modulation map, not albedo — `faithful` handles it]
+
+The clutter shader computes `albedo = 2 * decode(rgb, a) * mix(meanLum, instanceColor, a) / meanLum`,
+so the stored texel is doubled, and alpha is not opacity: it selects the decode — sRGB at `0`, linear
+at `1` — _and_ how far the per-instance terrain tint reaches. `bind` takes an optional third token
+that chooses what gatOS does about that, and it defaults to the answer you want.
+
+- **`faithful`, the default.** gatOS rewrites the decoded pixels before upload, so an ordinary sRGB
+  PNG renders with its own colors and no hand-correction. RGB is scaled by `2^(-1/2.2)` ≈ `0.7297`
+  to cancel the doubling — pure white `255` is stored as `186`, and the round-trip error is under
+  0.2%, all of it 8-bit quantization. Alpha is cleared to `0`, which picks the sRGB decode _and_
+  collapses the terrain tint to exactly `1`, so the same image reads identically in every biome.
+- **`raw`, the deliberate opt-out.** The decoded bytes go up untouched and the image is read exactly
+  as one of KSA's own clutter textures: linear, doubled — so mid-grey `0.5` is neutral — and
+  biome-tinted when alpha is `1`. Use it to replace a stock texture like-for-like, or for art
+  already authored against those conventions.
+
+A decode that is not RGBA8 (some ktx, dds, and hdr files) cannot be corrected: the `faithful` binding
+comes back as a `failed` row in `applied` whose error names `raw` as the fix, and the stock texture
+keeps drawing. Real cutout opacity is a separate texture slot (`opacity`) in either mode, so a
+“transparent” alpha channel never punches holes. **Mips are mandatory** and gatOS generates them for
+you; without them clutter aliases badly at range. Images longer than `paint_texture_max_dimension`
+(4096 by default) on either edge are downscaled, not rejected.
+
+:::
+
+:::caution[Binding replaces the asset everywhere it is used]
+
+A stock texture is one asset shared by however many clutter materials reference it, so re-pointing
+it changes all of them at once. The `used_by` column in the `clutter` listing is that warning,
+published before you bind — a row with `used_by` greater than 1 is shared, and the `ecotypes` column
+names which clutter families change.
+
+:::
+
+## Read and control the texture store
+
+| Leaf                      | Read / write                                                                                               |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `paint/textures/file/`    | Writable upload directory. Chunked writes commit on close; `rm` evicts and unbinds first.                  |
+| `paint/textures/clutter`  | `texture-id slot width height mips used_by ecotypes`; slot is diffuse, normal, pbr, opacity, or thickness. |
+| `paint/textures/bindings` | `texture-id file mode`, one row per desired binding — the same shape `bind` takes.                         |
+| `paint/textures/applied`  | `texture-id file state width height mips vram_bytes error`; state is pending, applied, or failed.          |
+| `paint/textures/status`   | `available bound applied catalog retiring vram_bytes revision error`.                                      |
+| `paint/textures/info`     | File and byte usage against `files_max`, `bytes_max`, `file_bytes_max`, `bindings_max`, `max_dimension`.   |
+| `paint/textures/help`     | The grammar, the bind modes, and what the shader does, in the filesystem.                                  |
+| `paint/textures/bind`     | Write `texture-id file [faithful\|raw]`; the mode defaults to `faithful`.                                   |
+| `paint/textures/unbind`   | Write `texture-id`, or `all`.                                                                              |
+| `paint/textures/clear`    | Write `1` for the global teardown: every stock texture restored, uploads kept.                             |
+
+A binding is **desired state → applied state**: `bind` records it immediately, and the next frame
+uploads the image and re-points the slot, which is when `applied` gains a row. Watch `applied` for
+the outcome; a `failed` row carries the reason in its last column. Writing `all` to `unbind` is
+exactly the `clear` trigger, so the two spellings cannot drift apart.
+
+Uploads accept png, jpeg, bmp, hdr, dds, ktx, and ktx2 — the container is sniffed from the bytes, so
+the file extension is for humans. Names are a single component of at most 64 characters from
+`[A-Za-z0-9._-]`. Limits answer `EFBIG` for the per-file cap and `ENOSPC` for the file-count, total
+byte, and binding caps, enforced mid-write so the failing write carries the errno. Binding a name
+that has not finished uploading is `EBUSY`; an unknown texture id or file is `ENOENT`; an
+unrecognized image container is `EINVAL`.
+
+Texture uploads are one of only two binary surfaces in gatOS with dedicated HTTP routes (audio clips
+are the other): `PUT` or `POST /v1/paint/texture/file/<name>` with `offset` and `complete=0|1` for
+ordered chunks, `GET /v1/paint/texture/files`, and `DELETE /v1/paint/texture/file/<name>`. Requests
+are capped at 1 MiB and a larger declared `Content-Length` is refused with `413`, so chunking is the
+normal path for real PNGs. MQTT mirrors the text leaves but carries no binary upload.
+
 ## Other interfaces
 
 - MQTT reads retained `gatos/sim/<path>` topics and writes the same raw values to
@@ -108,9 +218,15 @@ one material used by unrelated characters. The clone pool defaults to 64 and is 
 - MCP uses [`gatos.paint_control`](/gatOS/mcp/tools/paint-control/). Read complete desired/runtime
   state with `gatos.get_runtime_state({"feature":"paint"})` or `gatos://runtime/paint`; request
   `include:["paint"]` from `gatos.get_vessel` for one vessel.
+- Clutter textures use [`gatos.paint_texture`](/gatOS/mcp/tools/paint-texture/) for the store and
+  `gatos.paint_control` operations `texture_bind`, `texture_unbind`, and `texture_clear` for the
+  bindings. The bind mode rides `value`: `0` is `faithful` (the default) and `1` is `raw`. Read
+  complete texture state with `gatos.get_runtime_state({"feature":"paint_textures"})` or
+  `gatos://runtime/paint_textures`.
 - Generic HTTP and MQTT command envelopes accept every canonical `paint.*` action listed by
   capabilities.
 
 All paint actions are Frame phase and honor `control_enabled`, but visual by-id operations do not
-require the target to be the controlled vessel. Rules are never written into a save game. Mod unload
+require the target to be the controlled vessel. Texture actions carry their own gate — the store has
+to be enabled, not either paint master — and answer `EOPNOTSUPP` when `paint_textures_enabled=false`. Rules are never written into a save game. Mod unload
 clears them and restores stock rendering.

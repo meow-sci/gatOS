@@ -59,6 +59,8 @@ tags:
     description: The field-level /sim filesystem mirror.
   - name: control
     description: The single command endpoint and field writes.
+  - name: textures
+    description: Custom ground-clutter texture uploads (the dedicated binary image routes).
   - name: meta
     description: Health and the live OpenAPI document.
 
@@ -490,6 +492,135 @@ paths:
         "200": { $ref: "#/components/responses/CommandOk" }
         "404": { $ref: "#/components/responses/CommandError" }
 
+
+  /paint/texture/files:
+    get:
+      tags: [textures]
+      operationId: listClutterTextures
+      summary: List the uploaded clutter-texture images
+      description: |
+        The `/sim/paint/textures/file/` store as JSON (requires `paint_textures_enabled=true` —
+        otherwise `404`). `kind` is the container sniffed from the magic bytes (`png`, `jpeg`,
+        `bmp`, `hdr`, `dds`, `ktx`, `ktx2`, or `unknown`); `ready=false` marks an upload that has
+        not committed yet. `/v1/paint/textures/files` is accepted as an alias.
+      responses:
+        "200":
+          description: The image list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    bytes: { type: integer }
+                    kind: { type: string }
+                    version: { type: integer }
+                    ready: { type: boolean }
+                  required: [name, bytes, kind, version, ready]
+        "404":
+          description: Custom clutter textures are disabled (`paint_textures_enabled=false`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /paint/texture/file/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: The image name (single component, ≤ 64 chars, `[A-Za-z0-9._-]`).
+        schema: { type: string }
+    put:
+      tags: [textures]
+      operationId: uploadClutterTexture
+      summary: Upload image bytes (raw binary body; POST is an alias)
+      description: |
+        The second deliberately transport-specific route, for the same reason as audio: the
+        `/v1/fs` field write is UTF-8 text and bodies cap at 1 MiB, so image bytes get a raw-body
+        route. Chunking works exactly as the audio route: every chunk passes `complete=0` except
+        the last, and each chunk's `offset` must equal the bytes sent so far (append-by-position;
+        out-of-order → `400 EINVAL`). The commit (`complete=1`, the default) mirrors the 9p clunk:
+        only then is the container sniffed and the image bindable.
+
+        **This route differs from `/audio/file/{name}` in one way.** A request whose
+        `Content-Length` exceeds the server's 1 MiB request cap is answered `413 EFBIG` up front —
+        the body is never read, so an oversized single-shot upload is refused instead of silently
+        committing an empty file. PNGs routinely exceed 1 MiB, so chunking is the normal path, not
+        the exception. `/v1/paint/textures/file/{name}` is accepted as an alias.
+      parameters:
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+          description: Byte position of this chunk; `0` starts a fresh (truncated) upload.
+        - name: complete
+          in: query
+          required: false
+          schema: { type: integer, default: 1, enum: [0, 1] }
+          description: "`0` keeps the upload open for more chunks; `1` (default) commits."
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: Chunk accepted (and committed when `complete=1`).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  outcome: { type: string, const: "ok" }
+                  name: { type: string }
+                  bytes: { type: integer }
+                  ready: { type: boolean }
+                required: [outcome, name, bytes, ready]
+        "400": { $ref: "#/components/responses/CommandError" }
+        "413":
+          description: |
+            EFBIG — either the declared `Content-Length` exceeds the 1 MiB request cap (chunk
+            instead), or the image would exceed `paint_texture_max_bytes`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "507":
+          description: ENOSPC — `paint_texture_max_total_bytes` or `paint_texture_max_files` is full.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      tags: [textures]
+      operationId: uploadClutterTexturePost
+      summary: Alias of PUT (same raw-body upload)
+      parameters:
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+        - name: complete
+          in: query
+          required: false
+          schema: { type: integer, default: 1, enum: [0, 1] }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200": { description: "As PUT." }
+    delete:
+      tags: [textures]
+      operationId: deleteClutterTexture
+      summary: Evict an uploaded image
+      description: |
+        The name frees immediately; any binding using it is unbound first, so the stock texture is
+        restored rather than left pointing at freed bytes.
+      responses:
+        "200": { $ref: "#/components/responses/CommandOk" }
+        "404": { $ref: "#/components/responses/CommandError" }
   /openapi.json:
     get:
       tags: [meta]

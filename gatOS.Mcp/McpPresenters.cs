@@ -2,6 +2,7 @@ using System.Text;
 using gatOS.SimFs;
 using gatOS.SimFs.Audio;
 using gatOS.SimFs.Camera;
+using gatOS.SimFs.Paint;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
 using gatOS.Paint;
@@ -21,10 +22,11 @@ public sealed class McpPresenters
     private readonly CameraStore? _camera;
     private readonly ScheduleStore? _schedules;
     private readonly PaintStore? _paint;
+    private readonly TextureStore? _textures;
 
     public McpPresenters(SnapshotStore snapshots, ICommandSink? commands = null,
         Func<string>? transports = null, AudioStore? audio = null, CameraStore? camera = null,
-        ScheduleStore? schedules = null, PaintStore? paint = null)
+        ScheduleStore? schedules = null, PaintStore? paint = null, TextureStore? textures = null)
     {
         _snapshots = snapshots;
         _commands = commands;
@@ -33,6 +35,7 @@ public sealed class McpPresenters
         _camera = camera;
         _schedules = schedules;
         _paint = paint;
+        _textures = textures;
     }
 
     public SimSnapshot Current => _snapshots.Current;
@@ -144,6 +147,20 @@ public sealed class McpPresenters
             "clouds" => s.FxEditors?.CloudBodies,
             "terrain" => s.FxEditors is null ? null : new { bodies = s.FxEditors.TerrainBodies, global = s.FxEditors.TerrainGlobal },
             "paint" => _paint?.Current,
+            "paint_textures" => _textures is null ? null : new
+            {
+                runtime = _textures.Runtime,
+                bindings = _textures.Bindings,
+                applied = _textures.Applied,
+                clutter = _textures.Catalog,
+                files = _textures.List(),
+                revision = _textures.Revision,
+                limits = new
+                {
+                    _textures.MaxFileBytes, _textures.MaxTotalBytes, _textures.MaxFiles,
+                    _textures.MaxBindings, _textures.MaxDimension,
+                },
+            },
             _ => MissingSentinel.Value,
         };
         if (ReferenceEquals(data, MissingSentinel.Value)) return Invalid($"unknown runtime feature '{feature}'", s);
@@ -161,7 +178,7 @@ public sealed class McpPresenters
             json = new { size_limit = (int?)null, truncation = false },
             control_enabled = _commands?.ControlEnabled ?? false,
             debug_enabled = _commands?.DebugEnabled ?? false,
-            features = new { audio = _audio is not null, camera = _camera is not null, schedules = _schedules is not null, paint = _paint is not null },
+            features = new { audio = _audio is not null, camera = _camera is not null, schedules = _schedules is not null, paint = _paint is not null, paint_textures = _textures is not null },
             actions = CommandCatalog.All.Select(d => new
             {
                 action = d.Action,
@@ -315,6 +332,7 @@ public sealed class McpPresenters
         "camera_enabled" => _camera is not null,
         "schedule_enabled" => _schedules is not null,
         "control_enabled + paint runtime master" => _paint is not null && (_commands?.ControlEnabled ?? false),
+        "control_enabled + paint textures store" => _textures is not null && (_commands?.ControlEnabled ?? false),
         "debug_namespace" => _commands?.DebugEnabled ?? false,
         _ => _commands?.ControlEnabled ?? false,
     };

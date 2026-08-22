@@ -179,3 +179,18 @@ tracked in [`SPEC_9P_FILESYSTEM.md`](../SPEC_9P_FILESYSTEM.md), not KSA churn.
 immutable `PaintSnapshot`, mutable game-thread `PaintStore`, and the pure idempotent GLSL transform.
 `gatOS.SimFs` owns paths/parsers and canonical `paint.*` actions; HTTP/MQTT mirror its VFS and MCP
 projects the same store logically. None references KSA/Brutal/StarMap.
+
+# Clutter texture game-free surface
+
+`gatOS.SimFs/Paint/TextureStore.cs` owns the whole game-free half: the in-memory upload set with
+magic-byte container sniffing (png/jpeg/bmp/hdr/dds/ktx/ktx2), name validation, chunked
+`OpenUpload`/`Write`/`Commit` with the file-count, total-byte and per-file caps (ENOSPC/EFBIG raised
+mid-write), the desired-binding set with its own cap, the published catalog/applied/runtime
+projections, and the `Revision` counter the game side polls. `TextureDirectory.cs` is the writable
+`/sim/paint/textures/file/` VfsDirectory — `Tlcreate` + chunked `Twrite`s committing on clunk,
+`Tunlinkat` evicting (unbinding first), flat with no subdirectories or rename (EPERM), entries marked
+streaming so they stay out of the MQTT scalar mirror and bulk walks. `TextureCommands.cs` parses the
+`bind`/`unbind` grammar fully here, so a bad line fails the guest's `write(2)` with EINVAL and the
+grammar is unit-testable without a game; `unbind all` normalizes to the same teardown action the
+`clear` trigger emits. None references KSA/Brutal/StarMap — the store holds bytes and intent, and the
+GPU only ever follows.

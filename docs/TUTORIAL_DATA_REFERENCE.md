@@ -488,3 +488,27 @@ Paint controls are ordinary `/sim` state/trigger leaves. A filesystem write such
 `gatos/sim/vessels/by-id/<id>/paint/parts/color/set`. Always enable the relevant root master first.
 Painting one part requires `telemetry_vessel_parts=true`; read its stable `instance_id` and write the
 adjacent `paint/color` + `paint/enabled`. See `SPEC_9P_FILESYSTEM.md` §Paint for precedence and errors.
+
+# Clutter texture correspondence
+
+`/sim/paint/textures` follows the same correspondence, with one exception. The control leaves are
+ordinary text: `echo '<texture-id> rock.png' > /sim/paint/textures/bind` corresponds to
+`POST /v1/fs/paint/textures/bind` with the same body and an MQTT publish to
+`gatos/sim/paint/textures/bind/set`; `unbind` (a texture id, or `all`) and the `clear` trigger work
+the same way, as do the `status`/`info`/`bindings`/`applied`/`clutter` reads. **Binary uploads are
+the exception**: a tutorial uses `cat rock.png > /sim/paint/textures/file/rock.png` in the guest, or
+`PUT /v1/paint/texture/file/<name>[?offset=N&complete=0|1]` over HTTP (chunk it — the server caps a
+single request body at 1 MiB and answers **413** above that), or
+`gatos.paint_texture(operation:"upload")` over MCP. **MQTT carries no binary upload.**
+
+There is no master switch to enable first — unlike vehicle/EVA paint, the feature is inert until
+something is bound. Discover valid targets by reading `clutter` (`texture-id slot w h mips used_by
+ecotypes`) rather than guessing ids, and check `applied` — not the write's exit status — to learn
+whether an image actually reached the GPU. Two things a tutorial must say out loud: binding replaces
+a texture *asset*, so every material with `used_by` > 1 changes together, and `bind` takes an
+optional third token for the render mode. It defaults to `faithful`, which rewrites the decoded
+pixels so an ordinary sRGB PNG renders at its authored colours in every biome — a tutorial does
+**not** need to teach colour maths. The alternative, `raw`, uploads the bytes untouched and is where
+the shader's own conventions apply (modulation map centred on mid-grey `0.5`; alpha selects
+colour-space and terrain-tint reach, not opacity) — the mode for replacing a stock texture
+like-for-like. See `SPEC_9P_FILESYSTEM.md` for the grammar and errno list.

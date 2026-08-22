@@ -312,7 +312,12 @@ public sealed partial class Mod
         _faceFx ??= new FaceFxManager();
         if (_paintManager is null && _paintStore is { } paintStore)
         {
-            _paintManager = new PaintManager(paintStore);
+            // The clutter-texture bridge is inert until something is bound: it never touches KSA
+            // while the store's revision stays at its initial value.
+            var textures = _textureStore is { } textureStore
+                ? new ClutterTextureBridge(textureStore, _health, Config.PaintTextureMaxDimension)
+                : null;
+            _paintManager = new PaintManager(paintStore, textures);
             if (Config.PaintPartsEnabled)
                 _paintManager.Execute(new SimCommand("", SimActions.PaintPartsEnabled, SimCommand.NoOrdinal, 1));
             if (Config.PaintKittensEnabled)

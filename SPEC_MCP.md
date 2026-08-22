@@ -47,10 +47,12 @@ positive integer, and must not exceed **1,000**. A client follows `next_cursor` 
 There is **no MCP JSON response/result-size cap or measurement**. In particular,
 `gatos.get_world(detail:"full")` and `gatos.get_vessel(include:["all"])` return their complete logical documents rather than silently
 truncating them. Request framing is capped at **24 MiB**: this is an HTTP safety limit, not a
-result inspection limit. Audio and camera-track uploads are deliberately chunkable; upload chunks
-should stay well below that framing limit. Existing domain limits still apply: for example,
-audio/track store capacity, schedule entry and live-player caps, and the game's command-per-frame
-limit are unchanged.
+result inspection limit. Audio, camera-track, and clutter-texture uploads are deliberately
+chunkable; upload chunks should stay well below that framing limit. Binary uploads (`gatos.audio_clip`
+and `gatos.paint_texture`) travel as base64, which inflates the payload by **4/3**: budget a chunk
+against the 24 MiB framing cap *after* that expansion, not against the decoded byte count. Existing
+domain limits still apply: for example, audio/track/texture store capacity, schedule entry and
+live-player caps, and the game's command-per-frame limit are unchanged.
 
 ### 1.2 Errors and availability
 
@@ -66,7 +68,7 @@ a human-readable `message`, and a `retryable` indication. The errno vocabulary i
 | `EIO` | A KSA operation faulted; its accessor may be degraded for the session. |
 | `ETIMEDOUT` | The game thread did not drain the command before `command_timeout_ms`. |
 | `EOPNOTSUPP` | The feature is unavailable, disabled by its capability gate, or has degraded. |
-| `EFBIG`, `ENOSPC`, `EEXIST`, `EPERM` | The existing audio/track-store upload errors. |
+| `EFBIG`, `ENOSPC`, `EEXIST`, `EPERM` | The existing audio-clip, camera-track, and clutter-texture store upload errors. |
 
 `gatos.get_capabilities` is the required preflight. It reports list limits, configured feature
 availability, control/debug authority status, and per-action phase, gate, argument-shape, unit, and
@@ -119,10 +121,10 @@ sectioned response always includes identity/control fields (`id`, `name`, `situa
 `parent_body_name`, `controlled`, `controllable`, and `is_kitten`); request `flight` for position,
 velocity, attitude, altitude, and navball data.
 
-The `feature` input to `gatos.get_runtime_state` is one of `camera`, `schedules`, `audio`, `paint`, `welds`, `thug_life`,
-`face_fx`, `iva`, `engine_plume`, `plume_trail`, `clouds`, or `terrain`. It exposes the corresponding
-logical snapshot/read-back state, including configuration and pristine/reset diagnostics where the
-underlying feature provides them.
+The `feature` input to `gatos.get_runtime_state` is one of `camera`, `schedules`, `audio`, `paint`,
+`paint_textures`, `welds`, `thug_life`, `face_fx`, `iva`, `engine_plume`, `plume_trail`, `clouds`,
+or `terrain`. It exposes the corresponding logical snapshot/read-back state, including configuration
+and pristine/reset diagnostics where the underlying feature provides them.
 
 `gatos.wait` requires at least one of:
 
@@ -192,7 +194,8 @@ sample at which it was accepted. Failed commands use the error fields in §1.2.
 | `gatos.schedule_control` | `{operation, id?, value?, token?}`. Reads or manages existing schedule players: pause, scrub, rate, loop, stop, remove, or clear. |
 | `gatos.debug_control` | `{operation, vessel_id?:"", ordinal?:-1, value?, values?, token?, aux?}`. Performs the logical cheat/debug groups: focus/control-vessel, teleport, impulse, refills, docking pushoff, global IVA rendering, welds, thug-life cosmetics, face FX, and IVA cabin physics. |
 | `gatos.render_fx_control` | `{family, operation, entity?, field?, value?, values?, token?}`. Reads, sets, clears where applicable, or restores pristine values for engine plume, plume trail, clouds, and terrain editor state. Its entity scope remains explicit: template, global renderer, body/layer/type, or body/global terrain. |
-| `gatos.paint_control` | `{operation, vessel_id?:"", value?:0, color?, target?}`. Controls paint runtime masters and global/template/vessel/part/shared-EVA/individual-EVA rules. Flags use `value`; colors use normalized `color:[r,g,b]`; `target` names the blend, template, part instance, or semantic EVA material required by the selected operation. |
+| `gatos.paint_control` | `{operation, vessel_id?:"", value?:0, color?, target?, file?}`. Controls paint runtime masters, global/template/vessel/part/shared-EVA/individual-EVA rules, and the `texture_bind`/`texture_unbind`/`texture_clear` ground-clutter texture overrides. Flags use `value`; colors use normalized `color:[r,g,b]`; `target` names the blend, template, part instance, semantic EVA material, or — for the texture operations — the stock clutter texture id; `file` names the uploaded image consumed by `texture_bind`, whose render mode also rides `value` (`0` = `faithful`, the default; `1` = `raw`). |
+| `gatos.paint_texture` | `{operation, name?, offset?:0, complete?:true, data_base64?}`. `operation` is `list`, `catalog`, `bindings`, `retrieve`, `upload`, or `delete`. Upload data is JSON base64 and can be chunked at a decoded byte `offset`; `complete` commits it. Keep each request below the 24 MiB framing limit while the configured file-count, per-file, total-byte, and binding limits remain enforced. `catalog` enumerates the overridable stock clutter textures (including the `used_by` share count); `bindings` returns the desired and applied binding rows. Retrieval returns metadata plus the stored image as an embedded binary resource at `gatos://paint/textures/<name>`. |
 | `gatos.command` | The canonical command envelope in §4. Complete action coverage without filesystem paths. |
 | `gatos.execute_batch` | `{commands:[<canonical command>, ...]}`. Atomically submits one same-tick group. |
 | `gatos.schedule_batch` | `{id?, group?, clock, rate, loop, entries:[{at_ms, command:<canonical command>}, ...]}`. Registers a non-blocking timed command player. |
@@ -281,6 +284,41 @@ operations, and `target` for `blend`, template ids, part instance ids, and seman
 names. `vessel_id` is required only for vessel/part/individual-EVA operations. §6.1 gives the
 precedence and runtime-master behavior.
 
+The three **ground-clutter texture** operations are global and take neither `vessel_id` nor `color`;
+they are gated by `control_enabled + paint textures store`, not by the paint runtime master:
+
+| Tool operation | Complete operation payload | Meaning / accepted values |
+|---|---|---|
+| `paint_control` `texture_bind` | `{operation:"texture_bind",target:<stock-texture-id>,file:<uploaded-name>,value?:0\|1}` | Draw one stock clutter texture with a committed upload. `target` is an id from `gatos.paint_texture(operation:"catalog")`; `file` is a name from `operation:"list"`. `value` is the render mode — `0` = `faithful` (**the default**: gatOS rewrites the decoded pixels so an ordinary sRGB PNG renders as authored, in every biome), `1` = `raw` (bytes untouched, interpreted exactly as one of KSA's own clutter textures). Re-binding the same pair in the *other* mode is a real change and re-uploads. |
+| `texture_unbind` | `{operation:"texture_unbind",target:<stock-texture-id>}` | Restore that one stock texture; a `target` that is not currently bound is `ENOENT`. `target:"all"` is accepted here too and performs the same global teardown as `texture_clear` — the shorthand means the same thing on every transport. |
+| `texture_clear` | `{operation:"texture_clear",value:1}` | Global teardown: restore every stock texture. Uploads are kept, so a later `texture_bind` needs no re-upload. |
+| `paint_texture` `list`, `catalog`, `bindings` | `{operation}` | Uploads (`name`, `bytes`, `kind`, `version`, `ready`); overridable stock textures (`texture_id`, slot, size, mips, `used_by`, ecotypes); desired binding rows (with their `faithful`/`raw` mode) plus applied rows. |
+| `retrieve` | `{operation:"retrieve",name}` | Metadata plus the stored bytes as an embedded resource at `gatos://paint/textures/<name>`. |
+| `upload` | `{operation:"upload",name,data_base64,offset?:0,complete?:true}` | Base64 image bytes written at a **decoded** byte offset; `complete:false` leaves the file uncommitted (a bind of it is `EBUSY`), `complete:true` commits and sniffs the container. |
+| `delete` | `{operation:"delete",name}` | Evict an upload; a binding that names it is torn down first. |
+
+A complete two-chunk upload, bind, and teardown:
+
+```json
+{"tool":"gatos.paint_texture","arguments":{"operation":"catalog"}}
+{"tool":"gatos.paint_texture","arguments":{"operation":"upload","name":"mossy-rock.png","offset":0,"complete":false,"data_base64":"<first chunk>"}}
+{"tool":"gatos.paint_texture","arguments":{"operation":"upload","name":"mossy-rock.png","offset":1048576,"complete":true,"data_base64":"<final chunk>"}}
+{"tool":"gatos.paint_control","arguments":{"operation":"texture_bind","target":"RockDiffuseA","file":"mossy-rock.png","value":0}}
+{"tool":"gatos.get_runtime_state","arguments":{"feature":"paint_textures"}}
+{"tool":"gatos.paint_control","arguments":{"operation":"texture_unbind","target":"RockDiffuseA"}}
+{"tool":"gatos.paint_control","arguments":{"operation":"texture_clear","value":1}}
+```
+
+`texture_bind` validates the target id and the named upload when the command runs on the game thread
+— an unknown stock texture id is `ENOENT`, an uncommitted upload is `EBUSY`, an unrecognised
+container is `EINVAL` — but the decode and GPU upload happen on the next reconcile. Whether the image
+actually reached the GPU is therefore read back from the `applied` rows in
+`gatos.get_runtime_state(feature:"paint_textures")`, where each row carries `pending`, `applied`, or
+`failed` plus the decoded size, mip count, VRAM bytes, and any error text. Store errnos are the
+filesystem's: `EINVAL` for a bad name or an unrecognised image container, `ENOENT` for an unknown
+stock texture id or missing upload, `EBUSY` for an upload that has not committed, `ENOSPC` for the
+file-count/total-byte/binding caps, and `EFBIG` for the per-file byte cap.
+
 ### 5.2 Batches
 
 `gatos.execute_batch` is the JSON counterpart of `/sim/ctl/batch`, not a serialized batch-file upload.
@@ -319,8 +357,27 @@ semantics:
   support; orthographic height remains a non-restorable game-side change.
 - IVA physics is independently master-gated; disabling it returns every adopted object to rest.
   Adoption accepts interior subparts, not top-level parts.
-- Audio, camera tracks, and FX retain their current configured store caps, session lifetime, and
-  pristine-reset semantics.
+- Audio, camera tracks, clutter textures, and FX retain their current configured store caps, session
+  lifetime, and pristine-reset semantics.
+- **Clutter diffuse textures are modulation maps, not albedo — and `texture_bind` corrects for that
+  by default.** The shader's effective colour is
+  `albedo = 2 * decode(t.rgb, t.a) * mix(meanLum, instanceColor, t.a) / meanLum`: the texel is
+  doubled, and **alpha is not opacity** — it selects sRGB (`0`) versus linear (`1`) decoding *and*
+  how far the per-instance terrain tint applies. `value:0`, the **default `faithful` mode**, rewrites
+  the decoded pixels before upload — RGB scaled by `2^(-1/2.2)` to cancel the doubling (white `255`
+  stores as `186`; round-trip error under 0.2%, all 8-bit quantization) and alpha cleared to `0`,
+  which selects the sRGB path *and* collapses the terrain tint to exactly `1` — so an ordinary sRGB
+  PNG renders as authored and identically in every biome, with no hand-correction to instruct a user
+  in. `value:1`, `raw`, uploads the bytes untouched for a like-for-like stock replacement: there
+  mid-grey `0.5` is neutral and `A=255` opts into full terrain tinting. A decode that is not RGBA8
+  (some ktx/dds/hdr) cannot be corrected — the `faithful` binding reports `failed` in the applied
+  rows with an error naming `raw` as the fix. Real cutout opacity is a separate `opacity` texture
+  slot in either mode. Mip chains are generated automatically and are mandatory — a single-mip
+  replacement aliases badly at range.
+- **Binding replaces a texture asset, not a material.** Every clutter material that shares the stock
+  asset changes at once. Read the `used_by` count and the ecotype list in the `paint_textures`
+  catalog before binding; `used_by` greater than one means the override is shared. Oversize uploads
+  are downscaled to the configured maximum dimension rather than rejected.
 
 `/sim/display` is intentionally **not exposed by MCP v1**. Its infinite binary Kitty stream is a
 terminal-video transport with no logical JSON resource/tool equivalent. This omission is deliberate,
@@ -330,17 +387,31 @@ documented, and must remain explicit in future coverage reviews.
 
 `gatos.paint_control` is the first-class logical wrapper for every `paint.*` catalog action. Input:
 `operation` is the action suffix (for example `parts_enabled`, `global_color`, `vessel_color`,
-`part_color`, `kittens_enabled`, or `kitten_material_color`); `vessel_id` addresses vessel/EVA
-rules; `target` carries a template id, uint part `instance_id`, or semantic EVA material name;
-`value` carries flags; `color` is a normalized three-number sRGB array. `gatos.command` remains the
-complete canonical-envelope backstop.
+`part_color`, `kittens_enabled`, `kitten_material_color`, `texture_bind`, `texture_unbind`, or
+`texture_clear`); `vessel_id` addresses vessel/EVA rules; `target` carries a template id, uint part
+`instance_id`, semantic EVA material name, or stock clutter texture id; `file` carries the uploaded
+image name consumed by `texture_bind`; `value` carries flags, and for `texture_bind` the render mode
+(`0` = `faithful`, the default; `1` = `raw`); `color` is a normalized three-number sRGB array. `gatos.command` remains the complete canonical-envelope backstop.
 
 `gatos.get_runtime_state(feature:"paint")` and `gatos://runtime/paint` return the complete immutable
-paint snapshot: desired rules, runtime masters/status, shader compile diagnostics, discovered EVA
-material names, active bindings, clone usage/cap, raytraced capability, and per-subsystem errors.
+paint snapshot: desired part/template/vessel/global and shared/individual EVA rules, both runtime
+masters and their status, the blend mode, shader compile diagnostics, discovered EVA material names,
+active EVA bindings, clone usage/peak/cap, raytraced capability, and per-subsystem errors.
 `gatos.get_vessel(include:["paint"])` includes that vessel's whole-vessel, per-part, and (for EVA)
 individual material rules. `gatos.get_capabilities` advertises paint actions with logical tool
 `gatos.paint_control` and gate `control_enabled + paint runtime master`.
+
+Custom **ground-clutter textures** are a separate feature document, not part of the paint snapshot.
+`gatos.get_runtime_state(feature:"paint_textures")` and `gatos://runtime/paint_textures` return
+`{runtime, bindings, applied, clutter, files, revision, limits}`: the game-side runtime status
+(availability, applied count, images awaiting deferred destruction, VRAM bytes, error), the desired
+bindings, the applied rows with their per-binding state/size/mips/VRAM/error, the overridable stock
+texture catalog with each entry's slot, dimensions, mip count, `used_by` share count and ecotypes,
+the committed uploads, the desired-state revision, and the configured caps. `gatos.paint_texture`
+owns the store operations. `gatos.get_capabilities` reports `features.paint_textures` (whether the
+store is wired at all) and advertises the three `paint.texture_*` actions with logical tool
+`gatos.paint_control` and gate **`control_enabled + paint textures store`** — a distinct gate from
+paint's, because the texture overrides have no runtime master to enable.
 
 ## 7. Coverage and maintenance mandate
 
@@ -349,7 +420,7 @@ filesystem's per-leaf UX. The implementation owns a declarative MCP capability r
 
 1. every `SimJson`/snapshot projection needed by a logical resource or read tool;
 2. every public `SimCommand.Action` to either one logical MCP control tool or `gatos.command`;
-3. every special store capability (audio clip, camera track, scheduler, and FX); and
+3. every special store capability (audio clip, camera track, clutter-texture store, scheduler, and FX); and
 4. the intentional `/sim/display` exclusion.
 
 Tests must fail if a public action or covered logical projection is absent from this registry. They

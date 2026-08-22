@@ -119,6 +119,12 @@ public sealed class GatOsConfig
             ("paint_parts_enabled", "Boot seed for /sim/paint/parts/enabled. false keeps every shader hook absent."),
             ("paint_kittens_enabled", "Boot seed for /sim/paint/kittens/enabled. false creates no material clones."),
             ("paint_max_material_clones", "Hard cap on gatOS-owned EVA material clones (clamped 1..256)."),
+            ("paint_textures_enabled", "Whether /sim/paint/textures exists. false removes the subtree entirely."),
+            ("paint_texture_max_bytes", "Per-upload byte cap (EFBIG past it; clamped 64 KiB..256 MiB)."),
+            ("paint_texture_max_total_bytes", "Store-wide upload byte cap (ENOSPC; clamped >= per-file..1 GiB)."),
+            ("paint_texture_max_files", "Uploaded image count cap (ENOSPC; clamped 1..256)."),
+            ("paint_texture_max_bindings", "Simultaneous texture override cap (ENOSPC; clamped 1..256)."),
+            ("paint_texture_max_dimension", "Longest GPU edge; larger uploads downscale (clamped 16..16384)."),
         }),
         ("AUDIO — userland playback through the game's speakers (/sim/audio)", new[]
         {
@@ -367,6 +373,24 @@ public sealed class GatOsConfig
 
     /// <summary>Hard bound below KSA's fixed 512-entry material buffer.</summary>
     public int PaintMaxMaterialClones { get; set; } = 64;
+
+    /// <summary>Whether /sim/paint/textures exists at all. false removes the subtree entirely.</summary>
+    public bool PaintTexturesEnabled { get; set; } = true;
+
+    /// <summary>Per-upload byte cap (EFBIG past it).</summary>
+    public int PaintTextureMaxBytes { get; set; } = 16 * 1024 * 1024;
+
+    /// <summary>Store-wide byte cap across committed and in-flight uploads (ENOSPC past it).</summary>
+    public int PaintTextureMaxTotalBytes { get; set; } = 128 * 1024 * 1024;
+
+    /// <summary>Maximum uploaded image count (ENOSPC past it).</summary>
+    public int PaintTextureMaxFiles { get; set; } = 32;
+
+    /// <summary>Maximum simultaneous texture overrides (ENOSPC past it).</summary>
+    public int PaintTextureMaxBindings { get; set; } = 32;
+
+    /// <summary>Longest GPU edge; larger uploads are downscaled at bind rather than rejected.</summary>
+    public int PaintTextureMaxDimension { get; set; } = 4096;
 
     // ---- AUDIO: userland playback through the game's FMOD (/sim/audio; GATOS_CUSTOM_AUDIO_PLAN). ----
 
@@ -709,6 +733,14 @@ public sealed class GatOsConfig
         DisplayWidth = Clamp(nameof(DisplayWidth), DisplayWidth, 16, 1920);
         DisplayHeight = Clamp(nameof(DisplayHeight), DisplayHeight, 16, 1920);
         PaintMaxMaterialClones = Clamp(nameof(PaintMaxMaterialClones), PaintMaxMaterialClones, 1, 256);
+        PaintTextureMaxBytes = Clamp(nameof(PaintTextureMaxBytes), PaintTextureMaxBytes,
+            64 * 1024, 256 * 1024 * 1024);
+        PaintTextureMaxTotalBytes = Clamp(nameof(PaintTextureMaxTotalBytes), PaintTextureMaxTotalBytes,
+            PaintTextureMaxBytes, int.MaxValue);
+        PaintTextureMaxFiles = Clamp(nameof(PaintTextureMaxFiles), PaintTextureMaxFiles, 1, 256);
+        PaintTextureMaxBindings = Clamp(nameof(PaintTextureMaxBindings), PaintTextureMaxBindings, 1, 256);
+        PaintTextureMaxDimension = Clamp(nameof(PaintTextureMaxDimension), PaintTextureMaxDimension,
+            16, 16384);
         AudioMaxClipBytes = Clamp(nameof(AudioMaxClipBytes), AudioMaxClipBytes, 4096, 256 * 1024 * 1024);
         AudioMaxTotalBytes = Clamp(nameof(AudioMaxTotalBytes), AudioMaxTotalBytes,
             AudioMaxClipBytes, 1024 * 1024 * 1024);

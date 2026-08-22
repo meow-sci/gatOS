@@ -304,7 +304,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         type: "string",
         required: true,
         description:
-          "camera, schedules, audio, paint, welds, thug_life, face_fx, iva, engine_plume, plume_trail, clouds, or terrain.",
+          "camera, schedules, audio, paint, paint_textures, welds, thug_life, face_fx, iva, engine_plume, plume_trail, clouds, or terrain.",
       },
     ],
     returns:
@@ -1343,7 +1343,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
       "Opt in to paint rendering and color whole vessels, individual parts, templates, or EVA materials.",
     useWhen:
       "Changing vehicle or EVA appearance while preserving gatOS's explicit shader/material opt-in lifecycle.",
-    gate: "control_enabled plus the corresponding parts or kittens runtime master.",
+    gate: "control_enabled plus the corresponding parts or kittens runtime master; texture_* operations instead require the clutter texture store (paint_textures_enabled).",
     fields: [
       {
         name: "operation",
@@ -1361,7 +1361,8 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         name: "value",
         type: "number",
         default: "0",
-        description: "0 or 1 for enabled flags and clear triggers.",
+        description:
+          "0 or 1 for enabled flags and clear triggers. For texture_bind it is the render mode: 0 = faithful (gatOS corrects the pixels so the image renders as authored — the default) and 1 = raw (upload the decoded bytes untouched, interpreted as a stock clutter texture would be).",
       },
       {
         name: "color",
@@ -1374,7 +1375,14 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         type: "string | null",
         default: "null",
         description:
-          "Blend token, raw Part.Template.Id, uint part instance_id, or semantic EVA material name, depending on operation.",
+          "Blend token, raw Part.Template.Id, uint part instance_id, semantic EVA material name, or — for texture_bind and texture_unbind — the stock clutter texture id, depending on operation.",
+      },
+      {
+        name: "file",
+        type: "string | null",
+        default: "null",
+        description:
+          "Uploaded image name for texture_bind, as uploaded through gatos.paint_texture. Maps to the command envelope's aux slot.",
       },
     ],
     operations: [
@@ -1457,6 +1465,31 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
           '{"operation":"kitten_material_color","vessel_id":"Valentina","target":"visor","color":[0.1,0.3,0.8]}',
         description: "Manage one semantic material on one EVA through vessel_id and target.",
       },
+      {
+        name: "texture_bind",
+        action: "paint.texture_bind",
+        callShape:
+          '{ operation: "texture_bind", target: stock_texture_id, file: uploaded_image_name, value?: 0 | 1 }',
+        example:
+          '{"operation":"texture_bind","target":"EarthGrassClutterDiffuse","file":"rock.png","value":0}',
+        description:
+          'Draw one stock ground-clutter texture with an uploaded image. target comes from gatos.paint_texture(operation:"catalog"); file must already be committed in the texture store. value picks the render mode: 0 = faithful (the default) rewrites the pixels so an ordinary sRGB PNG renders as authored and untinted by the biome; 1 = raw uploads them untouched for a like-for-like stock replacement. Re-binding the same pair in a different mode is a real change and re-uploads.',
+      },
+      {
+        name: "texture_unbind",
+        action: "paint.texture_unbind",
+        callShape: '{ operation: "texture_unbind", target: stock_texture_id }',
+        example: '{"operation":"texture_unbind","target":"EarthGrassClutterDiffuse"}',
+        description: "Restore one stock ground-clutter texture; the upload itself is kept.",
+      },
+      {
+        name: "texture_clear",
+        action: "paint.texture_clear",
+        callShape: '{ operation: "texture_clear", value: 1 }',
+        example: '{"operation":"texture_clear","value":1}',
+        description:
+          "Global teardown: restore every stock ground-clutter texture, keeping the uploads.",
+      },
     ],
     returns: "Canonical paint command outcome correlated with the current snapshot.",
     example: '{"operation":"vessel_color","vessel_id":"Hunter","color":[0.12,0.55,0.95]}',
@@ -1468,6 +1501,107 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
       "Set the desired rule, then enable its rule flag and runtime master; disabling a master restores stock rendering but retains rules for re-enable.",
       "Part precedence is instance > vessel > template > global > stock. EVA precedence is individual material > individual default > shared material > shared default > stock.",
       "EVA shared rules use gatOS-owned clones; they do not overwrite KSA's shared stock MaterialData.",
+      'texture_* operations need no runtime master and are unaffected by the parts and kittens masters; binding replaces the shared texture asset, so check used_by in gatos.paint_texture(operation:"catalog") first.',
+    ],
+  },
+  "gatos.paint_texture": {
+    name: "gatos.paint_texture",
+    kind: "tool",
+    category: "Debug and rendering",
+    summary:
+      "List, inspect, retrieve, chunk-upload, or delete the custom ground-clutter texture store.",
+    useWhen:
+      "Managing uploaded images and discovering overridable stock clutter textures, separately from the bindings themselves.",
+    gate: "paint_textures_enabled and TextureStore limits.",
+    fields: [
+      {
+        name: "operation",
+        type: "string",
+        required: true,
+        description: "list, catalog, bindings, retrieve, upload, or delete.",
+      },
+      {
+        name: "name",
+        type: "string | null",
+        default: "null",
+        description: "Uploaded image name for retrieve, upload, or delete.",
+      },
+      {
+        name: "offset",
+        type: "integer",
+        default: "0",
+        description: "Decoded byte offset for an upload chunk.",
+      },
+      {
+        name: "complete",
+        type: "boolean",
+        default: "true",
+        description: "Finalize the upload after this chunk.",
+      },
+      {
+        name: "data_base64",
+        type: "string | null",
+        default: "null",
+        description: "Base64-encoded image bytes for upload.",
+      },
+    ],
+    operations: [
+      {
+        name: "list",
+        callShape: '{ operation: "list" }',
+        example: '{"operation":"list"}',
+        description:
+          "List uploaded images with name, bytes, sniffed container kind, version, and ready.",
+      },
+      {
+        name: "catalog",
+        callShape: '{ operation: "catalog" }',
+        example: '{"operation":"catalog"}',
+        description:
+          "List every overridable stock clutter texture: id, slot, size, mip count, used_by, and ecotypes. The only source of the texture ids paint_control texture_bind takes.",
+      },
+      {
+        name: "bindings",
+        callShape: '{ operation: "bindings" }',
+        example: '{"operation":"bindings"}',
+        description:
+          "Return desired bindings with their render mode (faithful or raw) alongside applied state, including per-binding pending/applied/failed status and error text.",
+      },
+      {
+        name: "retrieve",
+        callShape: '{ operation: "retrieve", name }',
+        example: '{"operation":"retrieve","name":"rock.png"}',
+        description:
+          "Return metadata plus the stored bytes as an embedded binary resource at gatos://paint/textures/<name>.",
+      },
+      {
+        name: "upload",
+        callShape:
+          '{ operation: "upload", name, data_base64, offset?: decoded_byte_offset, complete?: boolean }',
+        example:
+          '{"operation":"upload","name":"rock.png","data_base64":"iVBORw0KGgo=","offset":0,"complete":true}',
+        description:
+          "Write a bounded base64 chunk through TextureStore; the image becomes bindable when complete.",
+      },
+      {
+        name: "delete",
+        callShape: '{ operation: "delete", name }',
+        example: '{"operation":"delete","name":"rock.png"}',
+        description: "Evict an upload, unbinding it first.",
+      },
+    ],
+    returns:
+      "Store metadata, catalog rows, or binding state; retrieve additionally emits an embedded binary resource.",
+    example: '{"operation":"catalog"}',
+    errors: [
+      "ENOENT for an unknown image or stock texture id; EBUSY for a name that has not finished uploading; EFBIG/ENOSPC/EEXIST/EPERM for store limits; EINVAL for a bad name, malformed base64, or an unrecognized image container.",
+      "EOPNOTSUPP when paint_textures_enabled is false.",
+    ],
+    notes: [
+      "Accepted containers are png, jpeg, bmp, hdr, dds, ktx, and ktx2, sniffed from the bytes rather than the file extension.",
+      "Base64 inflates payloads by 4/3 and the request framing limit is 24 MiB; chunk uploads by decoded byte offset.",
+      "Clutter diffuse maps are modulation maps, not albedo: the shader doubles the texel and alpha selects sRGB/linear decoding and terrain-tint reach rather than opacity. The default faithful bind mode corrects for both, so an ordinary sRGB PNG renders as authored; raw is the opt-out for replacing a stock texture like-for-like.",
+      'Bind with gatos.paint_control(operation:"texture_bind", target, file, value:0|1); binding re-points a shared texture asset, so check used_by in the catalog first.',
     ],
   },
   "gatos.command": {
@@ -1699,7 +1833,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         type: "URI template variable",
         required: true,
         description:
-          "camera, schedules, audio, paint, welds, thug_life, face_fx, iva, engine_plume, plume_trail, clouds, or terrain.",
+          "camera, schedules, audio, paint, paint_textures, welds, thug_life, face_fx, iva, engine_plume, plume_trail, clouds, or terrain.",
       },
     ],
     returns: "Complete store/runtime state correlated with the current simulation sequence.",

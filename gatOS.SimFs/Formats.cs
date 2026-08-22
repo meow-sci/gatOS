@@ -345,6 +345,41 @@ public static class Formats
         return buffer;
     }
 
+    /// <summary>
+    ///     One <c>/sim/paint/textures/bindings</c> row — space-separated, stable column order:
+    ///     <c>texture_id file mode</c>. Symmetric with the <c>bind</c> grammar, so a row can be echoed
+    ///     straight back to re-create the binding.
+    /// </summary>
+    public static string TextureBindingLine(Paint.TextureBinding b)
+        => $"{b.TargetId} {b.FileName} {Paint.TextureStore.FormatMode(b.Mode)}";
+
+    /// <summary>
+    ///     One <c>/sim/paint/textures/applied</c> row — space-separated, stable column order:
+    ///     <c>texture_id file state width height mips vram_bytes error</c>
+    ///     (state ∈ <c>pending</c>|<c>applied</c>|<c>failed</c>; an empty error renders <c>-</c>).
+    /// </summary>
+    public static string TextureAppliedLine(Paint.TextureBindStatus a)
+        => $"{a.TargetId} {a.FileName} {a.State.ToString().ToLowerInvariant()} "
+           + $"{a.Width.ToString(CultureInfo.InvariantCulture)} "
+           + $"{a.Height.ToString(CultureInfo.InvariantCulture)} "
+           + $"{a.MipLevels.ToString(CultureInfo.InvariantCulture)} "
+           + $"{a.VramBytes.ToString(CultureInfo.InvariantCulture)} "
+           + (a.Error.Length == 0 ? "-" : a.Error.Replace('\n', ' ').Replace(' ', '_'));
+
+    /// <summary>
+    ///     One <c>/sim/paint/textures/clutter</c> row — space-separated, stable column order:
+    ///     <c>texture_id slot width height mips used_by ecotypes</c>. <c>used_by</c> greater than 1
+    ///     means the asset is shared: binding it changes every one of those material slots.
+    ///     <c>ecotypes</c> is comma-separated, or <c>-</c> when none are known.
+    /// </summary>
+    public static string ClutterTextureLine(Paint.ClutterTextureInfo c)
+        => $"{c.TextureId} {c.Slot} "
+           + $"{c.Width.ToString(CultureInfo.InvariantCulture)} "
+           + $"{c.Height.ToString(CultureInfo.InvariantCulture)} "
+           + $"{c.MipLevels.ToString(CultureInfo.InvariantCulture)} "
+           + $"{c.UsedBy.ToString(CultureInfo.InvariantCulture)} "
+           + (c.Ecotypes.Count == 0 ? "-" : string.Join(',', c.Ecotypes));
+
     private static void WriteVec3(Utf8JsonWriter json, string name, double3Snap v)
     {
         json.WriteStartArray(name);

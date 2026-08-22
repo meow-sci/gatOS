@@ -52,6 +52,8 @@ public sealed record CommandDescriptor(string Action, CommandTargetKind Target, 
         _ when Action.StartsWith("audio.", StringComparison.Ordinal) => "audio_enabled",
         _ when Action.StartsWith("schedule.", StringComparison.Ordinal) => "schedule_enabled",
         _ when Action.StartsWith("camera.", StringComparison.Ordinal) && Action != SimActions.CameraFocus => "camera_enabled",
+        _ when Action.StartsWith("paint.texture_", StringComparison.Ordinal)
+            => "control_enabled + paint textures store",
         _ when Action.StartsWith("paint.", StringComparison.Ordinal) => "control_enabled + paint runtime master",
         _ when IsDebug => "debug_namespace",
         _ => "control_enabled",
@@ -260,6 +262,9 @@ public static class CommandCatalog
         Vessel(SimActions.PaintKittenMaterialEnabled, "Enable or disable one EVA material rule."),
         Vessel(SimActions.PaintKittenMaterialColor, "Set one EVA material colour."),
         Vessel(SimActions.PaintKittenMaterialClear, "Remove one EVA material rule."),
+        Global(SimActions.PaintTextureBind, "Draw a stock ground-clutter texture with an uploaded image."),
+        Global(SimActions.PaintTextureUnbind, "Restore one stock ground-clutter texture."),
+        Global(SimActions.PaintTextureClear, "Restore every stock ground-clutter texture (global teardown)."),
     ];
 
     private static readonly IReadOnlyDictionary<string, CommandDescriptor> ByAction =

@@ -857,3 +857,20 @@ references/GLSL source, KittenEva avatar/renderable graphs, protected material-i
 material AssetMap for handle-to-source identity. No GPU material read-back is attempted: the buffer
 is device-local and lacks TransferSrc. All reflection/anchor failures degrade paint instead of
 changing stock rendering. Exact fields and baseline are in `plans/PAINT_ASBUILT.md`.
+
+# Clutter texture reads
+
+Custom clutter textures read the live discovery chain only: `PlanetRenderer.GroundClutterRenderer` →
+`CelestialsWithGroundClutter` → `Celestial.BodyTemplate.GroundClutterReference.Ecotypes` →
+`ClutterEcotypeReference.{Name, MaterialReferences}` → `GroundClutterMaterialReference.
+{DiffuseReference, NormalReference, PBRMap, OpacityMap, ThicknessMap}` → `TextureReference.
+{GetRealId, Width, Height, Texture.MipMapCount, BindlessHandle}`, deduplicated by id with a usage
+count so a shared asset is visible before binding. Both the material reference and each
+`TextureReference` may be an unresolved reference, so `Get()` is called exactly as `ToGpuMaterial`
+does; the walk is ~1 s cadence and skipped entirely until something is uploaded or bound. Unlike EVA
+paint's GPU material buffer, the one datum that matters for exact teardown **is** readable here:
+`TextureReference.ImageView` and `.BindlessHandle` are public properties, so the pristine stock slot
+is captured directly before the first swap rather than reconstructed — a re-bind keeps the original
+capture, so restore always returns to stock and never to a previous override. Nothing is read back
+from the GPU. Exact members and baseline are in
+[`plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`](../plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md).

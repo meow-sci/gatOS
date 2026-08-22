@@ -518,3 +518,29 @@ Required shader reference/path: `MeshIndirectFrag` / `MeshIndirect.frag`. Option
 anchor, `inStateFlags`, and `gammaToLinear`. EVA clones reconstruct standard `PbrMaterialReference`
 assets and KSA's generated `*_FurMaterial` recipe. These are high-churn assets; re-audit the complete
 checklist in `plans/PAINT_ASBUILT.md` on every KSA revision.
+
+# Clutter texture assets at 2026.8.19.5261
+
+Decoding rides KSA's own texture stack, not a gatOS decoder: `Brutal.TextureApi.TextureLoader`
+dispatches `LoadFromMemory(bytes, FormatType, settings)` to one of three loaders by the extension its
+`FormatType` maps to — `Brutal.TextureApi.Stb` (png/jpg/bmp/hdr/tga), `Brutal.TextureApi.Ktx`
+(ktx/ktx2), `Brutal.TextureApi.Gli` (dds/kmg). That is exactly the container set gatOS sniffs at
+commit, and it is why cleanup is a three-way type switch: `ITexture` is neither `IDisposable` nor
+finalized, and only the concrete `StbTexture`/`KtxTexture`/`GliTexture` expose `Destroy()`. Settings
+come from `RenderCore.TextureAsset.LoadOptions(VkFormat.R8G8B8A8UNorm, KtxTranscodeFmt.Rgba32)`,
+which returns the **two-element pair** the loaders pick from — an stb `LoadSettings` whose
+`ForceChannels` is derived from the VkFormat (4, so a 3-channel PNG cannot decode to the widely
+unsupported `R8G8B8_UNorm`) and a ktx `LoadSettings` carrying `SuperCompressionTranscodeFormat`. That is the exact
+pair `TextureReference.DoLoad` falls back to for the game's own assets when no `TextureManifest`
+overrides `Format`/`SuperCompressionBlockFormatFamily`. The override targets are
+the stock clutter chain in `Content/Core/Astronomicals.xml`: `<GroundClutter><Ecotype Name="Grass">
+<Material Id="EarthGrassClutterMaterial"><Diffuse Id="EarthGrassClutterDiffuse"
+Path="Textures/Planets/Earth/GroundClutter/Grass_Diffuse.dds" Category="Terrain"/>` and its
+`<Normal>`/`<AoRoughMetal>`/`<Opacity>`/`<Thickness>` siblings — the `Id` attribute is the
+`TextureReference.GetRealId()` string a bind names, the element is the slot the `clutter` listing
+reports, and one `Material` shared across ecotypes is exactly what `used_by` warns about. Shared
+`GroundClutterMaterial` assets also live in `Content/Core/GroundClutter/*Assets.xml` (Grass,
+GenericRock, EarthTrees), authored as `.ktx2` there and `.dds` in `Astronomicals.xml`. These ids are
+content, not API: a rename breaks saved bindings (ENOENT at bind time, never a crash). Re-audit with
+the checklist in
+[`plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`](../plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md).

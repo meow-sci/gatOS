@@ -13,6 +13,7 @@ using gatOS.SimFs.Audio;
 using gatOS.SimFs.Camera;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Display;
+using gatOS.SimFs.Paint;
 using gatOS.SimFs.Snapshots;
 using gatOS.Ssh;
 using gatOS.Vm;
@@ -107,6 +108,7 @@ public sealed partial class Mod
     // Always-visible paint control/readback store. Runtime masters remain off until explicitly
     // enabled, so merely exposing /sim/paint installs no hooks and allocates no GPU materials.
     private PaintStore? _paintStore;
+    private TextureStore? _textureStore;
 
     // Timing of one telemetry sample (game thread, written by the sampler; read by the status
     // window). Allocation-free; owned here so the status window can read it before the sampler
@@ -253,8 +255,13 @@ public sealed partial class Mod
                     _config.CameraMaxTracks, _config.CameraMaxTrackBytes, _config.CameraMaxTotalBytes,
                     _config.CameraMaxKeys, _config.CameraFovMin, _config.CameraFovMax));
             _paintStore = new PaintStore(_config.PaintMaxMaterialClones);
+            if (_config.PaintTexturesEnabled)
+                _textureStore = new TextureStore(_config.PaintTextureMaxBytes,
+                    _config.PaintTextureMaxTotalBytes, _config.PaintTextureMaxFiles,
+                    _config.PaintTextureMaxBindings, _config.PaintTextureMaxDimension);
             _simRoot = SimFsTree.Build(_simStore, _commandQueue, SimTransportsStatus, _displaySurface,
-                _audioStore, schedules: _scheduleStore, camera: _cameraStore, paint: _paintStore);
+                _audioStore, schedules: _scheduleStore, camera: _cameraStore, paint: _paintStore,
+                textures: _textureStore);
             StartSimServer(port: 0);
             StartHttpServer();
             StartMqttBroker();
@@ -660,7 +667,7 @@ public sealed partial class Mod
         try
         {
             var server = new SimHttpServer(store, _commandQueue, SimTransportsStatus,
-                _config.HttpFieldEndpoints ? _simRoot : null, _audioStore);
+                _config.HttpFieldEndpoints ? _simRoot : null, _audioStore, _textureStore);
             server.StartAsync(_config.HttpPreferredPort, _config.HttpBindHost).GetAwaiter().GetResult();
             _httpServer = server;
             ModLog.Log.Info($"gatOS HTTP API listening on {FormatEndpoint(server.BindHost, server.Port)} "
@@ -719,7 +726,7 @@ public sealed partial class Mod
         try
         {
             var registry = new McpRegistry(store, _commandQueue, SimTransportsStatus,
-                _audioStore, _cameraStore, _scheduleStore, _paintStore);
+                _audioStore, _cameraStore, _scheduleStore, _paintStore, _textureStore);
             var version = typeof(Mod).Assembly.GetName().Version?.ToString() ?? "1.0.0";
             var server = new SimMcpServer(registry, version);
             server.StartAsync(_config.McpPreferredPort, _config.McpBindHost).GetAwaiter().GetResult();

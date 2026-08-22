@@ -5,6 +5,7 @@ using gatOS.SimFs;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Snapshots;
 using gatOS.Paint;
+using gatOS.SimFs.Paint;
 using MQTTnet;
 using MQTTnet.Client;
 
@@ -19,6 +20,7 @@ namespace gatOS.Mqtt.Tests;
 public sealed class MqttBrokerTests
 {
     private SnapshotStore _store = null!;
+    private TextureStore _textures = null!;
     private RecordingSink _sink = null!;
     private SimMqttBroker _broker = null!;
     private IMqttClient _client = null!;
@@ -31,7 +33,8 @@ public sealed class MqttBrokerTests
         _sink = new RecordingSink();
         // Share the real /sim tree (built with the sink, so ctl/ exists) so the field-level
         // gatos/sim/<path> mirror runs; a high field cadence keeps the tests prompt.
-        var simRoot = SimFsTree.Build(_store, _sink, null, paint: new PaintStore());
+        _textures = new TextureStore();
+        var simRoot = SimFsTree.Build(_store, _sink, null, paint: new PaintStore(), textures: _textures);
         _broker = new SimMqttBroker(_store, _sink, simRoot: simRoot, fieldFeedHz: 50);
         await _broker.StartAsync(0); // ephemeral
 
@@ -196,6 +199,19 @@ public sealed class MqttBrokerTests
         var result = await WaitForAsync(t => t == SimMqttBroker.CommandResultTopic);
         Assert.That(result, Does.Contain("ok"));
         Assert.That(_sink.Last, Is.EqualTo(new SimCommand("v1", "vessel.throttle", SimCommand.NoOrdinal, 0.8)));
+    }
+
+    [Test]
+    public async Task Field_TextureBindUsesTheSameTopicMirror()
+    {
+        // The bind/unbind/clear surface reaches MQTT for free through the tree; only the binary
+        // upload is a documented transport exception (HTTP only), exactly like audio clips.
+        await SetAsync("paint/textures/bind", "Core/Rock.png rock.png");
+        Assert.That(_sink.Last, Is.EqualTo(new SimCommand("", SimActions.PaintTextureBind, -1, 0)
+            { Token = "Core/Rock.png", Aux = "rock.png" }));
+
+        await SetAsync("paint/textures/unbind", "all");
+        Assert.That(_sink.Last!.Action, Is.EqualTo(SimActions.PaintTextureClear));
     }
 
     [Test]

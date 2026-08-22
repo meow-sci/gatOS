@@ -1070,3 +1070,17 @@ Part paint ORs audited free state-flag bits 11..31 in static/dynamic per-instanc
 EVA paint allocates gatOS-owned `MaterialData` clones, writes only their initial upload, and replaces
 supported avatar `MaterialIndices` slots. Restore is conditional on the slot still carrying gatOS's
 handle; owned AssetMap entries are removed/disposed. Stock MaterialData is never overwritten.
+
+# Clutter texture writes
+
+The entire write surface is one call: `BindlessTextureLibrary.SetTexture(handle, imageView)` — once
+per bind (our decoded image) and once per restore (the captured stock `ImageView`). No new bindless
+slots are allocated, so KSA's 1024-entry table is untouched and the only budget is VRAM; no Harmony
+patch, no shader transform, no pipeline or renderer rebuild, and no stock object is mutated —
+`TextureReference` itself is never written, only the descriptor slot it already owns. Nothing in KSA
+ever calls `SetTexture` (the engine only ever `AddTexture`/`FreeTexture`s), so gatOS is the sole
+writer of an existing slot and no engine code can clobber an override. Desired state is authored
+game-free (`paint.texture_bind` / `texture_unbind` / `texture_clear`, all Frame phase, Global target)
+and the GPU follows on the next tick; the actions never touch Vulkan. `Dispose` restores every slot
+before anything of ours is destroyed. See
+[`plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`](../plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md).

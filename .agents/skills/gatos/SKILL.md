@@ -381,3 +381,62 @@ Enable safe EVA clones with `echo 1 > /sim/paint/kittens/enabled`. Shared rules 
 `visor`, `mmu`, with numeric suffixes). Disabling either master restores stock but retains rules;
 write its `clear` trigger to remove rules. HTTP and MQTT use the normal field mirrors; MCP uses
 `gatos.paint_control` or canonical `gatos.command`.
+
+# Draw ground clutter with your own images
+
+`/sim/paint/textures` re-points a stock ground-clutter texture (rocks, trees, grass, shrubs) at an
+image you upload. **An ordinary sRGB PNG renders as authored** — the default `faithful` bind mode
+corrects for the clutter shader, so no pre-processing and no colour maths are asked of the user.
+Session-only, in-memory, restored on unbind. There is **no master switch** — the feature is inert
+until something is bound.
+
+The flow is upload → bind → teardown:
+
+```sh
+cat /sim/paint/textures/clutter          # texture-id slot w h mips used_by ecotypes
+cat rock.png > /sim/paint/textures/file/rock.png    # png|jpeg|bmp|hdr|dds|ktx|ktx2
+echo 'RockDiffuseA rock.png' > /sim/paint/textures/bind      # 'faithful' by default
+echo 'RockDiffuseA rock.png raw' > /sim/paint/textures/bind  # …or byte-for-byte, like a stock texture
+cat /sim/paint/textures/applied          # <id> <file> pending|applied|failed w h mips vram error
+echo 'RockDiffuseA' > /sim/paint/textures/unbind    # one; 'all' = everything
+echo 1 > /sim/paint/textures/clear       # same global teardown as 'unbind all'; uploads survive
+rm /sim/paint/textures/file/rock.png     # evict an upload (unbinds it first)
+```
+
+Rules a program must follow:
+
+- **A plain sRGB PNG just works.** Bind's optional third token is the render mode and defaults to
+  `faithful`, which rewrites the decoded pixels so the image renders at its authored colours, in
+  every biome. Nothing has to be pre-corrected, and a user does not have to be told to author against
+  mid-grey.
+- **Discover, never guess, target ids.** Read `clutter` and use its first column. Bind takes
+  `<texture-id> <file> [faithful|raw]` — the same shape a `bindings` row reads back (mode column
+  included), so a listing line can be echoed straight back to re-create a binding.
+- **The write's success is not the GPU's.** `bind` only queues a Frame-phase command. Poll `applied`
+  (or `status`, which carries `bound applied retiring vram_bytes revision error`) for the real
+  outcome; a failed decode leaves the stock texture drawn and puts the reason in the row.
+- **A binding replaces a texture *asset*.** `used_by > 1` in the `clutter` listing means every one of
+  the listed ecotypes changes together. Check before binding.
+- **Errno vocabulary:** `EINVAL` bad name / unparseable line / unrecognised container; `ENOENT`
+  unknown texture id or missing upload; `EBUSY` the upload has not committed yet; `ENOSPC` file,
+  byte, or binding cap; `EFBIG` per-file cap (mid-write, so the failing `write(2)` carries it).
+  Images larger than `paint_texture_max_dimension` are downscaled, not rejected.
+- **Uploads over the network are the one non-uniform surface.** HTTP uses
+  `PUT /v1/paint/texture/file/<name>[?offset=N&complete=0|1]` and answers **413/EFBIG** above the
+  1 MiB request cap, so chunk any real PNG. MCP uses `gatos.paint_texture(operation:"upload")` with
+  base64 (which inflates 4/3 against the 24 MiB frame). **MQTT carries no binary upload**, though it
+  mirrors every control leaf. Everything else rides `/v1/fs/paint/textures/...` and
+  `gatos/sim/paint/textures/...` normally; MCP binds with
+  `gatos.paint_control(operation:"texture_bind", target:"<texture-id>", file:"<name>", value:0|1)`
+  — `value` is the mode (`0` = `faithful`, `1` = `raw`).
+- **`raw` is the like-for-like option.** Clutter diffuse maps are modulation maps, not albedo: the
+  shader computes `albedo = 2 * decode(t.rgb, t.a) * mix(meanLum, instanceColor, t.a) / meanLum`, so
+  the texel is doubled and **alpha is not opacity** — it selects sRGB (`0`) vs linear (`1`) decoding
+  *and* the blend toward the per-instance terrain tint. `faithful` (the default) cancels both: RGB is
+  scaled by `2^(-1/2.2)` (white `255` → `186`, round-trip error < 0.2%) and alpha is cleared to `0`.
+  `raw` uploads the decoded bytes untouched, so the image is read exactly as one of KSA's own clutter
+  textures — mid-grey `0.5` neutral, biome-tinted at `A=255` — which is what you want when replacing
+  a stock texture like-for-like. A decode that is not RGBA8 (some ktx/dds/hdr) cannot be corrected:
+  the `faithful` binding lands `failed` in `applied`, its error naming `raw` as the fix. Real cutout
+  opacity is a separate `opacity` slot either way. Mips are generated automatically and are mandatory
+  — without them the texture aliases badly at range.

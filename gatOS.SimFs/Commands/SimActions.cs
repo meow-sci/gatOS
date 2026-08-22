@@ -109,6 +109,12 @@ public static class SimActions
     public const string PaintKittenMaterialColor = "paint.kitten_material_color";
     public const string PaintKittenMaterialClear = "paint.kitten_material_clear";
 
+    // Custom clutter textures (GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN): user PNG overrides of stock
+    // ground-clutter texture assets. token=<stock texture id>, aux=<uploaded file name>.
+    public const string PaintTextureBind = "paint.texture_bind";
+    public const string PaintTextureUnbind = "paint.texture_unbind";
+    public const string PaintTextureClear = "paint.texture_clear";
+
     // Feature families with their own game-free parsers/catalogues.
     public const string AudioPlay = "audio.play";
     public const string AudioSet = "audio.set";
