@@ -132,12 +132,15 @@ internal sealed class ClutterTextureBridge : IDisposable
             _appliedRevision = revision;
         }
 
-        // Discovery is only useful while something can act on it, and walking every ecotype is not
-        // free — so refresh it about once a second, and only once anything has been uploaded. Both
-        // guards are allocation-free so an unused feature stays at zero steady-state cost.
+        // Discovery runs about once a second. It must run at least once with nothing uploaded —
+        // `cat clutter` is documented as the FIRST step and the only source of texture ids — so an
+        // empty catalog always retries (cheap while the renderer is down: two null checks). Once it
+        // is populated the walk repeats only while something can act on it (an upload or a live
+        // override), so an unused feature stays at zero steady-state cost. All guards are
+        // allocation-free.
         if (++_catalogTicks % 60 != 0)
             return;
-        if (_live.Count == 0 && _store.Catalog.Count == 0 && _store.FileCount == 0)
+        if (_store.Catalog.Count != 0 && _live.Count == 0 && _store.FileCount == 0)
             return;
         RefreshCatalog();
     }
