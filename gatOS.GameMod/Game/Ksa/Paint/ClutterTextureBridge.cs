@@ -304,21 +304,27 @@ internal sealed class ClutterTextureBridge : IDisposable
         FxReflect.Healthy(_health, CatalogAccessor);
         var rows = new Dictionary<string, (string Slot, int W, int H, int Mips, int Used, SortedSet<string> Eco)>(
             StringComparer.Ordinal);
+        var walk = new WalkStats();
 
         foreach (var celestial in clutter.CelestialsWithGroundClutter)
         {
+            walk.Celestials++;
             if (celestial.BodyTemplate.GroundClutterReference is not { } reference)
                 continue;
             foreach (var ecotype in reference.Ecotypes)
+            {
+                walk.Ecotypes++;
                 foreach (var materialRef in ecotype.MaterialReferences)
                 {
+                    walk.Materials++;
                     var material = materialRef.Get();
-                    Add(rows, ecotype.Name, "diffuse", material.DiffuseReference);
-                    Add(rows, ecotype.Name, "normal", material.NormalReference);
-                    Add(rows, ecotype.Name, "pbr", material.PBRMap);
-                    Add(rows, ecotype.Name, "opacity", material.OpacityMap);
-                    Add(rows, ecotype.Name, "thickness", material.ThicknessMap);
+                    Add(rows, walk, ecotype.Name, "diffuse", material.DiffuseReference);
+                    Add(rows, walk, ecotype.Name, "normal", material.NormalReference);
+                    Add(rows, walk, ecotype.Name, "pbr", material.PBRMap);
+                    Add(rows, walk, ecotype.Name, "opacity", material.OpacityMap);
+                    Add(rows, walk, ecotype.Name, "thickness", material.ThicknessMap);
                 }
+            }
         }
 
         var catalog = rows
@@ -327,18 +333,61 @@ internal sealed class ClutterTextureBridge : IDisposable
             .OrderBy(c => c.TextureId, StringComparer.Ordinal)
             .ToArray();
         _store.PublishCatalog(catalog);
-        PublishRuntime(available: true, error: "");
+
+        // An empty walk with a healthy renderer is the one outcome a guest cannot diagnose from
+        // `status` alone, so say exactly where the walk went dry — and log it once per distinct
+        // shape rather than once a second.
+        var error = catalog.Length == 0
+            ? "clutter walk found no overridable textures: " + walk
+            : "";
+        if (error != _lastWalkError)
+        {
+            _lastWalkError = error;
+            if (error.Length != 0)
+                ModLog.Log.Warn("gatOS " + error);
+            else
+                ModLog.Log.Info($"gatOS clutter texture catalog: {catalog.Length} textures ({walk})");
+        }
+        PublishRuntime(available: true, error: error);
+    }
+
+    private string _lastWalkError = "";
+
+    /// <summary>Where the discovery walk spent its candidates; rendered into <c>status</c> when empty.</summary>
+    private sealed class WalkStats
+    {
+        public int Celestials, Ecotypes, Materials, Slots, Unresolved, Unbound, Anonymous;
+
+        public override string ToString()
+            => $"celestials={Celestials} ecotypes={Ecotypes} materials={Materials} slots={Slots} "
+               + $"unresolved={Unresolved} unbound={Unbound} anonymous={Anonymous}";
     }
 
     private static void Add(
         Dictionary<string, (string Slot, int W, int H, int Mips, int Used, SortedSet<string> Eco)> rows,
-        string ecotype, string slot, TextureReference? reference)
+        WalkStats walk, string ecotype, string slot, TextureReference? reference)
     {
-        if (reference?.Get() is not { } texture || texture.BindlessHandle <= 0)
+        if (reference is null)
             return;
+        walk.Slots++;
+        if (reference.Get() is not { } texture)
+        {
+            walk.Unresolved++;
+            return;
+        }
+
+        if (texture.BindlessHandle <= 0)
+        {
+            walk.Unbound++;
+            return;
+        }
+
         var id = texture.GetRealId();
         if (id.Length == 0)
+        {
+            walk.Anonymous++;
             return;
+        }
         if (rows.TryGetValue(id, out var row))
         {
             row.Used++;
