@@ -693,9 +693,12 @@ that frame; nothing is ever written to the game's asset folders and everything r
 ```sh
 cat /sim/paint/textures/clutter          # what can I override? (id, slot, size, mips, used_by, ecotypes)
 cat mossy-rock.png > /sim/paint/textures/file/mossy-rock.png
-echo 'RockDiffuseA mossy-rock.png' > /sim/paint/textures/bind
+
+# A texture id is the asset's content-relative path - copy one out of the listing above.
+T=Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2
+echo "$T mossy-rock.png" > /sim/paint/textures/bind
 cat /sim/paint/textures/applied          # did it actually reach the GPU?
-echo 'RockDiffuseA' > /sim/paint/textures/unbind   # ...or 'all', or: echo 1 > clear
+echo "$T" > /sim/paint/textures/unbind   # ...or 'all', or: echo 1 > clear
 ```
 
 PNG, JPEG, BMP, HDR, DDS, KTX and KTX2 all work, mip chains are generated for you, and there's no

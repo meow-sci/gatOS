@@ -276,14 +276,16 @@ internal sealed class ClutterTextureBridge : IDisposable
     [KsaAnchor("PlanetRenderer.GroundClutterRenderer (public) → CelestialsWithGroundClutter; "
             + "Celestial.BodyTemplate.GroundClutterReference.Ecotypes → ClutterEcotypeReference.Name / "
             + ".MaterialReferences → GroundClutterMaterialReference.{DiffuseReference,NormalReference,"
-            + "PBRMap,OpacityMap,ThicknessMap} → TextureReference.{GetRealId,Width,Height,BindlessHandle}",
-        SourceFile = "KSA/PlanetRenderer.cs:366 / KSA/GroundClutterRenderer.cs:247 / "
+            + "PBRMap,OpacityMap,ThicknessMap,AlphaMap} → TextureReference.{LocalPath,Width,Height,BindlessHandle}",
+        SourceFile = "KSA/PlanetRenderer.cs:389 / KSA/GroundClutterRenderer.cs:268 / "
             + "KSA/ClutterEcotypeReference.cs:14 / KSA/GroundClutterMaterialReference.cs / "
-            + "KSA/PbrMaterialReference.cs:10 / KSA/TextureReference.cs",
-        Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
+            + "KSA/PbrMaterialReference.cs:10 / KSA/TextureReference.cs / KSA/FileReference.cs:12",
+        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.Medium,
         Notes = "Every member is public; the PlanetRenderer handle reuses the existing FxReflect.Terrain "
             + "accessor, so this adds no reflection site. Both the material and the TextureReference "
-            + "may be a reference needing Get() resolution, exactly as ToGpuMaterial does.")]
+            + "may be a reference needing Get() resolution, exactly as ToGpuMaterial does. Rows are "
+            + "keyed by TextureReference.LocalPath (see KeyOf) — NOT GetRealId(), which is empty for "
+            + "every clutter texture because none of them carry an Id= attribute in the asset XML.")]
     private void RefreshCatalog()
     {
         if (FxReflect.Terrain(out var rendererError) is not { } planet)
@@ -323,6 +325,9 @@ internal sealed class ClutterTextureBridge : IDisposable
                     Add(rows, walk, ecotype.Name, "pbr", material.PBRMap);
                     Add(rows, walk, ecotype.Name, "opacity", material.OpacityMap);
                     Add(rows, walk, ecotype.Name, "thickness", material.ThicknessMap);
+                    // Alpha arrived with KSA 2026.8.22.5348 on PbrMaterialReference; no stock clutter
+                    // material authors one yet, so this slot is normally absent from the listing.
+                    Add(rows, walk, ecotype.Name, "alpha", material.AlphaMap);
                 }
             }
         }
@@ -382,7 +387,7 @@ internal sealed class ClutterTextureBridge : IDisposable
             return;
         }
 
-        var id = texture.GetRealId();
+        var id = KeyOf(texture);
         if (id.Length == 0)
         {
             walk.Anonymous++;
@@ -418,6 +423,7 @@ internal sealed class ClutterTextureBridge : IDisposable
                     if (Match(material.PBRMap, targetId) is { } c) return c;
                     if (Match(material.OpacityMap, targetId) is { } d) return d;
                     if (Match(material.ThicknessMap, targetId) is { } e) return e;
+                    if (Match(material.AlphaMap, targetId) is { } f) return f;
                 }
         }
 
@@ -426,9 +432,36 @@ internal sealed class ClutterTextureBridge : IDisposable
 
     private static TextureReference? Match(TextureReference? reference, string targetId)
         => reference?.Get() is { } texture
-           && string.Equals(texture.GetRealId(), targetId, StringComparison.Ordinal)
+           && string.Equals(KeyOf(texture), targetId, StringComparison.Ordinal)
             ? texture
             : null;
+
+    /// <summary>
+    ///     The stable public id of a stock clutter texture: its content-relative asset path, e.g.
+    ///     <c>Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2</c>. Empty when the reference
+    ///     carries no path (a pure reference), which the walk counts as anonymous.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>Not <c>GetRealId()</c>.</b> That returns <c>Id</c> only when
+    ///         <c>SerializedId.IsReferenceable</c> is set, which happens solely when the asset XML
+    ///         carries an <c>Id=</c> <i>attribute</i> — and not one clutter texture element in
+    ///         <c>Content/Core/GroundClutter/*Assets.xml</c> does; they are all <c>Path=</c>-only. So
+    ///         <c>GetRealId()</c> was empty for every candidate, every slot fell through to
+    ///         <c>walk.Anonymous</c>, and the catalog published empty (making every <c>bind</c> an
+    ///         ENOENT). Verified identical on KSA 2026.8.19.5261 and 2026.8.22.5348 — this was never a
+    ///         game-update regression.
+    ///     </para>
+    ///     <para>
+    ///         <b>Not <c>Id</c> either.</b> <c>FileReference.OnDataLoad</c> assigns
+    ///         <c>Id = ModPath</c> when the asset is not referenceable, and <c>ModPath</c> is an
+    ///         absolute machine path — it would differ per install and leak the user's filesystem into
+    ///         a public id. <c>LocalPath</c> is the XML <c>Path</c> attribute: install-independent,
+    ///         unique per asset, and free of spaces, which the space-separated <c>clutter</c> listing
+    ///         and <c>bind</c> line both require.
+    ///     </para>
+    /// </remarks>
+    private static string KeyOf(TextureReference texture) => texture.LocalPath ?? "";
 
     // ---- status ---------------------------------------------------------------------------------
 

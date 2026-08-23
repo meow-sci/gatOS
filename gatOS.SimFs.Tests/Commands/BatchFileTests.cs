@@ -21,7 +21,7 @@ public sealed class BatchFileTests
     {
         _sink = new FakeCommandSink();
 
-        // A miniature /sim: per-vessel teleports (Frame), an ignite trigger (Frame), a
+        // A miniature /sim: per-vessel teleports (Solver), an ignite trigger (Frame), a
         // refill trigger (Solver), a read-only sensor, and the batch file itself at ctl/batch.
         VfsDirectory? root = null;
         VfsFile Teleport(string id, ulong qid) => VectorControlFile.Create("teleport", qid, _sink,
@@ -98,7 +98,7 @@ public sealed class BatchFileTests
         using var handle = _batch.OpenWrite();
         await WriteAsync(handle,
             "/sim/debug/vessels/hunter/teleport 1 2 3 4 5 6\n"
-            + "/ignite 1\n"
+            + "/refill_fuel 1\n" // Solver-phase, like teleport — a batch cannot span both phases
             + "commit\n");
         Assert.That(_sink.LastBatch, Has.Count.EqualTo(2));
     }

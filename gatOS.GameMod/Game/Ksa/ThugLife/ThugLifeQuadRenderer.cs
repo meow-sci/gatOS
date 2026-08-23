@@ -246,8 +246,9 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
     /// <remarks>
     ///     Matrices come from <c>Program.GetRenderCamera()</c> — the camera of the viewport
     ///     <i>currently being rendered</i> — not the main camera. <c>RenderMainPass</c> runs once per
-    ///     visible viewport, which since 5261 includes the two 128² crew-portrait viewports (they are
-    ///     always visible), so the glasses appear in the crew cam automatically and in the right place.
+    ///     visible viewport, which includes the two 128² crew-portrait viewports <i>whenever they are
+    ///     visible</i> (portrait cameras enabled and the slot occupied — see the anchor note), so the
+    ///     glasses appear in the crew cam automatically and in the right place.
     ///     Ego space is camera-relative and the view-projection is per-camera; using the main camera
     ///     here would draw portrait-pass quads with the main view's clip transform.
     /// </remarks>
@@ -255,12 +256,18 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
             + "Program.SetViewport(cmd); Vehicle.GetMatrixAsmb2Ego(Camera); Vehicle.Asmb2Ego; "
             + "Part.PositionEgo(in double4x4); Part.Asmb2Ego(doubleQuat); double3.Transform",
         SourceFile = "KSA/Program.cs / KSA/Camera.cs / KSA/Vehicle.cs / KSA/Part.cs",
-        Verified = "2026-08-12", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
+        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
         Notes = "Per-frame ego-space model matrix + draw for one thug-life quad, per rendered viewport "
             + "(main + the two crew-portrait viewports at indices 4/5 — Program.RenderViewport calls "
             + "RenderMainPass for every visible viewport, and the portrait targets share the offscreen "
             + "target's color/depth formats and sample count, so one pipeline serves all passes). "
-            + "Program.SetViewport already sizes to RenderedViewport.Size.")]
+            + "Program.SetViewport already sizes to RenderedViewport.Size. 5348: the crew-portrait "
+            + "viewports are no longer unconditionally visible — revs 5276/5295 gate them on "
+            + "GameSettings.ShowCrewPortraitCameras() and on the slot being occupied, so the Crew pass "
+            + "can simply not occur. SuperMeshRenderSystem.RenderMainPass is still a single overload but "
+            + "its body is now wrapped in commandBuffer.TagRegion(Profiler.GpuTag.MeshRendererV2); a "
+            + "Harmony postfix runs after the finally, so these quads are attributed OUTSIDE that GPU "
+            + "tag — profiler attribution only, no mis-draw.")]
     public void RecordDraw(CommandBuffer cmd, ThugLifeEntry entry)
     {
         if (_disposed || !entry.Visible)

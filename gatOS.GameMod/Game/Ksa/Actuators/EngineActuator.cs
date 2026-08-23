@@ -45,7 +45,13 @@ internal static class EngineActuator
     }
 
     [KsaAnchor("EngineController.MinimumThrottle (float, settable)", SourceFile = "KSA/EngineController.cs",
-        Verified = "2026-06-12", Risk = ChurnRisk.Medium, Notes = "Deep-throttle floor 0..1.")]
+        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.Medium,
+        Notes = "Deep-throttle floor 0..1. 5348 (rev 5317 era): EngineController.MinimumThrottle itself "
+            + "is unchanged and this write still lands, but FlightComputer."
+            + "ComputeActiveEnginePerformance flipped its fold over the active engines — seed 1f -> 0f "
+            + "and MathF.Min -> MathF.Max — so the effective ActiveEnginePerformance.MinThrottle clamp "
+            + "on a multi-engine stack is now set by the MOST restrictive engine instead of the least, "
+            + "and the empty-set default flipped 1.0 -> 0.0.")]
     internal static CommandResult SetMinThrottle(Vehicle vehicle, int ordinal, double fraction)
     {
         var engines = vehicle.Parts.Modules.Get<EngineController>();

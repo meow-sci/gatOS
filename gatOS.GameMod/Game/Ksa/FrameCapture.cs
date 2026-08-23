@@ -113,15 +113,21 @@ internal sealed class FrameCapture : IDisposable
                + "Allocator.CreateBuffer/CreateImage, CommandBufferEx.TransitionImages2 + "
                + "ImageBarrierInfo.Presets + ImageTransition, CommandBuffer.BlitImage, "
                + "CommandBuffer.CopyImageToBuffer, BufferEx.Map, PhysicalDevice.GetFormatProperties",
-        SourceFile = "KSA/Program.cs / KSA/Viewport.cs:54 / KSA.Rendering/RenderTarget.cs:36,48",
-        Verified = "2026-08-05", GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Program.cs / KSA/Viewport.cs:58 / KSA.Rendering/RenderTarget.cs:36,48",
+        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.Medium,
         Notes = "In-band GPU downscale capture (perf plan P1): barrier offscreen->TransferSrc + scratch "
                 + "Undefined->TransferDst, BlitImage(offscreen->B8G8R8A8 scratch, LINEAR — downscale + "
                 + "float->UNORM clamp in one op), CopyImageToBuffer(small scratch->host), restore "
                 + "offscreen to SampledReadVfc. All layout moves use the engine's OWN sync2 "
                 + "TransitionImages2 + ImageBarrierInfo.Presets (no sync1/sync2 mixing). Blit support is "
                 + "format-feature-queried once; the miss falls back to the previous full-frame copy + "
-                + "CPU convert. Deferred readback via frames-in-flight reuse (no fence wait).")]
+                + "CPU convert. Deferred readback via frames-in-flight reuse (no fence wait). "
+                + "5348: the offscreen colour + barrier path is verified unchanged (KSA.Rendering/"
+                + "RenderTarget.cs is byte-identical; Viewport.OffscreenTarget moved to :58). NEW "
+                + "dependency: rev 5283's UiCoverageMaskSystem stamps the reverse-Z near plane into the "
+                + "pre-pass depth under opaque ImGui UI, and this read happens BEFORE the UI composite, "
+                + "so a complete frame now also requires DisplayRenderPatch's UiPixelCulling prefix — "
+                + "without it the stream ships UI-shaped unshaded black holes.")]
     public void MaybeRecord(Program program, CommandBuffer cb, DisplaySurface surface)
     {
         var settings = surface.Settings;

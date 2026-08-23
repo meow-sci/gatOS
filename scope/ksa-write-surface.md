@@ -77,7 +77,7 @@ target in 4750 (verify live). Full record: [`../plans/FIX_CURRENT_GAPS_PLAN.md`]
 | `ctl/shutdown` | `vessel.shutdown` | `EngineActuator.Shutdown` | `Vehicle.SetEnum(VehicleEngine.MainShutdown)` | `KSA/Vehicle.cs` | Medium | ✅¹ |
 | `ctl/engine` | `vessel.engine` | `EngineActuator.SetEngineOn` | ignite/shutdown by flag | `KSA/Vehicle.cs` | Medium | ✅¹ |
 | `engines/<n>/active` | `engine.active` | `EngineActuator.SetActive` | `EngineController.SetIsActive(vehicle,bool)` | `KSA/EngineController.cs` | Low | ✅ |
-| `engines/<n>/min_throttle` | `engine.min_throttle` | `EngineActuator.SetMinThrottle` | `EngineController.MinimumThrottle` (float) | `KSA/EngineController.cs` | Medium | ✅ |
+| `engines/<n>/min_throttle` | `engine.min_throttle` | `EngineActuator.SetMinThrottle` | `EngineController.MinimumThrottle` (float) | `KSA/EngineController.cs` | Medium | ⚠️ **5348: the FC's floor fold inverted** `Min`→`Max` (rev 5317 era) — the write still lands, the *effective* floor moved; see [5348 findings](#5348-findings) |
 | `ctl/lights` | `vessel.lights` | `LightActuator.SetMaster` | `Vehicle.LightsOn`; `PowerConsumer.{LightSwitch,LightIsActive}` | `KSA/Vehicle.cs`, `KSA/LightModule.cs` | Low | ✅ |
 | `animations/<n>/goal`, `solar/<n>/goal`, `lights/<n>/goal` | `animation.goal` | `AnimationActuator.SetGoal` | `KeyframeAnimationModule.TimeGoal = f × Shared.Duration` | `KSA/KeyframeAnimationModule.cs` | Low | ✅ |
 
@@ -91,14 +91,14 @@ target in 4750 (verify live). Full record: [`../plans/FIX_CURRENT_GAPS_PLAN.md`]
 | `/sim` path | action key | phase | actuator | KSA member | Decomp file | Risk | 5018 |
 |---|---|---|---|---|---|---|---|
 | `ctl/throttle` | `vessel.throttle` | Frame | `ThrottleActuator.Set` | **reflection** `Vehicle._manualControlInputs.EngineThrottle` (no public setter; `GetManualThrottle()` reads it) | `KSA/Vehicle.cs` (`:232,824`) | **High** | ✅² |
-| `ctl/stage` | `vessel.stage` | Frame | `StagingActuator.Stage` | `Vehicle.Parts.SequenceList.ActivateNextSequence(vehicle)` + `Vehicle.UpdateAfterPartTreeModification()` | `KSA/SequenceList.cs`, `KSA/Vehicle.cs` | Medium | ✅³ |
+| `ctl/stage` | `vessel.stage` | Frame | `StagingActuator.Stage` | `Vehicle.Parts.SequenceList.ActivateNextSequence(vehicle)` + `Vehicle.UpdateAfterPartTreeModification()` | `KSA/SequenceList.cs`, `KSA/Vehicle.cs` | Medium | ⚠️ **5348: per-module sequencing** (rev 5329) — see [5348 findings](#5348-findings) ³ |
 | `ctl/rcs` | `vessel.rcs` | Frame | `RcsActuator.SetMaster` | `ThrusterController.SetIsActive(vehicle,bool)` over all | `KSA/ThrusterController.cs` | Medium | ✅ |
 | `ctl/translate` | `vessel.translate` | Frame | `TranslateActuator.SetTranslation` | **reflection** `Vehicle._manualControlInputs.ThrusterCommandFlags` (same struct as throttle; translate bits replaced, rotation bits preserved) + `ThrusterMapFlags`; read-back `Vehicle.GetThrusterFlags()`. `FlightComputer.ComputeRcsControl` consumes the flags each solver step (`ManualThrustMode.Direct` → `SelectJetsToFire`; Auto attitude strips only rotation bits, so translation composes with tracking). Sign→flag mapping (+x=`TranslateForward`, +y=`Right`, +z=`Down`) verified against the `KittenBackPackSubPart` nozzle geometry in `Content/Core/PartGameData.xml` | `KSA/Vehicle.cs`, `KSA/ThrusterMapFlags.cs`, `KSA/FlightComputer.cs` (`:454-519,1029`) | **High** | ⚠️ **gated + cleared at 5168** ⁷⁸ |
 | `ctl/rotate` | `vessel.rotate` | Frame | `RotateActuator.SetRotation` | **reflection** `Vehicle._manualControlInputs.ThrusterCommandFlags` (same struct as throttle/translate; rotation bits replaced, translation bits preserved) + `ThrusterMapFlags`; read-back `Vehicle.GetThrusterFlags()`. `FlightComputer.ComputeRcsControl` consumes the flags each solver step (`ManualThrustMode.Direct` → `SelectJetsToFire`; `ComputeTvcControl` decodes the same bits for gimbals). **Auto attitude strips the rotation bits** (`WithNoRotation()`) — full authority needs `attitude_mode=manual`, the inverse of translate's compose note. Sign→flag mapping is KSA's own torque decode (`ComputeTvcControl:559-585`): +x=`RollRight`, +y=`PitchUp`, +z=`YawRight` | `KSA/Vehicle.cs`, `KSA/ThrusterMapFlags.cs`, `KSA/FlightComputer.cs` (`:457-524,559-585,1020`) | **High** | ⚠️ **gated + cleared at 5168** ⁷⁸ |
 | `ctl/attitude_mode` | `vessel.attitude_mode` | **Solver** | `FlightComputerActuator.SetAttitudeMode` | `FlightComputer.{AttitudeMode,AttitudeTrackTarget}`; `FlightComputerAttitudeMode`/`...TrackTarget` | `KSA/FlightComputer.cs` | Medium | ✅²⁶ |
 | `ctl/attitude_frame` | `vessel.attitude_frame` | **Solver** | `…SetAttitudeFrame` | `FlightComputer.AttitudeFrame` (`VehicleReferenceFrame`) | `KSA/FlightComputer.cs` | Medium | ✅² |
 | `ctl/attitude_target` | `vessel.attitude_target` | **Solver** | `…SetAttitudeTarget` | `FlightComputer.{CustomAttitudeTarget,AttitudeFrame,AttitudeTrackTarget=Custom}`; `VehicleReferenceFrameEx.{GetEclBody2Cci,QuaternionToEulerAngles}` | `KSA/FlightComputer.cs` | Medium | ✅²⁶ |
-| `ctl/burn` | `vessel.burn` | **Solver** | `…SetBurn` | `FlightComputer.Burn = BurnTarget{ImpulsiveInstant,DeltaVTargetCci}` | `KSA/BurnTarget.cs` | Medium | ✅² |
+| `ctl/burn` | `vessel.burn` | **Solver** | `…SetBurn` | `FlightComputer.Burn = BurnTarget{ImpulsiveInstant,DeltaVTargetCci}` | `KSA/BurnTarget.cs` | Medium | ✅² · ⚠️ **5348: burn timing / throttle profile / TVC retuned** (rev 5317) — see [5348 findings](#5348-findings) |
 | `ctl/rcs_mode` | `vessel.rcs_mode` | **Solver** | `FlightComputerActuator.{SetRcsMode,ReadRcsMode}` | `FlightComputer.RCSMode` (`FlightComputerRCSMode.{Enabled,Disabled}`) — the file twin of the in-game **R** keybind. `Disabled` is a hard master cut-off: `ComputeRcsControl` zeroes the manual `ThrusterCommandFlags` (`:471`) so `ctl/translate`+`ctl/rotate` go dead, and `UpdateRcsParams` zeroes the RCS torque authority (`:884`) so auto attitude holds lose RCS. Solver-phase because `CopyFrom` copies it (`:131`) | `KSA/FlightComputer.cs` (`:41,131,471,884`) | Medium | ➕ added at 5168 (rev 5143) ⁷ |
 
 ² Compiles; **`IsControllable`-gated** at runtime (Solver-phase FC setpoints are the most affected). ³
@@ -116,7 +116,12 @@ in-flight sequence-window redesign (GaugeCanvas dressing, group expand/collapse,
 `ActivateNextSequence(Vehicle)` (`SequenceList.cs:127`) is untouched; note rev 4914 gates the
 **staging key** behind `ControlsLockout` (control-module required) but only in `Vehicle`'s key-input
 handler — the `ActivateNextSequence` call gatOS binds carries no such gate (see the
-[4939 findings](#4939-findings)).
+[4939 findings](#4939-findings)). ⚠️ **Falsified at 5348 (rev 5329):** the "byte-identical
+`ActivateNextSequence` / `Part.ActivateInStage`" claim above holds only through 5261. The signature is
+still the same, but the body now calls `Part.ActivateSubtreeInStage(vehicle, sequence.Number)` — a
+subtree walk over `GetSubtreeSequencedModules()` that activates only `ISequenced` modules whose own
+`Sequence` matches, so **`ctl/stage` no longer activates every `IActivate` on the part** and RCS is no
+longer flipped as a side effect. See [5348 findings](#5348-findings).
 
 ⁴ Added 2026-07-04 (born on 4826): the struct-reflection pattern is the proven throttle anchor; the
 flags path (`ComputeRcsControl`/`SelectJetsToFire`, `WithCanceledOpposingCommands`, the
@@ -205,7 +210,7 @@ decoupler with **EOPNOTSUPP**, and the state is readable at
 | `lights/<n>/color` | `light.color` | `LightActuator.SetColor` | `LightModule.Template.ColorRgb.{R,G,B}` + `OnDataLoad` (clone) | `KSA/LightModule.cs`, `KSA/ColorRgbReference.cs` | **High** | ✅ |
 | `lights/<n>/outer_angle` | `light.outer_angle` | `LightActuator.SetOuterAngle` | `LightModule.Template.OuterAngle.Value` (deg→rad, clamp `[1e-5, 1.5697963]`) | `KSA/LightModule.cs`, `KSA/Light.cs` (`CreateSpotLight`) | **High** | ✅ |
 | `lights/<n>/inner_angle` | `light.inner_angle` | `LightActuator.SetInnerAngle` | `LightModule.Template.InnerAngle.Value` (clamp `[0, OuterAngle]`) | `KSA/LightModule.cs` | **High** | ✅ |
-| `decouplers/<n>/fire` | `decoupler.fire` | `DecouplerActuator.Fire` | `Decoupler.{IsActive,IsEnabled,SetIsActive}` (re-fire → `EBUSY`; **disabled → `EOPNOTSUPP`**, since rev 5132 gated `SetIsActive` on `IsEnabled`) | `KSA/Decoupler.cs` (`:33,35,95`) | Medium | ✅⁴ ⁹ |
+| `decouplers/<n>/fire` | `decoupler.fire` | `DecouplerActuator.Fire` | `Decoupler.{IsActive,IsEnabled,SetIsActive}` (re-fire → `EBUSY`; **disabled → `EOPNOTSUPP`**, since rev 5132 gated `SetIsActive` on `IsEnabled`) | `KSA/Decoupler.cs` (`:33,35,95`) | Medium | ✅⁴ ⁹ · ⚠️ **5348: `Decoupler` is now a multi-instance component module** (`template.Decoupler` deleted); stock ordinals stable — see [5348 findings](#5348-findings) |
 | `docking/<n>/undock` | `docking.undock` | `DockingActuator.Undock` | `InputEvents.VehicleDockingInputBuffer.Add(VehicleDockingInputData{Undock=true})` → `DockingPort.Undock` → `Vehicle.Split(Connector, PushoffImpulse)` | `KSA/DockingPort.cs`, `KSA/InputEvents.cs` | Medium | ✅⁵ |
 
 ⁴ `Decoupler.SetIsActive` unchanged; rev 4715 ("decoupler releasing the wrong connector") is a runtime
@@ -251,7 +256,7 @@ deliberate by-id operation on an arbitrary vessel). Gated only by the `control_e
 
 | `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 5018 |
 |---|---|---|---|---|---|---|
-| `vessels/by-id/<id>/scale` | `vessel.scale` | `ScaleActuator.Set` (one-shot; > 0 only, `EINVAL` otherwise; KSA resets on vessel rebuild) | recursive `Part.Scale = (f,f,f)` over `Vehicle.Parts.Parts`/`Part.SubParts` (public `double3` setter); KittenEva avatar via reflected `_renderable._characterAvatar.Core.Scale = f*0.01f` | `KSA/Part.cs`, `KSA/PartTree.cs`, `KSA/KittenEva.cs` | **High** (reflection + `GetType().Name` gate) | ✅ |
+| `vessels/by-id/<id>/scale` | `vessel.scale` | `ScaleActuator.Set` (one-shot; > 0 only, `EINVAL` otherwise; KSA resets on vessel rebuild) | recursive `Part.Scale = (f,f,f)` over `Vehicle.Parts.Parts`/`Part.SubParts` (public `double3` setter); KittenEva avatar via reflected `_renderable._characterAvatar.Core.Scale = f*0.01f` | `KSA/Part.cs`, `KSA/PartTree.cs`, `KSA/KittenEva.cs` | **High** (reflection + `GetType().Name` gate) | ⚠️ **5348: still visual/transform-only, but no longer what the in-game gizmo means** — `ScaleTotal` composition went additive → multiplicative and the editor's own scaling became physical via `IRescale` (clamped 0.5×–2×); see [5348 findings](#5348-findings) |
 | `vessels/by-id/<id>/always_render` | `vessel.always_render` | `VesselForceRender.Set` (registry op; installs/removes the `gatos.always_render` prefixes — patches exist **only while ≥ 1 vessel is marked**) | prefixes on `Vehicle.GetWorldMatrix(Camera)` + `Vehicle.UpdateRenderData(Viewport,int)` reproduce the stock bodies minus the `< 1 px` cull: `Camera.GetPositionEgo`, `Vehicle.Body2Cce`, `Vehicle.GetMatrixAsmb2Ego`, `PartTree.UpdateRenderData`, `Vehicle.IsEditedVehicle` | `KSA/Vehicle.cs`, `KSA/Camera.cs`, `KSA/PartTree.cs` | Medium (dynamic Harmony; KittenEva override unaffected) | ✅ |
 
 Read-backs ride `VesselReader.SampleCore` (always on): `scale` ← representative `Part.Scale.X`
@@ -270,8 +275,8 @@ debug_namespace`. Authority-exempt (own opt-in).
 | `debug/time/warp` | `debug.warp` | Frame | `Universe.SetSimulationSpeed(double, alert:false)` | `KSA/Universe.cs` | Medium | ✅ |
 | `debug/control_vessel` | `debug.control_vessel` | Frame | `Program.GetMainCamera().SetFollow(…)`; `Program.ControlledVehicle = vehicle` | `KSA/Program.cs` | Medium | ✅⁶ |
 | `debug/focus` | `camera.focus` | Frame | (same as `ctl/focus` — **both** viewport cameras since C1.4) | `KSA/Program.cs`, `KSA/Viewport.cs` | Medium | ✅ |
-| `debug/vessels/<id>/teleport` | `debug.teleport` | Frame | `Orbit.CreateFromStateCci` + `Vehicle.Teleport` + `Vehicle.UpdatePerFrameData` | `KSA/Orbit.cs`, `KSA/Vehicle.cs` | **High** | ✅ |
-| `debug/vessels/<id>/impulse` | `debug.impulse` | Frame | `Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,TotalMass,Parent}` + `Orbit.CreateFromStateCci` + `Vehicle.Teleport` + `Vehicle.UpdatePerFrameData` (velocity-bump variant of the teleport pattern; Δv = J/`TotalMass` mirrors `Vehicle.Split`) | `KSA/Vehicle.cs`, `KSA/Orbit.cs` | **High** | ✅⁷ |
+| `debug/vessels/<id>/teleport` | `debug.teleport` | **Solver** | `Orbit.CreateFromStateCci` + `Vehicle.Teleport` + `Vehicle.UpdatePerFrameData` | `KSA/Orbit.cs`, `KSA/Vehicle.cs` | **High** | ⚠️ **moved Frame → Solver at 5348** (revs 5331/5339) — see [5348 findings](#5348-findings) |
+| `debug/vessels/<id>/impulse` | `debug.impulse` | **Solver** | `Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,TotalMass,Parent}` + `Orbit.CreateFromStateCci` + `Vehicle.Teleport` + `Vehicle.UpdatePerFrameData` (velocity-bump variant of the teleport pattern; Δv = J/`TotalMass` mirrors `Vehicle.Split`) | `KSA/Vehicle.cs`, `KSA/Orbit.cs` | **High** | ⚠️ **moved Frame → Solver at 5348** (revs 5331/5339) ⁷ |
 | `debug/vessels/<id>/refill_fuel` | `debug.refill_fuel` | **Solver** | `Vehicle.RefillConsumables()` | `KSA/Vehicle.cs` (`:2300`) | Medium | ✅ |
 | `debug/vessels/<id>/refill_battery` | `debug.refill_battery` | **Solver** | `Battery.Refill(ref state)` via `Batteries.GetModuleAndAllMutableStatesForInitialization` | `KSA/Battery.cs` (`:59`) | Medium | ✅ |
 | `debug/vessels/<id>/docking/<n>/pushoff_impulse` | `debug.docking_pushoff` | Frame | `DockingPort.PushoffImpulse =` (live float, N·s) | `KSA/DockingPort.cs` | Medium | ✅ |
@@ -328,6 +333,18 @@ per-tick re-resolution in the driver, so an animated subpart anchor tracks its l
 KSA members in the weld math: `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` are subpart-aware in the
 game (`IsSubPart` branch composing through `PartParent` — the same properties purrTTY's in-world
 quads anchor to subparts with); that branch staying intact is the semantic to watch on future bumps.
+
+Re-verified (static) 2026-08-23 against `2026.8.22.5348`: `Vehicle.Teleport(Orbit?,doubleQuat?,double3?)`
+keeps its signature and null-semantics (the only body delta is the `RemoveFromCurrentBubble()` refactor)
+and `Universe.GetJobSimStep` has **zero diff**, so the `NextTime` rationale holds exactly. ⚠️ **The
+bubble model underneath moved, though** (revs 5331/5339): merge/split/trim/intake are now worker-side in
+`VehicleUpdateTask` with a 2.0× split hysteresis and a cached pair-clearance dictionary, and
+`Universe.{MergeVehicleTasks,TrimPhysicsBubbles,AddVehiclesToTasks}` plus `Universe._physicsBubbles` are
+deleted. `WeldManager.Update` already anchors on `JobSystems.VehicleSolver.Wait()`, so the driver is
+safe by construction — but a per-tick weld teleport now orphans and re-intakes the vessel every tick,
+which only a live pass can clear (item 4 of this pass's re-check list). The `WeldEngine` anchor note is
+re-stamped accordingly. Same revs moved `debug/teleport` / `debug/impulse` to the Solver lane — see
+[5348 findings](#5348-findings).
 Discovery rides the read surface (`parts/<n>/subparts/<m>/`,
 [`ksa-read-surface.md#parts`](ksa-read-surface.md#parts)).
 
@@ -369,6 +386,12 @@ unload (`Mod.TeardownGameCheats`). Anchors verified `2026-06-28` against `2026.6
 macro-definition overloads in `Setup*Renderers`, `RenderMainPass(CommandBuffer)` is byte-identical at
 line 329, and the `UnlitMesh.{vert,frag}` shader assets are unchanged; re-verified (static) 2026-07-14
 against `2026.7.5.4892` — `SuperMeshRenderSystem.cs` entirely untouched, shaders/keys unchanged;
+re-verified (static) 2026-08-23 against `2026.8.22.5348` — `RenderMainPass(CommandBuffer)` is still the
+single overload (its body now wrapped in a `TagRegion`, which only moves the GPU profiler attribution)
+and `UnlitMesh.{vert,frag}` / `Common/Shared.glsl` are still byte-identical, but ⚠️ **the crew-portrait
+viewports are no longer unconditionally `Visible`** (revs 5276/5295), so the postfix can legitimately
+never run for them — the `Cameras & Crew` pass bit simply goes unused (see
+[5348 findings](#5348-findings));
 **live quad-draw check still pending** (`docs/VALIDATION.md`). Pipeline
 assumptions + the new render-DLL references: [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md).
 
@@ -530,7 +553,7 @@ renderer re-reads every frame, so a write needs **no apply call**:
 | `/sim` path | action key | phase | KSA member | Decomp file | Risk | 5056 |
 |---|---|---|---|---|---|---|
 | `debug/terrain/wireframe` | `debug.terrain_set` (token `""`) | Frame | `PlanetRenderer.Wireframe` (public **instance** field) via `Program.GetPlanetRenderer()` | `KSA/PlanetRenderer.cs:216`, `KSA/Program.cs:491` | Medium | ✅³ |
-| `debug/terrain/bodies/<id>/**` | `debug.terrain_set` | Frame | `TerrainActuator.Write` → `Celestial.BodyTemplate.HeightReference.{Minimum,Maximum}` and `BodyTemplate.TerrainReference.BiomeMaterials.{BlendStrength.Value,DetailFadeInStart,DetailFadeInEnd}` (construct-new `DistanceReference`) **plus** the `PlanetUbo`/`MeshUbo` structs at `(NumCelestials*frame + slot)*Stride`, then the frame-in-flight mirror copy | `KSA/PlanetRenderer.cs:2107-2398` (the editor's write + mirror loop), `KSA/AstronomicalTemplate.cs:27,51`, `KSA/BiomeMaterialsReference.cs` | **High** | ✅⁴ |
+| `debug/terrain/bodies/<id>/**` | `debug.terrain_set` | Frame | `TerrainActuator.Write` → `Celestial.BodyTemplate.HeightReference.{Minimum,Maximum}` and `BodyTemplate.TerrainReference.BiomeMaterials.{BlendStrength.Value,DetailFadeInStart,DetailFadeInEnd}` (construct-new `DistanceReference`) **plus** the `PlanetUbo`/`MeshUbo` structs at `(NumCelestials*frame + slot)*Stride`, then the frame-in-flight mirror copy | `KSA/PlanetRenderer.cs:2107-2398` (the editor's write + mirror loop), `KSA/AstronomicalTemplate.cs:27,51`, `KSA/BiomeMaterialsReference.cs` | **High** | ✅⁴ · ⚠️ **5348: the frame-in-flight mirror is now field-wise** (revs 5319–5325 added per-frame `MeshUbo` anchor fields) — see [5348 findings](#5348-findings) |
 | (slot resolution) | — | — | `PlanetRenderer.RenderUboSlot(Celestial)` / `MeshUboSlot(Celestial)` (public; `-1` ⇒ no slot ⇒ the body is absent from the tree) | `KSA/PlanetRenderer.cs:374,379` | Medium | ✅ |
 | (UBO handles) | — | — | `FxReflect.TerrainUbo` → reflected `PlanetRenderer._renderUboMap` / `_meshUboMap` (`MappedMemory`, host-visible + coherent) with the public `PlanetUboStride`/`MeshUboStride`/`NumCelestials` and `Program.GetRenderer().MaxFramesInFlight` — latch `fx.terrain_ubo` | `KSA/PlanetRenderer.cs:250-252` | **High** | ✅ |
 | `debug/terrain/bodies/<id>/reset` | `debug.terrain_reset` | Frame | `FxPristine.Restore` replays through the same paired write | — | **High** | ✅ |
@@ -624,7 +647,7 @@ gatOS owns the camera the player's camera keys do nothing** (a per-frame re-asse
 | `camera/tidal` | `camera.tidal` | `CameraDirector.SetTidal` | `Camera.{Following,TidalLocking,SetFollow,PositionEcl}` — `TidalLocking` is get-only (`=> _tidalLocking`) and `SetFollow` is its only writer, so the flag change re-issues `SetFollow` and then **re-asserts the captured `PositionEcl`** to undo its unconditional teleport | `KSA/Camera.cs` | Medium | ➕ new 2026-08-06 |
 | `camera/map/scope` | `camera.map_scope` | `CameraDirector.SetMapScope` | `Program.MainViewport.MapController`; `MapController.Scope` (`:33`, a plain public `double`, no setter hook). **Not ownership-gated** — like `mode`/`follow`/`tidal` it configures the *game's* camera | `KSA/Viewport.cs`, `KSA/MapController.cs` | Medium | ➕ new 2026-08-06 |
 | `camera/pose/{position,frame,orbit/*,aim_frame}` | `camera.{position,frame,orbit_radius,orbit_azimuth,orbit_elevation,aim_frame}` | `CameraFrames.TryFrame2Ecl` | `Vehicle.{GetEnu2Cce,GetLvlh2Cce,Body2Cce,ComputeEnu2Cce,ComputeLvlh2Cce,GetPositionCce,GetVelocityCce}`; `Celestial.{GetCci2Cce,GetCcf2Cce,GetDirCcfFromLatLon,MeanRadius,GetPositionCce,GetVelocityCce}`. `GetEnu2Cce`/`GetLvlh2Cce` are **nullable** and `GetEnu2Cce` dereferences `Orbit.Parent` unguarded — both guarded | `KSA/Vehicle.cs`, `KSA/Celestial.cs` | Medium | ➕ new 2026-08-06 |
-| `camera/pose/geo` | `camera.geo` | `CameraFrames.GeoToEcl` | `Celestial.{GetDirCcfFromLatLon,GetCcf2Cce,GetTerrainHeightFromDirCce,MeanRadius,GetPositionEclFromCce}` — gatOS **calls** the game's own lat/lon trigonometry rather than restating it (CCF +Z = north pole, +X = prime meridian on the equator) | `KSA/Celestial.cs` (`:674`), `KSA/Camera.cs` (`SetLatLon` is the model) | Medium | ➕ new 2026-08-06 |
+| `camera/pose/geo` | `camera.geo` | `CameraFrames.GeoToEcl` | `Celestial.{GetDirCcfFromLatLon,GetCcf2Cce,GetTerrainHeightFromDirCce,MeanRadius,GetPositionEclFromCce}` — gatOS **calls** the game's own lat/lon trigonometry rather than restating it (CCF +Z = north pole, +X = prime meridian on the equator) | `KSA/Celestial.cs` (`:674`), `KSA/Camera.cs` (`SetLatLon` is the model) | Medium | ➕ new 2026-08-06 · ⚠️ **5348: cube-face seam sampler changed** (sub-metre, seams only) — see [5348 findings](#5348-findings) |
 
 **Runtime coupling beyond the writes:** the per-frame driver (`CameraViewportPatch` →
 `Mod.PrepareMainViewportFrame` → `CameraDirector.Update`) is a guarded prefix on the main
@@ -659,6 +682,33 @@ release. It is therefore written only when its channel is explicitly claimed. An
 (tasks C5.1 / the parking half of C5.2). This is a **finding**, not a TODO — see the evidence in
 [`ksa-runtime-coupling.md#camera-mode-contexts`](ksa-runtime-coupling.md#camera-mode-contexts). What
 C5.2 *does* ship is the `map/scope` row above.
+
+---
+
+## Display capture — UI coverage-mask suppression (render thread, no command) {#display-capture}
+
+`Game/Ksa/DisplayRenderPatch.cs`. `/sim/display` has no `SimCommand` of its own — the stream is armed
+and torn down through the game-free display store — but since **`2026.8.22.5348`** it carries a real
+write into KSA all the same, so it gets a row here: a Harmony **prefix** that forces one `GameSettings`
+getter to `false` for as long as a capture is live. Gated by gatOS's own `IsCapturing` predicate
+(shared with the capture call), so with the stream off the game behaves exactly as stock.
+
+| what | actuator | KSA member | Decomp file | Risk | 5348 |
+|---|---|---|---|---|---|
+| suppress the UI coverage mask while `/sim/display` is streaming | `DisplayRenderPatch.UiPixelCullingPrefix` — installed on the existing `gatos.display` Harmony instance inside `DisplayRenderPatch.Install`, so it unpatches with the transpiler; **best-effort** (a missing target costs capture fidelity, never the stream) | Harmony **prefix** on `GameSettings.UiPixelCulling()` returning `false` while `DisplayRenderPatch.IsCapturing` | `KSA/GameSettings.cs` (`:388`), `KSA/UiCoverageMaskSystem.cs` (`:466`), `KSA/PrePassRenderer.cs` | **High** | ➕ **new 2026-08-23** |
+
+**Why it exists, why the getter, and why not `ActiveThisFrame`** — rev 5283's `UiCoverageMaskSystem`
+stamps the reverse-Z near plane into the pre-pass depth under opaque ImGui UI, which the offscreen
+target then loads, punching the player's window chrome out of gatOS's streamed frame as unshaded black.
+`GameSettings.Graphics.UiPixelCulling` is the **player's saved setting** (`[TomlField("uiPixelCulling")]`),
+so the field must not be touched; the *getter* has exactly one caller in the whole game
+(`UiCoverageMaskSystem.RecordMaskGeneration`), which re-reads it per frame and zero-clears the tile masks
+when it is false — which suppresses the stamp *and* every consumer early-out. Patching `ActiveThisFrame`
+would not work: the consumers sample the tile texture directly, not the flag. Full evidence in the
+[5348 findings](#5348-findings); the live confirmation is item 1 of this pass's re-check list. The
+capture path itself — `FrameCapture`'s offscreen colour read + barriers — is **runtime coupling**
+([`ksa-runtime-coupling.md#display-capture`](ksa-runtime-coupling.md#display-capture)) and is verified
+unchanged at 5348; it simply now depends on this prefix for a complete frame.
 
 ---
 
@@ -701,6 +751,282 @@ anchors (the two here + `VesselReader.SampleDocking`) were re-verified to `Verif
   see the docking section above).
 - **Lights / animations / decouplers / RCS / engines / flight computer / teleport / refills** — all
   members compiled clean and none appear in the changelog with an API-affecting change.
+
+---
+
+## ⚠️ 5348 write-surface findings (playbook pass 2026-08-23) {#5348-findings}
+
+Full playbook pass 2026-08-23, `2026.8.19.5261` → `2026.8.22.5348` (revs 5262–5348, 85 commits).
+PREVIOUS was a fully audited baseline and CURRENT's `fromRevision` is 5261, so the trees chain with no
+gap. **Zero compile breaks — the first pass in the project's history with none** (5261 had ten, 5168
+had four). Clean `-t:Rebuild` against the 5348 DLLs: **0 warnings, 0 errors**; `dotnet test gatos.slnx`
+**1646 passed / 12 skipped / 0 failed**. **Six code changes and one new KSA coupling**, none of them
+forced by a broken build — every one was found by reading the diff.
+
+The green build only certifies the non-reflective bindings, so this pass added a **binary-level surface
+diff**: all 481 external TypeRefs were extracted from the compiled `gatOS.GameMod.dll`, and every
+referenced type's full member surface (public + non-public, declared-only) was dumped from **both** DLL
+sets via `MetadataLoadContext` and compared. **63 of 470 referenced types changed shape.** Every Harmony
+target still resolves, and still with the single overload gatOS relies on where it relies on it:
+`Universe.ExecuteNextVehicleSolvers(double, SimStep)`, `Program.DrawProgramMenusHook()`,
+`Program.RenderGame(AcquiredFrame, double)`, `Viewport.OnFrame(double)`,
+`SuperMeshRenderSystem.RenderMainPass(CommandBuffer)`, `RenderTarget.ResolveAttachments(CommandBuffer)`,
+`PartModel.AddInstance` / `PartModelDynamic.AddInstance`, `PartModelModule.UpdateRenderData` /
+`PartModelDynamicModule.UpdateRenderData`, `Vehicle.GetWorldMatrix(Camera)`,
+`Vehicle.UpdateRenderData(Viewport,int)`, `ShaderModuleUtils.FromFile`, `ModLibrary.Find`. The pass is
+**static plus that metadata diff** — render correctness and in-flight behaviour still need a live pass
+(`docs/VALIDATION.md`).
+
+### ➕ C1 — a brand-new KSA coupling: suppressing the UI coverage mask for `/sim/display` (rev 5283)
+
+Rev 5283 added `UiCoverageMaskSystem`. `UiCoverageMask.RecordDepthStamp`, called first thing inside the
+opaque pre-pass (`PrePassRenderer.Render`), stamps the reverse-Z **near plane** into the pre-pass depth
+wherever fully-opaque ImGui UI covers the screen; `PrePassRenderer.CopyDepthImageToSrc` copies that into
+`_offscreenTarget`, whose scene pass then does `BeginRendering(…, depth VkAttachmentLoadOp.Load)`, so
+every later `GreaterOrEqual` test under the UI fails via early-Z. Clouds, the light pre-pass and the
+sunbloom merge additionally early-out on the same tile mask. gatOS's `FrameCapture` reads
+`Program.MainViewport.OffscreenTarget.ColorImage` **before** the UI composite, so the streamed frame
+carried the local player's window chrome punched out as unshaded black — invisible locally, visible only
+to a remote reader.
+
+The gate is `ActiveThisFrame = GameSettings.UiPixelCulling() && !Program.Instance.IsScreenshotCaptureActive && …`
+(`UiCoverageMaskSystem.cs:466`), and `GameSettings.Graphics.UiPixelCulling` **defaults `true`**
+(`GameSettings.cs:388`); KSA exempts only its own screenshot capture. **Fix:** a Harmony **prefix on
+`GameSettings.UiPixelCulling()`** returning `false` while the stream is live — see the new
+[display-capture row](#display-capture). Two decisions worth keeping:
+
+- **The getter, not the field.** `GameSettings.Current.Graphics.UiPixelCulling` is the **player's saved
+  setting** (persisted via `[TomlField("uiPixelCulling")]`); mutating it would corrupt their config and
+  show up in the settings UI. The getter has **exactly one caller in the entire game**
+  (`UiCoverageMaskSystem.RecordMaskGeneration`), which re-reads it per frame and zero-clears the tile
+  masks when false — suppressing the stamp *and* every consumer early-out.
+- **Patching `ActiveThisFrame` would NOT work:** consumers sample the tile texture directly, not the flag.
+
+New `[KsaAnchor]`: `"GameSettings.UiPixelCulling() (Harmony prefix)"`, SourceFile
+`KSA/GameSettings.cs / KSA/UiCoverageMaskSystem.cs / KSA/PrePassRenderer.cs`, Risk **High**. Installed on
+the existing `gatos.display` Harmony instance inside `DisplayRenderPatch.Install`, so it unpatches with
+the transpiler; best-effort, so a missing target costs capture fidelity and never the stream.
+
+### ⚠️ C2 — `debug/teleport` and `debug/impulse` moved Frame → **Solver** (revs 5331/5339)
+
+Physics-bubble ownership moved entirely into `VehicleUpdateTask`. Its `Run()` now performs
+`TrimBubbles()` / `IntakeOrphans()` / `MergeBubbles()` / `SplitBubbles()` — structural bubble-list **and
+object-pool** mutation — on the solver thread. The old main-thread entry points
+`Universe.MergeVehicleTasks()` / `TrimPhysicsBubbles()` / `AddVehiclesToTasks()` are **all deleted**, as
+is the `Universe._physicsBubbles` field. Both debug actions call `Vehicle.Teleport` →
+`RemoveFromCurrentBubble()` → `PhysicsBubble.RemoveVehicle`, which does `_vehicleStates.Remove(…)`, bumps
+`TopologyVersion` and calls `ConstraintSim.RemoveVehicle` — i.e. exactly the state the worker now owns.
+
+Timing proof: `Program.PrepareFrame` opens with `JobSystems.VehicleSolver.Wait()` (`Program.cs:2010`) and
+queues the job near its end (`:2047`), so the job is **in flight from the tail of `PrepareFrame` until
+the next frame's `Wait()`** — across the whole GUI phase where the Frame lane drains (`OnBeforeUi`). The
+engine states the invariant itself: `VehicleUpdateTask.SyncWindowBubbles` throws
+`InvalidOperationException` unless the task is idle. gatOS's solver prefix runs after that `Wait()` and
+before the job is re-queued — the one provably safe window. Both action keys were added to
+`SimCommand.SolverActions`; four fixtures that encoded the old "teleport is Frame-phase" rationale were
+updated (`VesselImpulseTests.Impulse_BareVector_DefaultsToCciNewtonSeconds`,
+`ControlSurfaceTests.CtlBatch_SubmitsOneAtomicGroup`, `ControlSurfaceTests.CtlBatch_MixedPhases_FailTheWrite`,
+`BatchFileTests.PathSpellings_BareSlashAndSimRooted_AllResolve`).
+
+**Recorded, not fixed:** `StagingActuator.Stage` calls `vehicle.UpdateAfterPartTreeModification()`
+(mutating `PhysicsStates`, `UpdateCollisionGeometry()`) from the **Frame** lane — the same window, lower
+severity, and **not widened by this update**. Welds are unaffected: `WeldManager.Update` already calls
+`JobSystems.VehicleSolver.Wait()` first.
+
+### ⚠️ C3 — the terrain UBO mirror is field-wise now (revs 5319–5325)
+
+The terrain precision rework gave `PlanetRenderer.MeshUbo` four new split-double anchor fields —
+`DirAnchorHi`, `DirAnchorLo`, `DirAnchorUvHi`, `DirAnchorUvLo` — and `PlanetRenderer.GenerateMeshData`
+writes them **per frame index, every frame**, from the live camera
+(`_meshUboMap.Offset(MeshUboStride * (NumCelestials * frameIndex + slot))`). gatOS's mirror
+whole-struct-copied frame 0 into every other frame-in-flight, so every `/sim/debug/terrain` write stamped
+frame 0's terrain anchor over the other frames' live values — one frame of wrong anchor per mirrored
+frame, in the brand-new precision path. Self-healing, but real. Before 5348 the only per-frame `MeshUbo`
+fields were frame-invariant, so the whole-struct copy was harmless.
+
+**Fix:** `TerrainActuator.Mirror` now copies only the fields gatOS writes —
+`PlanetUbo.{TanMeanSlopeRoughnessRadians, HapkeMeanAlbedo, BiomeBlendStrength, DetailFadeStartMeters,
+DetailFadeEndMeters, TessellationEdgeLengthPixels, TessellationFactor, TessellationRangeMeters}` and
+`MeshUbo.{MinHeight, MaxHeight, BiomeBlendStrength}` — which also makes it immune to the next such field
+addition on either struct. The paired write + mirror discipline itself (⁴ above) is unchanged: skipping
+the mirror still makes a change flicker.
+
+### ⚠️ C4 / C5 — the clutter catalog is re-keyed on `LocalPath`, and walks the new `alpha` slot
+
+**C4 is a PRE-EXISTING bug, not a 5348 regression — identical on 5261 and 5348.** The catalog keyed rows
+on `TextureReference.GetRealId()`, which is only non-anonymous when the asset XML carries an `Id=`
+attribute, and **no clutter texture element has one**; the catalog published empty and every
+`paint.texture_bind` returned `ENOENT`, so the whole feature was inert. Rows are now keyed by a single
+`KeyOf(TextureReference)` helper returning `texture.LocalPath`, used by **both** the discovery walk and
+`Match`/`ResolveStock` so they cannot diverge. Full evidence, including why `Id` (== `ModPath`, an
+absolute machine path) was rejected and why the previously documented `EarthGrassClutterDiffuse`-style
+ids do not exist in either build, is on the read page:
+[`ksa-read-surface.md#5348-findings`](ksa-read-surface.md#5348-findings). **User-visible:** the
+`texture_id` argument to `bind` is now a content-relative path; bindings are session-only, so nothing
+migrates. The `RefreshCatalog` anchor is re-stamped and its `Member` string now says `LocalPath`, not
+`GetRealId`.
+
+**C5:** `PbrMaterialReference` gained `[XmlElement("Alpha")] public TextureReference? AlphaMap;` in 5348
+and `GroundClutterMaterialReference` inherits it, so the walk and `ResolveStock`/`Match` now cover it as
+slot `alpha`. No stock clutter material authors one yet — this is forward-coverage so a future material
+is not silently un-overridable. **Related trap, recorded not acted on:**
+`GroundClutterMaterialReference.PopulateShaderMacrosFromFlags` **gained a second overload** in 5348.
+gatOS calls neither, but any future `AccessTools.Method` on it by name alone would now throw
+`AmbiguousMatchException`.
+
+### ⚠️ C6 — the EVA face point moved −0.85 → −0.70 (rev 5270)
+
+Rev 5270 lowered `CrewPortraitPanel.FACE_HEIGHT_OFFSET_EVA` from `0.85` to `0.7` ("Lowered the EVA
+face-cam height … so the portrait frames the kitten's face instead of the top of the helmet"), and the
+default EVA face point became `new double3(0, 0, -1) * 0.7`. `FaceFxManager.KittenFaceAsmb` mirrors that
+constant for `/sim/debug/fx` face bursts, so they were spawning ~0.15 m too high; the constant is
+updated. **No code change, but note:** when the player selects a non-`Default` bone target the game's
+face point becomes `kitten.Renderable.GetBoneAsmbOffset(boneIdx)` for `Head_M`/`Neck_M`/`Chest_M` —
+there is no longer a single constant to mirror. `KittenEva.Renderable` and
+`KittenRenderable.{TryFindBoneIndex, GetBoneAsmbOffset}` are new public API that could track it exactly.
+
+### ⚠️ Silent drift on existing writes (no code change)
+
+- **`ctl/stage` is per-module now (rev 5329).** `SequenceList.ActivateNextSequence(Vehicle)` keeps its
+  signature, but its body changed `Parts[n].ActivateInStage(vehicle)` →
+  `Parts[n].ActivateSubtreeInStage(vehicle, sequence.Number)`, which walks
+  `GetSubtreeSequencedModules()` and activates only modules whose own `Sequence` matches. `ISequenced`
+  implementors are exactly `EngineController` and `Decoupler`; **`ThrusterController` is `IActivate` but
+  not `ISequenced`**, so a stage no longer activates RCS as a side effect. It is also a **subtree** walk
+  now, so engines/decouplers on sub-parts stage where they were previously skipped, and a part carrying
+  an engine in sequence 2 and a decoupler in sequence 3 needs **two** presses. This **falsifies footnote
+  ³'s** "`ActivateNextSequence` and `Part.ActivateInStage` are byte-identical", which held only through
+  5261. The `StagingActuator` anchor is re-stamped with the new semantics.
+- **`ctl/engines/<n>/min_throttle` inverted its effect (rev 5317 era).**
+  `FlightComputer.ComputeActiveEnginePerformance` changed its fold over active engines: seed
+  `float num = 1f` → `0f`, and `num = MathF.Min(num, rocketControllerData.MinimumThrottle)` →
+  `MathF.Max(…)`. `ActiveEnginePerformance.MinThrottle` is the clamp floor in both `SolveBurnThrottle`
+  and the manual path. `EngineController.MinimumThrottle` is itself unchanged and gatOS's write still
+  lands — but on a multi-engine stack the **effective** floor is now set by the *most* restrictive engine
+  instead of the least, and the empty-set default flipped `1.0` → `0.0`.
+- **`ctl/burn` timing and throttle profile moved (rev 5317).** The same target is still scheduled, but:
+  `BurnTarget` gained `float? Throttle` (auto-burn throttle is now **latched on the target**,
+  `Burn?.Throttle ?? SolveMinimumDurationThrottleCap()`, seeded from `PlannedBurnThrottle`) and
+  `bool LastIgnitionDenied`; `MAX_TRANSIENT_BURN_FRACTION` went `0.3f` → `0.5f`;
+  `TVC_SETTLE_TOLERANCE = 0.02` became `TVC_SETTLE_POINTING_TOLERANCE = 0.0017453` (0.1°);
+  `ComputeTvcTrackSettleDuration` gained `initialError`/`errorTolerance` parameters; the TVC gain matrix
+  went `(10000, 1000)` → `(50, 100)` alongside a row-vs-column multiplication **bug fix**
+  (`vector.MultiplyAsRow`); and `HasAnyPropellant` was deleted in favour of a two-consecutive-denials
+  latch on `LastIgnitionDenied` (the "always kicked out of auto burn on save load" fix). Observable: burn
+  duration, throttle profile and the point at which the FC abandons an auto burn all differ from the 5261
+  baseline for the same commanded Δv.
+- **`vessels/by-id/<id>/scale` now means something different from the in-game gizmo (revs 5329 et al.).**
+  `Part.ScaleTotal` for a subpart went `Scale + PartParent.ScaleTotal.Transform(inverse(Asmb2ParentAsmb))`
+  → componentwise `Scale * PartParent.ScaleTotal`. `ScaleActuator` writes `factor` to a part **and every
+  subpart**, so a subpart's `ScaleTotal` is now `factor²` where it was ≈`2·factor`. **Bounded:** the
+  `Part.Scale` setter only calls `ResetCachedPosMatrixValues()` — it does **not** call the new
+  `RefreshScale()`, which is reached solely from the `Part` constructor and `VehicleEditor`. So gatOS's
+  write stays visual/transform-only, exactly as on 5261, and `ScaleTotal` itself feeds only the raycast
+  bounding sphere (`Part.Raycast`), `KittenEva` and `RefreshScale` — gatOS's own `StickerPicker` uses
+  `Ray.RaycastWatertight` over the mesh directly, bypassing that bounding sphere. **The new divergence to
+  document:** rev 5329 added `IRescale`, so the game's own editor scaling is now **physical** —
+  `RefreshScale()` rescales colliders (`ColliderModule` rebuilds the BEPU shape), tank `StorageVolume`,
+  inert mass, nozzle areas, decoupler separation force and connector offsets, then
+  `Tree.RefreshStaticMass()`; the editor also clamps top-level scale to **0.5×–2×** and quantizes to
+  0.25 m diameter increments. gatOS's `/sim` scale does none of that and admits any finite value > 0 — a
+  deliberate cheat-mod divergence, but it no longer means what the in-game gizmo means. Live check: a
+  gatOS-scaled part seeds the editor's private `_positionedScale` at `1.0`, so dragging the scale gizmo on
+  it afterwards may produce a spurious subtree shift.
+- **thug_life no longer runs on crew-portrait viewports that are hidden (revs 5276/5295).** `Program.cs`
+  now wraps the portrait update:
+  `if (GameSettings.ShowCrewPortraitCameras()) { CrewPortraitPanel.Update(); } else { for (j<2) GetCrewPortraitViewport(j).Visible = false; }`,
+  and `CrewPortraitPanel.Update` itself sets `Visible = k < _visibleCount` (all false with no occupants).
+  `RenderViewport` is gated on `viewport.Visible`, so with portraits off or unoccupied `RenderMainPass` —
+  and therefore gatOS's thug_life postfix — **never runs** for those viewports.
+  `Program.GetCrewPortraitViewport(0|1)` and `_crewPortraitViewportStart = 4` are unchanged, so
+  `ThugLifeManager.CurrentPassBit()` still classifies correctly; the `Cameras & Crew` bit simply goes
+  unused. **The anchor/comment claim that these viewports are "always Visible" is now false** and has
+  been dropped.
+
+### Verified clean — the render seams hold
+
+- **`KSA.Rendering/RenderTarget.cs` is untouched.** `ResolveAttachments(CommandBuffer)` and
+  `SetupGraphicsPipeline` are identical, so the sticker seam holds. `KSA/RenderingPresets.cs` and
+  `Brutal.VulkanApi.Abstractions/Presets.cs` are untouched too (reverse-Z depth, blend and rasterization
+  presets), as is `Content/Core/Shaders/Grid.{vert,frag}`.
+- **`Content/Core/Shaders/Mesh/UnlitMesh.{vert,frag}` and `Common/Shared.glsl` are untouched** —
+  push-constant layout, vertex inputs and the single combined-image-sampler binding all still match the
+  thug_life pipeline, and `Shared.glsl` does not include `Global.glsl`, so the rev-5301 lighting-UBO
+  rework cannot reach it. (That rework swapped 4 portrait-light arrays for 16-entry forward-light arrays
+  and grew the UBO stride; gatOS is safe by construction — it compiles its GLSL at runtime against the
+  shipped headers and takes the dynamic offset from `GlobalShaderBindings.DynamicOffset(…)`, and the
+  fields its shader reads — `global.camera.*`, `global.lighting.{sunPosition,planetColor,sunColor}` — are
+  the struct's leading members. Re-verify live only because a stale SPIR-V cache would be fatal.)
+- **`SuperMeshRenderSystem.RenderMainPass(CommandBuffer)` is still exactly one overload**, so both gatOS
+  lookups (Apply and Remove) stay unambiguous. Its body is now wrapped in
+  `using (commandBuffer.TagRegion(Profiler.GpuTag.MeshRendererV2))`; a Harmony postfix runs after the
+  `finally`, so the quad draws are attributed outside that GPU tag. **Profiler attribution only — no
+  mis-draw, and the patch still installs.**
+- **The `Program.RenderGame` transpiler still lands.** The new tail is
+  `_screenshotCapture.OnRenderGameSwapchainGrab(…); Profiler.Gpu.EndFrame(commandBuffer2); commandBuffer2.End();`
+  — `EndFrame` is not named `End` and `Profiler` is in namespace `KSA`, so both transpiler filters reject
+  it; the new `TagRegion` `using` blocks emit `GpuRegion.Dispose()`, never an inlined `End`;
+  `codes[callIdx-1]` is still the `ldloc` of `commandBuffer2`; `VkDeviceExtensions.End<T>` has zero diff.
+- **Vulkan 1.3 → 1.4 (rev 5315) is a no-op for gatOS.** It declares no API version, no extensions and no
+  features, and reuses `Program.GetRenderer().Device`. `ShaderModuleUtils` maps 1.4 to SPIR-V `_1_6` —
+  **the SPIR-V target is unchanged** — so the runtime-compiled sticker GLSL and the `UnlitMesh*` shaders
+  produce the same SPIR-V, and every Vulkan struct gatOS fills is unchanged. **Environment note only:**
+  the mod now inherits a Vulkan 1.4 device requirement.
+- **The solver hook is unchanged.** `Universe.ExecuteNextVehicleSolvers(double, SimStep)` — same
+  signature, still the only overload, still one call site, still main-thread, still once per frame in the
+  same slot, and the gatOS prefix still runs before
+  `RemoveEligibleVehicles`/`PrepareVehicleWorkers`/`PrepareFrame`. The multithreading of revs 5331/5339
+  is **inside the job it queues**, not in the method. It is resolved via `nameof(…)` on a real symbol, so
+  it is compile-checked and was never in the silent-failure class (`DisplayRenderPatch`'s `"RenderGame"`
+  string literal is).
+- **`Vehicle.Teleport(Orbit?, doubleQuat?, double3?)`** keeps its signature and null-semantics; the only
+  body delta is the `RemoveFromCurrentBubble()` refactor. `Universe.GetJobSimStep` has **zero diff**, so
+  `WeldEngine`'s `NextTime` rationale holds exactly.
+- **The bindless override mechanism is intact.** `BindlessTextureLibrary.{AddTexture,SetTexture,FreeTexture}`,
+  `TextureReference.{Width,Height,ImageView,BindlessHandle}`, `SimpleVkTexture`, `TextureAsset` and
+  `TextureLoader` all have zero diff, and **no KSA caller of `SetTexture` exists**, so gatOS remains the
+  sole writer of an existing slot.
+- **The clutter GPU repack (rev 5288) and the exclusion-mask descriptor growth (revs 5287/5289) do not
+  reach gatOS.** Per-instance data changed (`vec3 scale` → `uint scaleId`, plus `subCellId`) and cell
+  anchors became split-double, but `ClutterTextureBridge` only swaps a bindless descriptor and
+  `StickerDecalRenderer` reconstructs the receiving surface from the resolved depth buffer — that design
+  choice is precisely what makes gatOS immune.
+- **KSA's new "Decal" (revs 5335–5337) does not overlap gatOS stickers.** `DecalModifierReference`
+  deforms terrain *height* via a `HeightMap`; it does not paint colour. Five launch-site flatteners were
+  added to Earth and `Landmark` entries gained `StaticObject="CoreLaunchPadA_Prefab_LaunchPadA"` — new
+  geometry to sanity-check a pad sticker against, not a conflict.
+- **No gatOS injection leaks across the six viewports.** Menu (only reached from
+  `DrawMenuBar(MainViewport, …)`), status window (plain ImGui), display capture (explicitly
+  `Program.MainViewport.OffscreenTarget`), stickers (triple gate:
+  `__instance == Program.OffscreenTarget && RenderedViewport == MainViewport && !EditorFlag`), thug_life
+  (classifies via `Program.RenderedViewport`) and IVA force-render (gated on `Program.Editor`) all still
+  hold; `RenderMainPass` call count is still 3 and `ResolveAttachments` still 3.
+  `PartModel.AddInstance` gained a `viewport == Program.MainViewport` guard (rev 5308) — signature and
+  single-overload-ness unchanged, so gatOS's positional `__0`/`__1` args still bind, and the narrowing is
+  *helpful* (fewer stray raytrace transforms from secondary viewports). `Viewport` also gained
+  `ShouldRenderStars` and `LightMode : EViewportLightMode`, but `MainViewport.LightMode = Clustered` and
+  secondary viewports keeping `Forward` evaluate to **exactly** the previous hardcoded
+  `UseShadows`/`UseLightPrePass` constants.
+- **Nothing gatOS references was deleted.** `Utils.{Begin,End}GpuDebugLabel` went away (rev 5300,
+  replaced by `TagRegion`) and gatOS never called them; likewise it references none of
+  `ShadowBucketDrawCount` (renamed `MeshBucketDrawCount`), `LaunchPadRenderer`, `PortraitLight*`,
+  `Vehicle.PhysicsBubble`, `Part.{Sequence,Sequenceable,SetSequence,ActivateInStage,DeactivateInStage}`,
+  `PartTemplate.Decoupler`, `RocketControllerData.ComputeFromRocketTemplates`,
+  `IVASeat.{SEATED_DOWN_OFFSET,SeatedPositionAsmb}`, `GameSettings.{MIN_FONT_SIZE,GetSupportedShadowMaps}`,
+  `Vehicle.FindFinalFlightPlan`, `HasAnyOverlapsCce` or `GetActionSphere*`.
+  `EngineControllerState.Zero` / `ThrusterControllerState.Zero` went from a static property to a method
+  taking `UniverseTime commandTime` (the rev-5333 "deactivating an engine mid-burn left it firing
+  forever" fix) — gatOS never calls `.Zero`. And `ImGuiHelper`'s rev-5265 signature sweep does not touch
+  gatOS, which draws with `Brutal.ImGuiApi.ImGui` directly (`ImGui.cs` has zero diff); its only
+  `GameSettings` read before C1 was `Graphics.Particles`, unchanged.
+
+### ⚠️ Inherited value drift on the FX write surface
+
+`PlanetUbo.TessellationRangeMeters`' default went **220 → 50**, and the shader's displacement falloff
+moved from `range*0.1 … range*0.95` to `range*0.75 … range*0.975`. Field name, type and offset are
+unchanged and gatOS's `1..20000` clamp still admits the new default — but **the documented example values
+for `/sim/debug/terrain tessellation/range_m` are now misleading** and read differently in the live
+round-trip.
 
 ---
 
@@ -1079,7 +1405,13 @@ slots are allocated, so KSA's 1024-entry table is untouched and the only budget 
 patch, no shader transform, no pipeline or renderer rebuild, and no stock object is mutated —
 `TextureReference` itself is never written, only the descriptor slot it already owns. Nothing in KSA
 ever calls `SetTexture` (the engine only ever `AddTexture`/`FreeTexture`s), so gatOS is the sole
-writer of an existing slot and no engine code can clobber an override. Desired state is authored
+writer of an existing slot and no engine code can clobber an override. Re-verified 2026-08-23 against
+`2026.8.22.5348`: `BindlessTextureLibrary.{AddTexture,SetTexture,FreeTexture}`,
+`TextureReference.{Width,Height,ImageView,BindlessHandle}`, `SimpleVkTexture`, `TextureAsset` and
+`TextureLoader` all have **zero diff**, and there is still no KSA caller of `SetTexture`. ⚠️ **What did
+change is the argument**: the catalog is re-keyed on `TextureReference.LocalPath`, so `texture_bind`'s
+`texture_id` is now a content-relative asset path — before 5348 the catalog published empty and every
+bind returned `ENOENT`. See [5348 findings](#5348-findings). Desired state is authored
 game-free (`paint.texture_bind` / `texture_unbind` / `texture_clear`, all Frame phase, Global target)
 and the GPU follows on the next tick; the actions never touch Vulkan. `Dispose` restores every slot
 before anything of ours is destroyed. See
@@ -1128,6 +1460,12 @@ Every successful `place`/`spray` publishes the `last` line and emits a `paint.st
 (vessel-anchored placements carry the vessel id) so a script that is not polling still learns what
 the ray hit. Entries are **runtime-only** — never persisted, dropped at unload
 (`PaintManager.Dispose` → `StickerManager.Dispose`). Anchors verified `2026-08-22` against
-`2026.8.19.5261`; **the live draw is unvalidated** — see the stickers card in `docs/VALIDATION.md`.
+`2026.8.19.5261`; re-verified (static) 2026-08-23 against `2026.8.22.5348` — `RenderTarget.cs` is
+untouched so the resolve seam holds, the clutter GPU repack (rev 5288) does not reach the decal (the
+receiving surface is reconstructed from the resolved depth buffer), and KSA's own new "Decal"
+(revs 5335–5337) deforms terrain *height*, it does not paint colour. Two things a live pass must now
+cover: a pad sticker, where terrain is decal-flattened and new static-object geometry sits, and one near
+a **cube-face seam**, where the CPU height sampler changed (see [5348 findings](#5348-findings)).
+**The live draw is unvalidated** — see the stickers card in `docs/VALIDATION.md`.
 Pipeline, shader and GLSL-layout assumptions:
 [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md).

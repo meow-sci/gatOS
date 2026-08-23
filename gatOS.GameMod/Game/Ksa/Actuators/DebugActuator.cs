@@ -35,14 +35,18 @@ internal static class DebugActuator
     }
 
     [KsaAnchor("Orbit.CreateFromStateCci + Vehicle.Teleport + Vehicle.UpdatePerFrameData (physics-bypass teleport pattern)",
-        SourceFile = "KSA/Orbit.cs / KSA/Vehicle.cs", Verified = "2026-08-11",
-        GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
+        SourceFile = "KSA/Orbit.cs / KSA/Vehicle.cs", Verified = "2026-08-23",
+        GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
         Notes = "Sets a CCI state vector about the current parent; UpdatePerFrameData syncs caches. "
             + "5261: CreateFromStateCci's time argument became UniverseTime (rev 5211). Teleport keeps "
             + "its (Orbit?, doubleQuat?, double3?) signature and its null semantics — gatOS passes null "
             + "body2Cce/bodyRates, i.e. 'leave attitude and rates unchanged' — so rev 5226's new default "
             + "surface-teleport orientation ('pitch down is north') applies to KSA's own launch/placement "
-            + "path and NOT to this actuator.")]
+            + "path and NOT to this actuator. 5348: Teleport is still signature- and null-compatible "
+            + "(its only body delta is the RemoveFromCurrentBubble() refactor), but revs 5331/5339 moved "
+            + "physics-bubble structural mutation into VehicleUpdateTask on the solver thread, so this "
+            + "command moved from the Frame lane to the Solver lane — the window between "
+            + "JobSystems.VehicleSolver.Wait() and the job being re-queued is the only safe one.")]
     internal static CommandResult Teleport(Vehicle vehicle, IReadOnlyList<double> state)
     {
         if (state.Count != 6)
@@ -63,11 +67,15 @@ internal static class DebugActuator
 
     [KsaAnchor("Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,TotalMass,Parent} + Orbit.CreateFromStateCci "
             + "+ Vehicle.Teleport + Vehicle.UpdatePerFrameData (velocity-bump variant of the teleport pattern)",
-        SourceFile = "KSA/Vehicle.cs / KSA/Orbit.cs", Verified = "2026-07-04", Risk = ChurnRisk.High,
+        SourceFile = "KSA/Vehicle.cs / KSA/Orbit.cs", Verified = "2026-08-23",
+        GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
         Notes = "One-shot impulsive kick: Δv = J/TotalMass — the same math as KSA's own separation impulse "
             + "(Vehicle.Split) — applied by rebuilding the orbit from the current CCI position and the bumped "
             + "velocity, so it works on-rails and in the physics bubble alike. 'body' rotates the vector by "
-            + "Body2Cci (body +X = nose); 'dv' skips the mass division and applies the vector as Δv m/s.")]
+            + "Body2Cci (body +X = nose); 'dv' skips the mass division and applies the vector as Δv m/s. "
+            + "5348: Vehicle.Teleport and Orbit.CreateFromStateCci verified unchanged; the command moved "
+            + "to the Solver lane alongside debug.teleport, because it reaches the same "
+            + "PhysicsBubble.RemoveVehicle path that revs 5331/5339 made solver-thread work.")]
     internal static CommandResult Impulse(Vehicle vehicle, IReadOnlyList<double> vector, string? frame, string? unit)
     {
         // Re-validate through the shared game-free rules: the HTTP/MQTT command paths reach here

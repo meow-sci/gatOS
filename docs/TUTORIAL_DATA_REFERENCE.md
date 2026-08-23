@@ -492,7 +492,7 @@ adjacent `paint/color` + `paint/enabled`. See `SPEC_9P_FILESYSTEM.md` §Paint fo
 # Clutter texture correspondence
 
 `/sim/paint/textures` follows the same correspondence, with one exception. The control leaves are
-ordinary text: `echo '<texture-id> rock.png' > /sim/paint/textures/bind` corresponds to
+ordinary text: `echo 'Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2 rock.png' > /sim/paint/textures/bind` corresponds to
 `POST /v1/fs/paint/textures/bind` with the same body and an MQTT publish to
 `gatos/sim/paint/textures/bind/set`; `unbind` (a texture id, or `all`) and the `clear` trigger work
 the same way, as do the `status`/`info`/`bindings`/`applied`/`clutter` reads. **Binary uploads are
@@ -503,7 +503,11 @@ single request body at 1 MiB and answers **413** above that), or
 
 There is no master switch to enable first — unlike vehicle/EVA paint, the feature is inert until
 something is bound. Discover valid targets by reading `clutter` (`texture-id slot w h mips used_by
-ecotypes`) rather than guessing ids, and check `applied` — not the write's exit status — to learn
+ecotypes`) rather than guessing ids — as of KSA `2026.8.22.5348` a `texture-id` is the asset's
+**content-relative path** (e.g. `Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2`), not a
+symbolic name, so a tutorial must show it being copied out of the `clutter` listing rather than typed.
+It is install-independent and contains no spaces, so it drops straight into the space-separated
+`bind`/`unbind` lines. Check `applied` — not the write's exit status — to learn
 whether an image actually reached the GPU. Two things a tutorial must say out loud: binding replaces
 a texture *asset*, so every material with `used_by` > 1 changes together, and `bind` takes an
 optional third token for the render mode. It defaults to `faithful`, which rewrites the decoded

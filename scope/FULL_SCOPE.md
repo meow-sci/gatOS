@@ -65,6 +65,17 @@ update's blast radius is small and discoverable. The procedure:
    > and hid **nine** more that only appeared after it was fixed. **Fix, rebuild, repeat until the build
    > is green** — only then is the error list complete.
 
+   > **⚠️ A green build is an alarm that did not fire, not a survey — and the 5348 pass is the proof.**
+   > That pass produced **zero** compile errors and still found three real breaks plus a long-standing
+   > pre-existing bug. It also added a technique worth reusing: a **binary-level member-surface diff.**
+   > Extract every external TypeRef from the built `gatOS.GameMod.dll`, dump each referenced type's
+   > full member surface (public + non-public, declared-only) from **both** `dll/` sets via
+   > `MetadataLoadContext`, and diff the two dumps. This checks the **shipping binaries**, which is
+   > what the reflection accessors and Harmony targets actually bind to — the decomp is a readable
+   > approximation that can lag. At 5348 it reported **63 of 470 referenced types changed shape** while
+   > the compiler reported nothing at all. Mechanics:
+   > [`ksa-assets-and-versions.md#5348-pass`](ksa-assets-and-versions.md#5348-pass).
+
 3. **Diff the decompiled source for silent semantic drift.** A member can keep its name and signature
    but change *meaning* (units, frame, what a value represents) — these compile clean and are the
    dangerous ones. For every changelog hit, open the matching decomp file in **both** trees and compare:
@@ -84,7 +95,80 @@ update's blast radius is small and discoverable. The procedure:
    (`EOPNOTSUPP`), logs once, and shows up in `/sim/status/accessors`. The guest sees a failed sensor,
    not a crashed mod. This is the safety net for the things steps 2–3 miss.
 
-> **Current applied result of this playbook:** the **2026.8.3.5117 → 2026.8.5.5168** update was run
+> **Current applied result of this playbook:** the **2026.8.19.5261 → 2026.8.22.5348** update was run
+> through it on 2026-08-23 — **zero compile breaks, a first in this project's history; three
+> compiler-invisible breaks found and fixed; one pre-existing bug diagnosed and fixed.** PREVIOUS was
+> itself a fully audited baseline and CURRENT's `fromRevision` is 5261, so the two side-by-side trees
+> chained with no gap (revs 5262–5348, 85 commits) and no git-history fallback was needed. Build **and**
+> full suite green against 5348 (**0 warnings; 1646 passed / 12 skipped / 0 failed**).
+>
+> **The alarm never rang.** 5261 had ten compile breaks, 5168 four, 5117 two — 5348 had none, and
+> everything below was found by reading diffs. That is the pass that proves the playbook's own premise:
+> the build is *necessary, never sufficient*. It also added a new technique — a **binary-level
+> member-surface diff** of the shipping DLLs (see the callout under step 2), which reported **63 of 470
+> referenced types changed shape** while the compiler reported nothing.
+>
+> **Three real breaks the compiler could not see, all fixed:** (1) rev **5283**'s new
+> `UiCoverageMaskSystem` stamps the reverse-Z near plane into the pre-pass depth wherever opaque ImGui
+> UI covers the screen, and `/sim/display` captures the offscreen colour *before* the UI composite — so
+> the streamed frame carried the local player's window chrome punched out as unshaded black (invisible
+> locally; only a remote reader sees it). Closed with a Harmony **prefix on
+> `GameSettings.UiPixelCulling()`**, whose single game-side caller re-reads it per frame and zero-clears
+> the tile masks — **a brand-new KSA coupling born at 5348**, not a re-stamp. (2) revs **5331/5339**
+> moved structural `PhysicsBubble` list- **and object-pool** mutation onto the solver thread inside
+> `VehicleUpdateTask.Run()`, and the queued job is in flight across the whole GUI phase where the Frame
+> lane drains — so `debug.teleport` / `debug.impulse` moved **Frame → Solver phase**. (3) revs
+> **5319–5325** gave `PlanetRenderer.MeshUbo` four new per-frame split-double terrain anchors, so
+> `TerrainActuator`'s whole-struct frame-mirror was stamping frame 0's anchor over every other
+> frame-in-flight; the mirror is now **field-wise**.
+>
+> **Plus one pre-existing bug, diagnosed and fixed:** the clutter-texture catalog was keyed on
+> `TextureReference.GetRealId()`, which is empty unless the asset XML carries an `Id=` **attribute** —
+> and **not one** clutter texture element has one. Every slot fell through, the catalog published
+> **empty**, and every `bind` returned ENOENT: the feature was completely inert, identically on 5261 and
+> 5348. It is now keyed on `TextureReference.LocalPath`. The asset layout previously documented for it
+> **never existed in either build** and has been corrected in place.
+>
+> **Silent semantic drift, no code change** (nine items): `ctl/stage` no longer flips `rcs/<n>/active`
+> and is now a per-module subtree walk (rev 5329); `ctl/engines/<n>/min_throttle`'s effective floor
+> inverted from least- to most-restrictive engine (rev 5317); `navball/deltav` and `navball/twr` are now
+> **correct** on vehicles with a part in sequence 0 — they were wrong before (rev 5318); burn timing and
+> the TVC profile were retuned (rev 5317); the MMU material reorder swapped the EVA paint slot ordinals;
+> `Part.ScaleTotal` went additive → multiplicative and the game's own editor scaling became *physical*
+> and clamped 0.5×–2× via the new `IRescale`, which gatOS's `/sim` scale deliberately is not; the
+> terrain cube-face **seam** sampler changed (sub-metre, round-trip property preserved); crew-portrait
+> viewports are no longer always visible; and `TessellationRangeMeters`' default moved 220 → 50.
+>
+> **Verified clean, stated plainly:** `Brutal.Numerics` is **byte-identical** and rev 5280's new
+> `CelestialFrameMath` is a pure refactor with **bit-identical** results, so
+> [`../docs/KSA_CELESTIAL_COORDINATE_FRAMES.md`](../docs/KSA_CELESTIAL_COORDINATE_FRAMES.md) needs no
+> correction; the solver hook is unchanged in signature, overload count, call site, thread and slot (and
+> is `nameof`-resolved, so it was never in the silent-failure class); `KSA.Rendering/RenderTarget.cs`,
+> `UnlitMesh.{vert,frag}` and `Common/Shared.glsl` are **untouched**; Vulkan 1.3 → 1.4 is a no-op
+> because the SPIR-V target is still `_1_6`; and the rev-5301 lighting-UBO reshape cannot reach gatOS's
+> shaders by construction.
+> ([read 5348 findings](ksa-read-surface.md#5348-findings) /
+> [write 5348 findings](ksa-write-surface.md#5348-findings) /
+> [pass record](ksa-assets-and-versions.md#5348-pass)). **Live re-checks remain queued in
+> [`../docs/VALIDATION.md`](../docs/VALIDATION.md)** — 15 items, including the `/sim/display` capture
+> with UI open, the clutter `bind` round-trip, and both Solver-phase debug actions.
+> **5348 is now the verified baseline.**
+>
+> The prior **2026.8.5.5168 → 2026.8.19.5261** update was run through it on 2026-08-11 — **ten compile
+> breaks fixed, one silent semantic break found and closed.** Rev **5211** replaced `SimTime` (a
+> `double` of seconds) with `UniverseTime` (`Int128` nanoseconds) and revs **5208–5216** rebuilt the
+> vehicle-update threading model, together producing ten mechanical errors across eleven files. The
+> break the compiler could *not* catch: `UniverseTime.EndOfTime` is a **finite** ~1.7e29 s where
+> `SimTime.PositiveInfinity` was not, so `Sanitize.Finite` silently stopped scrubbing
+> `orbit/time_to_ap`, `orbit/time_to_pe` and `orbit/next_patch` — closed with `IsSaturated()` guards.
+> This pass is also where the step-2 "iterate to green" warning above comes from: the first build
+> reported **one** error and hid nine. Full detail:
+> [pass record](ksa-assets-and-versions.md#5261-pass) /
+> [read 5261 findings](ksa-read-surface.md#5261-findings) /
+> [write 5261 findings](ksa-write-surface.md#5261-findings).
+> ~~5261 is now the verified baseline.~~ *(superseded by 5348 above)*
+>
+> The prior **2026.8.3.5117 → 2026.8.5.5168** update was run
 > through it on 2026-08-05 — **four compile breaks, all fixed; three silent semantic breaks found and
 > closed.** PREVIOUS was itself an audited baseline and CURRENT's `fromRevision` is 5117, so the two
 > side-by-side trees chained with no gap (revs 5118–5168, 49 commits) and no git-history fallback was
@@ -127,7 +211,7 @@ update's blast radius is small and discoverable. The procedure:
 > ([read 5168 findings](ksa-read-surface.md#5168-findings) /
 > [write 5168 findings](ksa-write-surface.md#5168-findings) /
 > [pass record](ksa-assets-and-versions.md#5168-pass)). Live re-check items are queued in
-> `../docs/VALIDATION.md`. **5168 is now the verified baseline.**
+> `../docs/VALIDATION.md`. ~~5168 is now the verified baseline.~~ *(superseded by 5261/5348 above)*
 >
 > The prior **2026.7.9.5018 → 2026.8.3.5117** update was run
 > through it on 2026-08-01 — **two compile breaks, both fixed; two silent semantic drifts documented;
@@ -345,8 +429,9 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/Ksa/Render/VesselForceRender.cs` | 3 `[KsaAnchor]` (per-vessel `always_render` override; own dynamic `gatos.always_render` Harmony prefixes on `Vehicle.GetWorldMatrix`/`UpdateRenderData`, installed only while ≥ 1 vessel is marked) | per-prefix try/catch → stock cull; install throw → `KsaCatalog` degrade latch; unpatched on last unmark/prune/unload |
 | `Game/Ksa/Welds/{WeldEngine,WeldManager}.cs` | 4 `[KsaAnchor]` (per-frame `Teleport` driver + registry/liveness) | per-weld try/catch in the driver; `_weldsDead` session latch |
 | `Game/Ksa/Iva/*.cs` (`InteriorGeometry`×1, `FloatingObject`×3, `IvaPhysicsManager`×6; `CabinSim`/`CabinCallbacks`/`CabinTuning` touch **Bepu only**, no KSA type) | 10 `[KsaAnchor]` (IVA cabin physics: the interior-mesh walk, the per-frame SubPart transform driver, adopt-time measurement/lookup, the forcing-term reads + park gates) | master switch off by default (nothing constructed); per-vessel try/catch in the driver → that cabin dropped; `_ivaDead` session latch releases everything and disables the feature |
-| `Game/Ksa/ThugLife/*.cs` (`ThugLifeTextureFactory`×1, `ThugLifeQuadRenderer`×2, `ThugLifeRenderPatches`×1, `ThugLifeManager`×3; `ThugLifeEntry`/`ThugLifeTexturePattern` have none) | 7 `[KsaAnchor]` render-internals (`thug_life` cheat: Vulkan GPU build, per-frame anchor math, dynamic `gatos.thug_life` Harmony postfix on `SuperMeshRenderSystem.RenderMainPass`) — **deepest / highest-churn coupling** | per-frame try/catch; self-disables (`Active=false`) on any GPU fault; unpatched + GPU freed on disable/unload |
+| `Game/Ksa/ThugLife/*.cs` (`ThugLifeTextureFactory`×1, `ThugLifeQuadRenderer`×2, `ThugLifeRenderPatches`×1, `ThugLifeManager`×4; `ThugLifeEntry`/`ThugLifeTexturePattern` have none) | 8 `[KsaAnchor]` render-internals (`thug_life` cheat: Vulkan GPU build, per-frame anchor math, dynamic `gatos.thug_life` Harmony postfix on `SuperMeshRenderSystem.RenderMainPass`) — **deepest / highest-churn coupling** | per-frame try/catch; self-disables (`Active=false`) on any GPU fault; unpatched + GPU freed on disable/unload |
 | `Game/Ksa/Paint/{PaintManager,EvaPaintBridge}.cs` | 4 `[KsaAnchor]` (vehicle shader lifecycle + EVA material clones) | dynamic `gatos.paint` Harmony only while `paint/parts/enabled=1`; conditional restore |
+| `Game/Ksa/Paint/{PartPaintPatches,PaintRuntime}.cs` | **0** `[KsaAnchor]`, but KSA types are present: `PartPaintPatches` resolves and hosts the seven part-paint Harmony methods (`ShaderModuleUtils.FromFile`, the `PartModel{,Dynamic}Module.UpdateRenderData` prefix/finalizer pairs, the `PartModel{,Dynamic}.AddInstance` prefixes) and `PaintRuntime` is the single game-thread owner they call back into (`Part`) | the targets themselves are anchored on `PaintManager`; enable is preflighted and transactional, a foreign compiler prefix is a hard conflict, and disable/unload removes only the stored gatOS methods |
 | `Game/Ksa/Paint/ClutterTextureBridge.cs` | 2 `[KsaAnchor]` (one High `BindlessTextureLibrary.SetTexture` re-point of an **existing** stock slot, one Medium ground-clutter catalog walk reusing `FxReflect.Terrain`) | revision-gated tick; every slot restored before anything of ours is destroyed |
 | `Game/Ksa/Paint/UserTextureGpu.cs` | 1 `[KsaAnchor]` (the shared decode → `SimpleVkTexture` upload idiom + the deferred-destroy `RetireQueue`; **both** the clutter bridge and stickers use it, so there is one implementation and one anchor) | per-upload try/catch → the feature's health latch; images destroyed only after `MaxFramesInFlight + 1` ticks |
 | `Game/Ksa/Paint/Stickers/StickerRenderPatches.cs` | 1 `[KsaAnchor]` (dynamic `gatos.stickers` Harmony **postfix** on `RenderTarget.ResolveAttachments`) | `MissingMethodException` at install → feature degrades; per-postfix try/catch logs once; main-viewport identity filters |
@@ -355,9 +440,9 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/Ksa/Paint/Stickers/StickerAnchors.cs` | 2 `[KsaAnchor]` (per-frame geodetic→ego and part-local→ego decal composition) | returns false → that sticker is dormant for the frame rather than drawing garbage |
 | `Game/Ksa/Paint/Stickers/StickerPicker.cs` | 3 `[KsaAnchor]` (the aim ray, KSA's own watertight part raycast sweep, the terrain march+bisect) | no hit → `ENOENT`, nothing placed |
 | `Game/Ksa/Paint/Stickers/StickerManager.cs` | 3 `[KsaAnchor]` (per-frame anchor re-resolution, lazy `Program.GetRenderer()` init, the teardown `WaitIdle`) | a despawned target yields null → dormant, never pruned; `paint.sticker_renderer` health latch |
-| `Game/Ksa/Fx/*.cs` (`FxReflect`×8, `PlumeActuator`×4, `TrailActuator`×2, `CloudActuator`×4, `TerrainActuator`×3, `FxEditorReader`×4; `FxPristine` has none — no KSA types) | 25 `[KsaAnchor]` (the four FX editors: the reflective handles in `FxReflect` incl. the terrain UBO rings, the per-family read/write/apply pairs, the plume propagation loop, the sampler's rosters) | per-command try/catch in `KsaCatalog`; per-capability `KsaHealth` latches (`fx.*` keys) → `EOPNOTSUPP`; sampler-level try/catch (logged once); pristine restore at unload |
-| `Game/Ksa/Camera/*.cs` | Programmable-camera anchors plus `CameraViewportPatch`'s `Viewport.OnFrame(double)` prefix/postfix. Main viewport is selected by identity; the controller's public `Camera`/viewport camera is used, never unscience's obsolete `___Transform` injector | idle director is one branch; hook faults latch once; driver fault restores camera; unresolvable frames hold last good pose |
-| `Game/Ksa/{DisplayRenderPatch,FrameCapture}.cs` | 2 `[KsaAnchor]` (the `/sim/display` capture: the `Program.RenderGame` transpiler + the in-band Vulkan blit/readback) | transpiler degrades to **no injection**; a capture-time fault latches the feature off for the session (`_faulted`) |
+| `Game/Ksa/Fx/*.cs` (`FxReflect`×8, `PlumeActuator`×4, `TrailActuator`×2, `CloudActuator`×4, `TerrainActuator`×3, `FxEditorReader`×4, **`FaceFxManager`×1**; `FxPristine` has none — no KSA types) | 26 `[KsaAnchor]` (the four FX editors: the reflective handles in `FxReflect` incl. the terrain UBO rings, the per-family read/write/apply pairs, the plume propagation loop, the sampler's rosters) — **plus `FaceFxManager`**, the `/sim/debug/fx` face-burst emitter (`Program.Instance.ParticleSystem.{EmitterPool.Get,InitializeEmitter}`, `ParticleEmitterReference`, `ParticleEmitter.{LocalOffset,Context,Origin,CreateHandle,ForceSpawningComplete}`, `Vehicle.{AddEmitter,BubbleOrigin}`, `GameSettings.Current.Graphics.Particles`), which also **mirrors** `CrewPortraitPanel.FACE_HEIGHT_OFFSET_EVA` — retuned 0.85 → 0.70 at 5348 (rev 5270) | per-command try/catch in `KsaCatalog`; per-capability `KsaHealth` latches (`fx.*` keys) → `EOPNOTSUPP`; sampler-level try/catch (logged once); pristine restore at unload |
+| `Game/Ksa/Camera/*.cs` (`CameraDirector`×9, `CameraTargets`×7, `CameraFrames`×3, `CameraReader`×2, `CameraFollowable`×1, `CameraPoseController`×1, `CameraViewportPatch`×1) | **24** `[KsaAnchor]` — programmable-camera anchors plus `CameraViewportPatch`'s `Viewport.OnFrame(double)` prefix/postfix, and the mod-side `IFollowable` + `FixedController` subclass the pose controller drives through (offsets only — never an absolute camera transform). Main viewport is selected by identity; the controller's public `Camera`/viewport camera is used, never unscience's obsolete `___Transform` injector | idle director is one branch; hook faults latch once; driver fault restores camera; unresolvable frames hold last good pose |
+| `Game/Ksa/{DisplayRenderPatch,FrameCapture}.cs` | 3 `[KsaAnchor]` (the `/sim/display` capture: the `Program.RenderGame` transpiler + the in-band Vulkan blit/readback, **plus the 5348-new `GameSettings.UiPixelCulling()` prefix** that suppresses rev 5283's UI coverage mask while the stream is live) | transpiler degrades to **no injection**; the culling prefix is best-effort (a missing target costs capture fidelity, never the stream); a capture-time fault latches the feature off for the session (`_faulted`) |
 | `Game/Ksa/KsaCatalog.cs` | 2 `[KsaAnchor]` (vehicle/astronomical resolution) | self |
 | `Game/Ksa/{KsaAnchor,KsaHealth}.cs` | churn machinery (no KSA types in KsaHealth) | — |
 | `Game/TelemetrySampler.cs` | 5 `[KsaAnchor]` reads (G4: `Universe.*` time/warp/system + `VersionInfo.Current`) | per-vehicle + per-call try/catch |
@@ -365,9 +450,12 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/BrutalModLogger.cs` | `Brutal.Logging` sink | try/catch at install |
 | `Mod.cs`, `ModAssets.cs` | StarMap.API attributes, purrTTY contract — **no KSA game types** | n/a (mod-ecosystem ABI, not KSA) |
 
-Detail and per-member break-impact: the four `ksa-*.md` pages. **The census totals 174 `[KsaAnchor]`s**
+Detail and per-member break-impact: the four `ksa-*.md` pages. **The census totals 175 `[KsaAnchor]`s**
 (the one further occurrence in `Game/Ksa/KsaAnchor.cs` is the attribute's own doc comment, not a
-binding). It grew with each ported cheat: the sampler's `Universe`/`VersionInfo` reads were anchored in
+binding). The **5348** pass added exactly one — `DisplayRenderPatch.UiPixelCullingPrefix`, the
+first anchor in the project whose KSA target did not exist in the previous build (rev 5283's
+`UiCoverageMaskSystem`), which is why it needed a new row everywhere anchors are mirrored rather
+than a re-stamp. It grew with each ported cheat: the sampler's `Universe`/`VersionInfo` reads were anchored in
 the 4750 fix-pass (G4); the `unscience`-ported welds/IVA/parts feature added 6 (PartsReader,
 IvaForceRender, WeldEngine×2, WeldManager×2); the `thug_life` render cheat added the 7
 `Game/Ksa/ThugLife/` render-internals anchors (`ThugLifeTextureFactory.UploadPixels`,
@@ -392,10 +480,13 @@ decode/upload half into the shared `UserTextureGpu` (**+1**) and added the **15*
 second set that binds render-pipeline internals rather than gameplay APIs. Both sticker groups fail
 the **build**, not a health latch, when a member moves, which is the intended alarm.
 
-So the only remaining un-anchored KSA touch-points are the two `Mod.Game.cs` Harmony hook targets (the
-`gatos.iva`/`gatos.thug_life`/`gatos.always_render` patch targets and the weld/IVA drivers'
-`VehicleSolver.Wait()` are themselves anchored; the camera and schedule drivers install **no** patch
-and their KSA members are anchored inside `Game/Ksa/Camera/`).
+So the only remaining un-anchored KSA touch-points are the two `Mod.Game.cs` Harmony hook targets and
+the two part-paint plumbing files (`Paint/PartPaintPatches.cs` resolves the seven paint patch targets,
+`Paint/PaintRuntime.cs` holds the `Part`-keyed callback owner — both are anchored *at*
+`PaintManager`, where the lifecycle lives). The
+`gatos.iva`/`gatos.thug_life`/`gatos.always_render`/`gatos.stickers` patch targets and the weld/IVA
+drivers' `VehicleSolver.Wait()` are themselves anchored; the camera and schedule drivers install **no**
+patch and their KSA members are anchored inside `Game/Ksa/Camera/`.
 
 ---
 

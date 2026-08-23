@@ -21,15 +21,21 @@ internal static class WeldEngine
             + "Orbit.CreateFromStateCci(IParentBody,UniverseTime,double3,double3,byte4); "
             + "Universe.GetJobSimStep(double).NextTime; Program.GetPlayerDeltaTime; "
             + "Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}",
-        SourceFile = "KSA/Vehicle.cs / KSA/Orbit.cs / KSA/Universe.cs / KSA/Part.cs", Verified = "2026-08-11",
-        GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
+        SourceFile = "KSA/Vehicle.cs / KSA/Orbit.cs / KSA/Universe.cs / KSA/Part.cs", Verified = "2026-08-23",
+        GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
         Notes = "The welds per-tick teleport. Stamps the orbit with the NEXT sim-step time (not "
             + "GetElapsedTime) so the source body time aligns with the queued solver tick. 5261: the time "
             + "argument became UniverseTime (rev 5211); GetJobSimStep's body is otherwise unchanged, so "
             + "the NextTime rationale still holds exactly. Vehicle.Teleport keeps its signature but now "
             + "detaches via the object-pooled PhysicsBubble (RemoveFromBubble, revs 5215/5220) instead of "
             + "the old VehicleUpdateTask — per-frame welds therefore drive a pooled bubble split/merge "
-            + "every tick, which only a live flight can confirm is stable.")]
+            + "every tick, which only a live flight can confirm is stable. 5348: Universe.GetJobSimStep "
+            + "has zero diff and Teleport keeps its signature and null semantics, but physics-bubble "
+            + "ownership moved onto the solver worker — VehicleUpdateTask.Run now performs the "
+            + "trim/intake/merge/split itself (revs 5331/5339, 2.0x split hysteresis plus a cached "
+            + "pair-clearance dictionary) and Teleport detaches via the private RemoveFromCurrentBubble(). "
+            + "WeldManager.Update already calls JobSystems.VehicleSolver.Wait() first, so the per-tick "
+            + "teleport still runs outside that job.")]
     public static bool UpdateWeld(WeldEntry entry)
     {
         var source = entry.Source;

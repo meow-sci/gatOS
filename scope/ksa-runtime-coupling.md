@@ -62,9 +62,9 @@ change is safe in both directions.
 
 ---
 
-## Harmony patches (the three permanent KSA hook targets) {#threading-phases}
+## Harmony patches (the four permanent KSA hook targets) {#threading-phases}
 
-gatOS installs **three permanent** Harmony patches, all via `AccessTools.Method(...)` with a null-check
+gatOS installs **four permanent** Harmony patches, all via `AccessTools.Method(...)` with a null-check
 and try/catch (or a degrade-to-no-injection transpiler) so a missing/renamed target **disables that one
 feature with a logged warning instead of crashing** (**four** further dynamic instances — `gatos.iva`
 for the IVA cheat, `gatos.thug_life` for the world-space quad cheat, `gatos.always_render` for the
@@ -78,6 +78,7 @@ separate methods, so an unpatch of one cannot disturb the other):
 | Solver-drain **prefix** (`Priority.First`) | `Universe.ExecuteNextVehicleSolvers` | `KSA/Universe.cs` | drains `CommandPhase.Solver` commands inside the vehicle-solver step (`Mod.DrainSolverCommands`) | solver-phase commands (attitude/frame/target, burn, refills) never drain; logged once |
 | Menu **postfix** | `Program.DrawProgramMenusHook` | `KSA/Program.cs` | draws the fallback top-level "gatOS" menu when the ModMenu mod is absent; also touches `Program.MainViewport.MenuBarInUse`, `ModLibrary.Find("ModMenu")` | gatOS menu only reachable via ModMenu; logged once |
 | Screen-stream capture **transpiler** (`DisplayRenderPatch`) | `Program.RenderGame` — inserts a call before the frame's final 1-arg `Brutal.VulkanApi` `End()` | `KSA/Program.cs` | records the `/sim/display` capture into the engine's own frame command buffer (see [the capture section](#display-capture)) | no `End()` site found → **no injection** (stream dark, warning logged); the method is never corrupted |
+| UI-coverage-mask **prefix** (`DisplayRenderPatch.UiPixelCullingPrefix`) — **new at 2026.8.22.5348** | `GameSettings.UiPixelCulling()` | `KSA/GameSettings.cs` (+ `KSA/UiCoverageMaskSystem.cs`, `KSA/PrePassRenderer.cs`) | reports UI pixel culling **off while the stream is live**, so `/sim/display` captures complete frames instead of the local player's window chrome punched out as unshaded black (rev 5283, see [the capture section](#display-capture)) | best-effort: `InstallUiCullingSuppression` warns and returns; the stream still runs, it just carries UI-shaped holes |
 
 **Risk: Medium.** Neither target appears in the 4680→4750 changelog and `Game/Mod.Game.cs` compiled
 clean against 4750. These are the non-`/sim` KSA members most worth re-checking on any update (a rename
@@ -184,6 +185,65 @@ model: `Universe.ExecuteNextVehicleSolvers(double, SimStep)` (`Universe.cs:1796`
   `SimTime`→`UniverseTime` type, so the next-tick rationale holds verbatim.
 - **Frames and numerics unchanged**: the whole `Brutal.Numerics` decomp tree is byte-identical across
   the two builds.
+
+**Re-verified 2026-08-23 against `2026.8.22.5348`** (revs 5262–5348, 85 commits). **Zero compile
+breaks this pass** — and, for the first time, every Harmony target and reflection accessor was
+confirmed against the **shipping 5348 binaries** rather than the decomp, via a `MetadataLoadContext`
+member-surface diff of both DLL sets (63 of 470 referenced types changed shape; see
+[`ksa-assets-and-versions.md#5348-pass`](ksa-assets-and-versions.md#5348-pass)). All targets resolve,
+and all are still single-overload where gatOS relies on that:
+`Universe.ExecuteNextVehicleSolvers(double, SimStep)`, `Program.DrawProgramMenusHook()`,
+`Program.RenderGame(AcquiredFrame, double)`, `Viewport.OnFrame(double)`,
+`SuperMeshRenderSystem.RenderMainPass(CommandBuffer)`, `RenderTarget.ResolveAttachments(CommandBuffer)`,
+`PartModel.AddInstance` / `PartModelDynamic.AddInstance`, `PartModelModule.UpdateRenderData` /
+`PartModelDynamicModule.UpdateRenderData`, `Vehicle.GetWorldMatrix(Camera)`,
+`Vehicle.UpdateRenderData(Viewport,int)`, `ShaderModuleUtils.FromFile`, `ModLibrary.Find` — plus the
+**new** `GameSettings.UiPixelCulling()` (row above).
+
+- **The solver hook is unchanged in every respect that matters.**
+  `Universe.ExecuteNextVehicleSolvers(double, SimStep)` — same signature, **still the only overload**,
+  **still one call site**, still on the main thread, still once per frame in the same slot, and the
+  gatOS prefix still runs before `RemoveEligibleVehicles` / `PrepareVehicleWorkers` / `PrepareFrame`.
+  The multithreading revs **5331/5339** introduced is **inside the job the method queues**, not in the
+  method. Worth recording explicitly: this target is resolved through `nameof(...)` on a real symbol,
+  so it is **compile-checked** — it was never in the silent-failure class. (`DisplayRenderPatch`'s
+  `"RenderGame"` string literal *is*.)
+
+- ⚠️ **NEW THREADING HAZARD — the most important runtime finding of this pass, and it is fixed.**
+  Revs **5331/5339** moved physics-bubble ownership entirely into `VehicleUpdateTask`. Its `Run()` now
+  performs `TrimBubbles()` / `IntakeOrphans()` / `MergeBubbles()` / `SplitBubbles()` — structural
+  bubble-list **and object-pool** mutation — **on the solver thread**. The main-thread equivalents
+  `Universe.{MergeVehicleTasks,TrimPhysicsBubbles,AddVehiclesToTasks}` and the field
+  `Universe._physicsBubbles` are all **deleted**.
+  `debug.teleport` and `debug.impulse` both reach `Vehicle.Teleport` → `RemoveFromCurrentBubble()` →
+  `PhysicsBubble.RemoveVehicle`, which does `_vehicleStates.Remove(...)`, bumps `TopologyVersion` and
+  calls `ConstraintSim.RemoveVehicle`. They were **Frame-phase**.
+  **Timing proof.** `Program.PrepareFrame` opens with `JobSystems.VehicleSolver.Wait()`
+  (`KSA/Program.cs:2010`) and queues the job near its end (`:2047`). The job is therefore **in flight
+  from the tail of `PrepareFrame` until the next frame's `Wait()`** — i.e. across the whole GUI phase,
+  which is exactly where the Frame lane drains (`OnBeforeUi`). The engine states the invariant itself:
+  `VehicleUpdateTask.SyncWindowBubbles` throws `InvalidOperationException` unless the task is idle.
+  **Fix:** both actions moved into `SimCommand.SolverActions`. gatOS's solver prefix runs *after* that
+  `Wait()` and *before* the job is re-queued — the one provably safe window. Four test fixtures that
+  had encoded the old "teleport is Frame-phase" rationale were updated alongside it.
+  Welds are unaffected: `WeldManager.Update` already calls `JobSystems.VehicleSolver.Wait()` first.
+
+- ⚠️ **Recorded, NOT fixed — a pre-existing race in the same window.** `StagingActuator.Stage` calls
+  `vehicle.UpdateAfterPartTreeModification()` (which mutates `PhysicsStates` and runs
+  `UpdateCollisionGeometry()`) from the **Frame** lane. Revs 5331/5339 did not widen it, and its
+  severity is lower than the bubble-list mutation above, so it was left alone deliberately rather than
+  overlooked. It is the next candidate if staging ever shows non-deterministic physics.
+
+- **`Vehicle.Teleport(Orbit?, doubleQuat?, double3?)` itself is unchanged** — signature and
+  null-semantics preserved; the only body delta is the `RemoveFromCurrentBubble()` refactor.
+  `Universe.GetJobSimStep` is **zero-diff**, so `WeldEngine`'s `NextTime` rationale holds exactly.
+
+- **Render-side targets:** `RenderMainPass` is now wrapped in
+  `using (commandBuffer.TagRegion(Profiler.GpuTag.MeshRendererV2))` — a postfix runs after the
+  `finally`, so the `thug_life` quad draws are attributed outside that GPU tag. **Profiler attribution
+  only.** The `/sim/display` transpiler's filters still reject the new tail
+  (`Profiler.Gpu.EndFrame(commandBuffer2)` is not named `End`, and `Profiler` is in namespace `KSA`).
+  Full render treatment: [`ksa-assets-and-versions.md#render-refs`](ksa-assets-and-versions.md#render-refs).
 
 ### Dynamic IVA patches (`gatos.iva`) {#iva-patches}
 
@@ -642,10 +702,17 @@ Full inventory: [`non-ksa-surface.md#scheduler`](non-ksa-surface.md#scheduler).
   weld create/remove/enable/clear and `always_render_iva` toggle).
 - **Solver phase** — Harmony prefix above → `CommandQueue.Drain(CommandPhase.Solver, …)`. The set is
   `SimCommand.SolverActions = { vessel.attitude_mode, vessel.attitude_frame, vessel.attitude_target,
-  vessel.burn, debug.refill_fuel, debug.refill_battery }`. Phase is **derived from the action key**
-  (`SimCommand.Phase`), the single source of truth — never passed at a construction site, so every
-  transport routes identically. Rationale (FlightComputer `CopyFrom` snapshot/restore) is in
+  vessel.burn, debug.refill_fuel, debug.refill_battery, debug.teleport, debug.impulse }`. Phase is
+  **derived from the action key** (`SimCommand.Phase`), the single source of truth — never passed at a
+  construction site, so every transport routes identically. Rationale (FlightComputer `CopyFrom`
+  snapshot/restore) is in
   [`ksa-write-surface.md`](ksa-write-surface.md#vessel-control-surface-g4).
+  **`debug.teleport` / `debug.impulse` moved Frame → Solver at 2026.8.22.5348**: revs 5331/5339 put
+  structural `PhysicsBubble` list- and pool-mutation on the solver thread, and the queued job is in
+  flight across the entire GUI phase where the Frame lane drains. The proof, the engine's own
+  `SyncWindowBubbles` invariant, and the one pre-existing Frame-lane race left unfixed
+  (`StagingActuator` → `UpdateAfterPartTreeModification`) are in
+  [the Harmony section above](#threading-phases).
 - **Weld driver** — *not* a `CommandQueue` phase: a separate per-frame `Vehicle.Teleport` in `OnAfterUi`
   (the third mutation site, [`#welds-driver`](#welds-driver) above).
 - **thug_life draw + validation** — *not* a `CommandQueue` phase: a per-frame draw recorded in the
@@ -712,6 +779,28 @@ Brutal, so no numerics API moved. **Risk: Medium** — a Brutal change would bre
 Known gotcha preserved in code: `VesselReader` uses the *static* `double3.Transform(...)` to dodge the
 extension-method overload that would drag `BepuUtilities` into resolution (CS0012).
 
+**Verified clean at `2026.8.22.5348` (2026-08-23) — no frames or numerics drift, stated plainly.**
+`Brutal.Numerics` `doubleQuat.cs` and `double3.cs`, plus `KSA/QuaternionEx.cs` and `KSA/Double3Ex.cs`,
+are **byte-identical**. Handedness, quaternion component order, `Concatenate` argument order and
+`CreateFromAxisAngle` conventions are all unchanged. Rev **5280** introduced a new `CelestialFrameMath`
+helper, and it is a **pure refactor**: inlining each of its four helpers reproduces the old expression
+textually, operand order included, so the results are **bit-identical**. Every other Cci/Cce/Ccf
+accessor on `Celestial` is byte-identical, as is `CreateOrb2Cci`; `StellarBody.cs`, `CelestialBody.cs`,
+`CelestialObject.cs`, `IParentBody.cs` and `BubbleOrigin.cs` are byte-identical.
+**Therefore [`docs/KSA_CELESTIAL_COORDINATE_FRAMES.md`](../docs/KSA_CELESTIAL_COORDINATE_FRAMES.md)
+needs no correction.**
+
+> **One real change, and it is sub-metre (D8).** `Celestial.SampleCubeFacePointR`'s out-of-range branch
+> replaced a 4-tap bilinear seam fetch with `UnfoldCubeFaceUv` + a single clamped nearest tap; the
+> private `FetchTexelSeamlessR` was **deleted**; `GetFaceAndTexelFromDirection`'s texel index changed
+> `(int)Math.Floor(u*w - 0.5)` → `(int)(u*w)`; and `DirectionToCubemap` went `private` →
+> `internal static`. `GetTerrainHeightFromDirCcf`/`Ccc` themselves are unchanged.
+> **What it touches:** `CameraFrames.GeoToEcl` / `TryEclToGeo` geodetic **altitude**, and
+> `StickerAnchors`/`StickerPicker` terrain anchoring — in both cases only **near cube-face boundaries**
+> and at sub-metre magnitude. The `/sim/camera/pose/geo` **round-trip property still holds**: both
+> directions route through the same sampler, so they remain exact inverses of each other. Both
+> `CameraFrames` anchors are re-stamped with this note.
+
 ---
 
 ## Reflection accessors (High risk — no compile guard) {#reflection-accessors}
@@ -733,6 +822,42 @@ update removes it, `ctl/throttle` writes return
 `Unsupported` ("manual throttle field not found in this build") and the read-back falls back to
 `GetManualThrottle()` (public, still present). A live `/sim/status/accessors` check after each update
 remains standard practice (decomp can lag the shipping binary).
+
+**Re-verified 2026-08-23 against `2026.8.22.5348` — in the shipping binaries, not the decomp.** This
+is the first pass that closed the gap the artifact table has always warned about ("decomp may lag the
+shipping binary"). Every external TypeRef in the built `gatOS.GameMod.dll` was extracted, each
+referenced type's full member surface (public + non-public, declared-only) was dumped from **both**
+DLL sets via `MetadataLoadContext`, and the dumps diffed — 63 of 470 referenced types changed shape,
+and **all ~15 reflection accessors resolve with compatible shapes in the real 5348 assemblies**:
+
+| Accessor chain | 5348 status |
+|---|---|
+| `Vehicle._manualControlInputs` → `ManualControlInputs.EngineThrottle : float`, `.ThrusterCommandFlags : ThrusterMapFlags` | ✅ both still **public instance fields** on the struct |
+| `KittenEva._renderable` → `KittenRenderable._characterAvatar` → `CharacterAvatar.Core : CharacterCore` → `.Scale : float` | ✅ whole chain intact; `0.01f` still means 1:1 (unchanged) |
+| `Program._volumetricTrailRenderer`, `Program._planetTransparenciesRenderer` | ✅ |
+| `VolumetricTrailRenderer._plumeTrailSegmentsManager` → `PlumeTrailSegmentsManager._settings` | ✅ (the two-hop re-bind the 5117 pass introduced) |
+| `VolumetricExhaustTemplate.References` | ✅ |
+| `VolumetricExhaustRenderer._currentAtmosphericPressure`, `._debugThrottle` | ✅ |
+| `KSA.Atmosphere.Rendering.CloudRenderer._renderer`, `._cloudShadowsRenderer`, `._worleyNoise3dTarget` | ✅ |
+| `PlanetRenderer._renderUboMap`, `._meshUboMap` | ✅ — but see the ⚠️ below |
+
+> ⚠️ **The terrain UBO ring needed a code change even though the accessor was fine (C3).** Revs
+> **5319–5325** (terrain precision rework) added four split-double anchor fields to
+> `PlanetRenderer.MeshUbo` — `DirAnchorHi`, `DirAnchorLo`, `DirAnchorUvHi`, `DirAnchorUvLo` — which
+> `GenerateMeshData` writes **per frame index, every frame**, from the live camera
+> (`_meshUboMap.Offset(MeshUboStride * (NumCelestials * frameIndex + slot))`). `TerrainActuator.Mirror`
+> whole-struct-copied frame 0 into every other frame-in-flight, so each `/sim/debug/terrain` write
+> stamped frame 0's terrain anchor over the other frames' live values — one frame of wrong anchor per
+> mirrored frame, in the brand-new precision path. Self-healing, but real; before 5348 every per-frame
+> `MeshUbo` field was frame-invariant, which is why the copy had been harmless. `Mirror` is now
+> **field-wise**, copying only what gatOS writes, and is therefore immune to the next such addition on
+> either struct.
+
+**This does not retire the live check.** A `MetadataLoadContext` diff proves the members exist with
+the right shapes; it cannot prove the *chain* resolves through live objects, that the Harmony installs
+took, or that a value still means what it meant. `cat /sim/status/accessors` after a flight exercising
+throttle, translate/rotate, staging and an FC setpoint stays on the
+[`../docs/VALIDATION.md`](../docs/VALIDATION.md) list.
 
 ### FX-editor reflection accessors — `FxReflect` (no patches, no driver) {#fx-accessors}
 
@@ -806,6 +931,13 @@ schedules and a KSA update does not touch them. Listed so the coupling census is
 > now owns its attachments/render pass/framebuffer outright (rather than borrowing KSA's deleted
 > helpers), its quad pipeline sources formats + sample count from `Program.OffscreenTarget`, and its
 > scene barrier uses the tracked-state `PipelineBarrier2(IRenderImage, ImageBarrierInfo)`.
+
+**Unaffected at `2026.8.22.5348`.** Nothing in this section moved: a KSA game update does not move
+purrTTY's contract, the StarMap loader, or ModMenu. The 5168 refinement above still stands as the
+operational rule — the *contract* is KSA-independent, but purrTTY the mod has its own game-coupled
+render patches, so re-check it whenever a KSA update breaks gatOS's render bindings. This pass broke
+none: `KSA.Rendering/RenderTarget.cs` is untouched (see
+[`ksa-assets-and-versions.md#render-refs`](ksa-assets-and-versions.md#render-refs)).
 
 | ABI | gatOS site | Pin / source | Notes |
 |---|---|---|---|

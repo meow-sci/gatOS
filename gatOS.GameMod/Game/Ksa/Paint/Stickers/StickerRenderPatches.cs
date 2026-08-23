@@ -25,21 +25,24 @@ internal static class StickerRenderPatches
 
     /// <summary>Installs the postfix. Throws <see cref="MissingMethodException"/> if the seam moved.</summary>
     [KsaAnchor("KSA.Rendering.RenderTarget.ResolveAttachments(CommandBuffer) — Harmony postfix",
-        SourceFile = "KSA.Rendering/RenderTarget.cs:315 / KSA/Program.cs:4418",
-        Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
+        SourceFile = "KSA.Rendering/RenderTarget.cs:315 / KSA/Program.cs:4568",
+        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
         Notes = "Program.RenderGame calls RenderedViewport.OffscreenTarget.ResolveAttachments("
-            + "commandBuffer) UNCONDITIONALLY at Program.cs:4418 (and at :4174 for secondary "
+            + "commandBuffer) UNCONDITIONALLY at Program.cs:4568 (and at :4268 for secondary "
             + "viewports). The method BODY is MSAA-gated — it does nothing when neither attachment is "
             + "multisampled — but a postfix fires either way, which is exactly what makes this a "
             + "reliable seam at every MSAA setting. It is an instance method, so __instance identifies "
-            + "the target: the main viewport's is literally Program.OffscreenTarget (Program.cs:432, "
-            + "assigned to MainViewport.OffscreenTarget at :1442). Both that identity check and the "
+            + "the target: the main viewport's is literally Program.OffscreenTarget (Program.cs:438, "
+            + "assigned to MainViewport.OffscreenTarget at :1477). Both that identity check and the "
             + "RenderedViewport == MainViewport check are required — crew-portrait viewports have "
             + "their own targets and their own cameras, and stickers are main-viewport-only in v1. "
-            + "There is a THIRD call site: RenderEditor (Program.cs:4447) resolves the SAME "
-            + "_offscreenTarget at :4527 after setting _renderedViewportIndex = _mainViewportIndex at "
-            + ":4468, so both identity checks pass in the VAB — Program.EditorFlag (:201, the flag "
-            + "OnFrame picks the path on at :2221) is the only thing that separates the two.")]
+            + "There is a THIRD call site: RenderEditor (Program.cs:4598) resolves the SAME "
+            + "_offscreenTarget at :4694 after setting _renderedViewportIndex = _mainViewportIndex at "
+            + ":4621, so both identity checks pass in the VAB — Program.EditorFlag (:205, the flag "
+            + "OnFrame picks the path on at :2279) is the only thing that separates the two. "
+            + "5348: KSA.Rendering/RenderTarget.cs is untouched — ResolveAttachments is byte-identical "
+            + "— so the seam holds exactly; only the Program.cs call-site line numbers moved (~+95..+150, "
+            + "updated above), and the RenderMainPass/ResolveAttachments call counts are still 3 each.")]
     public static void Apply(Harmony harmony)
     {
         var original = AccessTools.Method(typeof(RenderTarget), nameof(RenderTarget.ResolveAttachments));

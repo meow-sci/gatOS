@@ -216,10 +216,15 @@ internal static class CameraFrames
     [KsaAnchor("Celestial.{GetDirCcfFromLatLon,GetCcf2Cce,GetTerrainHeightFromDirCce,MeanRadius,"
             + "GetPositionEclFromCce}",
         SourceFile = "KSA/Celestial.cs / KSA/Camera.cs (SetLatLon/SetAltitude are the model)",
-        Verified = "2026-08-06", GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
+        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.Medium,
         Notes = "GetTerrainHeightFromDirCce returns METRES and 0 for a body with no heightmap. "
             + "GetSurfacePositionEclFromDirCce expects a UNIT direction and does not normalize (its "
-            + "FromCce sibling does), so the direction is normalized here.")]
+            + "FromCce sibling does), so the direction is normalized here. 5348: "
+            + "GetTerrainHeightFromDirCce/GetTerrainHeightFromDirCcf are themselves unchanged, but the "
+            + "CPU sampler under them moved at cube-face seams — Celestial.SampleCubeFacePointR's "
+            + "out-of-range branch swapped a 4-tap bilinear seam fetch for UnfoldCubeFaceUv plus one "
+            + "clamped nearest tap (the private FetchTexelSeamlessR was deleted). Sub-metre altitude "
+            + "differences near a face boundary only.")]
     internal static double3 GeoToEcl(Celestial body, double latitudeDeg, double longitudeDeg,
         double altitudeMetres)
     {
@@ -238,10 +243,13 @@ internal static class CameraFrames
     /// </summary>
     /// <returns>False when the point is at the body's centre, where latitude/longitude are undefined.</returns>
     [KsaAnchor("Celestial.{GetPositionCceFromEcl,GetCcf2Cce,GetTerrainHeightFromDirCce,MeanRadius}",
-        SourceFile = "KSA/Celestial.cs", Verified = "2026-08-06", GameVersion = "2026.8.5.5168",
+        SourceFile = "KSA/Celestial.cs", Verified = "2026-08-23", GameVersion = "2026.8.22.5348",
         Risk = ChurnRisk.Medium,
         Notes = "Mirrors GetDirCcfFromLatLon exactly: lat = asin(ccf.Z), lon = atan2(ccf.Y, ccf.X) — "
-            + "the same pair KSA's own GetLatitudeFromCce/GetLongitudeFromCcf use.")]
+            + "the same pair KSA's own GetLatitudeFromCce/GetLongitudeFromCcf use. 5348: the same "
+            + "cube-face seam sampler change noted on GeoToEcl applies here; because both directions "
+            + "route through GetTerrainHeightFromDirCce, they remain exact inverses and the "
+            + "/sim/camera/pose/geo round-trip property still holds.")]
     internal static bool TryEclToGeo(Celestial body, double3 positionEcl,
         out double latitudeDeg, out double longitudeDeg, out double altitudeMetres)
     {

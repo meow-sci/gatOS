@@ -27,13 +27,111 @@ Two checkouts are kept side by side for diffing:
 
 | Checkout dir | Build | Date | Revisions | Role |
 |---|---|---|---|---|
-| `…/ksa-game-assemblies` | **2026.8.19.5261** | 2026-08-11 | 5168 → 5261 | **current / verified baseline** — full playbook pass 2026-08-11 (see below): **ten compile breaks** (all from rev 5211's `SimTime`→`UniverseTime` migration + revs 5208–5216's solver rename) fixed, **one silent semantic break** found and closed (the `EndOfTime` sentinel becoming a finite ~1.7e29 s); `KSAFolder` default resolves here. The checkout is a **git repo whose history holds every prior drop** (`13595c1` = 5056, `3106557` = 5018, `cdb7391` = 4980, `7cf5c0a` = 4892, …) — diff drops with `git diff <old>..<new>` inside it |
-| `…/ksa-game-assemblies_prev` | 2026.8.5.5168 | 2026-08-05 | 5117 → 5168 | prior side-by-side checkout — a **genuinely audited baseline** (the 5168 pass closed its own findings), so the 5261 pass diffed the two trees directly (no git-history fallback needed) |
+| `…/ksa-game-assemblies` | **2026.8.22.5348** | 2026-08-23 | 5261 → 5348 (85 commits, revs 5262–5348) | **current / verified baseline** — full playbook pass 2026-08-23 (see [`#5348-pass`](#5348-pass)): **zero compile breaks — the first pass in the project's history with none** (5261 had ten, 5168 had four); three real breaks the compiler could not see found and fixed, plus one long-standing **pre-existing** bug diagnosed and fixed. `KSAFolder` default resolves here (commit `c465abb`). The checkout is a **git repo whose history holds every prior drop** (`1401af7` = 5261, `13595c1` = 5056, `3106557` = 5018, `cdb7391` = 4980, `7cf5c0a` = 4892, …) — diff drops with `git diff <old>..<new>` inside it |
+| `…/ksa-game-assemblies_prev` | 2026.8.19.5261 | 2026-08-11 | 5168 → 5261 | prior side-by-side checkout — itself a **fully audited baseline** (the 5261 pass closed its own findings, [`#5261-pass`](#5261-pass)), and CURRENT's `fromRevision` is 5261, so the two trees **chained with no gap** and the 5348 pass diffed them directly (no git-history fallback needed) |
 
 gatOS was originally built against the 4680-era sources (most `[KsaAnchor]` `Verified` dates span
 2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27; the touched
 anchors carry `GameVersion="2026.6.9.4750"` (see
 [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)).
+
+**The 5261 → 5348 pass (2026-08-23) — ZERO compile breaks (a first), three compiler-invisible breaks
+found and fixed, one pre-existing bug diagnosed and fixed.** {#5348-pass}
+PREVIOUS (`2026.8.19.5261`) was itself a fully audited baseline and CURRENT's `fromRevision` is 5261,
+so the two trees chain with no gap and were diffed directly (revs 5262–5348, 85 commits).
+
+**The build said nothing.** A clean `-t:Rebuild` of the whole solution against the 5348 DLLs produced
+**0 warnings and 0 errors** — the first pass in the project's history where the compile-as-alarm step
+did not fire at all (5261 had ten breaks, 5168 four, 5117 two, 5018/4980 one each). The suite is green:
+**1646 passed / 12 skipped / 0 failed**. That makes this the pass that proves the playbook's own
+premise: *the alarm is necessary, never sufficient.* Everything below was found by reading diffs.
+
+> **New technique — a binary-level member-surface diff.** Beyond the skill's decomp-diff procedure,
+> all 481 external TypeRefs were extracted from the compiled `gatOS.GameMod.dll`, every referenced
+> type's full member surface (public + non-public, declared-only) was dumped from **both** DLL sets via
+> `MetadataLoadContext`, and the two dumps diffed. **63 of 470 referenced types changed shape.** This
+> checks the *shipping binaries* rather than the decomp, which can lag them (the warning at the foot of
+> the artifact table has always said so; this is the first pass that acted on it). Every one of gatOS's
+> ~15 reflection accessors and every Harmony target was confirmed present with a compatible shape in
+> the real 5348 assemblies — not merely in the decomp. See
+> [runtime](ksa-runtime-coupling.md#reflection-accessors).
+
+**Three real breaks the compiler could not see — all fixed:**
+
+| # | Break | Why the compiler was blind | Fix |
+|---|---|---|---|
+| C1 | Rev **5283**'s new `UiCoverageMaskSystem` stamps the reverse-Z **near plane** into the pre-pass depth wherever fully-opaque ImGui UI covers the screen (`UiCoverageMask.RecordDepthStamp`, first thing inside `PrePassRenderer.Render`); `CopyDepthImageToSrc` carries it into `_offscreenTarget`, whose scene pass loads that depth — so every later `GreaterOrEqual` test under the UI fails via early-Z. `FrameCapture` reads the offscreen colour **before** the UI composite, so `/sim/display` streamed the local player's window chrome as unshaded black. Invisible locally; only a remote reader sees it. | pure new engine subsystem; no gatOS symbol moved | a Harmony **prefix on `GameSettings.UiPixelCulling()`** returning `false` while the stream is live — the getter has exactly **one** game-side caller, which re-reads it per frame and zero-clears the tile masks, suppressing the stamp *and* every consumer early-out. Not the field: `GameSettings.Current.Graphics.UiPixelCulling` is the player's persisted `[TomlField]` setting. **A brand-new KSA coupling born at 5348** — new `[KsaAnchor]`, Risk High |
+| C2 | Revs **5331/5339** moved physics-bubble ownership entirely into `VehicleUpdateTask.Run()` — `TrimBubbles()`/`IntakeOrphans()`/`MergeBubbles()`/`SplitBubbles()` now mutate the bubble list **and object pool** on the solver thread; `Universe.{MergeVehicleTasks,TrimPhysicsBubbles,AddVehiclesToTasks}` and `Universe._physicsBubbles` are all **deleted**. `debug.teleport`/`debug.impulse` reach `PhysicsBubble.RemoveVehicle` through `Vehicle.Teleport`, and they were Frame-phase | the deleted methods were ones gatOS never called; the surviving path is signature-identical | both actions moved into `SimCommand.SolverActions`. Timing proof and the engine's own invariant: [runtime](ksa-runtime-coupling.md#threading-phases) |
+| C3 | Revs **5319–5325** (terrain precision rework) gave `PlanetRenderer.MeshUbo` four new split-double anchor fields (`DirAnchor{Hi,Lo}`, `DirAnchorUv{Hi,Lo}`) that `GenerateMeshData` writes **per frame index, every frame**, from the live camera. `TerrainActuator.Mirror` whole-struct-copied frame 0 into every other frame-in-flight, so every `/sim/debug/terrain` write stamped frame 0's terrain anchor over the other frames' live values | additive fields on a struct gatOS copies wholesale — nothing to bind, nothing to break | `Mirror` is now **field-wise**: only the eight `PlanetUbo` and three `MeshUbo` fields gatOS actually writes. Also immune to the next such field addition on either struct |
+
+**Plus one pre-existing bug, diagnosed and fixed (C4).** `ClutterTextureBridge` keyed its catalog on
+`TextureReference.GetRealId()`, which returns `Id` only when `SerializedId.IsReferenceable` — set
+**only** when the asset XML carries an `Id=` *attribute*. **No clutter texture element has one.** Every
+slot fell through to `walk.Anonymous++`, the catalog published **empty**, and every `bind` returned
+ENOENT: the feature was completely inert, identically on 5261 and 5348. This is the bug commit
+`1e97269` was hunting. The catalog is now keyed on `TextureReference.LocalPath` — and the asset layout
+this document previously described **never existed**; see
+[clutter texture assets](#clutter-assets) below for the correction.
+
+Two smaller code changes rode along: the clutter walk gained the new `PbrMaterialReference.AlphaMap`
+slot (`[XmlElement("Alpha")]`, added in 5348 — no stock clutter material authors one yet, so this is
+forward-coverage), and `FaceFxManager.KittenFaceAsmb` tracked rev **5270**'s
+`CrewPortraitPanel.FACE_HEIGHT_OFFSET_EVA` `0.85 → 0.70`, which had `/sim/debug/fx` face bursts landing
+~0.15 m too high.
+
+**Silent semantic drift — `/sim` meaning moved with no code change** (nine items, detailed on
+[read](ksa-read-surface.md#5348-findings) / [write](ksa-write-surface.md#5348-findings)): rev **5329**
+made `ctl/stage` walk `GetSubtreeSequencedModules()` and activate only `ISequenced` modules whose own
+`Sequence` matches, so **staging no longer flips `rcs/<n>/active`** (`ThrusterController` is `IActivate`
+but not `ISequenced`) and a part with modules in two sequences now needs two presses; rev **5317**
+inverted the FC's min-throttle fold (`Min`→`Max`, seed `1f`→`0f`), so on a multi-engine stack the
+*effective* floor is now set by the most restrictive engine; rev **5318** corrected `navball/deltav`
+and `navball/twr` on vehicles with a part in sequence 0 (the values were **wrong before**); rev
+**5317** retuned burn timing, the TVC gain matrix and the auto-burn abandonment latch; rev **5268**'s
+MMU material reorder swapped the EVA paint slot ordinals (D5, below); `Part.ScaleTotal` composition
+went additive → multiplicative and rev **5329**'s new `IRescale` made the game's own editor scaling
+*physical* and clamped 0.5×–2×, which gatOS's `/sim` scale deliberately is not; and the terrain
+cube-face **seam** sampler changed (D8 — sub-metre, round-trip property preserved,
+[runtime](ksa-runtime-coupling.md#frames-and-numerics)).
+
+**Asset-level changes this pass:**
+- `Astronomicals.xml`: **`TreeType13/14/15` commented out** (rev 5263 — no colliders yet). Their sole
+  materials `Tree12Cards`/`Tree13Cards`/`Tree14Cards` (15 texture slots) leave the clutter catalog
+  walk. A persisted binding to one surfaces as `Failed` ("stock texture 'x' is gone") — graceful.
+- Grass ecotype (revs 5306/5345): `ObjectSeparation` **1.3 → 1.45 m**, `GenerationRange`
+  **170 → 80 m**. An overridden grass texture now disappears at 80 m.
+- `CharacterAssets.xml` `CharacterMMUAttachment` (rev 5268 era): source mesh
+  `Characters/KittenMMU/KSA_Cat_MMU.gltf` → `SK_KSA_MMU.glb` (now **skinned** — `MmuMesh` retyped
+  `StaticMeshRenderable` → `AnimatedRenderable`, plus an `AnimationScrubSampler ArmScrub` and a new
+  `<Transform>` block), and the two `<Materials>` blocks were **reordered** to follow the glb
+  ("body first, labels second"): `KSA_MMU_Color` is now index **0** (was 1), `KSA_MMU_Texts` index
+  **1** (was 0). gatOS names EVA paint slots by array ordinal, so a saved rule targeting `mmu` now
+  repaints the MMU **body** instead of the label decals. The `.glb` is not in the repo, so the
+  `MaterialIndices` **length** could also differ — live check queued.
+- **New** `Content/Core/GroundClutter/_GameData.xml` and `_Materials.xml`: purely additive
+  `ClutterObjectGameData` substance/volume entries and `Rock.*` substance definitions
+  (density/temperature) for clutter collisions. They **replace nothing, rename nothing, and move no
+  texture key** — the three `*Assets.xml` files remain the only clutter *texture* source.
+- `PlanetUbo.TessellationRangeMeters` default **220 → 50** and the shader's displacement falloff moved
+  from `range*0.1 … range*0.95` to `range*0.75 … range*0.975`. Field name/type/offset unchanged and
+  gatOS's `1..20000` clamp still admits the new default — but the documented example values for
+  `/sim/debug/terrain tessellation/range_m` are now misleading.
+
+**Verified clean, stated plainly:** the whole `Brutal.Numerics` tree is **byte-identical** and rev
+5280's new `CelestialFrameMath` is a **pure refactor with bit-identical results**, so
+[`../docs/KSA_CELESTIAL_COORDINATE_FRAMES.md`](../docs/KSA_CELESTIAL_COORDINATE_FRAMES.md) needs no
+correction; `Orbit.CreateFromStateCci` and the whole orbits set are byte-identical; the solver hook is
+unchanged in every respect that matters; `KSA.Rendering/RenderTarget.cs`, `UnlitMesh.{vert,frag}`,
+`Common/Shared.glsl` and `Grid.{vert,frag}` are **untouched**; the Vulkan 1.3 → 1.4 bump (rev 5315) is
+a no-op for gatOS because `ShaderModuleUtils` still maps to SPIR-V `_1_6`; the rev-5301 lighting-UBO
+reshape cannot reach gatOS's shaders by construction; the bindless override mechanism is zero-diff and
+gatOS remains the **sole** caller of `BindlessTextureLibrary.SetTexture` in the process; and the
+rev-5288 clutter GPU repack does not reach the bridge. Full detail:
+[read](ksa-read-surface.md#5348-findings) / [write](ksa-write-surface.md#5348-findings) /
+[render refs](#render-refs) / [runtime](ksa-runtime-coupling.md).
+Build + full suite green against 5348 (0 warnings, 1646 passed / 12 skipped). **5348 is now the
+verified baseline.** **Still pending: the live in-game pass** — 15 items queued in
+[`../docs/VALIDATION.md`](../docs/VALIDATION.md).
 
 **The 5168 → 5261 pass (2026-08-11) — ten compile breaks fixed (one type migration), one silent
 semantic break found and closed.** {#5261-pass}
@@ -403,7 +501,62 @@ breaks the draw — re-verify live):
 Full anchor list: [`ksa-read-surface.md#thug-life`](ksa-read-surface.md#thug-life) (anchor math),
 [`ksa-write-surface.md#thug-life`](ksa-write-surface.md#thug-life) (the seven actions),
 [`../docs/KSA_INTEGRATION_MATRIX.md`](../docs/KSA_INTEGRATION_MATRIX.md) (render set).
-**Re-verified (static) 2026-08-01 against `2026.8.3.5117`**: `SuperMeshRenderSystem.cs` is
+**Re-verified (static) 2026-08-23 against `2026.8.22.5348`** (revs 5262–5348, 85 commits) — the
+render set survived a heavy render-internals window with **no compile break and no re-bind**:
+
+- **`KSA.Rendering/RenderTarget.cs` is untouched.** `ResolveAttachments(CommandBuffer)` and
+  `SetupGraphicsPipeline` are identical, so both the `gatos.stickers` postfix target and the quad's
+  pipeline-format handshake hold. `KSA/RenderingPresets.cs` and
+  `Brutal.VulkanApi.Abstractions/Presets.cs` (reverse-Z depth, blend, rasterization presets) are
+  likewise untouched.
+- **`Content/Core/Shaders/Mesh/UnlitMesh.{vert,frag}` and `Common/Shared.glsl` are untouched** —
+  push-constant layout, vertex inputs and the single combined-image-sampler binding all still match
+  the `thug_life` pipeline. `Shared.glsl` does **not** include `Global.glsl`, so the lighting-UBO
+  rework below cannot reach the quad at all. `Grid.{vert,frag}` untouched (the sticker include
+  directory's discovery asset).
+- **`SuperMeshRenderSystem.RenderMainPass(CommandBuffer)` is still exactly one overload**, so both
+  gatOS lookups (Apply and Remove) stay unambiguous. Its body is now wrapped in
+  `using (commandBuffer.TagRegion(Profiler.GpuTag.MeshRendererV2))`; a Harmony postfix runs *after*
+  the `finally`, so the quad draws are attributed **outside** that GPU tag. **Profiler attribution
+  only — no mis-draw, and the patch still installs.**
+- **The `Program.RenderGame` transpiler still lands.** The new tail is
+  `_screenshotCapture.OnRenderGameSwapchainGrab(…); Profiler.Gpu.EndFrame(commandBuffer2);
+  commandBuffer2.End();` — `EndFrame` is not named `End` and `Profiler` is in namespace `KSA`, so both
+  transpiler filters reject it; the new `TagRegion` `using` blocks emit `GpuRegion.Dispose()`, never an
+  inlined `End`. `codes[callIdx-1]` is still the `ldloc` of `commandBuffer2`, and
+  `VkDeviceExtensions.End<T>` is zero-diff.
+- **Vulkan 1.3 → 1.4 (rev 5315) is a no-op for gatOS.** It declares no API version, no extensions and
+  no features, and reuses `Program.GetRenderer().Device`; `ShaderModuleUtils` maps 1.4 to SPIR-V
+  **`_1_6` — the SPIR-V target is unchanged**, so the runtime-compiled sticker GLSL and the
+  `UnlitMesh*` shaders produce the same SPIR-V, and every Vulkan struct gatOS fills is unchanged.
+  *Environment note only:* the mod now inherits a Vulkan 1.4 device requirement.
+- **The lighting-UBO reshape (rev 5301) is safe by construction.** `UboLightingData` swapped four
+  portrait-light arrays for 16-entry forward-light arrays and `Global.glsl` matched, growing the UBO
+  stride. gatOS compiles its GLSL **at runtime against the shipped headers** and takes the dynamic
+  offset from `GlobalShaderBindings.DynamicOffset(…)`; the fields its shader reads
+  (`global.camera.*`, `global.lighting.{sunPosition,planetColor,sunColor}`) are the struct's leading
+  members and are untouched. Re-verify live only because a **stale SPIR-V cache** would be fatal.
+  Per-viewport light modes (`Viewport.LightMode : EViewportLightMode`, +4 lines) evaluate to exactly
+  the previous hardcoded `UseShadows`/`UseLightPrePass` constants.
+- **NEW coupling — `UiCoverageMaskSystem` (rev 5283).** Not a render-*set* break, but the one render
+  change this pass that reached a gatOS feature: it stamps the reverse-Z near plane into the pre-pass
+  depth under opaque ImGui UI, which `/sim/display` was capturing as black chrome. Closed by a Harmony
+  prefix on `GameSettings.UiPixelCulling()` — see [`#5348-pass`](#5348-pass) C1 and
+  [`ksa-runtime-coupling.md#threading-phases`](ksa-runtime-coupling.md#threading-phases).
+- Also cleared: `PartModel.AddInstance` gained a `viewport == Program.MainViewport` guard (rev 5308) —
+  same signature, still one overload, so the positional `__0`/`__1` args bind and the narrowing is
+  *helpful*; `Utils.{Begin,End}GpuDebugLabel` were **deleted** (rev 5300, replaced by `TagRegion`) and
+  gatOS never called them; the rev-5288 clutter GPU repack and the revs-5287/5289 exclusion-mask
+  descriptor growth do not reach `ClutterTextureBridge` (it only swaps a bindless descriptor) or
+  `StickerDecalRenderer` (it reconstructs the surface from the resolved depth buffer); and the
+  multi-viewport leak audit found **no gatOS injection leaks** — `RenderMainPass` call count is still
+  3 and `ResolveAttachments` still 3. ⚠️ One claim in the `thug_life` anchors **became false**: crew
+  portrait viewports are no longer always `Visible` (revs 5276/5295 gate them on
+  `GameSettings.ShowCrewPortraitCameras()` and occupancy), so the `Cameras & Crew` pass bit simply goes
+  unused; `Program.GetCrewPortraitViewport(0|1)` and `_crewPortraitViewportStart = 4` are unchanged, so
+  `ThugLifeManager.CurrentPassBit()` still classifies correctly.
+
+Prior stamp — **Re-verified (static) 2026-08-01 against `2026.8.3.5117`**: `SuperMeshRenderSystem.cs` is
 **byte-identical** across the whole 5018→5117 window (so `RenderMainPass` and the postfix target are
 untouched); `Program.OffScreenPass` and `OffscreenTarget.CreateRenderPass` unchanged; the
 `UnlitMeshVert`/`UnlitMeshFrag` keys still resolve (`NavBallRenderer` uses the same pair) and
@@ -498,7 +651,15 @@ When a changelog line mentions a subsystem, open these. (Decomp paths relative t
 3. **Asset diff** — for value/unit questions, compare the Content XML (field names + unit attributes like
    `Ns=`/`J=`/`W=` make unit changes obvious).
 4. **Build** — `dotnet build gatOS.GameMod` against the new `dll/` to get the compile-break work list.
-5. **Record** — update the `[KsaAnchor]`s, this `scope/` folder, the matrix, the SPEC, and re-run
+   Iterate to green: Roslyn hides body-phase errors behind any outstanding declaration-phase error.
+5. **Binary-level member-surface diff** (added 2026-08-23, `#5348-pass`) — the build is an alarm, not
+   a survey, and the decomp can lag the shipping DLLs. Extract every external TypeRef from the built
+   `gatOS.GameMod.dll`, then dump each referenced type's full member surface (public + non-public,
+   declared-only) from **both** `dll/` sets via `MetadataLoadContext` and diff the two dumps. This is
+   what proves the reflection accessors and Harmony targets resolve against the **real** assemblies
+   rather than the decomp's approximation of them. At 5348: 481 TypeRefs, 470 resolvable,
+   **63 changed shape** — with zero compile breaks.
+6. **Record** — update the `[KsaAnchor]`s, this `scope/` folder, the matrix, the SPEC, and re-run
    `docs/VALIDATION.md`.
 
 The applied 4680→4750 result: [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md).
@@ -521,7 +682,7 @@ anchor, `inStateFlags`, and `gammaToLinear`. EVA clones reconstruct standard `Pb
 assets and KSA's generated `*_FurMaterial` recipe. These are high-churn assets; re-audit the complete
 checklist in `plans/PAINT_ASBUILT.md` on every KSA revision.
 
-# Clutter texture assets at 2026.8.19.5261
+# Clutter texture assets at 2026.8.22.5348 {#clutter-assets}
 
 Decoding rides KSA's own texture stack, not a gatOS decoder: `Brutal.TextureApi.TextureLoader`
 dispatches `LoadFromMemory(bytes, FormatType, settings)` to one of three loaders by the extension its
@@ -534,18 +695,65 @@ which returns the **two-element pair** the loaders pick from — an stb `LoadSet
 `ForceChannels` is derived from the VkFormat (4, so a 3-channel PNG cannot decode to the widely
 unsupported `R8G8B8_UNorm`) and a ktx `LoadSettings` carrying `SuperCompressionTranscodeFormat`. That is the exact
 pair `TextureReference.DoLoad` falls back to for the game's own assets when no `TextureManifest`
-overrides `Format`/`SuperCompressionBlockFormatFamily`. The override targets are
-the stock clutter chain in `Content/Core/Astronomicals.xml`: `<GroundClutter><Ecotype Name="Grass">
-<Material Id="EarthGrassClutterMaterial"><Diffuse Id="EarthGrassClutterDiffuse"
-Path="Textures/Planets/Earth/GroundClutter/Grass_Diffuse.dds" Category="Terrain"/>` and its
-`<Normal>`/`<AoRoughMetal>`/`<Opacity>`/`<Thickness>` siblings — the `Id` attribute is the
-`TextureReference.GetRealId()` string a bind names, the element is the slot the `clutter` listing
-reports, and one `Material` shared across ecotypes is exactly what `used_by` warns about. Shared
-`GroundClutterMaterial` assets also live in `Content/Core/GroundClutter/*Assets.xml` (Grass,
-GenericRock, EarthTrees), authored as `.ktx2` there and `.dds` in `Astronomicals.xml`. These ids are
-content, not API: a rename breaks saved bindings (ENOENT at bind time, never a crash). Re-audit with
-the checklist in
+overrides `Format`/`SuperCompressionBlockFormatFamily`.
+
+> **⚠️ Correction (2026-08-23, C4). The content layout this section previously described does not
+> exist — in *either* build.** It claimed the override targets were an inline
+> `<Material Id="EarthGrassClutterMaterial"><Diffuse Id="EarthGrassClutterDiffuse" …/>` chain under
+> `<GroundClutter><Ecotype Name="Grass">` in `Content/Core/Astronomicals.xml`, and that those
+> `Id` attributes were the `TextureReference.GetRealId()` strings a `bind` names. **That block is
+> present in the XML but is never deserialized**: `ClutterEcotypeReference.MaterialReferences` is
+> `[XmlIgnore]` and is repopulated wholesale from `ClutterObjects → Lods → MaterialReferences` by
+> `PopulateMaterialReferences()`. No `EarthGrassClutterDiffuse`-style id ever reaches the runtime.
+> This was not a 5348 regression; the description was wrong on 5261 too, and acting on it is what made
+> the feature inert (see [`#5348-pass`](#5348-pass) C4).
+
+**The real override targets** are the `GroundClutterMaterial` assets in
+`Content/Core/GroundClutter/{Grass,GenericRock,EarthTrees}Assets.xml` — autogenerated from the source
+`.glb`s and reached at runtime through the `ClutterObject` → `LODs` → `<Material Id="…"/>` chain. The
+*material* element carries an `Id` (e.g. `<GroundClutterMaterial Id="Grass">`); its **texture child
+elements do not**:
+
+```xml
+<GroundClutterMaterial Id="Grass">
+  <Diffuse       Path="Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2"   Category="Terrain" />
+  <Normal        Path="Textures/Planets/Earth/GroundClutter/Grass_Normal.ktx2"    Category="Terrain" />
+  <AoRoughMetal  Path="Textures/Planets/Earth/GroundClutter/Grass_Pbr.ktx2"       Category="Terrain" />
+  <Opacity       Path="Textures/Planets/Earth/GroundClutter/Grass_Opacity.ktx2"   Category="Terrain" />
+  <Thickness     Path="Textures/Planets/Earth/GroundClutter/Grass_Thickness.ktx2" Category="Terrain" />
+  …
+</GroundClutterMaterial>
+```
+
+`Path=`-only, every one of them, in all three files
+(`grep -cE '<(Diffuse|Normal|Opacity|Thickness|AoRoughMetal|Alpha)[^>]*Id=' *Assets.xml` → **0**).
+
+**So the catalog is keyed on `TextureReference.LocalPath`, not `Id`.** `LocalPath` *is* that XML
+`Path` attribute — e.g. `Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2`. It is
+install-independent, unique per asset, and space-free, which the space-separated `clutter` listing and
+`bind` line require. One `KeyOf(TextureReference)` helper
+(`Game/Ksa/Paint/ClutterTextureBridge.cs`) is used by **both** the discovery walk and
+`Match`/`ResolveStock`, so the two cannot diverge.
+
+**Why not `Id`.** `TextureReference.GetRealId()` returns `Id` only when `SerializedId.IsReferenceable`,
+and `SerializedId.OnDataLoad` sets that flag **only** if the XML supplied an `Id=` attribute —
+`IsReferenceable = !string.IsNullOrEmpty(Id)`. For a `Path=`-only element it is false, and
+`FileReference.OnDataLoad` then assigns `Id = ModPath`, an **absolute machine path**. Keying on `Id`
+would therefore differ per install *and* leak the user's filesystem into `/sim`.
+
+The slot set the walk covers is `{Diffuse, Normal, PBRMap, OpacityMap, ThicknessMap, AlphaMap}`;
+`AlphaMap` (`[XmlElement("Alpha")]` on `PbrMaterialReference`) is **new at 5348** and no stock clutter
+material authors one yet, so it is normally absent from the listing. One material shared across
+ecotypes is exactly what `used_by` warns about. These paths are **content, not API**: a rename or a
+removal (rev 5263 commented out `TreeType13/14/15`, taking `Tree12Cards`/`Tree13Cards`/`Tree14Cards`
+and their 15 slots out of the walk) breaks saved bindings as a `Failed` row or an ENOENT at bind time,
+never a crash — and bindings are session-only, so there is nothing to migrate. Re-audit with the
+checklist in
 [`plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`](../plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md).
+
+> **Trap recorded, not acted on:** `GroundClutterMaterialReference.PopulateShaderMacrosFromFlags`
+> **gained a second overload** in 5348. gatOS calls neither, but a future `AccessTools.Method` on it by
+> name alone would now throw `AmbiguousMatchException`.
 
 # Sticker assets at 2026.8.19.5261 {#sticker-assets}
 
@@ -578,6 +786,14 @@ point, so re-read them on any shader-asset churn):
 | `Global.glsl:144` | the `layout(set = SET_GLOBAL, binding = 0) uniform Global { Camera camera; GlobalLighting lighting; Celestial celestial; Vessel vessel; } global;` block — **set 0 with a dynamic offset per viewport** | the pipeline layout's set 0 is `GlobalShaderBindings.DescriptorSetLayout` and the draw binds it with `GlobalShaderBindings.DynamicOffset(Program.MainViewport.Index)`; a layout change desynchronises both |
 | `TextureSet.glsl` | `SAMPLE_TEXTURE(texID, samplerID, uv)` over `globalTextures[]`/`samplers[]`. gatOS `#define SET_TEXTURE 2` **before** the include (the header defaults it to 1), so the bindless table is set 2 | the macro/array names and the `SET_TEXTURE` override are load-bearing; sampler slot **0** is assumed to be the library's linear-clamped, full-mip sampler (`BindlessTextureLibrary.cs:127-130`) |
 | `Extensions.glsl` (via `TextureSet.glsl`) | the non-uniform-indexing extension pragmas the bindless table needs | transitive; breaks the compile if removed |
+
+> **5348 note (rev 5301).** `GlobalLighting` *did* reshape — four portrait-light arrays became
+> 16-entry forward-light arrays and `Global.glsl` matched, growing the UBO stride. The sticker shaders
+> are unaffected **by construction**, not by luck: they are compiled at runtime against the shipped
+> headers, they bind set 0 with `GlobalShaderBindings.DynamicOffset(...)` rather than a computed
+> stride, and the members they read (`global.camera.*`,
+> `global.lighting.{sunPosition,sunColor,planetColor}`) are the leading members and are untouched. The
+> residual risk is a **stale SPIR-V cache**, which is a live check, not a static one.
 
 **Descriptor-set order is baked into the GLSL** — set 0 = KSA's global UBO block (`SET_GLOBAL`
 defaults to 0), set 1 = our scene-depth `sampler2D`, set 2 = KSA's bindless table (`SET_TEXTURE` is

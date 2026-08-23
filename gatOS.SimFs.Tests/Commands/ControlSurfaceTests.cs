@@ -326,11 +326,11 @@ public sealed class ControlSurfaceTests
     [Test]
     public async Task CtlBatch_SubmitsOneAtomicGroup()
     {
-        // Two Frame-phase controls — a debug teleport and a throttle — land as ONE group, so the
+        // Two Solver-phase controls — a debug teleport and a refill — land as ONE group, so the
         // game thread executes them in the same drain (the formation-teleport fix).
         await WriteAsync(
             "debug/vessels/test-1/teleport 1 2 3 4 5 6\n"
-            + "vessels/by-id/test-1/ctl/throttle 0.5\n"
+            + "debug/vessels/test-1/refill_fuel 1\n"
             + "commit\n",
             "ctl", "batch");
 
@@ -339,8 +339,7 @@ public sealed class ControlSurfaceTests
             Assert.That(_sink.LastBatch, Has.Count.EqualTo(2));
             Assert.That(_sink.LastBatch![0].Action, Is.EqualTo("debug.teleport"));
             Assert.That(_sink.LastBatch![0].Values, Is.EqualTo(new[] { 1d, 2d, 3d, 4d, 5d, 6d }));
-            Assert.That(_sink.LastBatch![1], Is.EqualTo(
-                new SimCommand("test-1", "vessel.throttle", SimCommand.NoOrdinal, 0.5)));
+            Assert.That(_sink.LastBatch![1].Action, Is.EqualTo("debug.refill_fuel"));
         });
     }
 
@@ -349,13 +348,13 @@ public sealed class ControlSurfaceTests
     {
         var ex = Assert.ThrowsAsync<NinePErrorException>(() => WriteAsync(
             "debug/vessels/test-1/teleport 1 2 3 4 5 6\n"
-            + "debug/vessels/test-1/refill_fuel 1\n"
+            + "vessels/by-id/test-1/ctl/throttle 0.5\n"
             + "commit\n",
             "ctl", "batch"));
         Assert.Multiple(() =>
         {
             Assert.That(ex!.Errno, Is.EqualTo(LinuxErrno.EINVAL),
-                "teleport is Frame-phase, refill is Solver-phase — a batch cannot span both");
+                "teleport is Solver-phase, throttle is Frame-phase — a batch cannot span both");
             Assert.That(_sink.LastBatch, Is.Null);
         });
     }

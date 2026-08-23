@@ -47,9 +47,20 @@ public sealed record SimCommand(
     /// <summary>
     ///     The lone source of truth for which actions must drain in the solver phase: their mutation
     ///     is only visible to (or only survives) the per-vehicle physics solver if applied inside the
-    ///     solver step (KSA_GAME_INTEGRATION_PLAN §3.1). Two reasons land an action here:
+    ///     solver step (KSA_GAME_INTEGRATION_PLAN §3.1). Three reasons land an action here:
     ///     <list type="bullet">
-    ///         <item>the debug refills mutate resource state the solver reads that same tick; and</item>
+    ///         <item>the debug refills mutate resource state the solver reads that same tick;</item>
+    ///         <item>the debug teleports (<c>teleport</c>/<c>impulse</c>) call <c>Vehicle.Teleport</c>,
+    ///         which detaches the vessel from its <c>PhysicsBubble</c>. As of KSA 2026.8.22.5348
+    ///         (revs 5331/5339) bubble ownership lives entirely in <c>VehicleUpdateTask</c>, whose
+    ///         <c>Run()</c> mutates the bubble list and object pool itself
+    ///         (<c>TrimBubbles</c>/<c>IntakeOrphans</c>/<c>MergeBubbles</c>/<c>SplitBubbles</c>) on the
+    ///         solver thread. That job is in flight from the tail of <c>Program.PrepareFrame</c> until
+    ///         the next frame's <c>VehicleSolver.Wait()</c> — i.e. across the whole GUI phase the frame
+    ///         lane drains in — so a frame-phase teleport races it. The engine says as much itself:
+    ///         <c>VehicleUpdateTask.SyncWindowBubbles</c> throws unless the task is idle. The solver
+    ///         prefix runs after that <c>Wait()</c> and before the job is re-queued, which is the one
+    ///         provably safe window; and</item>
     ///         <item>the flight-computer setpoints (<c>attitude_mode</c>/<c>attitude_frame</c>/
     ///         <c>attitude_target</c>/<c>burn</c>/<c>rcs_mode</c>) write fields that KSA's async vehicle solver
     ///         <i>snapshots and restores</i> every frame (<c>FlightComputer.CopyFrom</c> at prepare
@@ -64,6 +75,8 @@ public sealed record SimCommand(
         new(StringComparer.Ordinal)
         {
             "debug.refill_fuel", "debug.refill_battery",
+            // Both call Vehicle.Teleport → RemoveFromCurrentBubble → PhysicsBubble.RemoveVehicle.
+            "debug.teleport", "debug.impulse",
             "vessel.attitude_mode", "vessel.attitude_frame", "vessel.attitude_target", "vessel.burn",
             // FlightComputer.RCSMode is copied by CopyFrom alongside the other setpoints, so a
             // frame-phase write would be reverted by the in-flight solve exactly the same way.

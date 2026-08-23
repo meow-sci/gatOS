@@ -56,13 +56,13 @@ statics (+ `VersionInfo.Current`).
 | `attitude/quat` | `:84` | `Vehicle.GetBody2Cci()` | `KSA/Vehicle.cs` | quat `x y z w` | Low | ✅ |
 | `attitude/rates` | `:85` | `Vehicle.BodyRates` | `KSA/Vehicle.cs` | rad/s `x y z` | Low | ✅ |
 | `altitude/{barometric,radar}` | `:102,103` | `Vehicle.GetBarometricAltitude()` / `GetRadarAltitude()` | `KSA/Vehicle.cs` | m | Low | ✅ |
-| `mass/{total,dry,propellant}` | `:104-106` | `Vehicle.TotalMass` / `InertMass` / `PropellantMass` | `KSA/Vehicle.cs` | kg | Low | ⚠️ ˢ |
+| `mass/{total,dry,propellant}` | `:104-106` | `Vehicle.TotalMass` / `InertMass` / `PropellantMass` | `KSA/Vehicle.cs` | kg | Low | ⚠️ ˢ · ✅ **5348** (aggregation moved to `IInertMass`, values unchanged — see [5348 findings](#5348-findings)) |
 | `orbit/{apoapsis,periapsis,ecc,inc,sma,period}` | `:75-82` | `Vehicle.Orbit` elements (radii→alt; inc rad→deg) | `KSA/Orbit.cs` | m / – / deg / s | Low | ✅ |
 | `battery/{charge,fraction}` | `:86,339` | `Vehicle.Parts.Batteries.GetState(b).Charge.Value()` ÷ `b.MaximumCapacity.Value()` | `KSA/Battery.cs` | fraction 0..1 | Low | ✅ (G2) |
 | `ctl/lights` (readback) | `:112` | `Vehicle.LightsOn` | `KSA/Vehicle.cs` | 0/1 | Low | ✅ |
 | `ctl/engine` (readback) | `:125` | `Vehicle.IsSet(VehicleEngine.MainIgnite, false)` | `KSA/Vehicle.cs` | 0/1 | Medium | ✅ ᵈ |
 | `controllable` | `:133` | `Vehicle.IsControllable` (`_overrideIsControllable \|\| Parts.Controls.NumModules > 0`) | `KSA/Vehicle.cs` | 0/1 | Medium | ✅ (G3, new) |
-| `engines/<n>/{active,vac_thrust,isp}` | `:256` | `Vehicle.Parts.Modules.Get<EngineController>()`; `.IsActive`, `.VacuumData.{ThrustMax,MassFlowRateMax}` | `KSA/EngineController.cs` | bool / N / s | Medium | ✅ ᵈ |
+| `engines/<n>/{active,vac_thrust,isp}` | `:256` | `Vehicle.Parts.Modules.Get<EngineController>()`; `.IsActive`, `.VacuumData.{ThrustMax,MassFlowRateMax}` | `KSA/EngineController.cs` | bool / N / s | Medium | ✅ ᵈ · ⚠️ **5348: `active` moved** (staging is per-module now; RCS no longer self-activates at construction) — see [5348 findings](#5348-findings) |
 | `tanks/<r>/{amount,capacity,fraction}` | `:312` | `Tank.Moles`; `Parts.Moles.GetState(mole).Mass`; `mole.GetStoredMass(ContainerVolume)`; `mole.FilledFraction` | `KSA/Tank.cs`, `KSA/Mole.cs` | kg / kg / 0..1 | Low | ⚠️ **fixed** ˢ |
 | `animations/<n>/{current,state,goal}` | `:596` | `KeyframeAnimationModule.{TimeGoal,Shared.Duration}`; `State.{TimeCurrent,DeploymentState}` via `ModuleStateful` | `KSA/KeyframeAnimationModule.cs` | 0..1 / enum | Medium | ✅ |
 
@@ -113,10 +113,10 @@ are cached per vehicle in `Readers/AnimationLinks.cs` (GP3), rebuilt on module-c
 | `/sim` path | gatOS site | KSA member | Decomp file | Risk | 5018 |
 |---|---|---|---|---|---|
 | `position/ecl`, `velocity/cci`, `com` | `:154-156` | `Vehicle.GetPositionEcl()`, `GetVelocityCci()`, `CenterOfMassAsmb` | `KSA/Vehicle.cs` | Low | ✅ |
-| `navball/{pitch,yaw,roll,twr,deltav,frame,speed}` | `:223` | `Vehicle.NavBallData.{AttitudeAngles(int3 deg),ThrustWeightRatio,DeltaV,Frame,Speed}` | `KSA/NavBallData.cs` | Medium | ⚠️ **5117: renamed + semantic drift** (rev 5114) — see below |
+| `navball/{pitch,yaw,roll,twr,deltav,frame,speed}` | `:223` | `Vehicle.NavBallData.{AttitudeAngles(int3 deg),ThrustWeightRatio,DeltaV,Frame,Speed}` | `KSA/NavBallData.cs` | Medium | ⚠️ **5117: renamed + semantic drift** (rev 5114) — see below; ⚠️ **5348: `deltav`/`twr` values corrected** (rev 5318) — see [5348 findings](#5348-findings) |
 | `environment/{pressure,density,dynamic_pressure,ocean_density,terrain_radius,accel,angular_accel,g_force}` | `:235` | `Vehicle.PhysicsEnvironment.{AtmosphericPressure,AtmosphericDensity,OceanDensity,TerrainRadius}`; `PhysicalAtmosphereReference.GetDynamicPressure(vehicle)`; `Vehicle.AccelerationBody`/`AngularAccelerationBody` | `KSA/PhysicsEnvironment.cs`, `KSA/Vehicle.cs` | Low | ✅ |
 | `orbit/{lan,argpe,true_anomaly,time_to_ap,time_to_pe,next_patch}` | `:199` | `Orbit.{LongitudeOfAscendingNode,ArgumentOfPeriapsis,StateVectors.TrueAnomaly.Degrees}`; `Vehicle.Next{Apoapsis,Periapsis,PatchEvent}Time` | `KSA/Orbit.cs`, `KSA/Vehicle.cs` | Low | ✅ |
-| `encounters` (NDJSON) | `:573` | `Vehicle.Patch.Encounters`; `Encounter.{Body.Id,GameTime,ClosestDistance}` | `KSA/PatchedConic.cs`, `KSA/Encounter.cs` | Medium | ✅ |
+| `encounters` (NDJSON) | `:573` | `Vehicle.Patch.Encounters`; `Encounter.{Body.Id,GameTime,ClosestDistance}` | `KSA/PatchedConic.cs`, `KSA/Encounter.cs` | Medium | ✅ re-verified (static) 2026-08-23 against `2026.8.22.5348` (rev 5266 changed a *different* list) |
 
 ### Writable-setpoint read-backs (so `ctl/*` files report the real state)
 
@@ -132,16 +132,16 @@ are cached per vehicle in `Readers/AnimationLinks.cs` (GP3), rebuilt on module-c
 | `/sim` path | gatOS site | KSA member | Decomp file | Risk | 5018 |
 |---|---|---|---|---|---|
 | `engines/<n>/{throttle,propellant,min_throttle}` | `:278` | `EngineControllerState.{CommandThrottle,IsPropellantAvailable}`; `EngineController.MinimumThrottle` | `KSA/EngineControllerState.cs` | Medium | ✅ |
-| `srb/<n>/*` + `srb/<n>/segments/<m>/*` | `:490` | `Vehicle.Parts.RocketCores.{Modules,GetState}` filtered to `SolidMotor`; `SolidMotor.{Stack,Propellant,DefaultGeometry,UnburnableGrainMass,AreaRatio,ComputeBurningArea}`; `SolidGrainSegment.{Grain,Propellant,InitialGrainMass,UnburnableGrainMass,CasingInnerRadius,Length,GrainVolume,ComputeGrainDepth}`; `RocketCoreState.{Throttle,IsPropellantAvailable,MassFlowRate,ThrustTimeRemaining,Conditions}` | `KSA/SolidMotor.cs`, `KSA/SolidGrainSegment.cs`, `KSA/RocketCoreState.cs` | Medium | ✅ **new (5018)** ˢ |
-| `rcs/<n>/{active,propellant,map}` | `:387` | `ThrusterController.IsActive`; `ThrusterControllerState.{ControlMap,IsPropellantAvailable}` | `KSA/ThrusterController.cs` | Medium | ✅ ᵈ |
+| `srb/<n>/*` + `srb/<n>/segments/<m>/*` | `:490` | `Vehicle.Parts.RocketCores.{Modules,GetState}` filtered to `SolidMotor`; `SolidMotor.{Stack,Propellant,DefaultGeometry,UnburnableGrainMass,AreaRatio,ComputeBurningArea}`; `SolidGrainSegment.{Grain,Propellant,InitialGrainMass,UnburnableGrainMass,CasingInnerRadius,Length,GrainVolume,ComputeGrainDepth}`; `RocketCoreState.{Throttle,IsPropellantAvailable,MassFlowRate,ThrustTimeRemaining,Conditions}` | `KSA/SolidMotor.cs`, `KSA/SolidGrainSegment.cs`, `KSA/RocketCoreState.cs` | Medium | ✅ **new (5018)** ˢ · ⚠️ **5348: `area_ratio` is the *sizing* ratio** once `AreaRatioMultiplier != 1` — see [5348 findings](#5348-findings) |
+| `rcs/<n>/{active,propellant,map}` | `:387` | `ThrusterController.IsActive`; `ThrusterControllerState.{ControlMap,IsPropellantAvailable}` | `KSA/ThrusterController.cs` | Medium | ✅ ᵈ · ⚠️ **5348: `ctl/stage` no longer flips `active`** (rev 5329) — see [5348 findings](#5348-findings) |
 | `solar/<n>/{produced,occluded,sun_aoa,efficiency,tracker_angle}` | `:419` | `SolarPanelState.{Produced,IsOccluded,SunAoA,SunEfficiency}`; `SolarTrackerState.CurrentAngle` | `KSA/SolarPanel.cs`, `KSA/SolarTracker.cs`, `KSA/SolarPanelState.cs` | Medium | ✅ (G2: W) |
 | `generators/<n>/{active,produced}` | `:476` | `GeneratorState.{Active,Produced}` | `KSA/Generator.cs`, `KSA/GeneratorState.cs` | Medium | ✅ (G2: W) |
 | `lights/<n>/{on,brightness,color,inner_angle,outer_angle}` | `:500` | `LightModule.Template.{Intensity.Value,ColorRgb,OuterAngle.Value,InnerAngle.Value}`; `Parent.FullPart.LightSwitch.LightIsActive` | `KSA/LightModule.cs` | **High** | ✅ |
 | `docking/<n>/{docked,docked_to,pushoff_impulse}` | `:540` | `DockingPort.{Docked,DockedToPart.Id,PushoffImpulse}` | `KSA/DockingPort.cs` | Medium | ✅ (fixed) |
-| `decouplers/<n>/fired` | `:560` | `Decoupler.IsActive` | `KSA/Decoupler.cs` | Medium | ✅ ᵈ |
+| `decouplers/<n>/fired` | `:560` | `Decoupler.IsActive` | `KSA/Decoupler.cs` | Medium | ✅ ᵈ · ⚠️ **5348: `Decoupler` is a multi-instance component module** (ordinals stable on stock content) — see [5348 findings](#5348-findings) |
 | `power/produced` | `:360` | Σ `SolarPanelState.Produced.Value()` + `GeneratorState.Produced.Value()` | `KSA/SolarPanelState.cs`, `KSA/GeneratorState.cs` | Medium | ✅ (G2: W) |
-| `power/consumed` | `:374` | Σ `Vehicle.Parts.PowerConsumers.GetState(c).Consumed.Value()` | `KSA/PowerConsumerState.cs` | Medium | ✅ (G2: W) |
-| `battery/capacity` | `:342` | Σ `Battery.MaximumCapacity.Value()` | `KSA/Battery.cs` | Low | ✅ (G2) |
+| `power/consumed` | `:374` | Σ `Vehicle.Parts.PowerConsumers.GetState(c).Consumed.Value()` | `KSA/PowerConsumerState.cs` | Medium | ✅ (G2: W) · ✅ **5348** (`PowerManager` rebuilt on `ElectricalCircuits`, rev 5326 — shape/unit unaffected; a former `*SameStage` brown-out can now read non-zero) |
+| `battery/capacity` | `:342` | Σ `Battery.MaximumCapacity.Value()` | `KSA/Battery.cs` | Low | ✅ (G2) · ✅ re-verified 2026-08-23 against `2026.8.22.5348` (`Battery.cs`/`BatteryState.cs` byte-identical) |
 
 ---
 
@@ -272,6 +272,13 @@ live pose check still advised (render internals; see `docs/VALIDATION.md`). Re-v
 2026-07-14 against `2026.7.5.4892`: `Camera` gains an additive **orthographic** mode (editor gizmo use;
 the in-flight main camera stays perspective, `MVP`/`viewProjection` shape unchanged);
 `Vehicle.GetMatrixAsmb2Ego` and the `Part` ego members untouched — live pose check still advised.
+Re-verified (static) 2026-08-23 against `2026.8.22.5348`: `SuperMeshRenderSystem.RenderMainPass(CommandBuffer)`
+is still the single overload, so the postfix these reads run inside still installs (its body is now
+wrapped in `using (commandBuffer.TagRegion(Profiler.GpuTag.MeshRendererV2))` — a Harmony postfix runs
+after the `finally`, so the quad draws are attributed outside that GPU tag; **profiler attribution only,
+no mis-draw**). ⚠️ **The crew-portrait viewports are no longer unconditionally `Visible`** (revs
+5276/5295), so on those two viewports these reads may simply never run — evidence on the write side,
+[`ksa-write-surface.md#5348-findings`](ksa-write-surface.md#5348-findings).
 
 ---
 
@@ -336,7 +343,7 @@ here is gated by `telemetry_*`, and nothing here is sampled by `TelemetrySampler
 | `camera/pose/fov` | `CameraReader.Sample` | `Camera.GetFieldOfView()` — ⚠️ returns **radians** while `SetFieldOfView(float)` takes **degrees**; converted here, once, at the boundary, so nothing downstream carries a radian | `KSA/Camera.cs` | degrees | Medium | ➕ new 2026-08-06 |
 | `camera/pose/ortho` | `CameraReader.Sample` | `Camera.Orthographic` | `KSA/Camera.cs` | flag | Medium | ➕ new 2026-08-06 |
 | `camera/map/scope`, `camera/status`' `map_scope` | `CameraReader.Sample` (+ `CameraDirector.SetMapScope`'s own publish) | `Viewport.MapController` (public field); `MapController.Scope` (public `double`, `:33`) — the controller clamps it **up** to the followed object's `MeanRadius` every map frame, so a smaller written value reads back clamped | `KSA/Viewport.cs`, `KSA/MapController.cs` | metres | Medium | ➕ new 2026-08-06 |
-| `camera/pose/geo` (from a Cartesian placement) | `CameraReader.WithBothSpellings` → `CameraFrames.TryEclToGeo` | `Celestial.{GetPositionCceFromEcl,GetCcf2Cce,GetTerrainHeightFromDirCce,MeanRadius}` — the exact inverse of `GetDirCcfFromLatLon` (`lat = asin(ccf.Z)`, `lon = atan2(ccf.Y, ccf.X)`), the pair KSA's own `GetLatitudeFromCce`/`GetLongitudeFromCcf` use | `KSA/Celestial.cs` | deg / deg / m **above terrain** | Medium | ➕ new 2026-08-06 |
+| `camera/pose/geo` (from a Cartesian placement) | `CameraReader.WithBothSpellings` → `CameraFrames.TryEclToGeo` | `Celestial.{GetPositionCceFromEcl,GetCcf2Cce,GetTerrainHeightFromDirCce,MeanRadius}` — the exact inverse of `GetDirCcfFromLatLon` (`lat = asin(ccf.Z)`, `lon = atan2(ccf.Y, ccf.X)`), the pair KSA's own `GetLatitudeFromCce`/`GetLongitudeFromCcf` use | `KSA/Celestial.cs` | deg / deg / m **above terrain** | Medium | ➕ new 2026-08-06 · ⚠️ **5348: cube-face seam sampler changed** (sub-metre, seams only; the round-trip still inverts exactly) — see [5348 findings](#5348-findings) |
 | `camera/pose/position` (from a geodetic placement) | `CameraReader.WithBothSpellings` → `CameraFrames.TryFrame2Ecl` + `CameraTargets.PositionEcl` | back-projection into the Cartesian channel's own frame (same members as the write side — [`ksa-write-surface.md#camera-director`](ksa-write-surface.md#camera-director)) | `KSA/Vehicle.cs`, `KSA/Celestial.cs` | metres, in `pose/frame` | Medium | ➕ new 2026-08-06 |
 
 **Two properties keep this section short.** Every *composed* value (`pose/roll`, `smoothing`,
@@ -433,6 +440,175 @@ report faithfully, none a member drift:
 - **Content value tweak**: `CoreElectricalAGameData.xml` solar cell `SolarPanelB_CellA`
   `<Produced W="50"/>` → `W="100"` — same unit, read at runtime, so `solar/<n>/produced` simply reports
   the new stock value.
+
+---
+
+## ⚠️ 5348 read-surface findings (playbook pass 2026-08-23) {#5348-findings}
+
+Full playbook pass 2026-08-23, `2026.8.19.5261` → `2026.8.22.5348` (revs 5262–5348, 85 commits).
+PREVIOUS was a fully audited baseline and CURRENT's `fromRevision` is 5261, so the trees chain with no
+gap. **Zero compile breaks — the first pass in the project's history with none** (5261 had ten, 5168
+had four). Clean `-t:Rebuild` of the whole solution against the 5348 DLLs: **0 warnings, 0 errors**;
+`dotnet test gatos.slnx` **1646 passed / 12 skipped / 0 failed**. **No bound read changed name,
+signature, type, unit or frame** — every finding below is value drift that the reads report faithfully.
+
+A green build is the census only for the *non-reflective* bindings, so this pass added a **binary-level
+surface diff** on top of the decomp diff: all 481 external TypeRefs were extracted from the compiled
+`gatOS.GameMod.dll`, and every referenced type's full member surface (public + non-public,
+declared-only) was dumped from **both** DLL sets via `MetadataLoadContext` and compared. **63 of 470
+referenced types changed shape**, and every one of gatOS's ~15 reflection accessors resolved with a
+compatible shape in the real shipping 5348 assemblies — including the `KittenEva._renderable` →
+`KittenRenderable._characterAvatar` → `CharacterAvatar.Core` → `Scale` chain (`0.01f` == 1:1,
+unchanged) and `Vehicle._manualControlInputs` (`EngineThrottle : float` and
+`ThrusterCommandFlags : ThrusterMapFlags` both still public instance fields). This checks the shipping
+binaries rather than the decomp, which can lag. The pass is **static plus that metadata diff** — render
+correctness and in-flight behaviour still need a live pass (`docs/VALIDATION.md`).
+
+### ⚠️ Staging changed what the post-stage reads report (rev 5329)
+
+`SequenceList.ActivateNextSequence(Vehicle)` keeps its signature, but its body changed
+`Parts[n].ActivateInStage(vehicle)` → `Parts[n].ActivateSubtreeInStage(vehicle, sequence.Number)`.
+`Part.ActivateInStage` activated **every `IActivate`** on the part; `ActivateSubtreeInStage` walks
+`GetSubtreeSequencedModules()` and activates only modules whose own `Sequence` equals the sequence
+number being fired. `ISequenced` implementors are exactly `EngineController` and `Decoupler` —
+**`ThrusterController` is `IActivate` but NOT `ISequenced`**, so staging no longer flips
+`rcs/<n>/active` as a side effect. Three sub-changes, all visible in the reads after a `ctl/stage`:
+(a) it is now a **subtree** walk, so engines/decouplers on sub-parts activate where they were
+previously skipped; (b) `ISequenced` only, not every `IActivate`; (c) per-module sequence match, so a
+part carrying an engine in sequence 2 and a decoupler in sequence 3 needs **two** presses before both
+read active. Affects `engines/<n>/active`, `rcs/<n>/active` and `decouplers/<n>/*`. Write side:
+[`ksa-write-surface.md#5348-findings`](ksa-write-surface.md#5348-findings).
+
+### ⚠️ `navball/deltav` and `navball/twr` were wrong before; they are right now (rev 5318)
+
+`Vehicle.UpdateNavballData` and `NavBallData` are unchanged — the sequence→parts grouping beneath them
+is not. `SequencePerformanceList` went from
+`if (part.Sequenceable && _sequenceIdxByNumber.TryGetValue(part.Sequence, …))` to iterating
+`part.GetSubtreeSequencedModules()` and matching each module's own `Sequence`; decoupler jettison-mass
+attribution moved the same way. This is the upstream "assigning a part to sequence 0 silently zeroed the
+vehicle's delta-v and TWR" fix, so on affected vehicles these two leaves now read **different and
+correct** values. No unit, frame or member change; the 5117 rewiring onto
+`Parts.PerformanceSequences.FindActiveSequenceDeltaV()` ([5117 findings](#5117-findings)) still holds.
+
+### ⚠️ EVA paint slot ordinals swapped under the MMU (rev 5268 era, asset change)
+
+`Content/Core/CharacterAssets.xml`'s `CharacterMMUAttachment` changed source mesh
+`Characters/KittenMMU/KSA_Cat_MMU.gltf` → `Characters/KittenMMU/SK_KSA_MMU.glb` — now **skinned**, so
+`CharacterAvatar.Attachments.Mmu.MmuMesh` is retyped `StaticMeshRenderable` → `AnimatedRenderable` and
+an `AnimationScrubSampler ArmScrub` was added — a `<Transform>` block appeared, and the two
+`<Materials>` blocks were **reordered**; the file now carries the comment "Material order follows
+SK_KSA_MMU.glb: body first, labels second". `KSA_MMU_Color` is index **0** (was 1) and `KSA_MMU_Texts`
+is index **1** (was 0). gatOS names EVA paint slots by array ordinal (`mmu`, `mmu.0`, `mmu.1`, …), so a
+saved rule targeting `mmu` now repaints the MMU **body** instead of the label decals. The `.glb` is not
+in the repo, so the `MaterialIndices` array **length** could also differ — enumerate the slots live
+before trusting a stored rule.
+
+### ⚠️ CPU terrain height sampling changed at cube-face seams (5348)
+
+`Celestial.SampleCubeFacePointR`'s out-of-range branch replaced a 4-tap bilinear seam fetch with
+`UnfoldCubeFaceUv` plus a single clamped nearest tap; the private `FetchTexelSeamlessR` was **deleted**;
+`GetFaceAndTexelFromDirection`'s texel index changed `(int)Math.Floor(u*w - 0.5)` → `(int)(u*w)`; and
+`DirectionToCubemap` went `private` → `internal static`. `GetTerrainHeightFromDirCcf`/`Ccc` themselves
+are unchanged. The read impact is **sub-metre and only near cube-face boundaries**: geodetic altitude in
+`CameraFrames.GeoToEcl` / `TryEclToGeo` (`camera/pose/geo`), and `StickerAnchors`/`StickerPicker`
+terrain anchoring. **The `/sim/camera/pose/geo` round-trip property still holds** — both directions
+route through the same sampler, so they remain exact inverses of each other.
+
+### ⚠️ Value drift with no API change
+
+- **Power (rev 5326).** `PowerManager` was rebuilt on the new `ElectricalCircuits` partition:
+  `ResourceAvailable` is now "any battery on my circuit has charge", **`FlowRule` is no longer consulted
+  for power**, and battery draw starts from a rotating cursor and stops when satisfied instead of
+  splitting evenly. gatOS reads the vehicle-wide SoA `vehicle.Parts.Batteries`, **not**
+  `PowerManager.Batteries`, so `battery/{charge,capacity,fraction}` and `power/consumed` are unaffected
+  in shape and unit. One edge case: a craft whose consumers sat on a `*SameStage` flow rule now stays
+  powered where it previously browned out, so `power/consumed` can read non-zero where it read `0`.
+- **Inert mass.** `Vehicle.InertMass` aggregation moved from a global push to the self-nominated
+  `IInertMass` interface. Implementers are exactly `Tank` and `SolidGrainSegment` — a 1:1 match with the
+  three old push sites, and `Rescale` is the identity at `ScaleFactors(1.0)` — so `mass/dry`,
+  `mass/total` and `mass/propellant` are unchanged. The trap to keep: a future stock part that gains
+  `IInertMass` will move `mass/dry` with **no gatOS-side signal at all**.
+- **`srb/<n>/area_ratio`.** `SolidMotorNozzle` gained a player-editable `AreaRatioMultiplier`
+  (default `1f`) and `ThroatSizingArea => Config.ExitArea / AreaRatioMultiplier`. At the default the
+  arithmetic is identical, so stock craft are unchanged; at a non-default multiplier gatOS publishes the
+  **sizing** ratio while the real per-nozzle expansion ratio is `AreaRatio × multiplier`.
+- **`decouplers/<n>` ordinals.** `Decoupler` became a multi-instance component module (the
+  `template.Decoupler` field is deleted; instances are now constructed from `template.Components`).
+  Stock content still carries exactly one decoupler per part, so today's ordinals are stable — but a
+  modded or future part with two would produce two ordinals where the addressing model assumed one.
+- **`engines/<n>/active` at spawn.** `ThrusterController`'s constructor dropped its
+  `part.ActivateInStage(null)` broadcast, so RCS thrusters no longer self-activate at part construction.
+  `ThrusterController.IsActive` still defaults `true`, so `rcs/<n>/active` is unchanged — but an engine
+  on a part that co-hosts RCS now reads an **honest** default instead of a spurious `true`.
+- **Content removals and tuning.** `TreeType13/14/15` are **commented out** in `Astronomicals.xml`
+  (rev 5263 — no colliders yet), taking their sole materials `Tree12Cards`/`Tree13Cards`/`Tree14Cards`
+  (15 texture slots) out of the clutter catalog walk; a persisted binding to one surfaces as `Failed`
+  ("stock texture 'x' is gone"), which is the graceful path. Grass ecotype `ObjectSeparation` went
+  1.3 → 1.45 m and `GenerationRange` 170 → 80 m (revs 5306/5345), so an overridden grass texture now
+  disappears at 80 m. And vehicle destruction now actually kills crew (`Universe` calls
+  `vehicle.KillCrew()` before `DestroyVehicle`, rev 5316, with a `TimedAlert` naming the dead), so crew
+  snapshots will start seeing KIA crew where they previously saw stale live crew.
+
+### ⚠️ The clutter texture catalog was publishing nothing — fixed, and this page was wrong about why
+
+**Not a 5348 regression: identical on 5261 and 5348.** Rows were keyed on
+`TextureReference.GetRealId()`, which returns `Id` only when `SerializedId.IsReferenceable` is set, and
+that is set **only** when the asset XML carries an `Id=` *attribute* (`SerializedId.OnDataLoad`:
+`IsReferenceable = !string.IsNullOrEmpty(Id)`). **Not one clutter texture element** in
+`Content/Core/GroundClutter/{Grass,GenericRock,EarthTrees}Assets.xml` has one — they are all
+`Path=`-only (verified: `grep -cE '<(Diffuse|Normal|Opacity|Thickness|AoRoughMetal|Alpha)[^>]*Id='` →
+**0**). Every slot therefore fell through to `walk.Anonymous++`, the catalog published **empty**, and
+every `bind` returned `ENOENT`: the feature was completely inert. The `EarthGrassClutterDiffuse`-style
+ids previously documented live in an inline `<Material Id="EarthGrassClutterMaterial">` block in
+`Content/Core/Astronomicals.xml` that is **never deserialized** —
+`ClutterEcotypeReference.MaterialReferences` is `[XmlIgnore]` and is repopulated from
+`ClutterObjects → Lods → MaterialReferences` by `PopulateMaterialReferences()`. **That content layout
+does not exist in either build.**
+
+The catalog is now keyed on `TextureReference.LocalPath` — the XML `Path` attribute, e.g.
+`Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2`: install-independent, unique per asset and
+space-free, which the space-separated `clutter` listing and `bind` line require. **Not `Id`**, because
+`FileReference.OnDataLoad` assigns `Id = ModPath` when not referenceable and `ModPath` is an
+**absolute machine path** — it would differ per install and leak the user's filesystem. A single
+`KeyOf(TextureReference)` helper is used by both the discovery walk and `Match`/`ResolveStock` so they
+cannot diverge. `texture_id` values under `/sim/paint/textures/clutter` are therefore now
+content-relative paths; bindings are session-only (nothing is persisted), so there is nothing to
+migrate. The walk also picks up the new `PbrMaterialReference.AlphaMap`
+(`[XmlElement("Alpha")] public TextureReference? AlphaMap;`, inherited by
+`GroundClutterMaterialReference`) as slot `alpha` — no stock clutter material authors one yet, so it is
+normally absent from the listing; this is forward-coverage so a future material is not silently
+un-overridable.
+
+### Verified clean
+
+- **Frames and numerics are byte-identical.** `Brutal.Numerics` `doubleQuat.cs` / `double3.cs`,
+  `KSA/QuaternionEx.cs` and `KSA/Double3Ex.cs` are unchanged, as are every Cci/Cce/Ccf accessor on
+  `Celestial`, `CreateOrb2Cci`, `StellarBody.cs`, `CelestialBody.cs`, `CelestialObject.cs`,
+  `IParentBody.cs` and `BubbleOrigin.cs`. Handedness, quaternion component order, `Concatenate` argument
+  order and `CreateFromAxisAngle` conventions all hold. Rev 5280's new `CelestialFrameMath` helper is a
+  **pure refactor** — inlining each of its four helpers reproduces the old expression textually, operand
+  order included, so results are bit-identical. `docs/KSA_CELESTIAL_COORDINATE_FRAMES.md` needs no
+  correction.
+- **Orbits are byte-identical.** `Orbit.CreateFromStateCci(IParentBody, UniverseTime, double3, double3,
+  byte4)` is the same line in both trees; every public orbital element is unchanged; `OrbitData.cs`,
+  `StateVectors.cs`, `IPatchedConics.cs` and `OrbitalTransfers.cs` have zero diff. `orbit/*` and the
+  5261 `UniverseTime.IsSaturated()` handling on `time_to_ap`/`time_to_pe`/`next_patch` are untouched.
+- **`encounters` is unaffected by rev 5266.** The target-gauge change — now
+  `FlightPlan.TryFindNextClosestApproach(target, now)`, earliest-in-time on the current trajectory,
+  replacing a global-minimum scan over `FindFinalFlightPlan().Patches` — writes only
+  `PatchedConic._closestApproaches`. gatOS reads `_encounters` (SOI encounters), a **different list**;
+  `Vehicle.Patch.Encounters` and `Encounter.{Body,GameTime,ClosestDistance}` are unchanged. (One doc
+  consequence outside this page: `Vehicle.FindFinalFlightPlan()` has been **deleted**, so
+  `docs/VALIDATION.md`'s claim that the listed approaches "reflect the final trajectory including
+  planned burns" — never true of `Patch.Encounters` — must be corrected.)
+- **Power/battery module surface.** `Battery.cs`, `BatteryState.cs`, `PowerConsumerState.cs`,
+  `GeneratorState.cs`, `SolarPanelState.cs`, `Mole.cs`, `MoleState.cs`, `RocketCoreState.cs`,
+  `Joules.cs`, `Watts.cs` and `VehicleProperties.cs` are **byte-identical** — no Joules↔Watts swap
+  anywhere — and the `ModuleStateful` SoA pattern (`GetState`, `States`, `Modules`,
+  `GetModuleAndAllMutableStatesForInitialization`, `TryGetFrom`, `StatesIdx`) is intact.
+- **One trap for any future reflective module walk:** `ModuleBase.Parent` became a **property** (it was
+  a field) and `IActivate` now extends `IPartParent`. Every gatOS read of `.Parent` goes through typed
+  code, never reflection, so this is source-compatible today.
 
 ---
 
@@ -863,10 +1039,16 @@ changing stock rendering. Exact fields and baseline are in `plans/PAINT_ASBUILT.
 Custom clutter textures read the live discovery chain only: `PlanetRenderer.GroundClutterRenderer` →
 `CelestialsWithGroundClutter` → `Celestial.BodyTemplate.GroundClutterReference.Ecotypes` →
 `ClutterEcotypeReference.{Name, MaterialReferences}` → `GroundClutterMaterialReference.
-{DiffuseReference, NormalReference, PBRMap, OpacityMap, ThicknessMap}` → `TextureReference.
-{GetRealId, Width, Height, Texture.MipMapCount, BindlessHandle}`, deduplicated by id with a usage
-count so a shared asset is visible before binding. Both the material reference and each
-`TextureReference` may be an unresolved reference, so `Get()` is called exactly as `ToGpuMaterial`
+{DiffuseReference, NormalReference, PBRMap, OpacityMap, ThicknessMap, AlphaMap}` → `TextureReference.
+{LocalPath, Width, Height, Texture.MipMapCount, BindlessHandle}`, deduplicated by key with a usage
+count so a shared asset is visible before binding. **The key is `TextureReference.LocalPath` — the
+asset XML's `Path` attribute (e.g. `Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2`) — not
+`GetRealId()`, and there are no `EarthGrassClutterDiffuse`-style ids anywhere in the shipped content**:
+keying on `GetRealId()` published an **empty** catalog on both 5261 and 5348, because no clutter
+texture element carries an `Id=` attribute. Corrected 2026-08-23 — full evidence in the
+[5348 findings](#5348-findings). `AlphaMap` (`[XmlElement("Alpha")]`, slot `alpha`) is new at 5348 and
+no stock material authors one yet, so it is normally absent from the listing.
+Both the material reference and each `TextureReference` may be an unresolved reference, so `Get()` is called exactly as `ToGpuMaterial`
 does; the walk is ~1 s cadence and skipped entirely until something is uploaded or bound. Unlike EVA
 paint's GPU material buffer, the one datum that matters for exact teardown **is** readable here:
 `TextureReference.ImageView` and `.BindlessHandle` are public properties, so the pristine stock slot
@@ -926,6 +1108,11 @@ ecliptic point**. Everything is recomputed every frame and nothing derived is ca
 because ego space is camera-relative and the planet turns; all of it is `double`, including the
 inverse, with only the final 3×4 rows packed to `float` for the push constant (inverting the packed
 float matrix would lose the surface point to cancellation at kilometre distances).
+
+⚠️ **5348:** the CPU seam sampler beneath `GetTerrainHeightFromDirCcf` changed
+(`Celestial.SampleCubeFacePointR`'s out-of-range branch, `FetchTexelSeamlessR` deleted), so terrain
+anchoring shifts by **sub-metre amounts near cube-face boundaries** — see
+[5348 findings](#5348-findings).
 
 Nothing is read back from the GPU. The CPU terrain height the composition uses omits the GPU's
 tessellation displacement, so the surface point can be off by decimetres near the camera — the

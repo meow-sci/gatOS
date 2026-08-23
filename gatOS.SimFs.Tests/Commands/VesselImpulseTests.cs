@@ -64,8 +64,10 @@ public sealed class VesselImpulseTests
             Assert.That(_sink.Last!.Values, Is.EqualTo(new[] { 100.0, -200.0, 3.5 }));
             Assert.That(_sink.Last!.Token, Is.Null, "no frame keyword ⇒ the actuator defaults to cci");
             Assert.That(_sink.Last!.Aux, Is.Null, "no unit keyword ⇒ the actuator defaults to ns");
-            Assert.That(_sink.Last!.Phase, Is.EqualTo(CommandPhase.Frame),
-                "impulse uses the teleport pattern (orbit rebuild), not solver-visible state — Frame phase");
+            Assert.That(_sink.Last!.Phase, Is.EqualTo(CommandPhase.Solver),
+                "impulse uses the teleport pattern, and Vehicle.Teleport detaches the vessel from its "
+                + "PhysicsBubble — which VehicleUpdateTask owns and mutates on the solver thread as of "
+                + "KSA 2026.8.22.5348, so it must drain in the Solver phase");
         });
     }
 

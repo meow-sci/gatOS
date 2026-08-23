@@ -13,12 +13,17 @@ namespace gatOS.GameMod.Game.Ksa.Actuators;
 internal static class DecouplerActuator
 {
     [KsaAnchor("Decoupler.IsActive / IsEnabled / SetIsActive(Vehicle, true)",
-        SourceFile = "KSA/Decoupler.cs:33,35,95", Verified = "2026-08-05", GameVersion = "2026.8.5.5168",
-        Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Decoupler.cs:71,73,149", Verified = "2026-08-23",
+        GameVersion = "2026.8.22.5348", Risk = ChurnRisk.Medium,
         Notes = "Re-fire is rejected by KSA → EBUSY. 5168 (rev 5132): SetIsActive gained an IsEnabled "
             + "precondition (players may disable a part's decoupler module, e.g. turning an adapter into "
             + "a static fairing). Without the guard below the call is a silent no-op that gatOS would "
-            + "still report as success, so a disabled decoupler is rejected up front with EOPNOTSUPP.")]
+            + "still report as success, so a disabled decoupler is rejected up front with EOPNOTSUPP. "
+            + "5348: Decoupler became a multi-instance component module — PartTemplate.Decoupler was "
+            + "deleted and instances are built from template.Components — so a single part could now "
+            + "host more than one. Stock content still has exactly one per part, so decouplers/<n> "
+            + "ordinals are stable today. IsActive/IsEnabled/SetIsActive are otherwise unchanged; "
+            + "the cited line numbers moved.")]
     internal static CommandResult Fire(Vehicle vehicle, int ordinal)
     {
         var decouplers = vehicle.Parts.Modules.Get<Decoupler>();

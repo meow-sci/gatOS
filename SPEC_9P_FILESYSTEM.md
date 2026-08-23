@@ -262,7 +262,7 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 | `controllable` | S | flag | `1` when KSA will accept flight-control + flight-computer commands (`Vehicle.IsControllable`: the vessel has a Control Module). A vessel reading `0` here **silently ignores** throttle/stage/attitude/burn/RCS/ignite — gatOS does not gate, it relies on KSA's own lockout, so pre-check this. The controlled vessel is always `1`. (KSA 2026.6.9.4750.) |
 | `is_kitten` | S | flag | `1` when the vessel is an EVA kitten (`KittenEva : Vehicle`). The addressing pre-check for the face-anchored cosmetics (`/sim/debug/thug_life/`, face FX) and the crew-cam portraits — a program that decorates "every kitten" filters the roster on this. (KSA 2026.8.19.5261.) |
 | `com` | S | vector | Center of mass in the assembly frame, meters. |
-| `scale` | **St** | scalar | Uniform model scale factor; read = current (best-effort; `1` = unscaled/unknown), **write any finite value > 0** to rescale the whole vessel model (action `vessel.scale`, Frame, one-shot). Default `1.0`; no upper clamp; `0`/negative/non-finite → `EINVAL`. Exempt from the active-vessel authority gate — works on **any** vessel by id. The game reverts the scale when it rebuilds the vessel (scene reload / staging / undock). First per-vessel control intentionally placed here rather than under `/sim/debug/`. |
+| `scale` | **St** | scalar | Uniform model scale factor; read = current (best-effort; `1` = unscaled/unknown), **write any finite value > 0** to rescale the whole vessel model (action `vessel.scale`, Frame, one-shot). Default `1.0`; no upper clamp; `0`/negative/non-finite → `EINVAL`. Exempt from the active-vessel authority gate — works on **any** vessel by id. The game reverts the scale when it rebuilds the vessel (scene reload / staging / undock). First per-vessel control intentionally placed here rather than under `/sim/debug/`. ⚠ **This is a visual/transform-only scale, and as of KSA `2026.8.22.5348` it deliberately no longer means what the in-game gizmo means.** It changes the model transform only — no collider, mass, volume or performance change. Rev 5329's `IRescale` made the **game's own editor scaling physical** (colliders, tank volume, inert mass, nozzle areas, decoupler separation force), clamped to **0.5×–2×** and quantized to 0.25 m diameter steps; `/sim` scale does none of that and still admits any finite value > 0. |
 | `always_render` | **St** | flag | Render-distance override; read = current mark, **write `1`** to keep this vessel rendered at any distance (bypasses KSA's sub-pixel cull — normally a vehicle whose projected diameter falls under 1 px is not drawn), **`0`** to restore the stock cull (action `vessel.always_render`, Frame). Off by default; exempt from the active-vessel authority gate — works on **any** vessel by id, like `scale`. The mark keys on the vessel **id**, so it survives scene rebuilds, and is dropped automatically when the vessel despawns. The render patches behind it exist only while ≥ 1 vessel is marked. Note: EVA kittens render through their own path and are **not** affected. |
 | `telemetry` | S | JSON | The **atomic** per-vessel document (see §4). One `read()` = one self-consistent snapshot. |
 | `position/cci` | S | vector | Position in **CCI** (Celestial-Centered Inertial about `parent`), meters. |
@@ -311,6 +311,12 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 | `navball/frame` | S | string | Navball reference frame (`EclBody`, `Lvlh`, …). |
 | `navball/speed` | S | scalar | Navball speed readout, m/s. |
 
+> **⚠ `deltav` and `twr` values were corrected in KSA `2026.8.22.5348` (rev 5318).** The paths, format
+> and units are unchanged, but the sequence→parts grouping beneath them was fixed — assigning a part to
+> **sequence 0** previously zeroed the vehicle's delta-v and TWR outright. Readings on affected vehicles
+> therefore **differ from the `2026.8.19.5261` baseline**: they were wrong before and are right now.
+> Re-baseline any stored expectation.
+
 #### 3.4.4 Environment *(detail)* — `…/environment/`
 
 | Path | A | Format | Meaning / units |
@@ -338,12 +344,12 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 
 | Path | A | Format | Meaning / units |
 |---|---|---|---|
-| `engines/<n>/active` | **St** | flag | Read = active; **write `0`/`1`** to enable/disable (action `engine.active`). |
+| `engines/<n>/active` | **St** | flag | Read = active; **write `0`/`1`** to enable/disable (action `engine.active`). ⚠ Since KSA `2026.8.22.5348` (rev 5329) staging activates engines **per module and across sub-parts**, matching each engine's own sequence number (§3.4.18). |
 | `engines/<n>/vac_thrust` | S | scalar | Vacuum thrust, N. |
 | `engines/<n>/isp` | S | scalar | Specific impulse, s. |
 | `engines/<n>/throttle` | S | scalar | Commanded throttle 0..1. |
 | `engines/<n>/propellant` | S | flag | Propellant available. |
-| `engines/<n>/min_throttle` | **St** | fraction | Read = deep-throttle floor; **write `0..1`** (action `engine.min_throttle`). |
+| `engines/<n>/min_throttle` | **St** | fraction | Read = deep-throttle floor; **write `0..1`** (action `engine.min_throttle`). ⚠ **Multi-engine meaning inverted in KSA `2026.8.22.5348` (rev 5317).** The write still lands on this engine's own floor, but the flight computer now folds the active engines with `Max` seeded at `0` instead of `Min` seeded at `1`, so the **effective** floor for the stack is set by the **most** restrictive engine rather than the least (and defaults to `0`, not `1`, with no active engine). On a multi-engine stack a single high `min_throttle` now raises the whole vehicle's floor. |
 
 #### 3.4.7 Tanks — `…/tanks/<resource>/` (resource = sanitized resource name)
 
@@ -420,7 +426,7 @@ propellant (stacking them is how total impulse is sized in the editor); `<m>` is
 
 | Path | A | Format | Meaning |
 |---|---|---|---|
-| `rcs/<n>/active` | **St** | flag | Read = active; **write `0`/`1`** (action `rcs.active`). |
+| `rcs/<n>/active` | **St** | flag | Read = active; **write `0`/`1`** (action `rcs.active`). ⚠ **No longer flipped by `ctl/stage`** since KSA `2026.8.22.5348` (rev 5329) — `ThrusterController` is not `ISequenced` (§3.4.18). |
 | `rcs/<n>/propellant` | S | flag | Propellant available. |
 | `rcs/<n>/map` | S | string | Active control-axis flags (e.g. `Pitch|Yaw`). |
 
@@ -530,7 +536,7 @@ its live pose).
 | `ctl/ignite` | T | `1` | `vessel.ignite` | Frame | Ignite the active engines. |
 | `ctl/shutdown` | T | `1` | `vessel.shutdown` | Frame | Shut down the active engines. |
 | `ctl/engine` | **St** | `0`/`1` | `vessel.engine` | Frame | Ignition master: read = live `EngineOn`, write `1`=ignite/`0`=shutdown. |
-| `ctl/stage` | T | `1` | `vessel.stage` | Frame | Activate the next stage. |
+| `ctl/stage` | T | `1` | `vessel.stage` | Frame | Activate the next stage. ⚠ **Per-module since KSA `2026.8.22.5348` (rev 5329) — it no longer activates RCS thrusters.** See the staging note below. |
 | `ctl/throttle` | **St** | `0..1` | `vessel.throttle` | Frame | Manual throttle fraction; read = current setpoint. |
 | `ctl/lights` | **St** | `0`/`1` | `vessel.lights` | Frame | Master lights. |
 | `ctl/rcs` | **St** | `0`/`1` | `vessel.rcs` | Frame | Master RCS (the per-thruster `ThrusterController` active flags). ⚠ This is **not** the flight computer's RCS toggle (keybind **R**) — that is a separate switch, exposed as **`ctl/rcs_mode`** below, and it overrides this one. |
@@ -540,7 +546,7 @@ its live pose).
 | `ctl/attitude_frame` | **St** | token | `vessel.attitude_frame` | **Solver** | Reference frame for the named modes (see §3.4.19). |
 | `ctl/rcs_mode` | **St** | token | `vessel.rcs_mode` | **Solver** | **The flight computer's RCS master switch** — `Enabled` or `Disabled` (case-insensitive), the file twin of the in-game **R** keybind. Distinct from `ctl/rcs`, which toggles the per-thruster `ThrusterController` active flags. ⚠ **Since KSA 2026.8.5.5168 this is a hard cut-off for *manual* RCS too:** while `Disabled`, the game zeroes the manual thruster command flags outright, so **`ctl/translate` and `ctl/rotate` do nothing at all**, and auto attitude holds lose RCS torque authority (only engine-gimbal TVC survives, and only while burning). Read this first when an RCS command appears to be ignored — the `ctl/translate`/`ctl/rotate` read-backs report the *commanded* signs and cannot reveal the condition. |
 | `ctl/attitude_target` | **St** | `x y z w` | `vessel.attitude_target` | **Solver** | Custom **Body→CCI** quaternion; the autopilot points body **+X** along it. ⚠ KSA ≥ 2026.7.8.4980: the flight computer's roll mode defaults to **decoupled** ("ANY"), so on a fresh vessel the quaternion's **roll component is not held** — pointing converges, roll floats free unless the player sets a roll mode in-game (loaded saves keep their saved mode). |
-| `ctl/burn` | **St** | `ut dvx dvy dvz` | `vessel.burn` | **Solver** | Schedule an impulsive burn at `ut` with a CCI Δv vector. |
+| `ctl/burn` | **St** | `ut dvx dvy dvz` | `vessel.burn` | **Solver** | Schedule an impulsive burn at `ut` with a CCI Δv vector. ⚠ **Same interface, different execution since KSA `2026.8.22.5348` (rev 5317):** burn **duration**, the **throttle profile** and the point at which the flight computer **abandons** an auto burn all moved. The TVC row/column multiplication bug was fixed and the gains retuned, the auto-burn throttle is now latched on the burn target instead of re-solved, and a two-consecutive-denials latch replaced the propellant check. For the same commanded Δv, expect a different burn time than on `2026.8.19.5261` — re-tune any hard-coded expectation. |
 | `ctl/focus` | T | `1` | `camera.focus` | Frame | Move the camera to this vessel (view-only; no control change). |
 
 > **Solver phase matters.** `attitude_mode`/`attitude_frame`/`attitude_target`/`burn`/`rcs_mode` write
@@ -549,6 +555,16 @@ its live pose).
 > All transports get the right phase automatically (derived from the action key). As an author you
 > just write the file — but expect these to take effect on the **next solver step** (~10 Hz), not
 > instantly.
+
+> **⚠ Staging is per-*module* since KSA `2026.8.22.5348` (rev 5329) — `ctl/stage` no longer touches RCS.**
+> `ctl/stage` now walks the staged part's **subtree** and activates only modules that implement KSA's
+> `ISequenced` **and** carry that sequence number themselves. `ISequenced` is exactly `EngineController`
+> and `Decoupler`; `ThrusterController` is **not** one, so **`rcs/<n>/active` no longer flips as a side
+> effect of staging** (it did through `2026.8.19.5261`) — toggle RCS explicitly via `ctl/rcs` or
+> `rcs/<n>/active`. Two further consequences: engines and decouplers on **sub-parts** are now staged
+> where they were previously skipped, and a part whose modules sit in **different sequences** needs
+> **one `ctl/stage` press per sequence**. Affects the post-stage reads `engines/<n>/active`,
+> `rcs/<n>/active` and `decouplers/<n>/*`.
 
 #### 3.4.19 Attitude tokens (accepted values)
 
@@ -625,8 +641,8 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 
 | Path | A | Write | Action key | Phase | Meaning |
 |---|---|---|---|---|---|
-| `debug/vessels/<id>/teleport` | **St** | `px py pz vx vy vz` | `debug.teleport` | Frame | Set the vessel's **CCI state vector** (position m, velocity m/s) about its **current parent body**. See §6. |
-| `debug/vessels/<id>/impulse` | **St** | `x y z [cci\|body] [ns\|dv]` | `debug.impulse` | Frame | One-shot impulsive kick: a 3-vector **impulse in N·s** (default; Δv = J ÷ live vessel mass, the `Vehicle.Split` separation-impulse math) or a direct **Δv in m/s** (`dv`), in the parent-**CCI** frame (default) or the **vessel body frame** (`body`; +X = nose/thrust axis). The two keywords may follow the numbers in any order. No propellant is spent; the orbit is rebuilt at the current CCI position with the bumped velocity (the teleport pattern), so it works on-rails and in the physics bubble alike. Zero vector = no-op success. Read = `0 0 0` (no read-back). See §6. |
+| `debug/vessels/<id>/teleport` | **St** | `px py pz vx vy vz` | `debug.teleport` | **Solver** | Set the vessel's **CCI state vector** (position m, velocity m/s) about its **current parent body**. ⚠ **Solver phase since KSA `2026.8.22.5348`** (was Frame; revs 5331/5339 moved physics-bubble ownership onto the solver thread) — it therefore lands on the next solver step, and a `ctl/batch` may **no longer** mix it with Frame-phase actions (§3.10). See §6. |
+| `debug/vessels/<id>/impulse` | **St** | `x y z [cci\|body] [ns\|dv]` | `debug.impulse` | **Solver** | One-shot impulsive kick: a 3-vector **impulse in N·s** (default; Δv = J ÷ live vessel mass, the `Vehicle.Split` separation-impulse math) or a direct **Δv in m/s** (`dv`), in the parent-**CCI** frame (default) or the **vessel body frame** (`body`; +X = nose/thrust axis). The two keywords may follow the numbers in any order. No propellant is spent; the orbit is rebuilt at the current CCI position with the bumped velocity (the teleport pattern), so it works on-rails and in the physics bubble alike. Zero vector = no-op success. Read = `0 0 0` (no read-back). ⚠ **Solver phase since KSA `2026.8.22.5348`** (was Frame; same reason as `teleport` above — it rides the same machinery), so it lands on the next solver step and cannot share a `ctl/batch` with Frame-phase actions (§3.10). See §6. |
 | `debug/vessels/<id>/refill_fuel` | T | `1` | `debug.refill_fuel` | **Solver** | Refill all consumables. |
 | `debug/vessels/<id>/refill_battery` | T | `1` | `debug.refill_battery` | **Solver** | Refill all batteries. |
 | `debug/vessels/<id>/docking/<n>/pushoff_impulse` | **St** | number (N·s ≥0) | `debug.docking_pushoff` | Frame | Override a docking port's undock separation impulse (`DockingPort.PushoffImpulse`). |
@@ -731,7 +747,7 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/terrain/bodies/<id>/hapke_albedo` | **St** | number (`0.0001..0.99999`) | `debug.terrain_set` | Frame | Mean single-scattering albedo of the Hapke surface model. |
 | `debug/terrain/bodies/<id>/biomes/blend_strength` | **St** | number (`1..10`) | `debug.terrain_set` | Frame | Sharpness of the blend between neighbouring biome materials. |
 | `debug/terrain/bodies/<id>/biomes/{detail_fade_start_km,detail_fade_end_km}` | **St** | number, km (`≥0`) | `debug.terrain_set` | Frame | Altitudes where biome detail textures start / finish fading in. |
-| `debug/terrain/bodies/<id>/tessellation/{edge_length_px,factor,range_m}` | **St** | number (`0.1..20` px, `0..1`, `1..20000` m) | `debug.terrain_set` | Frame | Target screen-space edge length, the global tessellation-factor scale, and the camera distance over which tessellation falls off. |
+| `debug/terrain/bodies/<id>/tessellation/{edge_length_px,factor,range_m}` | **St** | number (`0.1..20` px, `0..1`, `1..20000` m) | `debug.terrain_set` | Frame | Target screen-space edge length, the global tessellation-factor scale, and the camera distance over which tessellation falls off. ⚠ **`range_m` re-baselined in KSA `2026.8.22.5348`:** the engine default moved **220 → 50 m**, and the shader's displacement falloff window moved from `range×0.1 … range×0.95` to `range×0.75 … range×0.975` — the same `range_m` now fades much later and much more abruptly. gatOS's `1..20000` clamp is unchanged and still admits the new default, but any value tuned against the old 220 m default is now misleading; read the live value before writing. |
 | `debug/terrain/bodies/<id>/json` | S | JSON object | — | — | Every terrain field of the body in one line. |
 | `debug/terrain/bodies/<id>/reset` | T | `1` | `debug.terrain_reset` | Frame | Restore that body's pristine terrain values. |
 
@@ -882,6 +898,15 @@ capture costs nothing until a client writes `1` to `enabled` *and* opens `stream
 
 Out-of-range writes to the numeric controls **clamp** (and succeed), matching the config's clamp-don't-reject rule.
 
+> **Captured frames stay complete over opaque game UI (KSA `2026.8.22.5348`, rev 5283).** KSA's new
+> `UiCoverageMaskSystem` stamps the reverse-Z near plane into the opaque pre-pass depth wherever
+> fully-opaque ImGui UI covers the screen, so every later shading test under a game window is skipped by
+> early-Z. gatOS captures the offscreen scene target **before** the UI composite, so without intervention
+> the stream would carry **unshaded holes** exactly where the local player's windows and HUD sit —
+> invisible locally, visible only to the remote reader. gatOS therefore **suppresses that UI pixel-coverage
+> culling while the stream has readers**. The player's **saved graphics setting is not modified**: the
+> suppression is live-only and lifts with the last reader, restoring the optimization.
+
 > **Debug harness (dormant):** `DisplaySurface.PngDumpDirectory` (settable only in code — see the
 > comment at the construction site in `Mod.cs`) switches `stream` from Kitty bytes to a host-side
 > dump of one `screencap-<ISO 8601 UTC>.{png,kitty}` pair per second plus a plain-text progress line
@@ -996,6 +1021,10 @@ EOF
   (the host log names the failing line).
 - **One phase per batch.** All lines must share the action phase (§5.1) — Frame **or** Solver, not
   both (`EINVAL`): the two phases drain at different points, so "same tick" is unsatisfiable.
+  ⚠ **`debug.teleport` and `debug.impulse` became Solver phase in KSA `2026.8.22.5348`** (§3.7): a batch
+  that mixed a teleport or impulse with a Frame-phase line such as `ctl/throttle` used to be legal and
+  now fails `EINVAL`. A batch of teleports/impulses alone (the formation case above) is still fine, and
+  they may now share a batch with `debug/vessels/<id>/refill_fuel`/`refill_battery`.
 - **Limits:** ≤ **64** commands and ≤ **64 KiB** per batch (`EINVAL`).
 - **Abort for free.** Closing the file without a `commit` line discards the batch. (An
   *unterminated* trailing `commit` — no final newline — fires best-effort on close, like any
@@ -1428,8 +1457,8 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `docking.undock` | docking n | value `1` | Frame | `docking/<n>/undock` | one-shot |
 | `camera.focus` | — | token = id | Frame | `ctl/focus`, `bodies/<id>/focus`, `debug/focus` | view-only; no authority gate; sets the follow target on **both** the viewport's base and map cameras (so the map view can no longer lag the base view), `alert:false`; works even with `camera_enabled=false` |
 | `debug.control_vessel` | — | token = id | Frame | `debug/control_vessel` | grants control |
-| `debug.teleport` | — | values `[px,py,pz,vx,vy,vz]` | Frame | `debug/vessels/<id>/teleport` | CCI about current parent |
-| `debug.impulse` | — | values `[x,y,z]`; token = frame (`cci`\|`body`, omit ⇒ `cci`); aux = unit (`ns`\|`dv`, omit ⇒ `ns`) | Frame | `debug/vessels/<id>/impulse` | one-shot kick; N·s ⇒ Δv = J ÷ live mass; `dv` ⇒ Δv m/s as-is |
+| `debug.teleport` | — | values `[px,py,pz,vx,vy,vz]` | **Solver** | `debug/vessels/<id>/teleport` | CCI about current parent; **Frame → Solver in KSA `2026.8.22.5348`** (revs 5331/5339) |
+| `debug.impulse` | — | values `[x,y,z]`; token = frame (`cci`\|`body`, omit ⇒ `cci`); aux = unit (`ns`\|`dv`, omit ⇒ `ns`) | **Solver** | `debug/vessels/<id>/impulse` | one-shot kick; N·s ⇒ Δv = J ÷ live mass; `dv` ⇒ Δv m/s as-is; **Frame → Solver in KSA `2026.8.22.5348`** (revs 5331/5339) |
 | `debug.refill_fuel` | — | value `1` | **Solver** | `debug/vessels/<id>/refill_fuel` | |
 | `debug.refill_battery` | — | value `1` | **Solver** | `debug/vessels/<id>/refill_battery` | |
 | `debug.docking_pushoff` | docking n | value N·s | Frame | `debug/vessels/<id>/docking/<n>/pushoff_impulse` | |
@@ -1621,7 +1650,9 @@ velocity m/s) and applies it **about the vessel's *current* parent body** via
 - **Formations: teleport the whole fleet through `/sim/ctl/batch` (§3.10).** Sequential teleport
   writes each wait a frame, and one frame at ~7.8 km/s is ~100 m of drift — far more than a
   few-meter spacing. Batched, all the teleports execute in the same tick and the spacing you
-  computed is the spacing you get.
+  computed is the spacing you get. ⚠ Both `teleport` and `impulse` are **Solver** phase since KSA
+  `2026.8.22.5348` — an all-teleport batch is unaffected, but a batch that also carries a Frame-phase
+  line (e.g. `ctl/throttle`) now fails `EINVAL` (§3.10).
 
 `mu` and `radius` come from `/sim/bodies/<parent>/{mu,radius}` (or SDK `bodies()` → `mu`,
 `mean_radius`). See `.agents/skills/gatos/recipes.md` for a complete teleport program.
@@ -1719,7 +1750,7 @@ H=http://127.0.0.1:4242/v1
 curl -T rock.png "$H/paint/texture/file/rock.png"                       # upload (≤ 1 MiB per request)
 curl -s "$H/paint/texture/files"                                        # what is uploaded
 curl -s "$H/fs/paint/textures/clutter"                                  # what can be overridden
-curl -X POST --data 'EarthGrassClutterDiffuse rock.png' "$H/fs/paint/textures/bind"
+curl -X POST --data 'Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2 rock.png' "$H/fs/paint/textures/bind"
 curl -s "$H/fs/paint/textures/applied"                                  # …and what reached the GPU
 ```
 
@@ -1858,8 +1889,8 @@ comparison per frame.
 ```sh
 cat rock.png > /sim/paint/textures/file/rock.png       # upload (commits on close)
 cat /sim/paint/textures/clutter                        # what can be overridden, and what shares it
-echo 'EarthGrassClutterDiffuse rock.png' > /sim/paint/textures/bind          # renders as authored
-echo 'EarthGrassClutterDiffuse rock.png raw' > /sim/paint/textures/bind      # …or as KSA would read it
+echo 'Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2 rock.png' > /sim/paint/textures/bind      # renders as authored
+echo 'Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2 rock.png raw' > /sim/paint/textures/bind  # …or as KSA would read it
 cat /sim/paint/textures/applied                        # …and what actually reached the GPU
 echo all > /sim/paint/textures/unbind                  # restore every stock texture
 ```
@@ -1873,7 +1904,7 @@ echo all > /sim/paint/textures/unbind                  # restore every stock tex
 | `paint/textures/help` | R | the grammar plus what the clutter shader does to a texture and what each bind mode does about it | — |
 | `paint/textures/bindings` | R | one row per desired binding: `<texture-id> <file> <mode>`; `mode` ∈ `faithful`\|`raw` — **symmetric with `bind`**, so a row can be echoed straight back to re-create it | — |
 | `paint/textures/applied` | R | one row per binding as the GPU sees it: `<texture-id> <file> <state> <width> <height> <mips> <vram_bytes> <error>`; `state` ∈ `pending`\|`applied`\|`failed`, an empty error renders `-` | — |
-| `paint/textures/clutter` | R | one row per overridable stock texture: `<texture-id> <slot> <width> <height> <mips> <used_by> <ecotypes>`; `slot` ∈ `diffuse`\|`normal`\|`pbr`\|`opacity`\|`thickness`, `ecotypes` is comma-separated (`-` when none) | — |
+| `paint/textures/clutter` | R | one row per overridable stock texture: `<texture-id> <slot> <width> <height> <mips> <used_by> <ecotypes>`; `<texture-id>` is the asset's **content-relative path** (e.g. `Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2`) — install-independent and space-free; `slot` ∈ `diffuse`\|`normal`\|`pbr`\|`opacity`\|`thickness`\|`alpha` (`alpha` is the `PbrMaterialReference.AlphaMap` slot added in KSA `2026.8.22.5348`; no stock clutter material authors one yet, so the row is normally absent), `ecotypes` is comma-separated (`-` when none) | — |
 | `paint/textures/bind` | R/W | write `<texture-id> <file> [faithful\|raw]`; read = empty. The mode is optional and defaults to `faithful` — gatOS corrects the decoded pixels so an ordinary sRGB PNG renders as authored; `raw` uploads them untouched (see below) | `paint.texture_bind` |
 | `paint/textures/unbind` | R/W | write `<texture-id>`, or `all` | `paint.texture_unbind` |
 | `paint/textures/clear` | R/W trigger | write `1`; global teardown — restores every stock texture, keeps the uploads | `paint.texture_clear` |

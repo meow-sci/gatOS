@@ -169,14 +169,17 @@ internal static class TerrainActuator
             + "over the reflected _renderUboMap/_meshUboMap",
         SourceFile = "KSA/PlanetRenderer.cs:2107-2398 (the in-game Terrain Editor's write + mirror loop) / "
             + "KSA/AstronomicalTemplate.cs:27,51 / KSA/BiomeMaterialsReference.cs",
-        Verified = "2026-08-01", GameVersion = "2026.7.10.5056", Risk = ChurnRisk.High,
+        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
         Notes = "INVESTIGATION (plan §5 directive): PlanetRenderer has NO public repopulate/invalidate that "
             + "would re-derive a body's UBO from its reference objects — the two population loops the plan "
             + "pointed at (:684-720 for PlanetUbo, :1086-1114 for MeshUbo) are inline CONSTRUCTOR code, not "
             + "callable methods, and they also reallocate descriptor sets. So the paired write is "
             + "implemented faithfully instead: write frame slot 0, then copy that struct into the remaining "
             + "MaxFramesInFlight mirrors (:2388-2398) or the value flickers. The memory is host-visible + "
-            + "host-coherent, written on the same (main) thread the game's own editor writes it from.")]
+            + "host-coherent, written on the same (main) thread the game's own editor writes it from. "
+            + "5348: the mirror is now FIELD-WISE, not a struct copy — MeshUbo gained per-frame "
+            + "DirAnchorHi/Lo + DirAnchorUvHi/Lo (revs 5319-5325) that GenerateMeshData rewrites every "
+            + "frame from the live camera; see the Mirror remarks.")]
     private static bool Write(PlanetRenderer renderer, FxReflect.TerrainUboMaps maps, Celestial body,
         FxFieldSpec spec, IReadOnlyList<double> v)
     {
@@ -239,21 +242,44 @@ internal static class TerrainActuator
     }
 
     /// <summary>
-    ///     Copies the just-written frame-0 UBO structs into every other frame-in-flight mirror — the
+    ///     Propagates the just-written frame-0 values into every other frame-in-flight mirror — the
     ///     tail of the in-game editor's write path. Without it the change flickers, appearing only on
     ///     the frames that happen to sample slot 0.
     /// </summary>
+    /// <remarks>
+    ///     Copies <b>only the individual fields gatOS writes</b>, never the whole struct. KSA
+    ///     2026.8.22.5348 (revs 5319–5325, the terrain-precision rework) gave <c>MeshUbo</c> four
+    ///     split-double anchor fields — <c>DirAnchorHi/Lo</c> and <c>DirAnchorUvHi/Lo</c> — which
+    ///     <c>PlanetRenderer.GenerateMeshData</c> rewrites <i>per frame index, every frame</i> from the
+    ///     live camera. A whole-struct copy stamps frame 0's anchor over each other frame's live value,
+    ///     corrupting one frame of terrain precision per mirrored frame on every terrain write. Before
+    ///     5348 the only per-frame <c>MeshUbo</c> fields were frame-invariant, so the struct copy was
+    ///     harmless; field-wise copying is also immune to the next such addition, on either struct.
+    /// </remarks>
     private static void Mirror(PlanetRenderer renderer, FxReflect.TerrainUboMaps maps, int renderSlot, int meshSlot)
     {
         var frames = Program.GetRenderer()?.MaxFramesInFlight ?? 1;
-        var planetValue = PlanetUbo(renderer, maps, renderSlot);
-        var meshValue = MeshUbo(renderer, maps, meshSlot);
+        var planetSrc = PlanetUbo(renderer, maps, renderSlot);
+        var meshSrc = MeshUbo(renderer, maps, meshSlot);
         for (var frame = 1; frame < frames; frame++)
         {
             var planetOffset = (renderer.NumCelestials * frame + renderSlot) * renderer.PlanetUboStride;
             var meshOffset = (renderer.NumCelestials * frame + meshSlot) * renderer.MeshUboStride;
-            maps.RenderUbo.Offset(planetOffset).As<PlanetRenderer.PlanetUbo>() = planetValue;
-            maps.MeshUbo.Offset(meshOffset).As<PlanetRenderer.MeshUbo>() = meshValue;
+
+            ref var planetDst = ref maps.RenderUbo.Offset(planetOffset).As<PlanetRenderer.PlanetUbo>();
+            planetDst.TanMeanSlopeRoughnessRadians = planetSrc.TanMeanSlopeRoughnessRadians;
+            planetDst.HapkeMeanAlbedo = planetSrc.HapkeMeanAlbedo;
+            planetDst.BiomeBlendStrength = planetSrc.BiomeBlendStrength;
+            planetDst.DetailFadeStartMeters = planetSrc.DetailFadeStartMeters;
+            planetDst.DetailFadeEndMeters = planetSrc.DetailFadeEndMeters;
+            planetDst.TessellationEdgeLengthPixels = planetSrc.TessellationEdgeLengthPixels;
+            planetDst.TessellationFactor = planetSrc.TessellationFactor;
+            planetDst.TessellationRangeMeters = planetSrc.TessellationRangeMeters;
+
+            ref var meshDst = ref maps.MeshUbo.Offset(meshOffset).As<PlanetRenderer.MeshUbo>();
+            meshDst.MinHeight = meshSrc.MinHeight;
+            meshDst.MaxHeight = meshSrc.MaxHeight;
+            meshDst.BiomeBlendStrength = meshSrc.BiomeBlendStrength;
         }
     }
 

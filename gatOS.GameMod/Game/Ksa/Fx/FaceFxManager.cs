@@ -51,8 +51,14 @@ internal sealed class FaceFxManager
     /// <summary>Concurrent gatOS-held emitters (the game's pool has 1024 slots; stay tiny).</summary>
     private const int MaxLive = 24;
 
-    /// <summary>A kitten's face point in its assembly frame (the crew-portrait camera's own numbers).</summary>
-    private static readonly double3 KittenFaceAsmb = new(0.25, 0, -0.85);
+    /// <summary>
+    ///     A kitten's face point in its assembly frame (the crew-portrait camera's own numbers).
+    ///     Mirrors <c>CrewPortraitPanel.FACE_HEIGHT_OFFSET_EVA</c>, which KSA 2026.8.22.5348 (rev 5270)
+    ///     lowered 0.85 → 0.70 so the portrait frames the face instead of the top of the helmet. The
+    ///     game additionally tracks a Head/Neck/Chest bone when the player picks one, so this constant
+    ///     is now only the <c>Default</c> case.
+    /// </summary>
+    private static readonly double3 KittenFaceAsmb = new(0.25, 0, -0.70);
 
     private readonly List<EmitterHandle> _live = [];
 

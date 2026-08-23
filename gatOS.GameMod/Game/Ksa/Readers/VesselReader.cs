@@ -369,7 +369,7 @@ internal static class VesselReader
     }
 
     [KsaAnchor("Vehicle.NavBallData{AttitudeAngles(int3,deg),ThrustWeightRatio,DeltaV,Frame,Speed}",
-        SourceFile = "KSA/NavBallData.cs", Verified = "2026-08-01", GameVersion = "2026.8.3.5117",
+        SourceFile = "KSA/NavBallData.cs", Verified = "2026-08-23", GameVersion = "2026.8.22.5348",
         Risk = ChurnRisk.Medium,
         Notes = "AttitudeAngles X/Y/Z = pitch/yaw/roll in whole degrees. SEMANTIC DRIFT at rev 5114 — "
             + "BOTH navball performance values changed meaning while keeping their names: DeltaVInVacuum "
@@ -377,7 +377,14 @@ internal static class VesselReader
             + "(the ACTIVE staging sequence's propellant-aware dV) rather than the whole-stack vacuum "
             + "rocket equation; ThrustWeightRatio's numerator moved from TotalEngineVacuumThrust to "
             + "ComputeActiveThrust(AtmosphericPressure), so it is now atmosphere-corrected and excludes "
-            + "engines that cannot produce thrust. Both flow to /sim navball/deltav + navball/twr.")]
+            + "engines that cannot produce thrust. Both flow to /sim navball/deltav + navball/twr. "
+            + "5348 (rev 5318): NavBallData and Vehicle.UpdateNavballData are unchanged, but the "
+            + "sequence-to-parts grouping beneath them is not — SequencePerformanceList now iterates "
+            + "part.GetSubtreeSequencedModules() and matches each MODULE's own Sequence instead of "
+            + "testing part.Sequenceable + the part's Sequence, and decoupler jettison-mass attribution "
+            + "changed the same way. That is the 'a part assigned to sequence 0 silently zeroed the "
+            + "vehicle's delta-v and TWR' fix, so these two reads will differ (correctly) from the 5261 "
+            + "baseline on affected vehicles.")]
     private static NavballSnapshot SampleNavball(Vehicle vehicle)
     {
         ref readonly var nb = ref vehicle.NavBallData;
@@ -409,10 +416,13 @@ internal static class VesselReader
     // ---- engines (M9 core + G3 throttle/propellant, one pass) --------------------------------
 
     [KsaAnchor("vehicle.Parts.Modules.Get<EngineController>(); .IsActive, .VacuumData{ThrustMax,MassFlowRateMax}",
-        SourceFile = "KSA/EngineController.cs", Verified = "2026-07-03", GameVersion = "2026.7.3.4826", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/EngineController.cs", Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.Medium,
         Notes = "Isp computed thrust/(massflow·g0). Index is the vessel-level ordinal the control addresses. "
             + "4826: Decoupler.Decouple no longer force-deactivates the separated stage's IActivate modules, "
-            + "so engines/<n>/active on a just-decoupled vehicle retains its pre-split state (was: false).")]
+            + "so engines/<n>/active on a just-decoupled vehicle retains its pre-split state (was: false). "
+            + "5348: the ThrusterController constructor dropped its part.ActivateInStage(null) broadcast, "
+            + "so engines/<n>/active on a part that co-hosts RCS now reads an honest spawn default "
+            + "instead of a spurious true.")]
     [KsaAnchor("EngineControllerState{CommandThrottle,IsPropellantAvailable} via ModuleStateful.TryGetFrom",
         SourceFile = "KSA/EngineControllerState.cs", Verified = "2026-07-14", GameVersion = "2026.7.5.4892", Risk = ChurnRisk.Medium,
         Notes = "Read in the same pass as the module walk (GP3); detail-off skips the state fetch and "
@@ -828,15 +838,19 @@ internal static class VesselReader
     }
 
     [KsaAnchor("vehicle.Parts.Modules.Get<Decoupler>(); .IsActive (fired, irreversible); .IsEnabled",
-        SourceFile = "KSA/Decoupler.cs:33,35", Verified = "2026-08-05", GameVersion = "2026.8.5.5168",
-        Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Decoupler.cs:71,73", Verified = "2026-08-23",
+        GameVersion = "2026.8.22.5348", Risk = ChurnRisk.Medium,
         Notes = "4826: Decoupler.Decouple dropped its fire-time cascade that walked the separated vehicle "
             + "deactivating every IActivate module — module active/fired state on the separated stage now "
             + "persists as-is. IsActive itself (fired, irreversible) is unchanged. 5168 (rev 5132): "
             + "Decoupler gained IEnable + IsEnabled/SetIsEnabled (players can disable a part's decoupler "
             + "module, e.g. to turn an adapter into a static fairing) and SetIsActive is now gated on it, "
             + "so a disabled decoupler silently ignores a fire — surfaced as decouplers/<n>/enabled and "
-            + "enforced with EOPNOTSUPP in DecouplerActuator.")]
+            + "enforced with EOPNOTSUPP in DecouplerActuator. 5348: Decoupler is now a multi-instance "
+            + "component module (PartTemplate.Decoupler deleted; instances come from "
+            + "template.Components), so the one-decoupler-per-part assumption behind these ordinals is "
+            + "no longer structural — stock content still satisfies it. IsActive/IsEnabled unchanged; "
+            + "the cited line numbers moved.")]
     private static IReadOnlyList<DecouplerSnapshot> SampleDecouplers(Vehicle vehicle)
     {
         var modules = vehicle.Parts.Modules.Get<Decoupler>();
@@ -849,7 +863,14 @@ internal static class VesselReader
     }
 
     [KsaAnchor("vehicle.Patch.Encounters; Encounter{Body.Id,GameTime,ClosestDistance}",
-        SourceFile = "KSA/PatchedConic.cs / KSA/Encounter.cs", Verified = "2026-06-12", Risk = ChurnRisk.Medium)]
+        SourceFile = "KSA/PatchedConic.cs / KSA/Encounter.cs", Verified = "2026-08-23",
+        GameVersion = "2026.8.22.5348", Risk = ChurnRisk.Medium,
+        Notes = "5348: Vehicle.Patch.Encounters and Encounter{Body,GameTime,ClosestDistance} are "
+            + "unchanged. Rev 5266's target-gauge rework (FlightPlan.TryFindNextClosestApproach, "
+            + "earliest-in-time on the current trajectory, replacing a global-minimum scan) writes "
+            + "PatchedConic._closestApproaches — a DIFFERENT list — and Vehicle.FindFinalFlightPlan was "
+            + "deleted. These are SOI encounters and are unaffected; they have never reflected planned "
+            + "burns.")]
     private static IReadOnlyList<EncounterSnapshot> SampleEncounters(Vehicle vehicle)
     {
         var patch = vehicle.Patch;

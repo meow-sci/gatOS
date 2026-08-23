@@ -164,12 +164,16 @@ internal sealed unsafe class StickerDecalRenderer : IDisposable
     [KsaAnchor("GlobalShaderBindings.DescriptorSetLayout; Program.Instance.BindlessTextures."
             + "DescriptorSetLayout",
         SourceFile = "KSA/GlobalShaderBindings.cs:55 / RenderCore.Systems/BindlessTextureLibrary.cs:38",
-        Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
+        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
         Notes = "Set 0 is the game-wide Camera/GlobalLighting/Celestial/Vessel UBO block with a DYNAMIC "
             + "offset per viewport (Content/Core/Shaders/Common/Global.glsl:144). Set 1 is ours. Set 2 "
             + "is the bindless table, declared UpdateAfterBind|PartiallyBound, which is why our shader "
             + "may index a slot the game never touches. Set indices are baked into the GLSL "
-            + "(SET_GLOBAL defaults to 0, SET_TEXTURE is #defined to 2), so this order is load-bearing.")]
+            + "(SET_GLOBAL defaults to 0, SET_TEXTURE is #defined to 2), so this order is load-bearing. "
+            + "5348: both layouts are unchanged. Rev 5301 reshaped UboLightingData (4 portrait-light "
+            + "arrays -> 16-entry forward-light arrays), which grew the set-0 UBO stride, but the GLSL "
+            + "is compiled at runtime against the shipped headers and the offset comes from "
+            + "GlobalShaderBindings.DynamicOffset, so nothing here is hard-coded to the old stride.")]
     private static VkPipelineLayout BuildPipelineLayout(DeviceEx device, DescriptorSetLayoutEx depthSetLayout)
     {
         if (Program.Instance?.BindlessTextures is not { } bindless)
@@ -219,10 +223,10 @@ internal sealed unsafe class StickerDecalRenderer : IDisposable
             + "Program.Instance.ColorFormat; Presets.{InputAssembly.TriangleList,Rasterization.Fill.CullFront}; "
             + "RenderingPresets.{ReverseZDepthStencil.NoDepthTest,BlendState.BlendColorAlphaOver}; "
             + "Renderer.{Device,DynamicStateInfo,ViewportState}",
-        SourceFile = "RenderCore/ShaderModuleUtils.cs:77 / KSA/ModLibrary.cs / KSA/FileReference.cs:24 / "
-            + "KSA/Program.cs:199 / Brutal.VulkanApi.Abstractions/Presets.cs:167,213 / "
+        SourceFile = "RenderCore/ShaderModuleUtils.cs:79 / KSA/ModLibrary.cs / KSA/FileReference.cs:24 / "
+            + "KSA/Program.cs:203 / Brutal.VulkanApi.Abstractions/Presets.cs:167,213 / "
             + "KSA/RenderingPresets.cs:63,95 / Core/Renderer.cs:21-23 / KSA/GridPass.cs:137-198",
-        Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
+        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
         Notes = "A null CompileOptions uses ShaderModuleUtils' own defaults, which already carry the "
             + "device's Vulkan/SPIR-V target and the default include callbacks "
             + "(ShaderModuleUtils.cs:16-22). #include resolves relative to the DIRECTORY OF THE "
@@ -232,7 +236,13 @@ internal sealed unsafe class StickerDecalRenderer : IDisposable
             + "than hard-coded — and it MUST be NUL-terminated, like Game/Ksa/Paint/PartPaintPatches"
             + ".cs:56-59. Modules we compile are OURS to destroy (unlike ModLibrary's), which happens "
             + "as soon as the pipeline is created. Program.Instance.ColorFormat is the format the main "
-            + "offscreen target is constructed with (Program.cs:1427), i.e. R16G16B16A16_SFLOAT.")]
+            + "offscreen target is constructed with (Program.cs:1462), i.e. R16G16B16A16_SFLOAT. "
+            + "5348: KSA/RenderingPresets.cs, Brutal.VulkanApi.Abstractions/Presets.cs and "
+            + "Content/Core/Shaders/Grid.{vert,frag} are all untouched, so the reverse-Z/no-depth-test, "
+            + "cull-front and alpha-over presets still mean what they did. Vulkan moved 1.3 -> 1.4 (rev "
+            + "5315) but ShaderModuleUtils maps 1.4 to the SAME SPIR-V target (_1_6), so this runtime "
+            + "compile is unaffected. Line numbers moved: ShaderModuleUtils.FromString :77 -> :79, "
+            + "ColorFormat :199 -> :203, the GridFrag asset DefaultAssets.xml:367 -> :373.")]
     private static VkPipeline BuildPipeline(DeviceEx device, Renderer renderer, VkPipelineLayout layout)
     {
         var directory = ShaderIncludeDirectory();
@@ -345,11 +355,13 @@ internal sealed unsafe class StickerDecalRenderer : IDisposable
     /// </summary>
     [KsaAnchor("Renderer.{Allocator,Graphics}; BufferEx.CreateInfo; VkUtils.StageAndUploadToBuffer",
         SourceFile = "Core/Renderer.cs / RenderCore/VkUtils.cs / Planet.Render.Core",
-        Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
+        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
         Notes = "The identical one-shot staging upload ThugLifeQuadRenderer.BuildGeometry does: a "
             + "private command buffer submitted out of band and waited on. This is the known "
             + "validation item shared with the clutter-texture upload path (STICKERS_PLAN §5 risk 3); "
-            + "it happens exactly once, when the first sticker goes live.")]
+            + "it happens exactly once, when the first sticker goes live. 5348: the staging-upload "
+            + "surface (Renderer.Allocator/Graphics, BufferEx.CreateInfo, VkUtils.StageAndUploadToBuffer) "
+            + "is unchanged.")]
     private static (BufferEx Vertices, BufferEx Indices) BuildGeometry(Renderer renderer)
     {
         Span<float3> vertices =
@@ -405,19 +417,23 @@ internal sealed unsafe class StickerDecalRenderer : IDisposable
             + "MainViewport}; RenderTarget.{DepthImage,ColorImage,Extent}; BarrierBatch; "
             + "ImageBarrierInfo.Presets.{DepthSampledReadF,ColorAttachmentReadWrite}; "
             + "GlobalShaderBindings.{DescriptorSet,DynamicOffset}; Program.Instance.BindlessTextures.DescriptorSet",
-        SourceFile = "KSA/Program.cs:432,442,458,195,4062 / KSA.Rendering/RenderTarget.cs:36,38,48 / "
+        SourceFile = "KSA/Program.cs:438,450,468,199,4148 / KSA.Rendering/RenderTarget.cs:36,38,48 / "
             + "KSA.Rendering/BarrierBatch.cs / KSA.Rendering/ImageBarrierInfo.cs:18,41 / "
             + "KSA/GlobalShaderBindings.cs:57,64 / KSA/GridPass.cs:427-471",
-        Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
+        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
         Notes = "A near-verbatim port of GridPass.Run, the engine's own post-resolve overlay. Depth is "
             + "moved to DepthSampledReadF and LEFT there, exactly as GridPass leaves it — the engine's "
             + "tracked-state barriers tolerate that for the rest of the frame and next frame's "
             + "ClearDepthImages barriers from the tracked state. The scene depth is REVERSE-Z, so 0 is "
             + "the far plane and 'nothing was drawn' (Content/Core/Shaders/Grid.frag:67-72). The "
             + "descriptor set for this frame's slot is safe to rewrite because the engine has already "
-            + "waited on that slot's fence (Program.cs:2123-2138 advances ResourceFrameIndex modulo "
+            + "waited on that slot's fence (Program.cs:2168-2183 advances ResourceFrameIndex modulo "
             + "MaxFramesInFlight). The depth descriptor is written with DepthReadOnlyOptimal and the "
-            + "point-clamped sampler, both copied from GridPass.UpdateDescriptorSet (:120-135).")]
+            + "point-clamped sampler, both copied from GridPass.UpdateDescriptorSet (:120-135). "
+            + "5348: GridPass and KSA.Rendering (RenderTarget, BarrierBatch, ImageBarrierInfo) are "
+            + "unchanged and this pass is verified intact; only the Program.cs member line numbers "
+            + "moved (OffscreenTarget :432 -> :438, PointClampedSampler :442 -> :450, MainViewport "
+            + ":458 -> :468, ResourceFrameIndex :195 -> :199, SetViewport :4062 -> :4148).")]
     internal void RecordPass(CommandBuffer commandBuffer, ReadOnlySpan<StickerEntry> entries, bool debug)
     {
         if (_disposed || entries.Length == 0)

@@ -105,12 +105,19 @@ internal static class FlightComputerActuator
     }
 
     [KsaAnchor("FlightComputer.Burn = new BurnTarget{ImpulsiveInstant,DeltaVTargetCci}",
-        SourceFile = "KSA/BurnTarget.cs", Verified = "2026-08-11", GameVersion = "2026.8.19.5261",
+        SourceFile = "KSA/BurnTarget.cs", Verified = "2026-08-23", GameVersion = "2026.8.22.5348",
         Risk = ChurnRisk.Medium,
         Notes = "ut + Δv (CCI); the autopilot executes it. ImpulsiveInstant became UniverseTime at "
             + "rev 5211. UniverseTime's ctor THROWS ArgumentException on NaN (SimTime silently stored "
             + "it), so a guest writing a non-finite ut would latch this accessor degraded instead of "
-            + "being rejected — hence the explicit finite check below.")]
+            + "being rejected — hence the explicit finite check below. 5348 (rev 5317): BurnTarget "
+            + "gained float? Throttle (the auto-burn throttle is now latched on the target, "
+            + "Burn?.Throttle ?? SolveMinimumDurationThrottleCap()) and bool LastIgnitionDenied; gatOS "
+            + "sets neither, so both take their defaults. The executor was retuned around it — TVC gain "
+            + "matrix (10000, 1000) -> (50, 100) with a row-vs-column multiplication fix, "
+            + "MAX_TRANSIENT_BURN_FRACTION 0.3f -> 0.5f, TVC_SETTLE_TOLERANCE replaced by "
+            + "TVC_SETTLE_POINTING_TOLERANCE (0.1°) — so burn duration and throttle profile differ from "
+            + "the 5261 baseline for the same commanded Δv.")]
     internal static CommandResult SetBurn(Vehicle vehicle, IReadOnlyList<double> burn)
     {
         if (burn.Count != 4)

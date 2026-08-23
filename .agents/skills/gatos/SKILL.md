@@ -60,14 +60,17 @@ TypeScript/Bun SDK over both transports).
   therefore *never* land in the same tick (a formation teleport smears ~100 m per frame gap at orbital
   speed). To make N writes execute in the **same tick**, write them as one group to `/sim/ctl/batch`:
   one `<path> <value>` line per command, then a `commit` line (SPEC §3.10). Atomic, in order, one
-  phase per batch, ≤64 commands. To spread writes over **time** instead of collapsing them into one
-  tick, commit the same lines — each prefixed with an **absolute ms offset** — to
+  phase per batch, ≤64 commands. ⚠ Since KSA `2026.8.22.5348`, `teleport`/`impulse` are Solver phase,
+  so a batch mixing either with a Frame-phase line (e.g. `ctl/throttle`) now fails `EINVAL`; an
+  all-teleport formation batch is still correct. To spread writes over **time** instead of collapsing
+  them into one tick, commit the same lines — each prefixed with an **absolute ms offset** — to
   `/sim/ctl/timed_batch`; they become a host-owned player under `/sim/ctl/schedules/<id>/` you can
   pause/scrub/re-rate/loop/stop (SPEC §3.10). Phase mixing *is* allowed there.
 - **Two attitude paths:** write a named mode to `ctl/attitude_mode` (`Prograde`, `Retrograde`, …) and
   the onboard autopilot steers (warp-correct, no math) — *or* compute a **Body→CCI quaternion** and
   write `ctl/attitude_target` for a custom direction. Attitude/burn writes are **solver-phase** (take
-  effect next solver step; run ~1× warp for closed loops).
+  effect next solver step; run ~1× warp for closed loops) — and since KSA `2026.8.22.5348` so are
+  `debug/…/teleport` and `debug/…/impulse`, which moved Frame → Solver (revs 5331/5339).
 - **CCI is the working frame:** `position/cci`, `velocity/cci`, `attitude/quat`, `debug/teleport`,
   `debug/…/impulse` (default frame), and `ctl/burn` Δv are all **Celestial-Centered Inertial about the
   parent body** (Z = north pole, X = vernal point, equatorial X–Y plane). Constants come from
@@ -323,9 +326,13 @@ schema: [SPEC §3.11](../../../SPEC_9P_FILESYSTEM.md); frames in
 **First-class per-vessel nodes (NOT under `/sim/debug`; also ported from `unscience`):**
 `vessels/by-id/<id>/scale` — write any finite value `> 0` to uniformly rescale the whole vessel model
 one-shot (`echo 50000 > scale` = planet-sized; `echo 1 >` restores; `0`/negative → `EINVAL`; KSA
-reverts it when it rebuilds the vessel). `vessels/by-id/<id>/always_render` — write `1` to keep that
-vessel rendered at **any** distance (bypasses the sub-pixel cull that normally hides far vessels; the
-mark survives scene rebuilds and auto-drops when the vessel despawns; EVA kittens are unaffected).
+reverts it when it rebuilds the vessel). It is **visual/transform-only** — no collider, mass or
+performance change — and since KSA `2026.8.22.5348` (rev 5329) that deliberately differs from the
+in-game gizmo, whose scaling is now *physical* (`IRescale`: colliders, tank volume, inert mass, nozzle
+areas, decoupler force), clamped 0.5×–2× and quantized to 0.25 m steps.
+`vessels/by-id/<id>/always_render` — write `1` to keep that vessel rendered at **any** distance
+(bypasses the sub-pixel cull that normally hides far vessels; the mark survives scene rebuilds and
+auto-drops when the vessel despawns; EVA kittens are unaffected).
 Both work on **any vessel by id** even with `control_all_vessels=false` (deliberately
 authority-exempt). SPEC §3.4.1 has the full semantics.
 
@@ -342,10 +349,30 @@ authority-exempt). SPEC §3.4.1 has the full semantics.
   `ENOENT` by design) and refuses anything bigger than `iva_max_object_size` (0.5 m) so you cannot cut a
   hull panel loose.
 - **`debug.teleport` sets a CCI state about the vessel's *current* parent body** — the vessel must
-  already be in the intended body's SOI. See [SPEC §6](../../../SPEC_9P_FILESYSTEM.md).
+  already be in the intended body's SOI. See [SPEC §6](../../../SPEC_9P_FILESYSTEM.md). Since KSA
+  `2026.8.22.5348` both `teleport` and `impulse` are **Solver** phase (they land on the next solver
+  step, and cannot share a `ctl/batch` with Frame-phase actions).
 - **`debug/…/impulse` defaults to newton-seconds** (Δv = J ÷ live mass), not m/s — append the `dv`
   keyword to apply the vector directly as Δv, and `body` to read it in the vessel frame (+X = nose):
   `echo "10 0 0 body dv" > impulse`. Same CCI-about-current-parent frame as teleport otherwise.
+- **`ctl/stage` is per-*module* and no longer touches RCS (KSA `2026.8.22.5348`, rev 5329).** It walks
+  the staged part's **subtree** and activates only `ISequenced` modules — exactly engines and
+  decouplers — whose own sequence matches. `ThrusterController` is not one, so **`rcs/<n>/active` does
+  not flip as a side effect any more**: toggle RCS explicitly. Engines/decouplers on **sub-parts** now
+  stage where they used to be skipped, and a part with modules in **different sequences** needs one
+  `ctl/stage` press per sequence.
+- **`engines/<n>/min_throttle` on a multi-engine stack inverted (KSA `2026.8.22.5348`, rev 5317).** The
+  write still sets that engine's own floor, but the flight computer now folds the active engines with
+  `Max` (seed `0`) instead of `Min` (seed `1`) — the **most** restrictive engine sets the effective
+  floor, not the least. One high value now raises the whole stack's floor.
+- **`navball/deltav` and `navball/twr` were corrected in KSA `2026.8.22.5348` (rev 5318)** — a part in
+  sequence 0 used to zero both. Same path, format and units; re-baseline stored expectations.
+- **`ctl/burn` timing moved (KSA `2026.8.22.5348`, rev 5317)** — same interface and CCI Δv, but burn
+  duration, throttle profile and the point at which the FC abandons an auto burn all differ from
+  earlier builds. Don't hard-code a burn duration.
+- **`debug/terrain/.../tessellation/range_m` re-baselined (KSA `2026.8.22.5348`)** — the engine default
+  moved 220 → 50 m and the shader's displacement falloff moved from `range×0.1…0.95` to
+  `range×0.75…0.975`. Read the live value before writing; old tunings look wrong.
 - **`POST /v1/command` / `gatos/command` require `vessel_id` even for globally addressed actions** —
   the whole `camera.*`, `schedule.*`, `audio.*` families and `debug.warp`/`debug.thug_life_*`/… name
   no vessel, so send `"vessel_id": ""`. Omitting it (or sending `null`) is `400 EINVAL`.
@@ -394,11 +421,13 @@ The flow is upload → bind → teardown:
 
 ```sh
 cat /sim/paint/textures/clutter          # texture-id slot w h mips used_by ecotypes
+                                         # texture-id is a content-relative asset PATH, e.g.
+                                         # Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2
 cat rock.png > /sim/paint/textures/file/rock.png    # png|jpeg|bmp|hdr|dds|ktx|ktx2
-echo 'RockDiffuseA rock.png' > /sim/paint/textures/bind      # 'faithful' by default
-echo 'RockDiffuseA rock.png raw' > /sim/paint/textures/bind  # …or byte-for-byte, like a stock texture
+echo 'Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2 rock.png' > /sim/paint/textures/bind      # 'faithful' by default
+echo 'Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2 rock.png raw' > /sim/paint/textures/bind  # …or byte-for-byte, like a stock texture
 cat /sim/paint/textures/applied          # <id> <file> pending|applied|failed w h mips vram error
-echo 'RockDiffuseA' > /sim/paint/textures/unbind    # one; 'all' = everything
+echo 'Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2' > /sim/paint/textures/unbind  # one; 'all' = everything
 echo 1 > /sim/paint/textures/clear       # same global teardown as 'unbind all'; uploads survive
 rm /sim/paint/textures/file/rock.png     # evict an upload (unbinds it first)
 ```
@@ -409,7 +438,11 @@ Rules a program must follow:
   `faithful`, which rewrites the decoded pixels so the image renders at its authored colours, in
   every biome. Nothing has to be pre-corrected, and a user does not have to be told to author against
   mid-grey.
-- **Discover, never guess, target ids.** Read `clutter` and use its first column. Bind takes
+- **Discover, never guess, target ids.** Read `clutter` and use its first column. A `<texture-id>` is
+  the asset's **content-relative path** (e.g.
+  `Textures/Planets/Earth/GroundClutter/Grass_Diffuse.ktx2`) — install-independent, unique per asset
+  and space-free, so it drops straight into the space-separated line. It is not a symbolic name and
+  cannot be constructed by hand. Bind takes
   `<texture-id> <file> [faithful|raw]` — the same shape a `bindings` row reads back (mode column
   included), so a listing line can be echoed straight back to re-create a binding.
 - **The write's success is not the GPU's.** `bind` only queues a Frame-phase command. Poll `applied`

@@ -21,11 +21,17 @@ internal static class CameraViewportPatch
     private static bool _faulted;
 
     [KsaAnchor("Viewport.OnFrame(double) (Harmony prefix/postfix); Program.MainViewport",
-        SourceFile = "KSA/Viewport.cs / KSA/Program.cs", Verified = "2026-08-09",
-        GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Viewport.cs / KSA/Program.cs", Verified = "2026-08-23",
+        GameVersion = "2026.8.22.5348", Risk = ChurnRisk.Medium,
         Notes = "Viewport.OnFrame calls GetActiveController().OnFrame then GetCamera().OnFrame. "
-                + "Program has four viewports, so both hooks bind by MainViewport identity. The prefix "
-                + "applies the current-frame pose; the postfix samples KSA's final clamped transform.")]
+                + "Program.Viewports holds SIX viewports (the two crew-portrait ones start at "
+                + "_crewPortraitViewportStart = 4), so both hooks bind by MainViewport identity. The "
+                + "prefix applies the current-frame pose; the postfix samples KSA's final clamped "
+                + "transform. 5348: OnFrame(double) is verified unchanged and still the only overload. "
+                + "Viewport gained ShouldRenderStars and LightMode (EViewportLightMode) — MainViewport "
+                + "is Clustered and secondaries Forward, which evaluate to exactly the previous "
+                + "hardcoded UseShadows/UseLightPrePass values, so nothing changes here. The earlier "
+                + "'four viewports' count was wrong in both builds; it has always been 6.")]
     internal static bool Install(Harmony harmony)
     {
         var original = AccessTools.Method(typeof(Viewport), nameof(Viewport.OnFrame), [typeof(double)]);

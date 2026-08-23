@@ -160,8 +160,8 @@ internal sealed class ThugLifeManager
 
     /// <summary>
     ///     Called from the render postfix on the main thread (inside the offscreen pass) — once per
-    ///     visible viewport per frame, since <c>RenderMainPass</c> runs for the main view, both
-    ///     crew-portrait viewports and any secondary camera windows. Reads the published immutable
+    ///     visible viewport per frame, since <c>RenderMainPass</c> runs for the main view, whichever
+    ///     crew-portrait viewports are currently visible, and any secondary camera windows. Reads the published immutable
     ///     array and records one draw per entry whose camera mask includes the pass currently being
     ///     rendered. Self-disables on the first fault.
     /// </summary>
@@ -224,11 +224,17 @@ internal sealed class ThugLifeManager
     /// </summary>
     [KsaAnchor("Program.RenderedViewport (Viewports[_renderedViewportIndex], set at the top of "
             + "RenderViewport); Program.MainViewport; Program.GetCrewPortraitViewport(int)",
-        SourceFile = "KSA/Program.cs", Verified = "2026-08-12", GameVersion = "2026.8.19.5261",
+        SourceFile = "KSA/Program.cs", Verified = "2026-08-23", GameVersion = "2026.8.22.5348",
         Risk = ChurnRisk.Medium,
-        Notes = "CrewPortraitPanel owns viewports 4 and 5 (always Visible, IsOffscreen). "
-            + "GetCrewPortraitViewport indexes by portrait slot (0/1). Identity comparison — never "
-            + "by viewport index arithmetic.")]
+        Notes = "CrewPortraitPanel owns viewports 4 and 5 (IsOffscreen). GetCrewPortraitViewport "
+            + "indexes by portrait slot (0/1). Identity comparison — never by viewport index "
+            + "arithmetic. 5348 (revs 5276/5295): those two viewports are NOT always Visible — Program "
+            + "now gates the portrait update on GameSettings.ShowCrewPortraitCameras() and forces "
+            + "Visible = false on both slots when it is off, and CrewPortraitPanel.Update itself sets "
+            + "Visible = k < _visibleCount (all false with no occupants). RenderViewport is gated on "
+            + "Visible, so with portraits off or unoccupied RenderMainPass — and this postfix — never "
+            + "runs for them and the Crew bit simply goes unused. GetCrewPortraitViewport(0|1) and "
+            + "_crewPortraitViewportStart = 4 are unchanged, so the classification itself still holds.")]
     private static int CurrentPassBit()
     {
         var rendered = Program.RenderedViewport;
