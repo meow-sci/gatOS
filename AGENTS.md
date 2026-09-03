@@ -74,7 +74,20 @@ cut.
 > solar link intact) + the pass record live in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope
 > pages; live re-check items appended to [`docs/VALIDATION.md`](docs/VALIDATION.md).
 >
-> **KSA baseline → `2026.8.5.5168`** (upgrade-ksa playbook pass 2026-08-05, from 5117; revs 5118–5168,
+> **KSA baseline → `2026.9.7.5402`** (upgrade-ksa playbook pass 2026-09-02, from 5348; the 5261 and 5348
+> passes are recorded in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 only). **Three compile breaks,
+> all fixed:** KSA deleted the `Viewport` class (→ `IViewport`/`IGameViewport`/`GameViewport` +
+> `ViewportRegistry`; the camera director's `Mode`/`FixedController` writes now go through a reflection
+> seam, `Game/Ksa/Camera/ViewportSeam.cs`, two new High-risk anchors), removed
+> `VolumetricTrailRenderer.DebugTrailColor` (→ `debug/plumetrail/render/trail_color` **retired**), and
+> removed `Cursor.InputRay` (→ `Cursor.GetEgoRay`). Changelog gapped → full decomp diff; binary surface
+> diff 907/907 member refs resolve. Build + tests green (0 warnings, 1646 passed / 12 skipped). Drift
+> documented, no code change: crash debris/fragment vessels appear under `vessels/`, parachutes are a new
+> unreported module family that `ctl/stage` now arms, `parts/<n>/display_name` is the authored name.
+> Pass record: [`scope/ksa-assets-and-versions.md#5402-pass`](scope/ksa-assets-and-versions.md#5402-pass);
+> live re-checks in [`docs/VALIDATION.md`](docs/VALIDATION.md).
+>
+> **Prior — KSA baseline → `2026.8.5.5168`** (upgrade-ksa playbook pass 2026-08-05, from 5117; revs 5118–5168,
 > 49 commits — PREVIOUS was an audited baseline and CURRENT's `fromRevision` is 5117, so the trees chain
 > with no gap). **Four compile breaks, all fixed; three silent semantic breaks, all closed.** Build +
 > tests green (0 warnings, 772 passed).

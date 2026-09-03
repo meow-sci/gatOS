@@ -206,13 +206,11 @@ public sealed class FxEditorsTreeTests
     public async Task PlumeTrail_ReadsAndWritesGlobalFields()
     {
         var distance = await ReadAsync("debug", "plumetrail", "render", "max_distance");
-        var color = await ReadAsync("debug", "plumetrail", "render", "trail_color");
         await WriteAsync("200000\n", "debug", "plumetrail", "render", "max_distance");
         var c = _sink.Last!;
         Assert.Multiple(() =>
         {
             Assert.That(distance, Is.EqualTo("0.5\n"));
-            Assert.That(color, Is.EqualTo("0.5 0.75 1 1\n"), "a Color4 leaf is 'r g b a'");
             Assert.That(c.Action, Is.EqualTo(FxCatalog.PlumeTrailSet));
             Assert.That(c.Token, Is.Null, "the trail is a singleton — no entity token");
             Assert.That(c.Aux, Is.EqualTo("render/max_distance"));

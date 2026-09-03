@@ -2757,14 +2757,14 @@ public static class SimFsTree
               cat json                             # every field at once, as JSON
               cat render/max_distance
               echo 200000 > render/max_distance    # metres
-              echo "0.9 0.6 0.4 1" > render/trail_color   # r g b a, each 0..1
+              echo 0.5 > render/erosion_max_depth  # 0..1
               echo 1 > clear                       # drop the trails currently in the world
               echo 1 > reset                       # restore the pristine render settings
 
             FIELDS  (all under render/)
               max_distance, voxel_first_slice, min_step_size, step_size_distance_scale
               expansion_time, erosion_max_depth, erosion_edge_sharpness, self_shadow_steps
-              light_brightness, sky_ambient_brightness, trail_color
+              light_brightness, sky_ambient_brightness
             Each has a fixed inclusive range; out-of-range or unparseable writes fail with EINVAL
             before reaching the game. See SPEC_9P_FILESYSTEM.md for the ranges and units.
 

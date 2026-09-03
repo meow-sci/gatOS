@@ -36,8 +36,8 @@ internal static class VesselReader
     private static bool _enrichErrorLogged;
 
     [KsaAnchor("Vehicle core state (Id/Situation/GetPositionCci/OrbitalSpeed/masses/attitude)",
-        SourceFile = "KSA/Vehicle.cs", Verified = "2026-06-12", Risk = ChurnRisk.Low,
-        Notes = "Verified at M9; Name = Id (KSA has no separate display name).")]
+        SourceFile = "KSA/Vehicle.cs", Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Low,
+        Notes = "Verified at M9; Name = Id (KSA has no separate display name). 5402: Vehicle gained IsDebris (Class => IsDebris ? \"Debris\" : \"Vehicle\") — KSA's new part-failure system spawns fragment vehicles ('<id>_N' via GenerateSplitId, from Vehicle.Split per severed connection) and single-part debris (SpawnSubPartDebris) as ordinary Vehicles in CurrentSystem.All, so vessels/ lists them (controllable=false, one part) and they are NOT distinguishable from real vessels on this surface yet (VesselSnapshot carries neither Class nor IsDebris — follow-up candidate). PartFailureEvent.Apply also hands Program.ControlledVehicle to the largest IsControllable fragment, so status/controlled_vessel can flip to '<id>_N' after a crash with no command; the Program.ControlledVehicle setter now ClearHeldPlayerInput()s the previous vehicle on change. GetSurfaceSpeed() is now GetSurfaceVelocityCci().Length() (same value).")]
     internal static VesselSnapshot Sample(Vehicle vehicle, string? activeVesselId, double utSeconds, bool detail)
     {
         // detail off (config telemetry_vessel_detail): skip the whole G3 extension surface. It is
@@ -267,11 +267,12 @@ internal static class VesselReader
     private static bool ReadEngineOn(Vehicle vehicle) => vehicle.IsSet(VehicleEngine.MainIgnite, false);
 
     [KsaAnchor("Vehicle.IsControllable => _overrideIsControllable || Parts.Controls.NumModules > 0",
-        SourceFile = "KSA/Vehicle.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Vehicle.cs", Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
         Notes = "4750/rev 4699: a vessel with no Control Module (Parts.Controls.NumModules==0) cannot be "
             + "controlled by the player or the flight computer (control + FC paths gate via ControlsLockout). "
             + "Reported as vessels/<id>/controllable so guests/autopilots can pre-check; gatOS itself does not "
-            + "gate (relies on KSA's lockout). The player-controlled vessel always has a Control Module.")]
+            + "gate (relies on KSA's lockout). The player-controlled vessel always has a Control Module."
+            + "5402: unchanged; gained a new caller — PartFailureEvent.Apply picks the largest IsControllable fragment after a structural failure and makes it Program.ControlledVehicle. Debris (one InertMass part) is never controllable.")]
     private static bool ReadControllable(Vehicle vehicle) => vehicle.IsControllable;
 
     [KsaAnchor("Vehicle.GetManualThrottle(); FlightComputer.{AttitudeMode,AttitudeTrackTarget,AttitudeFrame}",
@@ -321,14 +322,15 @@ internal static class VesselReader
 
     [KsaAnchor("Orbit.StateVectors.TrueAnomaly.Degrees; LongitudeOfAscendingNode/ArgumentOfPeriapsis (rad); "
                + "Vehicle.NextApoapsisTime/NextPeriapsisTime/NextPatchEventTime (UniverseTime)",
-        SourceFile = "KSA/Orbit.cs / KSA/Vehicle.cs / KSA/UniverseTime.cs", Verified = "2026-08-11",
-        GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Low,
+        SourceFile = "KSA/Orbit.cs / KSA/Vehicle.cs / KSA/UniverseTime.cs", Verified = "2026-09-02",
+        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Low,
         Notes = "SEMANTIC DRIFT at rev 5211 — KSA replaced SimTime (double seconds) with UniverseTime "
             + "(Int128 nanoseconds). The 'no such event' sentinel changed from SimTime.PositiveInfinity "
             + "to UniverseTime.EndOfTime (Int128.MaxValue ns), whose .Seconds() is a FINITE ~1.7e29 and "
             + "so passes Sanitize.Finite unchanged instead of scrubbing to 0. Every apsis/patch time is "
             + "therefore routed through UtOrZero/TimeUntil, which test IsSaturated() first to preserve "
-            + "the established 0 = 'no such event' /sim contract.")]
+            + "the established 0 = 'no such event' /sim contract."
+            + "5402 NEW GATING (debris only): PhysicsBubble.RunVehiclePostWorkInner skips RecalculateFlightPlan and the burn-plan refresh when vehicleState.IsDebris, so on a debris/fragment vessel next_apoapsis_ut / next_periapsis_ut / next_patch_event_ut are FROZEN at their spawn values while position/velocity keep integrating. Real vessels are unaffected; the members themselves are unchanged.")]
     private static OrbitSnapshot? FullOrbit(Vehicle vehicle, IParentBody? parent, double utSeconds)
     {
         if (vehicle.Orbit is not { } o || parent is null)
@@ -863,14 +865,15 @@ internal static class VesselReader
     }
 
     [KsaAnchor("vehicle.Patch.Encounters; Encounter{Body.Id,GameTime,ClosestDistance}",
-        SourceFile = "KSA/PatchedConic.cs / KSA/Encounter.cs", Verified = "2026-08-23",
-        GameVersion = "2026.8.22.5348", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/PatchedConic.cs / KSA/Encounter.cs", Verified = "2026-09-02",
+        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
         Notes = "5348: Vehicle.Patch.Encounters and Encounter{Body,GameTime,ClosestDistance} are "
             + "unchanged. Rev 5266's target-gauge rework (FlightPlan.TryFindNextClosestApproach, "
             + "earliest-in-time on the current trajectory, replacing a global-minimum scan) writes "
             + "PatchedConic._closestApproaches — a DIFFERENT list — and Vehicle.FindFinalFlightPlan was "
             + "deleted. These are SOI encounters and are unaffected; they have never reflected planned "
-            + "burns.")]
+            + "burns."
+            + "5402: members unchanged (PatchedConic/Encounter diff is viewport-typed UI signatures). Same debris gating as the apsis times: flight-plan recalculation is skipped for IsDebris vehicles, so encounters/ on a debris row is frozen at spawn.")]
     private static IReadOnlyList<EncounterSnapshot> SampleEncounters(Vehicle vehicle)
     {
         var patch = vehicle.Patch;

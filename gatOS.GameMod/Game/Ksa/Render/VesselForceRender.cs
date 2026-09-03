@@ -111,14 +111,15 @@ internal static class VesselForceRender
 
     private static void Publish() => _published = Marked.Count == 0 ? null : new HashSet<string>(Marked, StringComparer.Ordinal);
 
-    [KsaAnchor("Vehicle.GetWorldMatrix(Camera) (prefix); Vehicle.UpdateRenderData(Viewport,int) (prefix, virtual)",
-        SourceFile = "KSA/Vehicle.cs", Verified = "2026-07-02", GameVersion = "2026.6.9.4750",
+    [KsaAnchor("Vehicle.GetWorldMatrix(Camera) (prefix); Vehicle.UpdateRenderData(IViewport,int) (prefix, virtual)",
+        SourceFile = "KSA/Vehicle.cs", Verified = "2026-09-02", GameVersion = "2026.9.7.5402",
         Risk = ChurnRisk.Medium,
         Notes = "The always_render patch targets — both cull on GetObjectDiameterPixelsAsDouble < 1.0. "
             + "UpdateRenderData is virtual: the patch binds Vehicle's implementation, so overrides "
             + "(KittenEva renders via its own KittenRenderable path) are NOT force-rendered — same "
             + "limitation as the unscience original. Patches are dynamic — installed only while ≥1 "
-            + "vessel is marked.")]
+            + "vessel is marked."
+            + "5402: the UpdateRenderData parameter is IViewport; both bodies are otherwise identical (the terrain-debug branch now tests viewport.IsMain() instead of == Program.MainViewport — it was never reproduced here).")]
     private static void InstallPatches()
     {
         if (_harmony is not null)
@@ -127,7 +128,7 @@ internal static class VesselForceRender
         var getWorldMatrix = AccessTools.Method(typeof(Vehicle), nameof(Vehicle.GetWorldMatrix),
             [typeof(KsaCamera)]);
         var updateRenderData = AccessTools.Method(typeof(Vehicle), nameof(Vehicle.UpdateRenderData),
-            [typeof(Viewport), typeof(int)]);
+            [typeof(IViewport), typeof(int)]);
         if (getWorldMatrix is null || updateRenderData is null)
             throw new MissingMethodException(
                 "Vehicle.GetWorldMatrix/UpdateRenderData not found in this build");
@@ -175,10 +176,11 @@ internal static class VesselForceRender
     ///     stock implementation.
     /// </summary>
     [KsaAnchor("Camera.GetPositionEgo(Vehicle); Vehicle.Body2Cce; float3.Pack; floatQuat.Pack",
-        SourceFile = "KSA/Vehicle.cs / KSA/Camera.cs", Verified = "2026-07-02",
-        GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Vehicle.cs / KSA/Camera.cs", Verified = "2026-09-02",
+        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
         Notes = "Reproduces the GetWorldMatrix body (rotation * translation) without the "
-            + "< 1 px visibility check. Ported from unscience i-feel-seen.")]
+            + "< 1 px visibility check. Ported from unscience i-feel-seen."
+            + "5402: GetWorldMatrix is byte-identical.")]
     private static bool GetWorldMatrixPrefix(Vehicle __instance, KsaCamera camera, ref float4x4? __result)
     {
         try
@@ -203,13 +205,14 @@ internal static class VesselForceRender
     ///     <c>Vehicle.UpdateRenderData</c> minus the sub-pixel cull: always refreshes a marked
     ///     vessel's part render data so the mesh actually draws (the matrix alone is not enough).
     /// </summary>
-    [KsaAnchor("Vehicle.GetMatrixAsmb2Ego(Camera); Viewport.GetCamera(); Vehicle.IsEditedVehicle; "
-            + "PartTree.UpdateRenderData(in double4x4,bool,Viewport,int)",
-        SourceFile = "KSA/Vehicle.cs / KSA/PartTree.cs", Verified = "2026-07-02",
-        GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium,
+    [KsaAnchor("Vehicle.GetMatrixAsmb2Ego(Camera); IViewport.GetCamera(); Vehicle.IsEditedVehicle; "
+            + "PartTree.UpdateRenderData(in double4x4,bool,IViewport,int)",
+        SourceFile = "KSA/Vehicle.cs / KSA/PartTree.cs", Verified = "2026-09-02",
+        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
         Notes = "Reproduces the UpdateRenderData body without the < 1 px visibility check. "
-            + "Ported from unscience i-feel-seen.")]
-    private static bool UpdateRenderDataPrefix(Vehicle __instance, Viewport viewport, int inFrameIndex)
+            + "Ported from unscience i-feel-seen."
+            + "5402: PartTree.UpdateRenderData takes IViewport; its module fan-out is unchanged.")]
+    private static bool UpdateRenderDataPrefix(Vehicle __instance, IViewport viewport, int inFrameIndex)
     {
         try
         {

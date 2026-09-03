@@ -2,7 +2,7 @@
 
 ## How the Game Menu Bar Works
 
-The game draws its menu bar in `Program.DrawMenuBar(Viewport viewport, int windowWidth)`. It creates a borderless ImGui window with `ImGuiWindowFlags.MenuBar` and calls `ImGui.BeginMenuBar()` / `ImGui.EndMenuBar()` inside it. The built-in menus rendered inside that block are, in order:
+The game draws its menu bar in `Program.DrawMenuBar(IGameViewport viewport, int windowWidth)` (parameter type `Viewport` through 2026.8.22.5348; the interface since 2026.9.7.5402). It creates a borderless ImGui window with `ImGuiWindowFlags.MenuBar` and calls `ImGui.BeginMenuBar()` / `ImGui.EndMenuBar()` inside it. The built-in menus rendered inside that block are, in order:
 
 1. **File** — save/load, exit, settings
 2. **Editor** (when in editor mode) *or* **Universe** (in flight) — simulation controls
@@ -47,7 +47,7 @@ public static class MyMenuPatcher
                 endMenuCount++;
                 if (endMenuCount == 1)   // last EndMenu in source = View menu's EndMenu
                 {
-                    // Ldarg_1 pushes the Viewport parameter; call our injected method
+                    // Ldarg_1 pushes the IGameViewport parameter; call our injected method
                     codes.Insert(i + 4, new CodeInstruction(OpCodes.Ldarg_1));
                     codes.Insert(i + 5, new CodeInstruction(OpCodes.Call, injectMethod));
                     Console.WriteLine("MyMod: menu injected successfully");
@@ -59,11 +59,14 @@ public static class MyMenuPatcher
         return codes;
     }
 
-    private static void DrawMyMenu(Viewport viewport)
+    private static void DrawMyMenu(IGameViewport viewport)
     {
         if (ImGui.BeginMenu("My Mod"))
         {
-            viewport.MenuBarInUse = true;   // REQUIRED: blocks game hotkeys/camera while menu is open
+            // REQUIRED: blocks game hotkeys/camera while menu is open. MenuBarInUse is a read-only
+            // property since 5402; the writer is the explicit IGameViewportLifecycle interface
+            // (the same call Program.DrawMenuBar itself makes). Before 5402: viewport.MenuBarInUse = true;
+            ((IGameViewportLifecycle)viewport).SetMenuBarInUse(true);
 
             if (ImGui.MenuItem("Do Something", default, _enabled))
                 _enabled = !_enabled;
@@ -86,9 +89,9 @@ Apply this in your `Patcher.cs` using `_harmony.PatchAll()` or `_harmony.Patch(.
 
 ## Critical Details
 
-### `viewport.MenuBarInUse = true`
+### `((IGameViewportLifecycle)viewport).SetMenuBarInUse(true)`
 
-Set this **inside** the `ImGui.BeginMenu(...)` block (i.e. only when the menu is open). It tells the game the menu bar is actively being used, which:
+Call this **inside** the `ImGui.BeginMenu(...)` block (i.e. only when the menu is open). It tells the game the menu bar is actively being used, which:
 - Prevents the menu bar from auto-hiding (when the auto-hide setting is on)
 - Suppresses camera movement and game hotkey processing while the menu is open
 
@@ -100,7 +103,7 @@ After the View menu's `ImGui.EndMenu()` call there are **3 IL instructions** for
 
 ### `DrawMenuBar` is called per-viewport
 
-In split-screen mode, `DrawMenuBar` is called once per visible viewport. Your `DrawMyMenu(Viewport viewport)` will be called multiple times per frame. If you have per-frame state, account for this. The `viewport` argument lets you scope behavior to a specific viewport if needed.
+In split-screen mode, `DrawMenuBar` is called once per visible viewport. Your `DrawMyMenu(IGameViewport viewport)` will be called multiple times per frame (`viewport.IsMain()` tells the main one apart; a postfix on the parameterless `Program.DrawProgramMenusHook()` — what gatOS uses — fires once per `DrawMenuBar` call too). If you have per-frame state, account for this. The `viewport` argument lets you scope behavior to a specific viewport if needed.
 
 ### Harmony patch timing
 

@@ -95,7 +95,54 @@ update's blast radius is small and discoverable. The procedure:
    (`EOPNOTSUPP`), logs once, and shows up in `/sim/status/accessors`. The guest sees a failed sensor,
    not a crashed mod. This is the safety net for the things steps 2–3 miss.
 
-> **Current applied result of this playbook:** the **2026.8.19.5261 → 2026.8.22.5348** update was run
+> **Current applied result of this playbook:** the **2026.8.22.5348 → 2026.9.7.5402** update was run
+> through it on 2026-09-02 — **three compile breaks fixed, one `/sim` node retired, two new High-risk
+> reflection seams, no compiler-invisible break found.** CURRENT's changelog is **gapped** (its
+> `version.json` logs only rev 5401; revs 5349–5399 have no messages), so the discovery mechanism was
+> the full decomp + Content diff (294 decomp files, +16 221/−3 942) against a `git worktree` of the
+> 5348 drop, exactly as the version-diff method prescribes for `fromRevision` > baseline. Build **and**
+> full suite green against 5402 (**0 warnings; 1646 passed / 12 skipped / 0 failed**).
+>
+> **The alarm rang, and hid half of itself:** the first build showed **10** errors — every one a
+> `Viewport` declaration site — and only after those were fixed did the body phase report **6** more
+> (`DebugTrailColor` ×5, `Cursor.InputRay` ×1). Three distinct breaks: (1) **KSA deleted the `Viewport`
+> class** in favour of `IViewport`/`IGameViewport`, `ViewportBase`/`GameViewport` and a static
+> `ViewportRegistry` (8 slots; `Index` → `ShaderSlot`), and turned the public `Mode`/`FixedController`
+> fields the camera director wrote into **protected-set properties** — nine files were retyped, the
+> camera hook now targets `GameViewport.OnFrame(double)`, and a new `Game/Ksa/Camera/ViewportSeam.cs`
+> reaches the two protected setters by reflection (**two new High-risk anchors**, degrading to
+> `EOPNOTSUPP`/`SetCameraMode` on a miss) so the silent Fixed park still skips `ClearHeldPlayerInput`;
+> (2) `VolumetricTrailRenderer.DebugTrailColor` was **removed** (colour/density/lifetime are per
+> plume-trail template now), so `/sim/debug/plumetrail/render/trail_color` was **retired** — nothing
+> global remains to bind and the debug window no longer shows it; (3) `Cursor.InputRay` was **removed**
+> — the sticker cursor aim uses `Cursor.GetEgoRay(Program.MainViewport)`, computed live.
+>
+> **The binary member-surface diff was run again:** 482/482 game TypeRefs and **907/907 MemberRefs**
+> resolve in the shipping 5402 DLLs, 52 of 474 shared referenced types changed shape (all `KSA.dll`,
+> 42 only by the viewport rename), all 222 referenced `Brutal`/`Planet`/Bepu types are byte-identical,
+> all 25 reflection strings and all 15 Harmony targets (each a single overload) are present.
+> **Verified clean, stated plainly:** `Universe.ExecuteNextVehicleSolvers(double, SimStep)` unchanged
+> (a new cloth-solver lane now runs beside it but touches nothing gatOS writes — no action changed
+> phase); `RenderMainPass` still one overload / three call sites; `ResolveAttachments` and
+> `RenderTarget.cs` unchanged; `MeshUbo`/`PlanetUbo` identical; every FX reflection handle intact;
+> `Brutal.Numerics` unchanged; `Astronomicals.xml` no diff.
+>
+> **Semantic drift and new engine behaviour, documented, no code change:** a **structural-failure /
+> debris system** (crash tolerances per part; a crash splits a vessel into `<id>_N` fragments plus
+> debris that are ordinary vehicles — `vessels/` lists them, their orbit events are frozen at spawn,
+> and control/camera can move to a fragment with no command); **parachutes** (a new module family
+> gatOS does not report; `ctl/stage` now arms/cuts them; chute bays drive their own door animation, so
+> `animations/<n>/goal` on one fights the chute); `parts/<n>/display_name` is now the **authored**
+> template name and no longer unique; `Camera.ClampCamera` is camera-local and terrain-aware;
+> `MapController` only juggles control for the main viewport.
+> ([read 5402 findings](ksa-read-surface.md#5402-findings) /
+> [write 5402 findings](ksa-write-surface.md#5402-findings) /
+> [pass record](ksa-assets-and-versions.md#5402-pass)). **Live re-checks queued in
+> [`../docs/VALIDATION.md`](../docs/VALIDATION.md)** — the reflection camera seam, the sticker cursor
+> aim, thug_life across the new viewport types, a provoked crash, and the plumetrail surface without
+> `trail_color`. **5402 is now the verified baseline.**
+>
+> The prior **2026.8.19.5261 → 2026.8.22.5348** update was run
 > through it on 2026-08-23 — **zero compile breaks, a first in this project's history; three
 > compiler-invisible breaks found and fixed; one pre-existing bug diagnosed and fixed.** PREVIOUS was
 > itself a fully audited baseline and CURRENT's `fromRevision` is 5261, so the two side-by-side trees
@@ -152,7 +199,7 @@ update's blast radius is small and discoverable. The procedure:
 > [pass record](ksa-assets-and-versions.md#5348-pass)). **Live re-checks remain queued in
 > [`../docs/VALIDATION.md`](../docs/VALIDATION.md)** — 15 items, including the `/sim/display` capture
 > with UI open, the clutter `bind` round-trip, and both Solver-phase debug actions.
-> **5348 is now the verified baseline.**
+> ~~5348 is now the verified baseline.~~ *(superseded by 5402 above)*
 >
 > The prior **2026.8.5.5168 → 2026.8.19.5261** update was run through it on 2026-08-11 — **ten compile
 > breaks fixed, one silent semantic break found and closed.** Rev **5211** replaced `SimTime` (a
@@ -441,7 +488,7 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/Ksa/Paint/Stickers/StickerPicker.cs` | 3 `[KsaAnchor]` (the aim ray, KSA's own watertight part raycast sweep, the terrain march+bisect) | no hit → `ENOENT`, nothing placed |
 | `Game/Ksa/Paint/Stickers/StickerManager.cs` | 3 `[KsaAnchor]` (per-frame anchor re-resolution, lazy `Program.GetRenderer()` init, the teardown `WaitIdle`) | a despawned target yields null → dormant, never pruned; `paint.sticker_renderer` health latch |
 | `Game/Ksa/Fx/*.cs` (`FxReflect`×8, `PlumeActuator`×4, `TrailActuator`×2, `CloudActuator`×4, `TerrainActuator`×3, `FxEditorReader`×4, **`FaceFxManager`×1**; `FxPristine` has none — no KSA types) | 26 `[KsaAnchor]` (the four FX editors: the reflective handles in `FxReflect` incl. the terrain UBO rings, the per-family read/write/apply pairs, the plume propagation loop, the sampler's rosters) — **plus `FaceFxManager`**, the `/sim/debug/fx` face-burst emitter (`Program.Instance.ParticleSystem.{EmitterPool.Get,InitializeEmitter}`, `ParticleEmitterReference`, `ParticleEmitter.{LocalOffset,Context,Origin,CreateHandle,ForceSpawningComplete}`, `Vehicle.{AddEmitter,BubbleOrigin}`, `GameSettings.Current.Graphics.Particles`), which also **mirrors** `CrewPortraitPanel.FACE_HEIGHT_OFFSET_EVA` — retuned 0.85 → 0.70 at 5348 (rev 5270) | per-command try/catch in `KsaCatalog`; per-capability `KsaHealth` latches (`fx.*` keys) → `EOPNOTSUPP`; sampler-level try/catch (logged once); pristine restore at unload |
-| `Game/Ksa/Camera/*.cs` (`CameraDirector`×9, `CameraTargets`×7, `CameraFrames`×3, `CameraReader`×2, `CameraFollowable`×1, `CameraPoseController`×1, `CameraViewportPatch`×1) | **24** `[KsaAnchor]` — programmable-camera anchors plus `CameraViewportPatch`'s `Viewport.OnFrame(double)` prefix/postfix, and the mod-side `IFollowable` + `FixedController` subclass the pose controller drives through (offsets only — never an absolute camera transform). Main viewport is selected by identity; the controller's public `Camera`/viewport camera is used, never unscience's obsolete `___Transform` injector | idle director is one branch; hook faults latch once; driver fault restores camera; unresolvable frames hold last good pose |
+| `Game/Ksa/Camera/*.cs` (`CameraDirector`×9, `CameraTargets`×7, `CameraFrames`×3, `CameraReader`×2, `ViewportSeam`×2 **(new at 5402 — reflection on the protected `GameViewport.FixedController` / `ViewportBase.Mode` setters)**, `CameraFollowable`×1, `CameraPoseController`×1, `CameraViewportPatch`×1) | **26** `[KsaAnchor]` — programmable-camera anchors plus `CameraViewportPatch`'s `Viewport.OnFrame(double)` prefix/postfix, and the mod-side `IFollowable` + `FixedController` subclass the pose controller drives through (offsets only — never an absolute camera transform). Main viewport is selected by identity; the controller's public `Camera`/viewport camera is used, never unscience's obsolete `___Transform` injector | idle director is one branch; hook faults latch once; driver fault restores camera; unresolvable frames hold last good pose |
 | `Game/Ksa/{DisplayRenderPatch,FrameCapture}.cs` | 3 `[KsaAnchor]` (the `/sim/display` capture: the `Program.RenderGame` transpiler + the in-band Vulkan blit/readback, **plus the 5348-new `GameSettings.UiPixelCulling()` prefix** that suppresses rev 5283's UI coverage mask while the stream is live) | transpiler degrades to **no injection**; the culling prefix is best-effort (a missing target costs capture fidelity, never the stream); a capture-time fault latches the feature off for the session (`_faulted`) |
 | `Game/Ksa/KsaCatalog.cs` | 2 `[KsaAnchor]` (vehicle/astronomical resolution) | self |
 | `Game/Ksa/{KsaAnchor,KsaHealth}.cs` | churn machinery (no KSA types in KsaHealth) | — |

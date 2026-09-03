@@ -248,7 +248,7 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 
 `vessels/active/…` is a live **alias** of the controlled vessel (same qids as `by-id/<activeId>`);
 `vessels/active/id` reads the active vessel id, or `ENOENT` when nothing is controlled.
-`vessels/by-id` lists all vessels.
+`vessels/by-id` lists all vessels. ⚠ Since KSA `2026.9.7.5402` that includes **debris and fragment vehicles** the game's new structural-failure system spawns from a crash (`<id>_1`, `<id>_2`, … and single-part debris): they are ordinary KSA vehicles, so they get rows here with `controllable` = `0`, one part, and orbit-event/encounter values that are **frozen at spawn** (KSA does not recalculate flight plans for debris). There is no `debris` flag on this surface yet. After such a failure KSA also hands control to the largest still-controllable fragment, so the controlled vessel can change to `<id>_N` with no command written.
 
 #### 3.4.1 Core vessel scalars — `vessels/by-id/<id>/…`
 
@@ -518,14 +518,14 @@ its live pose).
 | `parts/json` | S | JSON | The **whole part/subpart tree as one JSON document**: an array of part objects (snake_case, the shared record projection) each `{index, instance_id, id, display_name, template, is_root, subpart_count, position_vehicle_asmb:{x,y,z}, subparts:[{index, instance_id, id, display_name, template, position_vehicle_asmb}]}`. The one-`cat` discovery path — e.g. `cat parts/json \| jq -r '.[] \| .. \| .instance_id? // empty'` or find-by-name with `jq '.[] \| select(.display_name=="Solar Array")'`. Serialized only when the parts list actually rebuilds (count change / 10 s); reads in between are served from cache. |
 | `parts/<n>/instance_id` | S | uint | Stable part id (`Part.InstanceId`) — pass as `<part_iid>` to a weld. |
 | `parts/<n>/id` | S | string | `Part.Id` (can collide across instances of one template). |
-| `parts/<n>/display_name` | S | string | Human-readable name. |
+| `parts/<n>/display_name` | S | string | Human-readable name. ⚠ Since KSA `2026.9.7.5402` this is the part template's **authored** display name when it has one (`"Parachute Bay"`, `"Drogue Radial A"`) and the runtime `id` otherwise — so it is **no longer unique** per instance; address parts by `instance_id`. |
 | `parts/<n>/template` | S | string | Part template id (`Part.Template.Id`). |
 | `parts/<n>/is_root` | S | flag | Whether this is the root part. |
 | `parts/<n>/subpart_count` | S | int | Number of subparts (= entries under `subparts/`). |
 | `parts/<n>/position` | S | `x y z` | Part position in the vehicle assembly frame, m. |
 | `parts/<n>/subparts/<m>/instance_id` | S | uint | Stable subpart id — pass as `<part_iid>` to a weld, same as a part's. |
 | `parts/<n>/subparts/<m>/id` | S | string | Subpart `Part.Id`. |
-| `parts/<n>/subparts/<m>/display_name` | S | string | Human-readable name. |
+| `parts/<n>/subparts/<m>/display_name` | S | string | Human-readable name (same 5402 authored-name rule as the part's). |
 | `parts/<n>/subparts/<m>/template` | S | string | Subpart template id. |
 | `parts/<n>/subparts/<m>/position` | S | `x y z` | Subpart position in the vehicle assembly frame, m (sampled; the weld tracks the live pose). |
 
@@ -536,7 +536,7 @@ its live pose).
 | `ctl/ignite` | T | `1` | `vessel.ignite` | Frame | Ignite the active engines. |
 | `ctl/shutdown` | T | `1` | `vessel.shutdown` | Frame | Shut down the active engines. |
 | `ctl/engine` | **St** | `0`/`1` | `vessel.engine` | Frame | Ignition master: read = live `EngineOn`, write `1`=ignite/`0`=shutdown. |
-| `ctl/stage` | T | `1` | `vessel.stage` | Frame | Activate the next stage. ⚠ **Per-module since KSA `2026.8.22.5348` (rev 5329) — it no longer activates RCS thrusters.** See the staging note below. |
+| `ctl/stage` | T | `1` | `vessel.stage` | Frame | Activate the next stage. ⚠ **Per-module since KSA `2026.8.22.5348` (rev 5329) — it no longer activates RCS thrusters.** See the staging note below. Since KSA `2026.9.7.5402` a stage also **arms parachutes** (the new `ParachuteDeploy` module: stowed → armed, bay doors open; deployment then follows the chute's own altitude/speed logic) and **fires cut modules** (`ParachuteCut`) in that sequence, exactly like the stage key. |
 | `ctl/throttle` | **St** | `0..1` | `vessel.throttle` | Frame | Manual throttle fraction; read = current setpoint. |
 | `ctl/lights` | **St** | `0`/`1` | `vessel.lights` | Frame | Master lights. |
 | `ctl/rcs` | **St** | `0`/`1` | `vessel.rcs` | Frame | Master RCS (the per-thruster `ThrusterController` active flags). ⚠ This is **not** the flight computer's RCS toggle (keybind **R**) — that is a separate switch, exposed as **`ctl/rcs_mode`** below, and it overrides this one. |
@@ -720,8 +720,7 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/plumetrail/render/{max_distance,voxel_first_slice,min_step_size}` | **St** | number, meters (`0.01..1e7`, `0.001..1e5`, `0.001..1e5`) | `debug.plumetrail_set` | Frame | Maximum render distance, first voxel-slice depth, minimum raymarch step. |
 | `debug/plumetrail/render/{step_size_distance_scale,expansion_time,erosion_max_depth,erosion_edge_sharpness}` | **St** | number (`0..10`, `0.001..10000` s, `0..1`, `0..0.999`) | `debug.plumetrail_set` | Frame | Step growth with camera distance, segment expansion time, noise-erosion depth and edge sharpness. |
 | `debug/plumetrail/render/self_shadow_steps` | **St** | number (`0..64`) | `debug.plumetrail_set` | Frame | Self-shadow raymarch step count, **rounded to an integer** (`0` = off). |
-| `debug/plumetrail/render/{light_brightness,sky_ambient_brightness}` | **St** | number (`0..1000`) | `debug.plumetrail_set` | Frame | Direct-light and sky-ambient brightness on the trail. |
-| `debug/plumetrail/render/trail_color` | **St** | `r g b a` (each `0..1`) | `debug.plumetrail_set` | Frame | Debug tint applied to every trail. |
+| `debug/plumetrail/render/{light_brightness,sky_ambient_brightness}` | **St** | number (`0..1000`) | `debug.plumetrail_set` | Frame | Direct-light and sky-ambient brightness on the trail. ⚠ **`render/trail_color` was retired in KSA `2026.9.7.5402`**: the renderer's global debug tint (`DebugTrailColor`) no longer exists — trail colour, density and lifetime are now per-`PlumeTrailTemplate` asset values carried on each emitter, so there is nothing global left to bind. Reading or writing the old leaf answers `ENOENT`. |
 | `debug/plumetrail/json` | S | JSON object | — | — | Every trail field in one line (same shape as the plume `json`). |
 | `debug/plumetrail/clear` | T | `1` | `debug.plumetrail_clear` | Frame | Drop the trail geometry currently in the world (a one-shot — **not** a settings change). |
 | `debug/plumetrail/reset` | T | `1` | `debug.plumetrail_reset` | Frame | Restore the trail renderer's pristine values. |
@@ -1139,7 +1138,7 @@ middle of a running shot. Ownership is a **mode park plus a same-frame viewport 
 `camera/enabled 1` captures the
 live camera's state, switches the viewport to `Fixed` and unfollows, which makes the game's own
 camera controller write nothing — so gatOS is the sole transform writer. A guarded Harmony prefix on
-the **main** `Viewport.OnFrame` applies the pose after simulation advances and immediately before KSA
+the **main** `GameViewport.OnFrame` applies the pose after simulation advances and immediately before KSA
 rebuilds that viewport's camera matrices; its postfix publishes the final clamped transform.
 Everything you write is an *override* layered on the captured baseline, so a channel you never touch
 falls through to how the game had it, and release puts it all back. The pose is composed after the

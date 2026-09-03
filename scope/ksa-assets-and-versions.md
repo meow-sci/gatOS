@@ -27,13 +27,88 @@ Two checkouts are kept side by side for diffing:
 
 | Checkout dir | Build | Date | Revisions | Role |
 |---|---|---|---|---|
-| `…/ksa-game-assemblies` | **2026.8.22.5348** | 2026-08-23 | 5261 → 5348 (85 commits, revs 5262–5348) | **current / verified baseline** — full playbook pass 2026-08-23 (see [`#5348-pass`](#5348-pass)): **zero compile breaks — the first pass in the project's history with none** (5261 had ten, 5168 had four); three real breaks the compiler could not see found and fixed, plus one long-standing **pre-existing** bug diagnosed and fixed. `KSAFolder` default resolves here (commit `c465abb`). The checkout is a **git repo whose history holds every prior drop** (`1401af7` = 5261, `13595c1` = 5056, `3106557` = 5018, `cdb7391` = 4980, `7cf5c0a` = 4892, …) — diff drops with `git diff <old>..<new>` inside it |
+| `…/ksa-game-assemblies` | **2026.9.7.5402** | 2026-09-02 | 5348 → 5402 (**changelog gapped**: `version.json` logs only rev 5401, `fromRevision` 5400) | **current / verified baseline** — full playbook pass 2026-09-02 (see [`#5402-pass`](#5402-pass)): **three compile breaks** (the `Viewport` class rework, `DebugTrailColor` removed, `Cursor.InputRay` removed) fixed, one `/sim` node retired, two new High-risk reflection accessors, binary surface diff 907/907 member refs resolved. `KSAFolder` default resolves here (commit `57e6040`). PREVIOUS for the diff was **`git worktree add <tmp> c465abb`** (the 5348 drop) — the git history is the `_prev` checkout now |
+| (git `c465abb`) | 2026.8.22.5348 | 2026-08-23 | 5261 → 5348 (85 commits, revs 5262–5348) | prior baseline — full playbook pass 2026-08-23 (see [`#5348-pass`](#5348-pass)): **zero compile breaks — the first pass in the project's history with none** (5261 had ten, 5168 had four); three real breaks the compiler could not see found and fixed, plus one long-standing **pre-existing** bug diagnosed and fixed. `KSAFolder` default resolves here (commit `c465abb`). The checkout is a **git repo whose history holds every prior drop** (`1401af7` = 5261, `13595c1` = 5056, `3106557` = 5018, `cdb7391` = 4980, `7cf5c0a` = 4892, …) — diff drops with `git diff <old>..<new>` inside it |
 | `…/ksa-game-assemblies_prev` | 2026.8.19.5261 | 2026-08-11 | 5168 → 5261 | prior side-by-side checkout — itself a **fully audited baseline** (the 5261 pass closed its own findings, [`#5261-pass`](#5261-pass)), and CURRENT's `fromRevision` is 5261, so the two trees **chained with no gap** and the 5348 pass diffed them directly (no git-history fallback needed) |
 
 gatOS was originally built against the 4680-era sources (most `[KsaAnchor]` `Verified` dates span
 2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27; the touched
 anchors carry `GameVersion="2026.6.9.4750"` (see
 [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)).
+
+**The 5348 → 5402 pass (2026-09-02) — three compile breaks fixed (one viewport-class rework, two
+removed members), one `/sim` node retired, two new High-risk reflection accessors, no silent breaks
+found.** {#5402-pass}
+PREVIOUS (`2026.8.22.5348`, commit `c465abb`, materialised with `git worktree`) was a fully audited
+baseline. CURRENT's `version.json` is **gapped**: `fromRevision` 5400, `toRevision` 5402, one logged
+commit (rev 5401, "Fixed crash for incorrect data stride for thumbnail rendering") — revs 5349–5399
+carry no messages anywhere, so the **full tree diff was the discovery mechanism** (`git diff c465abb
+57e6040`: 350 files, 294 decomp files +16 221/−3 942; `KSA.dll` 4 564 056 → 4 798 552 bytes,
+`Planet.Render.Core.dll` +512 bytes, every `Brutal.*.dll` rebuilt with identical sizes). Rev numbers
+are therefore not cited for this window.
+
+**The alarm rang — and hid half of itself.** The first build reported **10** errors, all `CS0246
+'Viewport' could not be found` at declaration sites (`CameraDirector`, `CameraPoseController`,
+`CameraFollowable`, `CameraViewportPatch`, `CameraReader`, `IvaForceRender`, `VesselForceRender`); with
+those fixed the body phase surfaced **6** more (five `VolumetricTrailRenderer.DebugTrailColor`, one
+`Cursor.InputRay`). Three distinct breaks, 16 errors, two iterations to green — the step-2 "iterate to
+green" warning, again. Clean `-t:Rebuild` of the whole solution against the 5402 DLLs: **0 warnings, 0
+errors**; `dotnet test gatos.slnx` **1646 passed / 12 skipped / 0 failed** (three trail-colour tests
+re-pointed, none dropped).
+
+> **Binary-level member-surface diff, second run** (the 5348 technique; tool and raw dumps kept out of
+> the repo). Of the built `gatOS.GameMod.dll`'s 850 TypeRefs, **482** point into game assemblies (KSA
+> 260, Brutal.Vulkan 80, BepuPhysics 34, …): **482/482 resolve in 5402** (474/482 in 5348 — the eight
+> missing there are the viewport types gatOS now binds), **907/907 MemberRefs** resolve with identical
+> name/parameters/return type, **0 type-level breaks**, **52 of 474** shared referenced types changed
+> declared shape — every one in `KSA.dll`, 42 of them only by `Viewport → IViewport/IGameViewport` —
+> and **all 222 referenced `Brutal.*`/`Planet.*`/Bepu/CommunityToolkit types are byte-identical** in
+> declared surface despite the rebuilt DLLs. All 25 reflection strings resolve on the same declaring
+> type with the same visibility (the one "not found" is the never-taken `GetProperty("Scale")`
+> fallback; `CharacterCore.Scale` is a public float field in both builds). All 15 Harmony targets are
+> present, each with **exactly one overload** (`GameViewport.OnFrame(double)` public virtual;
+> `Program.RenderGame(AcquiredFrame,double)` private; `PartModel..ctor(PartModelModule+Template)`
+> protected; …). The two protected setters `ViewportSeam` now reaches — `GameViewport.FixedController`
+> and `ViewportBase.Mode`, both `get:public set:protected` — exist. Struct layouts gatOS mirrors are
+> identical (`PlanetUbo` 31 fields, `MeshUbo` 19 incl. the four `DirAnchor*` split-doubles,
+> `ManualControlInputs`, `VolumetricTrailPushConstants`); `VolumetricTrailData` lost `TrailColor` and
+> `PlumeTrailSettings` swapped `SegmentLifetimeSeconds` for `PropertyCommitDelta` — both already in
+> the retired-node finding below.
+
+**The three breaks, all fixed:**
+
+| # | Break | Fix |
+|---|---|---|
+| C1 | **Viewport rework.** `KSA.Viewport` deleted; `IViewport`/`IGameViewport` interfaces, `ViewportBase`/`GameViewport`/`PartThumbnailViewport`, static `ViewportRegistry` (8 slots: 1 main, 1 part-thumbnail, 4 secondary, 2 crew-portrait; `Index` → `ShaderSlot`). `Program.MainViewport` is an `IGameViewport`, `RenderedViewport` an `IViewport`; `Controller.OnFrame`, `IOrientation.DrawAxes`, `Vehicle.UpdateRenderData`, `PartTree.UpdateRenderData`, `PartModel.AddInstance` all take `IViewport`; **`Mode` and `FixedController` became protected-set properties**, `MenuBarInUse` read-only (writer = explicit `IGameViewportLifecycle.SetMenuBarInUse`). | Nine files retyped; `GameViewport.OnFrame` is the camera hook target; **new `Game/Ksa/Camera/ViewportSeam.cs`** reaches the two protected setters by reflection (2 anchors, Risk High, degrade to `EOPNOTSUPP` / `SetCameraMode`); `IvaForceRender` mirrors `AddInstance`'s new `RenderPartModels` gate; `StickerDecalRenderer` binds `ShaderSlot`; `ThugLifeManager` classifies passes by `ViewportType` (a part-thumbnail pass gets no bit). |
+| C2 | **`VolumetricTrailRenderer.DebugTrailColor` removed** (with its debug-window row and UBO slot); colour/density/lifetime are per-`PlumeTrailTemplate` asset now (`Color`/`DensityMultiplier`/`Lifetime`, `PlumeTrailAssets.xml` gained `LiquidEnginePlumeTrail`). | `/sim/debug/plumetrail/render/trail_color` **retired** (nothing global left to bind; the debug window no longer exposes it): `FxCatalog`, help text, `TrailActuator`, 3 tests, SPEC/matrix/scope/VALIDATION. Follow-up candidate: a per-template subtree. |
+| C3 | **`Cursor.InputRay` removed**; `Cursor` rewritten on `float2` desktop coordinates with `GetEgoRay(IViewport)`. | `StickerPicker` aims with `Cursor.GetEgoRay(Program.MainViewport)` — the ray is now computed live rather than cached from the previous frame. |
+
+**No compiler-invisible break was found this time.** The candidates were checked one by one: the
+`RenderMainPass` postfix (still one overload, three call sites `:4395/:4656/:4856`; the body gained
+two-sided skinned techniques inside their own GPU tag), `ResolveAttachments` (`:4430/:4737/:4864`,
+`RenderTarget.cs` unchanged), the `RenderGame` transpiler anchor, `UiPixelCulling()`, the terrain UBO
+mirror (`MeshUbo`/`PlanetUbo` identical), the plume/cloud/trail reflection handles, the throttle/RCS
+struct fields, the EVA scale chain, the solver-drain window (a new cloth-solver lane runs alongside but
+touches nothing gatOS writes), and the threading phases (`SolverActions` unchanged).
+
+**Semantic drift and new engine behaviour, documented, no code change** (detail on
+[read](ksa-read-surface.md#5402-findings) / [write](ksa-write-surface.md#5402-findings)): a
+**structural-failure/debris system** (parts carry crash tolerances; a crash splits a vessel into
+`<id>_N` fragments plus debris that are ordinary vehicles — so `vessels/` lists them, their orbit
+events are frozen, and control/camera can move to a fragment with no command); **parachutes** (a new
+module family gatOS does not report; `ctl/stage` now arms/cuts them; chute bays drive their own door
+animation); `Part.DisplayName` is now the **authored** template name (not unique);
+`Camera.ClampCamera` is camera-local and terrain-aware; `MapController` only juggles control for the
+main viewport; `Program.ControlledVehicle`'s setter clears held input.
+
+**Lockstep:** 30 anchors re-stamped + 2 new (**177** total); `#5402-findings` on both scope surfaces;
+this record; FULL_SCOPE §0; the matrix header + camera/trail/IVA/always-render rows; the
+runtime-coupling hook table, camera-driver section and reflection-accessor table; SPEC §3.4 (`vessels/`
+debris note, `display_name`, `ctl/stage`), §3.7 (trail row), §3.10 (camera hook); `docs/VALIDATION.md`
+(a 5402 card + item 5 of the FX card); `plans/FX_EDITORS_PLAN.md`; the `gatos` skill's version notes;
+and the `ksa`/`harmony` skills' viewport, menu-bar, quad and vehicle-API passages (the KSA API they
+document changed). **Live re-checks queued in [`../docs/VALIDATION.md`](../docs/VALIDATION.md).**
+**5402 is now the verified baseline.**
 
 **The 5261 → 5348 pass (2026-08-23) — ZERO compile breaks (a first), three compiler-invisible breaks
 found and fixed, one pre-existing bug diagnosed and fixed.** {#5348-pass}

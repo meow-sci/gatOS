@@ -208,7 +208,7 @@ switch: while it is off none of these members is touched at all.
 | read | gatOS site | KSA / Brutal member | Decomp file | Risk | 5018 |
 |---|---|---|---|---|---|
 | forcing terms (the whole physics model) | `IvaPhysicsManager.Update`/`DriveVessel` | `Vehicle.{AccelerationBody,AngularAccelerationBody,BodyRates,CenterOfMassAsmb}` | `KSA/Vehicle.cs` | Low | ✅ |
-| park gates | `IvaPhysicsManager.ParkReason` | `Program.{Editor,MainViewport}`; `Viewport.Mode`; `CameraMode.IVA`; `Universe.SimulationSpeed` | `KSA/Program.cs`, `KSA/Viewport.cs`, `KSA/Universe.cs` | Low | ✅ |
+| park gates | `IvaPhysicsManager.ParkReason` | `Program.{Editor,MainViewport}`; `IViewport.Mode` (5402; the public `Viewport.Mode` field before); `CameraMode.IVA`; `Universe.SimulationSpeed` | `KSA/Program.cs`, `KSA/IViewport.cs`, `KSA/Universe.cs` | Low | ✅ |
 | interior collision geometry | `InteriorGeometry.Build`/`Emit` | `Vehicle.Parts.Parts`; `Part.{SubParts,InstanceId,Modules,MatrixAsmb2VehicleAsmb}`; `ModuleList.Get<PartModelModule>()`; `PartModelModule.PartModel.Template`; `PartModelModule.Template.{Internal,RayTracing,Mesh}`; `MeshReference.PositionCompare`; `double3.Transform(double3,double4x4)` | `KSA/Part.cs`, `KSA/PartModelModule.cs`, `KSA/PartModel.cs`, `KSA/MeshReference.cs` | **Medium** | ✅ |
 | fallback room (no interior meshes) | `InteriorGeometry.BuildFallbackRoom` | `PartTree.Modules.Get<IVASeat>()`; `IVASeat.PositionAsmb` | `KSA/IVASeat.cs`, `KSA/PartTree.cs` | Low | ✅ |
 | collision-proxy sizing | `IvaPhysicsManager.TryMeasure` | `Part.{Modules,Scale}`; `MeshReference.PositionCompare` | `KSA/Part.cs`, `KSA/MeshReference.cs` | **Medium** | ✅ |
@@ -337,12 +337,12 @@ here is gated by `telemetry_*`, and nothing here is sampled by `TelemetrySampler
 
 | read | gatOS site | KSA member | Decomp file | Unit/format | Risk | 5168 |
 |---|---|---|---|---|---|---|
-| `camera/mode`, `camera/status`' `mode` | `CameraReader.Sample` → `ModeOf` | `Viewport.Mode` (public field — **not** `Program.GetCameraMode()`, which reads the *frame* viewport); the `CameraMode` enum `{Orbit,Free,Map,IVA,Fixed}` mapped out member-by-member rather than cast | `KSA/Viewport.cs`, `KSA/CameraMode.cs` | token | Low–Medium | ➕ new 2026-08-06 |
+| `camera/mode`, `camera/status`' `mode` | `CameraReader.Sample` → `ModeOf` | `IViewport.Mode` (a read-only interface property since 5402; a public field on `Viewport` before — **not** `Program.GetCameraMode()`, which reads the *frame* viewport); the `CameraMode` enum `{Orbit,Free,Map,IVA,Fixed}` mapped out member-by-member rather than cast | `KSA/IViewport.cs`, `KSA/CameraMode.cs` | token | Low–Medium | ➕ new 2026-08-06 |
 | `camera/target`, `camera/status`' `follow` | `CameraReader.Sample` → `CameraTargets.Describe` | `Camera.Following` → `IFollowable`; `Astronomical.Id`. A `WreckageMarker` or `VehicleEditingSpace` is not addressable ⇒ both report `none` | `KSA/Camera.cs` | `vessel:<id>` \| `body:<id>` \| `none` | Low | ➕ new 2026-08-06 |
 | `camera/tidal` | `CameraReader.Sample` | `Camera.TidalLocking` (get-only) | `KSA/Camera.cs` | flag | Medium | ➕ new 2026-08-06 |
 | `camera/pose/fov` | `CameraReader.Sample` | `Camera.GetFieldOfView()` — ⚠️ returns **radians** while `SetFieldOfView(float)` takes **degrees**; converted here, once, at the boundary, so nothing downstream carries a radian | `KSA/Camera.cs` | degrees | Medium | ➕ new 2026-08-06 |
 | `camera/pose/ortho` | `CameraReader.Sample` | `Camera.Orthographic` | `KSA/Camera.cs` | flag | Medium | ➕ new 2026-08-06 |
-| `camera/map/scope`, `camera/status`' `map_scope` | `CameraReader.Sample` (+ `CameraDirector.SetMapScope`'s own publish) | `Viewport.MapController` (public field); `MapController.Scope` (public `double`, `:33`) — the controller clamps it **up** to the followed object's `MeanRadius` every map frame, so a smaller written value reads back clamped | `KSA/Viewport.cs`, `KSA/MapController.cs` | metres | Medium | ➕ new 2026-08-06 |
+| `camera/map/scope`, `camera/status`' `map_scope` | `CameraReader.Sample` (+ `CameraDirector.SetMapScope`'s own publish) | `IGameViewport.MapController` (interface property since 5402); `MapController.Scope` (public `double`, `:34`) — the controller clamps it **up** to the followed object's `MeanRadius` every map frame, so a smaller written value reads back clamped | `KSA/IGameViewport.cs`, `KSA/MapController.cs` | metres | Medium | ➕ new 2026-08-06 |
 | `camera/pose/geo` (from a Cartesian placement) | `CameraReader.WithBothSpellings` → `CameraFrames.TryEclToGeo` | `Celestial.{GetPositionCceFromEcl,GetCcf2Cce,GetTerrainHeightFromDirCce,MeanRadius}` — the exact inverse of `GetDirCcfFromLatLon` (`lat = asin(ccf.Z)`, `lon = atan2(ccf.Y, ccf.X)`), the pair KSA's own `GetLatitudeFromCce`/`GetLongitudeFromCcf` use | `KSA/Celestial.cs` | deg / deg / m **above terrain** | Medium | ➕ new 2026-08-06 · ⚠️ **5348: cube-face seam sampler changed** (sub-metre, seams only; the round-trip still inverts exactly) — see [5348 findings](#5348-findings) |
 | `camera/pose/position` (from a geodetic placement) | `CameraReader.WithBothSpellings` → `CameraFrames.TryFrame2Ecl` + `CameraTargets.PositionEcl` | back-projection into the Cartesian channel's own frame (same members as the write side — [`ksa-write-surface.md#camera-director`](ksa-write-surface.md#camera-director)) | `KSA/Vehicle.cs`, `KSA/Celestial.cs` | metres, in `pose/frame` | Medium | ➕ new 2026-08-06 |
 
@@ -442,6 +442,127 @@ report faithfully, none a member drift:
   the new stock value.
 
 ---
+
+## ⚠️ 5402 read-surface findings (playbook pass 2026-09-02) {#5402-findings}
+
+Full playbook pass 2026-09-02, `2026.8.22.5348` → `2026.9.7.5402`. **The changelog is gapped:** CURRENT's
+`version.json` has `fromRevision` 5400 / `toRevision` 5402 and logs a single commit (rev 5401, a
+thumbnail-stride crash fix), while PREVIOUS ends at 5348 — revs 5349–5399 carry **no commit messages**
+in either tree, so per the version-diff method the **full decomp + Content diff was the discovery
+mechanism** (294 decomp files, +16 221 / −3 942 lines; `git diff c465abb 57e6040` inside the
+assemblies repo, PREVIOUS materialised as a `git worktree` of `c465abb`). Rev numbers are therefore
+deliberately not cited below. **The build alarm fired — three compile breaks** (ten declaration-phase
+errors hid six body-phase ones, exactly the "iterate to green" trap the playbook warns about): the
+`KSA.Viewport` **class was deleted** in a viewport rework, `VolumetricTrailRenderer.DebugTrailColor`
+was **removed**, and `Cursor.InputRay` was **removed**. All three are on the write/runtime surface
+([write findings](ksa-write-surface.md#5402-findings)); **no bound read changed name, signature, type,
+unit or frame** — everything on this page is semantic drift the reads report faithfully, plus new
+engine behaviour that changes *what appears* on the surface. Clean `-t:Rebuild` of the whole solution
+against the 5402 DLLs: **0 warnings, 0 errors**; `dotnet test gatos.slnx` **1646 passed / 12 skipped /
+0 failed**.
+
+The binary-level surface diff was run again (the 5348 technique, [pass record](ksa-assets-and-versions.md#5402-pass)):
+**482** of the built `gatOS.GameMod.dll`'s 850 TypeRefs point into game assemblies; **482/482 resolve
+in 5402** (474 in 5348 — the eight new ones are the viewport types gatOS now binds), **907/907
+MemberRefs** resolve with identical name, parameter list and return/field type, **52 of 474** shared
+referenced types changed declared shape (all in `KSA.dll`, 42 of them only by the `Viewport →
+IViewport/IGameViewport` rename), and **all 222 referenced `Brutal.*`/`Planet.*`/Bepu types are
+byte-identical** in declared surface even though every Brutal DLL was rebuilt. Every reflection string
+(25 sites) resolves on the same declaring type with the same visibility; every Harmony target (15) is
+present with exactly one overload.
+
+### ⚠️ `parts/<n>/display_name` is now the authored template name (5402)
+
+`Part..ctor` changed `DisplayName = Id;` → `DisplayName = (Template.DisplayName != Template.Id) ?
+Template.DisplayName : Id;`. `parts/<n>/display_name` and `subparts/<m>/display_name` now report
+`"Parachute Bay"`, `"Drogue Radial A"`, … where the template authors a name, and the runtime `Id`
+otherwise — so the value is **no longer unique per instance**. `Id`/`InstanceId` are unchanged and remain
+the addressing keys (welds, stickers, IVA adopt, camera `part:` anchors all key on `instance_id`).
+`PartsReader.cs:30` re-stamped; SPEC §3.4 rows annotated. *No code change.*
+
+### ⚠️ Crashes now spawn debris and fragment vessels that appear under `vessels/` (5402)
+
+KSA gained a **structural-failure model**: parts carry `CrashTolerancePascals`/`InertMassKg`
+(`PartTemplate.CrashTolerance`, e.g. `CorePropulsionAAssets.xml` gives EngineA2…A6 `3e6`),
+`PartContactLoad`/`PartStructuralLimits` accumulate contact loads on the solver thread
+(`PhysicsBubble.cs` → `PartFailure.Detect(vehicleUpdateState)`), and `PartFailureEvent.Apply` on the
+game thread runs `PartFailure.IsolateAndDestroy` → `Vehicle.Split(connection, endpoint, 0.0, …)` per
+severed connection, `ShedDebris` → `Vehicle.SpawnSubPartDebris`, and — when ≥ max(2, 50 %) of the
+parts fail at once — `Universe.DestroyVehicle(…, CrewDisposition.Kill)`. `DestroyVehicleFromEvent`
+sheds up to 12 pieces. The consequences on this surface:
+
+- **Fragments (`<id>_1`, `<id>_2`, … via `GenerateSplitId`) and single-part debris are ordinary
+  `Vehicle`s in `CurrentSystem.All`**, so `vessels/by-id` lists them: `controllable` = `0`, one part,
+  ordinary flight/orbit reads. `Vehicle.Class` is now `IsDebris ? "Debris" : "Vehicle"`, but
+  `VesselSnapshot` carries neither `Class` nor `IsDebris` — **debris is not distinguishable on this
+  surface yet.** Coverage-gap follow-up: a `vessels/<id>/debris` flag (and `parts/<n>/crash_tolerance_pa`,
+  `inert_mass_kg`).
+- **Orbit-event reads on debris are frozen at spawn** — `PhysicsBubble.RunVehiclePostWorkInner` skips
+  `RecalculateFlightPlan` and the burn-plan refresh when `vehicleState.IsDebris`, so
+  `orbit/time_to_ap`, `time_to_pe`, `next_patch` and `encounters/` stop updating on a debris row while
+  its position/velocity keep integrating. Real vessels unaffected (`VesselReader.cs:322,:865`
+  re-stamped).
+- **The controlled vessel can change with no command written**: `PartFailureEvent.Apply` hands
+  `Program.ControlledVehicle` to the largest still-`IsControllable` fragment, and the
+  `Program.ControlledVehicle` setter now `ClearHeldPlayerInput()`s the previous vehicle on change.
+  `Universe.DestroyVehicle` also `HandOffCameras` (to `FindHeaviestBubbleNeighbour() ?? Parent`) and
+  `DestroyVehicleFromEvent` follows the shed debris or a `WreckageMarker`, so `camera/target` can move
+  too. `debug/control_vessel` is unchanged.
+- A weld / sticker / camera **anchor part can migrate — `InstanceId` intact — into a fragment vehicle**
+  between two frames; every driver resolves anchors within the vehicle it was created on, so the
+  anchor resolves null and the feature goes **dormant through its existing null path** (never garbage).
+  Re-resolving `InstanceId`s across all vehicles is a follow-up option (`WeldManager.cs:187`
+  re-stamped).
+
+### ⚠️ Parachutes: a new module family on the part tree (5402, coverage gap)
+
+`Parachute` (+ `ParachuteDeploy`/`ParachuteCut` `ISequenced` modules, an `ActiveChute` physics term,
+`ChuteState {Stowed, Armed, LineStretch, Reefed, Disreefing, Full, Cut, Ripped, SeveredLines}` and a
+Bepu cloth canopy solved on a new `JobSystems.ClothSolvers` lane). Parts: `RadialParachuteSmallA/B`
+(drogue), `RadialParachuteMediumA/B` (main), `ParachuteBayB` (replaces `ParachuteBayA`; two `Parachute`
+sub-parts, `DeployAltitudeM = 800`, `CutsDrogues`), `ParachuteAssets.xml`. The module appears in
+`Parts.Modules.Get<Parachute>()` and **gatOS's per-module walk does not report it** — exposable reads
+are `State`, `Fill`, `DisreefProgress`, `IsDrogue`, `IsEnabled`, `Fitted`, `HasCanopy`,
+`CanopyAttached`, `CanopyRadius`, `Tuning.{DiameterM,RiserLengthM,…}`; controls `Arm()`, `Disarm()`,
+`Deploy()`, `CutAway()` (the Frame-safe route is the `IActivateInputBuffer`, like staging). Two reads
+gatOS *does* make are touched: `acceleration_body` now **includes chute drag** (folded into
+`PhysicsStates.Disturbances`; correct, no unit change), and `animations/<n>` on a chute bay mirrors the
+chute state machine because `Parachute.Arm/Disarm/Deploy` drive the bay's `KeyframeAnimationModule`
+(`SetBayDoorsOpen`). `ctl/stage` now arms/cuts them — [write findings](ksa-write-surface.md#5402-findings).
+
+### ⚠️ Camera read-backs: what changed underneath `camera/**` (5402)
+
+`CameraReader.Sample` now reads `IGameViewport.{Mode,MapController}` (read-only interface properties;
+public fields on `Viewport` before) — values unchanged. Three inherited behaviours: (1)
+**`Camera.ClampCamera` is camera-local and terrain-aware** — `Program.FindNearbyCelestial(this)` +
+`TryGetSurfaceClampPositionEcl(0.5)` lifts the camera to 0.5 m above `MeanRadius + terrain height`
+along its own direction, instead of gating on the *frame* viewport's `CurrentAltitudeKm`; the postfix
+read-back publishes the clamped transform, so a placement solved below terrain reads back lifted. (2)
+`MapController` gained `CanChangeControl => ViewportRegistry.IsMainCamera(Camera)` — no change for the
+main viewport gatOS drives; `Scope` and its clamp are unchanged (`camera/map/scope` reads back exactly as
+before). (3) `camera/target` can move on a vehicle destruction (`HandOffCameras`, above).
+
+### Verified clean
+
+Byte-identical KSA files behind bound reads: `EngineController`, `EngineControllerState`, `Battery`,
+`Decoupler`, `Tank`, `Mole`, `ThrusterController(State)`, `KeyframeAnimationModule`, `NavBallData`,
+`UniverseTime`, `VersionInfo`, `Encounter`, `SolidMotor`, `SolidGrainSegment`, `RocketCoreState`,
+`ManualControlInputs`, `ThrusterMapFlags`, `PhysicsEnvironment`, `BurnTarget`, `VehicleReferenceFrame(Ex)`,
+`FloatReference`, `ColorRgbReference`, `SolarTracker`, `SolarPanelState`, `GeneratorState`,
+`PowerConsumerState`, `SolarTrackerState`, `VehicleUpdateTask`, `DockingPortTemplate`, `VehicleEngine`,
+`ModuleStateful`, `Sequence`, `ISequenced`, `IActivate`, `CharacterAvatar`, `KittenRenderable`,
+`IParentBody`, `LookupCollection`; `Astronomicals.xml` has **no diff** (no celestial-parameter drift for
+`BodyReader`). Members re-checked by name with no semantic change: every `VesselReader` anchor,
+`BodyReader` ×3, `AnimationLinks`, `TelemetrySampler` ×5 (`Universe.{GetElapsedSeconds :2108,
+SimulationSpeed :102, GetLastSimStep :2096, GetSimulationSpeeds :2235, IsAutoWarpActive :98,
+AutoWarpTime :100}`), `KsaCatalog` ×2, the IVA forcing-term reads (`AccelerationBody :572`, chute drag
+folded in), the thug_life anchor math (`Vehicle.GetMatrixAsmb2Ego :1256`, `Part.PositionEgo/Asmb2Ego`),
+`Brutal.Numerics` (byte-identical DLL surface). Refactors that are equivalent: `Vehicle.GetSurfaceSpeed()`
+is now `GetSurfaceVelocityCci().Length()`; `LightModule.IsActive` became
+`!Parent.FullPart.IsLightSwitchedOff()` (same truth table for a same-tree switch);
+`SolarTrackingExtension.IsAnimating => false` (never read). `Celestial.cs`'s 64-line diff is terrain
+render-data maths (`RenderData.SurfaceRadius` → `MeanRadius` in the modifier LUT) plus viewport-typed
+signatures — nothing `BodyReader` or `CameraFrames` binds.
 
 ## ⚠️ 5348 read-surface findings (playbook pass 2026-08-23) {#5348-findings}
 

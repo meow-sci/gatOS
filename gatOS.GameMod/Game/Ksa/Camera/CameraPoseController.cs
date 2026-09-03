@@ -33,9 +33,10 @@ internal interface ICameraPoseSource
 /// </summary>
 /// <remarks>
 ///     <para>
-///         Installed into the public writable <c>Viewport.FixedController</c> field by
-///         <see cref="CameraDirector"/>; the stock instance is saved and put back at shutdown. This is
-///         ordinary subclassing of a public unsealed class with a virtual <c>OnFrame</c> — no Harmony.
+///         Installed into <c>GameViewport.FixedController</c> by <see cref="CameraDirector"/> through
+///         <see cref="ViewportSeam"/> (the property became protected-set at 5402); the stock instance is
+///         saved and put back at shutdown. This is ordinary subclassing of a public unsealed class with a
+///         virtual <c>OnFrame</c> — no Harmony.
 ///         While <see cref="Pose"/> is null the controller is a behavioural clone of the stock one
 ///         (including the "Fixed Camera" alert, which is only suppressed for gatOS's own silent park),
 ///         so leaving it installed between ownership sessions changes nothing for the player.
@@ -72,17 +73,18 @@ internal sealed class CameraPoseController(KsaCamera camera) : FixedController(c
             base.OnSwitchOn(lastMode);
     }
 
-    [KsaAnchor("Viewport.FixedController (public writable field); FixedController(Camera) unsealed, "
+    [KsaAnchor("GameViewport.FixedController (protected-set property, installed through ViewportSeam); FixedController(Camera, string) unsealed, "
             + ".{CameraOffset,CameraRotation} public fields, .OnFrame/.OnSwitchOn virtual; "
-            + "Viewport.GetActiveController() dispatches CameraMode.Fixed => FixedController",
-        SourceFile = "KSA/Viewport.cs / KSA/FixedController.cs", Verified = "2026-08-11",
-        GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
-        Notes = "Viewport.OnFrame runs GetActiveController().OnFrame then GetCamera().OnFrame, so a "
+            + "GameViewport.GetActiveController() dispatches CameraMode.Fixed => FixedController",
+        SourceFile = "KSA/GameViewport.cs / KSA/FixedController.cs", Verified = "2026-09-02",
+        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
+        Notes = "GameViewport.OnFrame runs GetActiveController().OnFrame then GetCamera().OnFrame, so a "
             + "pose written here is consumed by this frame's matrices. base.OnFrame crashes the process "
             + "(DivideByZeroException in double3.Normalized) if CameraRotation is zero, so CameraRotation "
             + "is kept non-zero whenever a fallback to base is reachable. FixedController.OnSwitchOn is "
-            + "only the TimedAlert(\"Fixed Camera\").")]
-    public override void OnFrame(Viewport inViewport, double inDeltaTime)
+            + "only the TimedAlert(\"Fixed Camera\")."
+            + "5402: Controller.OnFrame is now OnFrame(IViewport, double) (was Viewport); FixedController's body is byte-identical apart from that signature, and the DivideByZero hazard on a zero CameraRotation still stands.")]
+    public override void OnFrame(IViewport inViewport, double inDeltaTime)
     {
         if (Pose is not { } source || Faulted)
         {

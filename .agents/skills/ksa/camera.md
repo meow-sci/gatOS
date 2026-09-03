@@ -7,7 +7,7 @@ KSA has two camera controller types that can be patched via Harmony to intercept
 - `OrbitController` — orbit/follow camera mode
 - `FlyController` — free-fly camera mode
 
-Both override `Controller.OnFrame(Viewport inViewport, double inDeltaTime)` — **two** parameters — which drives the camera each frame.
+Both override `Controller.OnFrame(IViewport inViewport, double inDeltaTime)` — **two** parameters — which drives the camera each frame. (Through build 2026.8.22.5348 the parameter type was the concrete `Viewport` class; build 2026.9.7.5402 replaced that class with the `IViewport`/`IGameViewport` interfaces, `ViewportBase`, `GameViewport` and a static `ViewportRegistry` — see the callout below.)
 
 ## Harmony Patch Pattern
 
@@ -44,16 +44,37 @@ private static bool HandleOnFramePrefix(Controller controller, double deltaTime)
 - Declaring only `(Controller __instance, double inDeltaTime)` and omitting `inViewport` is legal —
   Harmony binds original arguments **by name**, so a subset is fine
 
-> **⚠️ A prefix on `Controller.OnFrame` fires up to 4× per frame — bind the main viewport explicitly.**
-> `Program.ViewportCount = 4` (`decomp/KSA/Program.cs:238`) and `Program.OnFrameViewports` calls
-> `viewport.OnFrame(...)` for **every** viewport in `Viewports`, with the `if (!viewport.Visible)
-> continue;` check coming *after* that call (`Program.cs:2267-2288`) — and `Viewport.OnFrame` is
-> literally `GetActiveController().OnFrame(this, dt); GetCamera().OnFrame(dt);`
-> (`decomp/KSA/Viewport.cs:139-144`). So the offscreen thumbnail viewport and every hidden extra camera
-> run their controllers too, each with its **own** `Controller` and `Camera` instances. A patch that
-> assumes "one call per frame" will animate the wrong camera, or the same animation four times.
-> **Resolve the target viewport by identity — `Program.MainViewport` — never by index**, and never
-> assume `Program.GetCamera()`/`GetCameraMode()` mean the main one (they read the *frame* viewport).
+> **⚠️ A prefix on `Controller.OnFrame` fires up to 7× per frame — bind the main viewport explicitly.**
+> Since 2026.9.7.5402 viewports live in the static `ViewportRegistry` (`MAX_VIEWPORTS = 8`): **1**
+> `ViewportType.Main`, **1** `PartThumbnail` (a `PartThumbnailViewport : ViewportBase` — *not* an
+> `IGameViewport`, has no controllers), **4** `Secondary` camera windows and **2** `CharacterPortrait`
+> (crew face-cams). `Program.OnFrameViewports` calls `viewport.OnFrame(dt)` for every registered
+> viewport, and `GameViewport.OnFrame` is literally `GetActiveController().OnFrame(this, dt);
+> GetCamera().OnFrame(dt);` (+ audio for the main one) — so every hidden secondary window and both
+> portrait viewports run their controllers too, each with its **own** `Controller` and `Camera`
+> instances. A patch that assumes "one call per frame" will animate the wrong camera, or the same
+> animation several times. **Resolve the target viewport by identity — `Program.MainViewport`
+> (an `IGameViewport`; `ReferenceEquals`) — never by index or `ShaderSlot`**, and never assume
+> `Program.GetCamera()`/`GetCameraMode()` mean the main one (they read the *frame* viewport).
+> `ViewportRegistry.IsMainCamera(Camera)` answers "is this the main viewport's base or map camera".
+>
+> **Viewport API cheat-sheet (5402):** `IViewport` = `{Id, ShaderSlot, Name, Type, State, OptionFlags,
+> LightMode, Visible, Mode, OffscreenTarget, MainTarget, Width/Height/Size, PendingSize, Position,
+> GetCamera(), SetVisible(), RequestResize(), OnFrame(dt)}`; `IGameViewport : IViewport` adds
+> `{BaseCamera, MapCamera, FlyController, OrbitController, MapController, IvaController,
+> FixedController, PartPicker, Hovered, MenuBarInUse, ImGuiId, IvaAudio, GetActiveController(),
+> SetCameraMode(), NextCameraMode(), SetName(), DrawImGui()}`. Everything that used to be a public
+> **field** (`Mode`, `Visible`, `Hovered`, `MenuBarInUse`, `FixedController`, `Size`, `Position`,
+> `LightMode`, `ShouldRenderGizmos`/`ShouldRenderStars`/`IsOffscreen`) is now a **get-only or
+> protected-set property**: write `Mode` through `SetCameraMode`, `Visible` through `SetVisible`,
+> `Hovered`/`MenuBarInUse` through the explicit `IGameViewportLifecycle` interface
+> (`((IGameViewportLifecycle)vp).SetMenuBarInUse(true)`), and the render flags are the
+> `ViewportOptionFlags` bit-set (`vp.HasAll(ViewportOptionFlags.RenderPartModels)`). Replacing a
+> controller (`FixedController` etc.) now needs reflection on the protected setter of the
+> `GameViewport` auto-property — gatOS does this in `Game/Ksa/Camera/ViewportSeam.cs`.
+> `Viewport.Index` became `IViewport.ShaderSlot` (the per-viewport UBO / `GlobalShaderBindings.DynamicOffset` slot);
+> `Program.GetCrewPortraitViewport(int)` still exists, but classify by `vp.Type ==
+> ViewportType.CharacterPortrait` (`vp.Is(...)` in `ViewportEx`) rather than by identity or index.
 >
 > Do **not** port unscience's "first controller wins" guard
 > (`camera-controller-override.lib/Animation/KeyframeSequencePlayer.cs:437-444`): it locks onto the
@@ -100,7 +121,7 @@ double3 targetPos = controller.Camera.Following.GetPositionEcl();
 double3 up = double3.UnitY.Transform(transform.LocalRotation);
 transform.LocalRotation = Camera.LookAtRotation(lookDirection, up);
 
-// Viewport camera reference (e.g., in UpdateRenderData patches):
+// Viewport camera reference (e.g., in UpdateRenderData patches — the parameter is IViewport since 5402):
 Camera camera = viewport.GetCamera();
 double3 egoPos = camera.GetPositionEgo(vehicle); // vehicle position in camera ego space
 ```

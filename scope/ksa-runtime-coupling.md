@@ -21,7 +21,7 @@ contract, not KSA game state):
 | `[StarMapBeforeGui]` | `OnBeforeUi(dt)` | sets the "ran this frame" latch, then `DrivePerFrame(dt)` = `SampleTelemetry` → `TickSchedules` → `DrainCommands` (**Frame phase**) → `DriveAudio` → `UpdateThugLife` | reads + Frame writes |
 | `[StarMapAfterGui]` | `OnAfterUi(dt)` | `DrivePostSolver(dt)` = `DriveWelds(dt)` → `DriveIvaPhysics(dt)` (both **game-thread mutations**, run first and independently of the UI, each self-gated to a no-op when its registry is empty) then `DrawGameUi()` (ImGui status window) | weld `Teleport` + IVA SubPart poses + ImGui |
 | `[StarMapAfterOnFrame]` | `OnAfterFrame(t, dtPlayer)` | **the F2 fallback hook (C0.1)** — a postfix on `Program.OnFrame`: when GUI hooks were skipped it completes the per-frame non-camera drivers. The main-viewport prefix has already sampled/ticked/drained when available, so the latch prevents a double step | F2 fallback only; no camera pose write |
-| Harmony prefix/postfix: `Viewport.OnFrame(double)` | `CameraViewportPatch` | Bound strictly by `ReferenceEquals(viewport, Program.MainViewport)`. Prefix samples, advances schedules, drains frame commands and applies the camera after simulation advance; original method runs controller + `Camera.OnFrame`; postfix publishes the final clamped transform | same-render camera ownership + applied read-back |
+| Harmony prefix/postfix: `GameViewport.OnFrame(double)` (`Viewport.OnFrame` through 5348) | `CameraViewportPatch` | Bound strictly by `ReferenceEquals(viewport, Program.MainViewport)`. Prefix samples, advances schedules, drains frame commands and applies the camera after simulation advance; original method runs controller + `Camera.OnFrame`; postfix publishes the final clamped transform | same-render camera ownership + applied read-back |
 | `[StarMapUnload]` | `Unload` | `TeardownGameCheats` (dispose `PaintManager` — which restores every clutter-texture slot and drops every sticker, unpatching `gatos.stickers` and freeing its pipeline/mesh/descriptors/bindless slots after a `WaitIdle` — then clear welds, restore/unpatch IVA + thug_life + always_render, FX pristine restore, audio shutdown, `ScheduleStore.Clear()`, `CameraDirector.Shutdown()`), remove hooks, stop serial, dispose broker/servers (bounded) | cheat/camera/schedule teardown + uninstall |
 
 The game-coupled hook bodies live in the partial `Game/Mod.Game.cs` and are `[MethodImpl(NoInlining)]`
@@ -76,7 +76,7 @@ separate methods, so an unpatch of one cannot disturb the other):
 | Patch | KSA target | Decomp file | Purpose | If target moves |
 |---|---|---|---|---|
 | Solver-drain **prefix** (`Priority.First`) | `Universe.ExecuteNextVehicleSolvers` | `KSA/Universe.cs` | drains `CommandPhase.Solver` commands inside the vehicle-solver step (`Mod.DrainSolverCommands`) | solver-phase commands (attitude/frame/target, burn, refills) never drain; logged once |
-| Menu **postfix** | `Program.DrawProgramMenusHook` | `KSA/Program.cs` | draws the fallback top-level "gatOS" menu when the ModMenu mod is absent; also touches `Program.MainViewport.MenuBarInUse`, `ModLibrary.Find("ModMenu")` | gatOS menu only reachable via ModMenu; logged once |
+| Menu **postfix** | `Program.DrawProgramMenusHook` | `KSA/Program.cs` | draws the fallback top-level "gatOS" menu when the ModMenu mod is absent; also calls `((IGameViewportLifecycle)Program.MainViewport).SetMenuBarInUse(true)` (5402 — the `MenuBarInUse` field became a read-only property whose writer is the explicit `IGameViewportLifecycle` interface, exactly what `Program.DrawMenuBar` itself calls), `ModLibrary.Find("ModMenu")` | gatOS menu only reachable via ModMenu; logged once |
 | Screen-stream capture **transpiler** (`DisplayRenderPatch`) | `Program.RenderGame` — inserts a call before the frame's final 1-arg `Brutal.VulkanApi` `End()` | `KSA/Program.cs` | records the `/sim/display` capture into the engine's own frame command buffer (see [the capture section](#display-capture)) | no `End()` site found → **no injection** (stream dark, warning logged); the method is never corrupted |
 | UI-coverage-mask **prefix** (`DisplayRenderPatch.UiPixelCullingPrefix`) — **new at 2026.8.22.5348** | `GameSettings.UiPixelCulling()` | `KSA/GameSettings.cs` (+ `KSA/UiCoverageMaskSystem.cs`, `KSA/PrePassRenderer.cs`) | reports UI pixel culling **off while the stream is live**, so `/sim/display` captures complete frames instead of the local player's window chrome punched out as unshaded black (rev 5283, see [the capture section](#display-capture)) | best-effort: `InstallUiCullingSuppression` warns and returns; the stream still runs, it just carries UI-shaped holes |
 
@@ -578,8 +578,10 @@ degrades to no-injection; a capture-time managed fault latches the feature off f
 ### Camera director same-frame viewport driver {#camera-driver}
 
 The **programmable camera** (`Game/Ksa/Camera/`, plans/CAMERA_ASBUILT.md) installs one Harmony
-prefix/postfix pair on public `Viewport.OnFrame(double)`. Both bind strictly by
-`ReferenceEquals(__instance, Program.MainViewport)` because KSA owns four viewports. The prefix calls
+prefix/postfix pair on public `GameViewport.OnFrame(double)` (`Viewport.OnFrame` through 5348). Both
+bind strictly by `ReferenceEquals(__instance, Program.MainViewport)` because KSA owns eight registry
+viewports (1 main, 1 part-thumbnail — a `ViewportBase` with its own `OnFrame`, never patched — 4
+secondary, 2 crew-portrait). The prefix calls
 `Mod.PrepareMainViewportFrame(dt)`: sample telemetry, advance shared schedule clocks, post and drain due
 commands, then run `CameraDirector.Update(dt)`. It composes `Track ?? Override ?? Baseline`, resolves
 current-frame placement/aim, and writes `Camera.PositionEcl`, `Camera.LocalRotation` and projection.
@@ -588,15 +590,17 @@ matrix from that transform; the postfix publishes the final position/rotation af
 never touches a matrix or renderer. The obsolete after-render design was one simulation frame behind a
 moving ECL target and was removed after the first live validation exposed it.
 
-**Why the parked controller remains important.** `Viewport.OnFrame` (`KSA/Viewport.cs:139`) is
-literally `GetActiveController().OnFrame(this, dt); GetCamera().OnFrame(dt);`. The prefix must leave no
+**Why the parked controller remains important.** `GameViewport.OnFrame` (`KSA/GameViewport.cs`; was
+`KSA/Viewport.cs:139`) is literally `GetActiveController().OnFrame(this, dt); GetCamera().OnFrame(dt);`
+(+ audio when `HasAudio`). The prefix must leave no
 game controller that overwrites its transform before the matrix build. That is true of exactly one:
 `FixedController.OnFrame` (`KSA/FixedController.cs:18-35`) wraps its **entire body** in
 `if (following != null)`, and ownership unfollows. Hence `CameraDirector.Take()` parks
-`Viewport.Mode = CameraMode.Fixed` (**by direct field assignment**, so `FixedController.OnSwitchOn`'s
-`TimedAlert("Fixed Camera")` never draws in the footage) and calls
+`Mode = CameraMode.Fixed` (**by a direct property write** — since 5402 through `ViewportSeam`'s
+reflection on `ViewportBase.Mode`'s protected setter, with `SetCameraMode` as the fallback — so
+`FixedController.OnSwitchOn`'s `TimedAlert("Fixed Camera")` never draws in the footage) and calls
 `Unfollow(changeControl: false)` — the default `true` would null `Program.ControlledVehicle` and drop
-the player's vessel. Every frame the driver **re-asserts** both (`Viewport.Mode != Fixed` or
+the player's vessel. Every frame the driver **re-asserts** both (`Mode != Fixed` or
 `Following != null` is undone), because a camera hotkey or another mod could otherwise wake
 `FixedController.OnFrame` and leave two writers fighting over one transform. The visible consequence:
 **while gatOS owns the camera, the player's camera keys do nothing.**
@@ -852,6 +856,15 @@ and **all ~15 reflection accessors resolve with compatible shapes in the real 53
 > `MeshUbo` field was frame-invariant, which is why the copy had been harmless. `Mirror` is now
 > **field-wise**, copying only what gatOS writes, and is therefore immune to the next such addition on
 > either struct.
+
+**Re-verified 2026-09-02 against `2026.9.7.5402`** — and this pass **added two reflection accessors**,
+both born of the viewport rework ([`ksa-assets-and-versions.md#5402-pass`](ksa-assets-and-versions.md#5402-pass)):
+
+| Accessor chain | 5402 status |
+|---|---|
+| `ViewportSeam.TrySetFixedController` → `GameViewport.FixedController` **protected `set`** (compiler-generated `set_FixedController`) | ➕ **new** — through 5348 `Viewport.FixedController` was a public writable field; the pose controller install (`CameraDirector.EnsureController`) and the stock restore at `Shutdown` now go through the property setter by reflection. A miss ⇒ `camera/enabled 1` answers `EOPNOTSUPP` ("the fixed-camera controller seam could not be installed"), logged once |
+| `ViewportSeam.TrySetMode` → `ViewportBase.Mode` **protected `set`** (`set_Mode`) | ➕ **new** — the silent Fixed park / mode restore that used to be a public-field write. A miss falls back to `GameViewport.SetCameraMode`, which parks correctly but runs the controllers' switch hooks and `ClearHeldPlayerInput()` |
+| every 5348 chain above (`_manualControlInputs` + struct fields, the `KittenEva` scale chain, the six `FxReflect` handles, `PlanetRenderer._renderUboMap`/`_meshUboMap`, the EVA paint `_renderable`/`_characterAvatar` fields) | see the binary surface diff in the pass record |
 
 **This does not retire the live check.** A `MetadataLoadContext` diff proves the members exist with
 the right shapes; it cannot prove the *chain* resolves through live objects, that the Harmony installs

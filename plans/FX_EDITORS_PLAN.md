@@ -200,7 +200,7 @@ debug/plumetrail/
 | `render/self_shadow_steps` | Number | 0–64 (int) | `SelfShadowStepCount` | 4 |
 | `render/light_brightness` | Number | 0–1000 | `LightBrightness` | 7 |
 | `render/sky_ambient_brightness` | Number | 0–1000 | `SkyAmbientBrightness` | 3 |
-| `render/trail_color` | Color4 | 0–1/ch | `DebugTrailColor` (float4 RGBA) |  |
+| ~~`render/trail_color`~~ | ~~Color4~~ | ~~0–1/ch~~ | ~~`DebugTrailColor` (float4 RGBA)~~ — **retired at KSA 2026.9.7.5402**: the global tint was removed; colour/density/lifetime are per `PlumeTrailTemplate` asset (`Color`, `DensityMultiplier`, `Lifetime`) — a per-template subtree would be the follow-up |  |
 
 **Deferred:** `UseNoiseAntiTiling`/`DebugMode` (trigger `RebuildFrameResources()`), all
 `PlumeTrailSegmentsManager` private sim/LOD/wind fields (19 reflected fields — tier 2).

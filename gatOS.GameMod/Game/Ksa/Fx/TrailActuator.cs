@@ -98,15 +98,21 @@ internal static class TrailActuator
     /// </summary>
     [KsaAnchor("VolumetricTrailRenderer.{MaxDistance,VoxelDepthFirstSliceThickness,MinStepSize,"
             + "StepSizeDistanceScale,ErosionMaxDepth,ErosionEdgeSharpness,SelfShadowStepCount,"
-            + "LightBrightness,SkyAmbientBrightness,DebugTrailColor} (public fields); "
+            + "LightBrightness,SkyAmbientBrightness} (public fields); "
             + "PlumeTrailSettings.ExpansionTimeSeconds via FxReflect.TrailSettings",
-        SourceFile = "KSA/VolumetricTrailRenderer.cs:172-194 / KSA/PlumeTrailSettings.cs:11",
-        Verified = "2026-08-01", GameVersion = "2026.8.3.5117", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/VolumetricTrailRenderer.cs:172-192 / KSA/PlumeTrailSettings.cs:9",
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
         Notes = "Plain public instance fields, read fresh by the renderer every frame — read-back is "
             + "always the live value and a write needs no apply call. Floats, so a value round-trips at "
             + "single precision. ExpansionTimeSeconds is the exception: revs 5059/5097 moved it off the "
             + "renderer onto the private PlumeTrailSettings (High risk, separately latched), matching "
-            + "where the game's own Plume Trails debug window now edits it.")]
+            + "where the game's own Plume Trails debug window now edits it. 5402: the global float4 "
+            + "DebugTrailColor was REMOVED (with its 'trailColor' debug-window row and the "
+            + "VolumetricTrailParams.TrailColor UBO slot); colour, density and lifetime are now per "
+            + "PlumeTrailTemplate asset (Color/DensityMultiplier/Lifetime, PlumeTrailAssets.xml) and "
+            + "ride each SubmitEmitter call — so render/trail_color was retired from /sim rather than "
+            + "re-bound (nothing global remains to bind). PlumeTrailSettings.SegmentLifetimeSeconds "
+            + "also left (never bound). The nine remaining fields are byte-identical.")]
     internal static bool TryRead(VolumetricTrailRenderer r, FxFieldSpec spec, double[] dst)
     {
         switch (spec.Key)
@@ -125,12 +131,6 @@ internal static class TrailActuator
             case "render/self_shadow_steps": dst[0] = r.SelfShadowStepCount; return true;
             case "render/light_brightness": dst[0] = r.LightBrightness; return true;
             case "render/sky_ambient_brightness": dst[0] = r.SkyAmbientBrightness; return true;
-            case "render/trail_color":
-                dst[0] = r.DebugTrailColor.X;
-                dst[1] = r.DebugTrailColor.Y;
-                dst[2] = r.DebugTrailColor.Z;
-                dst[3] = r.DebugTrailColor.W;
-                return true;
             default: return false;
         }
     }
@@ -154,9 +154,6 @@ internal static class TrailActuator
             case "render/self_shadow_steps": r.SelfShadowStepCount = (int)Math.Round(v[0]); return true;
             case "render/light_brightness": r.LightBrightness = (float)v[0]; return true;
             case "render/sky_ambient_brightness": r.SkyAmbientBrightness = (float)v[0]; return true;
-            case "render/trail_color":
-                r.DebugTrailColor = new float4((float)v[0], (float)v[1], (float)v[2], (float)v[3]);
-                return true;
             default: return false;
         }
     }

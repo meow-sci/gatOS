@@ -50,10 +50,13 @@ private static bool GetWorldMatrix_Prefix(Vehicle __instance, Camera camera, ref
 
 [HarmonyPatch(typeof(Vehicle), "UpdateRenderData")]
 [HarmonyPrefix]
-private static bool UpdateRenderData_Prefix(Vehicle __instance, Viewport viewport, int inFrameIndex)
+private static bool UpdateRenderData_Prefix(Vehicle __instance, IViewport viewport, int inFrameIndex)
 {
+    // Parameter type is IViewport since 2026.9.7.5402 (was the concrete Viewport class); when you
+    // resolve the target with AccessTools.Method(..., [typeof(IViewport), typeof(int)]) the type
+    // must match exactly or the lookup returns null.
     double4x4 m = __instance.GetMatrixAsmb2Ego(viewport.GetCamera());
-    __instance.Parts.UpdateRenderData(in m, __instance.IsEditedVehicle, inFrameIndex);
+    __instance.Parts.UpdateRenderData(in m, __instance.IsEditedVehicle, viewport, inFrameIndex);
     return false;
 }
 ```

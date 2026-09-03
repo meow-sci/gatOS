@@ -112,11 +112,11 @@ public sealed class FxCatalogTests
     [Test]
     public void IsValid_NonFinite_IsRejected()
     {
-        var spec = Spec("render/trail_color", FxCatalog.PlumeTrail); // Color4, [0, 1]
+        var spec = Spec("emission/color0", FxCatalog.EnginePlume); // Color3, [0, 1]
         Assert.Multiple(() =>
         {
-            Assert.That(FxCatalog.IsValid(spec, [0, 0, 0, double.NaN]), Is.False);
-            Assert.That(FxCatalog.IsValid(spec, [double.PositiveInfinity, 0, 0, 0]), Is.False);
+            Assert.That(FxCatalog.IsValid(spec, [0, 0, double.NaN]), Is.False);
+            Assert.That(FxCatalog.IsValid(spec, [double.PositiveInfinity, 0, 0]), Is.False);
         });
     }
 

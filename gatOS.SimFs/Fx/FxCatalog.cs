@@ -182,8 +182,9 @@ public static class FxCatalog
             "Brightness of direct light on the trail."),
         new("render/sky_ambient_brightness", FxKind.Number, 0, 1000, "",
             "Brightness of sky ambient light on the trail."),
-        new("render/trail_color", FxKind.Color4, 0, 1, "rgba",
-            "Debug tint applied to every trail (RGBA)."),
+        // render/trail_color (Color4) was retired at KSA 2026.9.7.5402: the global DebugTrailColor
+        // tint left VolumetricTrailRenderer; trail colour is now per PlumeTrailTemplate asset
+        // (Color / DensityMultiplier / Lifetime in PlumeTrailAssets.xml), submitted per emitter.
     ];
 
     /// <summary>

@@ -15,7 +15,26 @@ new events) and **G4** (full control surface: throttle/staging/attitude/burn, RC
 built; they add **no** KSA coupling — every transport speaks the same `SnapshotStore` (reads) and
 `ICommandSink`/`SimCommand` (writes), so this matrix (the KSA-touching surface) is unaffected by them.
 
-**Verified:** **2026-08-23 against `2026.8.22.5348`** (clean `-t:Rebuild` of the whole solution against
+**Verified:** **2026-09-02 against `2026.9.7.5402`** (clean `-t:Rebuild` of the whole solution against
+the 5402 DLLs — 0 warnings; full test suite 1646 passed / 12 skipped / 0 failed; **the changelog was
+gapped** — CURRENT's `version.json` logs only rev 5401 — so the full decomp + Content diff against a
+`git worktree` of the 5348 drop was the discovery mechanism; **plus the binary-level surface diff**:
+482/482 game TypeRefs and 907/907 MemberRefs of the compiled `gatOS.GameMod.dll` resolve in the
+shipping 5402 assemblies, 52 of 474 shared referenced types changed shape (all `KSA.dll`), all 25
+reflection strings and 15 Harmony targets present with single overloads.) **Three compile breaks,
+all fixed:** KSA deleted the `Viewport` class (→ `IViewport`/`IGameViewport`/`GameViewport` +
+`ViewportRegistry`; `Program.MainViewport` is an `IGameViewport`, `Index` → `ShaderSlot`, and the
+`Mode`/`FixedController` fields the camera director wrote became **protected-set properties** — hence
+**two new High-risk reflection anchors** in `Game/Ksa/Camera/ViewportSeam.cs` and the camera hook now
+on `GameViewport.OnFrame(double)`); `VolumetricTrailRenderer.DebugTrailColor` was removed (→
+`debug/plumetrail/render/trail_color` **retired**, see the trail row); `Cursor.InputRay` was removed
+(→ `Cursor.GetEgoRay(IViewport)` in `StickerPicker`). No compiler-invisible break was found. **Drift
+documented, no code change:** a structural-failure/debris system (fragment vehicles appear under
+`vessels/`, control can move to one), parachutes (`ctl/stage` arms/cuts them), authored
+`parts/<n>/display_name`, terrain-aware `Camera.ClampCamera`. Detail:
+[`scope/ksa-assets-and-versions.md#5402-pass`](../scope/ksa-assets-and-versions.md#5402-pass).
+
+**Prior pass — 2026-08-23 against `2026.8.22.5348`** (clean `-t:Rebuild` of the whole solution against
 the 5348 DLLs — 0 warnings, **zero compile breaks**, the first pass in the project's history with none
 (5261 had ten, 5168 four); full test suite 1646 passed / 12 skipped / 0 failed; direct diff of the
 side-by-side 5261 and 5348 checkouts — gapless, CURRENT's `fromRevision` 5261 = the prior audited
@@ -337,7 +356,7 @@ i-feel-seen).
 | Path | A | Write | KSA anchor | Risk | Phase |
 |---|---|---|---|---|---|
 | `vessels/by-id/<id>/scale` | St | value > 0 | `ScaleActuator.Set`: recursive `Part.Scale = (f,f,f)` over `Vehicle.Parts.Parts`/`Part.SubParts` (public `double3` setter; invalidates cached transform matrices), one-shot — KSA resets it on vessel rebuild; KittenEva avatar via reflected `_renderable._characterAvatar.Core.Scale = f*0.01f` (0.01 == 1:1). **5348 (D6): `Part.ScaleTotal` composition went additive → multiplicative** (`Scale + PartParent.ScaleTotal.Transform(inverse(Asmb2ParentAsmb))` → componentwise `Scale * PartParent.ScaleTotal`), so a subpart's `ScaleTotal` is now `factor²` where it was ≈`2·factor`. **Bounded:** the `Part.Scale` setter still only calls `ResetCachedPosMatrixValues()` — it does *not* call the new `RefreshScale()` (reached solely from the `Part` ctor and `VehicleEditor`), so gatOS's write stays visual/transform-only exactly as on 5261, and `StickerPicker` bypasses the `ScaleTotal`-scaled bounding sphere by raycasting the mesh. **New divergence:** rev 5329's `IRescale` made the game's own editor scaling *physical* (`RefreshScale()` rebuilds BEPU colliders, tank `StorageVolume`, inert mass, nozzle areas, decoupler separation force, connector offsets, then `Tree.RefreshStaticMass()`) and clamped to **0.5×–2×** with 0.25 m diameter quantization. gatOS's `/sim` scale does none of that and admits any finite value > 0 — a deliberate cheat-mod divergence, but it no longer means what the in-game gizmo means | H (reflection + `GetType().Name` gate) | Frame |
-| `vessels/by-id/<id>/always_render` | St | `0`/`1` | `VesselForceRender.Set`: registry op; installs **two Harmony prefixes on its own `Harmony("gatos.always_render")` instance only while ≥ 1 vessel is marked** — `Vehicle.GetWorldMatrix(Camera)` + `Vehicle.UpdateRenderData(Viewport,int)` — reproducing the stock bodies minus the `GetObjectDiameterPixelsAsDouble < 1.0` sub-pixel cull (`Camera.GetPositionEgo`, `Vehicle.Body2Cce`, `Vehicle.GetMatrixAsmb2Ego`, `PartTree.UpdateRenderData`, `Vehicle.IsEditedVehicle`) | M (dynamic Harmony; `UpdateRenderData` is virtual — KittenEva's override renders via its own path and is **not** affected) | Frame |
+| `vessels/by-id/<id>/always_render` | St | `0`/`1` | `VesselForceRender.Set`: registry op; installs **two Harmony prefixes on its own `Harmony("gatos.always_render")` instance only while ≥ 1 vessel is marked** — `Vehicle.GetWorldMatrix(Camera)` + `Vehicle.UpdateRenderData(IViewport,int)` (`Viewport` through 5348) — reproducing the stock bodies minus the `GetObjectDiameterPixelsAsDouble < 1.0` sub-pixel cull (`Camera.GetPositionEgo`, `Vehicle.Body2Cce`, `Vehicle.GetMatrixAsmb2Ego`, `PartTree.UpdateRenderData`, `Vehicle.IsEditedVehicle`) | M (dynamic Harmony; `UpdateRenderData` is virtual — KittenEva's override renders via its own path and is **not** affected) | Frame |
 
 Read-backs are sampled in `VesselReader.SampleCore` (always on — not gated by the detail pass):
 `scale` ← a representative `Part.Scale.X` (best-effort, `1.0` fallback; anchor `ScaleActuator.Read`);
@@ -539,7 +558,7 @@ already loaded in-process).
 
 | Anchor (`Game/Ksa/Iva/`) | KSA / Brutal members | Risk | Notes |
 |---|---|---|---|
-| `IvaPhysicsManager.Update` | `JobSystems.VehicleSolver.Wait()`; `Universe.{CurrentSystem.All.UnsafeAsList,SimulationSpeed}`; `Program.{Editor,MainViewport}`; `Viewport.Mode`; `CameraMode.IVA`; `Vehicle.{Id,AccelerationBody,AngularAccelerationBody,BodyRates,CenterOfMassAsmb,Parts.Count}` | L | The per-frame driver (`Mod.DriveIvaPhysics`, `OnAfterUi` — the sixth game-thread work site), after the solver workers so the kinematics are settled. **`AccelerationBody` is a true accelerometer in every flight situation** (zero in `Freefall`; the `GM/r²` normal force when `Landed`/`Floating`; thrust+drag with gravity excluded when `Maneuvering`), which is why one formula covers pad, coast, burn and landing. Parks under warp, in the editor (`Program.Editor != null` disables `Part` transform caching), and outside the IVA camera unless `run_outside_iva`. |
+| `IvaPhysicsManager.Update` | `JobSystems.VehicleSolver.Wait()`; `Universe.{CurrentSystem.All.UnsafeAsList,SimulationSpeed}`; `Program.{Editor,MainViewport}`; `IViewport.Mode`; `CameraMode.IVA`; `Vehicle.{Id,AccelerationBody,AngularAccelerationBody,BodyRates,CenterOfMassAsmb,Parts.Count}` | L | The per-frame driver (`Mod.DriveIvaPhysics`, `OnAfterUi` — the sixth game-thread work site), after the solver workers so the kinematics are settled. **`AccelerationBody` is a true accelerometer in every flight situation** (zero in `Freefall`; the `GM/r²` normal force when `Landed`/`Floating`; thrust+drag with gravity excluded when `Maneuvering`), which is why one formula covers pad, coast, burn and landing. Parks under warp, in the editor (`Program.Editor != null` disables `Part` transform caching), and outside the IVA camera unless `run_outside_iva`. |
 | `InteriorGeometry.Build` | `Vehicle.Parts.Parts`; `Part.{SubParts,InstanceId,Modules,MatrixAsmb2VehicleAsmb}`; `ModuleList.Get<PartModelModule>()`; `PartModelModule.PartModel.Template`; `PartModelModule.Template.{Internal,RayTracing,Mesh}`; `MeshReference.PositionCompare`; `IVASeat.PositionAsmb`; `double3.Transform` | M | Builds exact interior collision geometry from the vessel's own IVA meshes. `Template.Internal` **is** "renders only through the IVA camera" (`PartModel`'s gate is `(!Template.Internal \|\| viewport.Mode == CameraMode.IVA)` — the flag `always_render_iva` flips), so it is a free, art-driven classifier for interior surfaces. `PositionCompare` is a de-indexed `double3[]` triangle soup retained forever for KSA's own picking raycasts. Read-only; never mutates a part. Falls back to a synthetic box room around the `IVASeat`s. |
 | `FloatingObject.ApplyPose` | `Part.{PositionParentAsmb(set),Asmb2ParentAsmb(set),PartParent,PositionVehicleAsmb,Asmb2VehicleAsmb,Scale}`; `double3.Transform`; `doubleQuat.{Concatenate,Conjugate,NormalizeOrZero}` | M | The per-frame transform driver. Both setters call `ResetCachedPosMatrixValues` and `PartModelModule.UpdateRenderData` re-reads them every frame, so rendering/lighting/ray-tracing/IVA gating follow for free — this is KSA's **own** idiom (`KeyframeAnimationModule`, `SolarTracker`). **SubParts only, binding:** `Part.GetReferenceWithChildren` serializes a `Transform` for top-level parts but not SubParts, so a displaced object cannot leak into a save. |
 | `FloatingObject.{ReadBodyPose,RestoreRestPose}` | `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb,PositionParentAsmb(set),Asmb2ParentAsmb(set)}` | L | Adopt-time seed pose and exact rest-pose restore. The rest pose is captured into gatOS's own fields, **not** KSA's `PositionParentAsmbSafe`/`Asmb2ParentAsmbSafe` (which belong to the animation system). |
@@ -581,7 +600,7 @@ re-reads each frame, so there is **no apply call**:
 
 | Path | A | Write | KSA anchor | Risk | Phase |
 |---|---|---|---|---|---|
-| `debug/plumetrail/render/*` | St | per-field (see SPEC §3.7) | `TrailActuator.TryRead`/`TryWrite`: `VolumetricTrailRenderer.{MaxDistance,VoxelDepthFirstSliceThickness,MinStepSize,StepSizeDistanceScale,ErosionMaxDepth,ErosionEdgeSharpness,SelfShadowStepCount,LightBrightness,SkyAmbientBrightness,DebugTrailColor}` (public fields, `float`/`float4`) | M | Frame |
+| `debug/plumetrail/render/*` | St | per-field (see SPEC §3.7) | `TrailActuator.TryRead`/`TryWrite`: `VolumetricTrailRenderer.{MaxDistance,VoxelDepthFirstSliceThickness,MinStepSize,StepSizeDistanceScale,ErosionMaxDepth,ErosionEdgeSharpness,SelfShadowStepCount,LightBrightness,SkyAmbientBrightness}` (public fields, `float`/`int`). ⚠️ **`render/trail_color` retired at 5402** — `DebugTrailColor` was removed from the renderer (colour is per-`PlumeTrailTemplate` asset now) | M | Frame |
 | `debug/plumetrail/render/expansion_time` | St | number, `0.001..10000` s | `TrailActuator` → `FxReflect.TrailSettings` → `PlumeTrailSettings.ExpansionTimeSeconds`; two private hops (`VolumetricTrailRenderer._plumeTrailSegmentsManager` → `PlumeTrailSegmentsManager._settings`), moved off the renderer at revs 5059/5097. Latch `fx.trail_settings` | **H** | Frame |
 | (renderer handle) | — | — | `FxReflect.Trail`: `Program.Instance._volumetricTrailRenderer` (private field — the only handle) | **H** | — |
 | `debug/plumetrail/clear` | T | `1` | `TrailActuator.Clear`: `Program.Instance.ClearPlumeTrails()` — **public instance** method (no reflection) | M | Frame |
@@ -649,8 +668,8 @@ phase; none is in `SimCommand.SolverActions` (nothing about the camera is visibl
 Everything except the game anchors below is **game-free** (`gatOS.SimFs/Camera/**`: the math
 primitives, the validation rules, the three-layer `Track ?? Override ?? Baseline` compositor, the
 store + writable `track/` dir, the line grammars, and the whole JSON track parser/evaluator/player).
-One guarded Harmony prefix/postfix targets public `Viewport.OnFrame(double)` and binds only
-`Program.MainViewport` by identity (see
+One guarded Harmony prefix/postfix targets public `GameViewport.OnFrame(double)` (`Viewport.OnFrame`
+through 5348) and binds only `Program.MainViewport` by identity (see
 [`scope/ksa-runtime-coupling.md#camera-driver`](../scope/ksa-runtime-coupling.md#camera-driver)). The
 prefix applies against current-frame target state immediately before KSA builds matrices; the postfix
 publishes the final clamped transform. Ownership parks `CameraMode.Fixed` and unfollows, and
@@ -663,22 +682,27 @@ unchanged, and `Viewport` only *gained* `ShouldRenderStars` and `LightMode : EVi
 lines, 0 removed), where `MainViewport.LightMode = Clustered` and secondary viewports' `Forward`
 evaluate to exactly the previous hardcoded `UseShadows`/`UseLightPrePass` values, so nothing about the
 camera driver changes. Correction carried in from the anchor re-stamp: the comment claiming "Program has
-four viewports" has been **wrong in both builds** — it is **6**. Live recheck pending
-(`docs/VALIDATION.md`).
+four viewports" has been **wrong in both builds** — it is **6**. **Re-verified 2026-09-02 against
+`2026.9.7.5402` — the viewport rework was a compile break here:** `KSA.Viewport` is gone; the hook
+target is now `GameViewport.OnFrame(double)`, `Program.MainViewport` is an `IGameViewport`, the
+registry holds **8** viewports (1 main, 1 part-thumbnail, 4 secondary, 2 crew-portrait), and
+`FixedController`/`Mode` became **protected-set properties** — so the controller install and the
+silent Fixed park now go through `ViewportSeam` (two new High-risk reflection accessors, below). Live
+recheck pending (`docs/VALIDATION.md`).
 
 **Ownership + the live game camera** (`Game/Ksa/Camera/CameraDirector.cs`):
 
 | Path | A | Write | KSA anchor | Risk | Phase |
 |---|---|---|---|---|---|
-| `camera/enabled` (`1`) | St | `camera.enabled` | `CameraDirector.Take`: `Program.MainViewport`; `Viewport.{Mode,GetCamera,SetCameraMode,BaseCamera}`; `Camera.{PositionEcl,LocalPosition,LocalRotation,NoRotation,Following,TidalLocking,GetFieldOfView,Orthographic,Unfollow}`. `Viewport.Mode` is assigned **directly** so `FixedController.OnSwitchOn`'s `TimedAlert("Fixed Camera")` never draws; `Unfollow(changeControl:false)` (the default `true` would null `Program.ControlledVehicle`) | M | Frame |
-| `camera/enabled` (`0`), `camera/release` | St / T | `camera.enabled` / `camera.release` | `CameraDirector.Restore`: `Camera.{SetFollow,Unfollow,LocalPosition,LocalRotation,NoRotation,SetFieldOfView,SetOrthographic}`; `Viewport.{Mode,SetCameraMode}`; `Universe.SetSimulationSpeed` (conditional). `SetFollow` **first** (it teleports), then `NoRotation`→`LocalPosition`→`LocalRotation`, projection, mode **last**; restoring *into* Map goes through `SetCameraMode` so `MapController.OnSwitchOn` re-establishes `NoRotation` + the map's control state | M | Frame |
+| `camera/enabled` (`1`) | St | `camera.enabled` | `CameraDirector.Take`: `Program.MainViewport` (`IGameViewport`); `IGameViewport.{Mode,GetCamera,SetCameraMode,BaseCamera,FixedController}`; **`ViewportSeam.TrySetFixedController` → `GameViewport.FixedController` protected setter, `ViewportSeam.TrySetMode` → `ViewportBase.Mode` protected setter (reflection, new at 5402, Risk H)**; `Camera.{PositionEcl,LocalPosition,LocalRotation,NoRotation,Following,TidalLocking,GetFieldOfView,Orthographic,Unfollow}`. `Mode` is written **directly** (through the seam) so `FixedController.OnSwitchOn`'s `TimedAlert("Fixed Camera")` never draws and no held input is cleared; `Unfollow(changeControl:false)` (the default `true` would null `Program.ControlledVehicle`) | M | Frame |
+| `camera/enabled` (`0`), `camera/release` | St / T | `camera.enabled` / `camera.release` | `CameraDirector.Restore`: `Camera.{SetFollow,Unfollow,LocalPosition,LocalRotation,NoRotation,SetFieldOfView,SetOrthographic}`; `IGameViewport.{Mode,SetCameraMode}` + the `ViewportSeam` mode write; `Universe.SetSimulationSpeed` (conditional). `SetFollow` **first** (it teleports), then `NoRotation`→`LocalPosition`→`LocalRotation`, projection, mode **last**; restoring *into* Map goes through `SetCameraMode` so `MapController.OnSwitchOn` re-establishes `NoRotation` + the map's control state | M | Frame |
 | (per-frame pose apply) | — | — | `CameraDirector.Apply`: `Camera.{PositionEcl,LocalRotation,LookAtRotation,SetFieldOfView,SetOrthographic,SetOrthoHalfHeight}`. `LocalRotation` (not `WorldRotation`) is what `Camera.OnFrame` builds the view matrix from; `SetFieldOfView` takes **degrees** and does **not** clamp (which is what puts fisheye/telephoto in reach) and rebuilds+inverts the projection on every call, so it is written only on change. `ortho_height` has **no public getter in 5168** — nothing to capture, nothing to restore | M | Frame |
 | (track `time` channel, C4) | — | — | `CameraDirector.ApplyTimeScale`: `Universe.SetSimulationSpeed(double, alert:false)` (`:1998`), `Universe.GetSimulationSpeed()` (`:2021`), `Universe.IsAutoWarpActive` (`:96`). `alert:false` is load-bearing (the default draws a speed alert *in the footage*). Speed is captured **lazily**, the first frame the channel is driven, and restored only if captured. Neither public `SetSimulationSpeed` overload checks `IsAutoWarpActive`, so a driven `time` channel **fights** an active auto-warp — deliberately unguarded, documented | M | Frame |
 | (release blend) | — | — | `CameraDirector.RestorePositionEcl`: the `Camera.PositionCce` composition (`LocalPosition` ⇄ `IFollowable.GetBodyFixed2Ecl` unless `NoRotation`); `IPosition.GetPositionEcl()`. Reproduced rather than called: the camera being blended is already unfollowed, so its own `PositionCce` would not use the captured target | M | Frame |
-| `camera/mode` | St | `camera.mode` | `CameraDirector.SetMode`: `Program.MainViewport`; `Viewport.SetCameraMode(CameraMode)`. Refused (`EOPNOTSUPP`) while gatOS owns the camera. Note the side effect: `SetCameraMode` calls `Program.ControlledVehicle?.ClearHeldPlayerInput()`, dropping latched `ctl/translate`+`ctl/rotate` flags (SPEC §3.4.19) | M | Frame |
+| `camera/mode` | St | `camera.mode` | `CameraDirector.SetMode`: `Program.MainViewport`; `IGameViewport.SetCameraMode(CameraMode)`. Refused (`EOPNOTSUPP`) while gatOS owns the camera. Note the side effect: `SetCameraMode` calls `Program.ControlledVehicle?.ClearHeldPlayerInput()`, dropping latched `ctl/translate`+`ctl/rotate` flags (SPEC §3.4.19) | M | Frame |
 | `camera/follow` | St | `camera.follow` | `CameraDirector.SetFollow`: `Program.MainViewport.{BaseCamera,MapCamera}`; `Camera.{SetFollow,Unfollow}` — **both** cameras, like the game's own follow. Keeps `SetFollow`'s `target + 2.5×MeanRadius×forward` teleport (that is what "go look at this" means); preserves the current tidal flag; a `part:` reference is `EOPNOTSUPP` (the game follows a whole `IFollowable`). Refused while owned | M | Frame |
 | `camera/tidal` | St | `camera.tidal` | `CameraDirector.SetTidal`: `Camera.{Following,TidalLocking,SetFollow,PositionEcl}`. `TidalLocking` is get-only and `SetFollow` is its only writer, so the flag change re-issues `SetFollow` and then **re-asserts the captured `PositionEcl`** to undo its unconditional teleport. Refused while owned | M | Frame |
-| `camera/map/scope` | St | `camera.map_scope` | `CameraDirector.SetMapScope`: `Program.MainViewport.MapController`; `MapController.Scope` (`:33`, a plain public `double`). **Not ownership-gated** — it configures the game's own map camera. Three inherited game behaviours: `MapController.OnFrame` clamps it **up** to `Camera.Following.MeanRadius` every map frame; `OnSwitchOn`→`SetDefaults()` recomputes it wholesale after a focus change; it has no visible effect outside `map` mode | M | Frame |
+| `camera/map/scope` | St | `camera.map_scope` | `CameraDirector.SetMapScope`: `Program.MainViewport.MapController`; `MapController.Scope` (`:34`, a plain public `double`). **Not ownership-gated** — it configures the game's own map camera. 5402: `MapController.CanChangeControl => ViewportRegistry.IsMainCamera(Camera)` limits the control juggling to the main viewport (no change for gatOS). Three inherited game behaviours: `MapController.OnFrame` clamps it **up** to `Camera.Following.MeanRadius` every map frame; `OnSwitchOn`→`SetDefaults()` recomputes it wholesale after a focus change; it has no visible effect outside `map` mode | M | Frame |
 
 **Frames + targets** (`Game/Ksa/Camera/CameraFrames.cs`, `CameraTargets.cs`):
 
@@ -700,7 +724,7 @@ with one volatile swap, which every `/sim/camera` leaf renders from:
 
 | Path | A | Write | KSA anchor | Risk | Phase |
 |---|---|---|---|---|---|
-| every `camera/**` read leaf | S | — | `CameraReader.Sample`: `Viewport.{Mode,MapController}` (public fields); `MapController.Scope`; `Camera.{Following,TidalLocking,GetFieldOfView,Orthographic}`. ⚠️ `GetFieldOfView()` returns **radians** while `SetFieldOfView(float)` takes **degrees** — converted here, once, at the boundary. `Viewport.Mode` is read directly, never `Program.GetCameraMode()` (which reads the *frame* viewport) | M | — |
+| every `camera/**` read leaf | S | — | `CameraReader.Sample`: `IGameViewport.{Mode,MapController}` (interface properties since 5402); `MapController.Scope`; `Camera.{Following,TidalLocking,GetFieldOfView,Orthographic}`. ⚠️ `GetFieldOfView()` returns **radians** while `SetFieldOfView(float)` takes **degrees** — converted here, once, at the boundary. `IViewport.Mode` is read directly, never `Program.GetCameraMode()` (which reads the *frame* viewport) | M | — |
 | `camera/mode`, `camera/status`' `mode` | S | — | `CameraReader.ModeOf(CameraMode)`: the `CameraMode` enum `{Orbit, Free, Map, IVA, Fixed}`. The `/sim` `CameraModeKind` ordinals match one-for-one but the mapping is **written out, not cast** — an inserted member upstream would otherwise silently re-label every mode on the wire | L | — |
 
 **Focus** (`Game/Ksa/Actuators/CameraActuator.cs`, pre-existing, **rebound** by task C1.4):

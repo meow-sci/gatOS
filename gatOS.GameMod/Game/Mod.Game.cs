@@ -115,7 +115,7 @@ public sealed partial class Mod
     private bool _audioDead;
 
     // The camera director (Game/Ksa/Camera): owns the main viewport's camera while a guest has taken
-    // it, writes the composed pose in Viewport.OnFrame before KSA builds matrices, and hands it back.
+    // it, writes the composed pose in GameViewport.OnFrame before KSA builds matrices, and hands it back.
     // Created lazily on the game thread with the other control objects (null when
     // [camera] camera_enabled=false), driven by CameraViewportPatch, released at unload.
     private CameraDirector? _cameraDirector;
@@ -199,7 +199,7 @@ public sealed partial class Mod
             if (ImGui.BeginMenu("gatOS"))
             {
                 // Keep the (possibly auto-hidden) menu bar shown while our menu is open.
-                Program.MainViewport.MenuBarInUse = true;
+                ((IGameViewportLifecycle)Program.MainViewport).SetMenuBarInUse(true);
                 DrawMenuContentSafe();
                 ImGui.EndMenu();
             }

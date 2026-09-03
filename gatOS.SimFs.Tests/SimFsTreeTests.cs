@@ -258,7 +258,7 @@ public sealed class SimFsTreeTests
             "debug/engineplume/templates/kerolox/json", "debug/engineplume/templates/kerolox/reset",
             "debug/engineplume/templates/methalox/emission/brightness",
             "debug/plumetrail/help", "debug/plumetrail/render/max_distance",
-            "debug/plumetrail/render/trail_color", "debug/plumetrail/json",
+            "debug/plumetrail/render/erosion_max_depth", "debug/plumetrail/json",
             "debug/plumetrail/clear", "debug/plumetrail/reset",
             "debug/clouds/help", "debug/clouds/bodies/Kerth/shared/transition_start_km",
             "debug/clouds/bodies/Kerth/layers/0/color",

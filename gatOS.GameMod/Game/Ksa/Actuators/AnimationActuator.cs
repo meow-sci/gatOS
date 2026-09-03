@@ -13,9 +13,10 @@ namespace gatOS.GameMod.Game.Ksa.Actuators;
 internal static class AnimationActuator
 {
     [KsaAnchor("KeyframeAnimationModule.TimeGoal = fraction × Shared.Duration",
-        SourceFile = "KSA/KeyframeAnimationModule.cs", Verified = "2026-06-12", Risk = ChurnRisk.Low,
+        SourceFile = "KSA/KeyframeAnimationModule.cs", Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Low,
         Notes = "fraction 0 = retract, 1 = deploy (PWM-duty-cycle semantics). Ordinal = animation index "
-                + "from VesselReader.SampleAnimations; solar/<n> and lights/<n> map their ordinal to the same index.")]
+                + "from VesselReader.SampleAnimations; solar/<n> and lights/<n> map their ordinal to the same index."
+            + "5402: KeyframeAnimationModule is byte-identical, but it gained a competing WRITER — Parachute.Arm/Disarm/Deploy call SetBayDoorsOpen(open), which drives the FullPart's KeyframeAnimationModule (ParachuteBayB keeps ParachuteBayDoorAnimation and hosts two Parachute subparts). animations/<n> on a chute bay therefore mirrors the chute state machine, and an animations/<n>/goal write on such a bay fights it (the next chute transition re-drives the doors).")]
     internal static CommandResult SetGoal(Vehicle vehicle, int ordinal, double fraction)
     {
         var animations = vehicle.Parts.Modules.Get<KeyframeAnimationModule>();

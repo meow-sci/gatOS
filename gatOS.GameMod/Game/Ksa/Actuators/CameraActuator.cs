@@ -49,12 +49,13 @@ internal static class CameraActuator
     /// </remarks>
     [KsaAnchor("Program.MainViewport.{BaseCamera,MapCamera}; Camera.SetFollow(IFollowable, "
             + "tidalLocking:true, changeControl:false, alert:false)",
-        SourceFile = "KSA/Program.cs / KSA/Viewport.cs / KSA/Camera.cs / KSA/InputEvents.cs",
-        Verified = "2026-08-06", GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Program.cs / KSA/IGameViewport.cs / KSA/Camera.cs / KSA/InputEvents.cs",
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
         Notes = "Mirrors the game's `follow` terminal action; Astronomical (Vehicle and celestials) is "
             + "IFollowable. changeControl:false leaves Program.ControlledVehicle untouched; alert:false "
             + "keeps the 'Following X' TimedAlert off screen, which matters now that the same camera "
-            + "surface is used to shoot footage.")]
+            + "surface is used to shoot footage."
+            + "5402: Program.MainViewport is an IGameViewport (BaseCamera/MapCamera get-only properties); InputEvents' follow action is unchanged.")]
     internal static CommandResult Focus(Astronomical target)
     {
         var viewport = Program.MainViewport;

@@ -126,7 +126,7 @@ internal sealed class CameraFollowable : IFollowable
 
     public bool HasOrbit() => false;
 
-    public void DrawAxes(Viewport viewport)
+    public void DrawAxes(IViewport viewport)
     {
     }
 }

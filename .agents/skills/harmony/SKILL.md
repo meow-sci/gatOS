@@ -194,10 +194,10 @@ This is the textbook "conditionally skip original and substitute the return valu
 |----------|-----------------|
 | `__instance` | `Vehicle __instance`, `PartModel __instance`, `Camera __instance`, `PartModelModule __instance`, `Controller __instance` — the game object being patched |
 | `ref __result` | `ref bool __result` (HotkeyGuard), `ref float4x4? __result` (i-feel-seen) — write it then `return false` to override |
-| named original args | `Camera camera`, `Viewport viewport`, `int inFrameIndex`, `CommandBuffer commandBuffer` — match the game method's real parameter names |
+| named original args | `Camera camera`, `IViewport viewport` (`Viewport` before KSA 2026.9.7.5402), `int inFrameIndex`, `CommandBuffer commandBuffer` — match the game method's real parameter names |
 | `ref <param>` | `ref PartModel.PerInstanceData instanceData` — mutate a struct argument in place (paint, deform, emissive) |
 | `___PrivateField` | triple-underscore reads a private game field directly into the patch. **No gatOS or unscience patch currently uses it** — every field these patches need is public (e.g. the camera transform is the public `Controller.Camera`). Harmony validates the name at *patch* time, so a misspelled or non-existent field throws from `Patch()` and, in a shared-Harmony host, aborts the rest of the chain — cite a real field or don't reach for this |
-| positional | `PartModel.PerInstanceData __0`, `Viewport __1` (IvaForceRender) — by-index when you don't want to name them |
+| positional | `PartModel.PerInstanceData __0`, `IViewport __1` (IvaForceRender) — by-index when you don't want to name them |
 
 ## Holding patch state: static `*PatchState` / manager singletons
 
@@ -320,7 +320,7 @@ private static void Postfix() { /* ImGui.BeginMenu(...) ... */ }
 | `PartModelDynamic.AddInstance` | prefix (`ref PerInstanceData`) | humble-arteest engine emissive temperature/TFI |
 | `PartModel` ctor / `PartModel.AddInstance` | postfix | IvaForceRender — force interior meshes visible |
 | `PartModelModule.UpdateRenderData` (+ Dynamic/Glass variants) | prefix (skip) | blinky/shiny — conditionally skip rendering `pixel_`/`shiny_` parts; mesh-deform Part capture |
-| `PartModelRenderer.UpdateRenderData(Viewport, int)` | prefix | flexo — render editor parts in main pass (note arg-type overload match) |
+| `PartModelRenderer.UpdateRenderData(IViewport, int)` (`Viewport` before 5402) | prefix | flexo — render editor parts in main pass (note arg-type overload match) |
 | `Universe.ExecuteNextVehicleSolvers` | prefix (`Priority.First`) | flexo — run hinge solver before vehicle solvers |
 | `SuperMeshRenderSystem.RenderMainPass` | postfix | thug-life — record extra quad draws into the command buffer |
 | `Controller.OnFrame` (Orbit/Fly) | prefix (`___Transform`) | camera-controller-override — keyframe camera playback |

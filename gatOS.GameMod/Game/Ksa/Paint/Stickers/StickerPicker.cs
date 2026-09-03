@@ -54,14 +54,17 @@ internal static class StickerPicker
     /// <param name="range">Maximum hit distance in metres.</param>
     /// <param name="result">The resolved anchor; undefined when this returns false.</param>
     /// <returns>False when nothing was hit — the caller maps that to ENOENT.</returns>
-    [KsaAnchor("Program.GetMainCamera(); Camera.{ScreenToEgoRay(float2),FramebufferSize}; Cursor.InputRay",
-        SourceFile = "KSA/Program.cs:569 / KSA/Camera.cs:688,47 / KSA/Cursor.cs:25",
-        Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
+    [KsaAnchor("Program.GetMainCamera(); Program.MainViewport; Camera.{ScreenToEgoRay(float2),FramebufferSize}; Cursor.GetEgoRay(IViewport)",
+        SourceFile = "KSA/Program.cs:632,485 / KSA/Camera.cs:47 / KSA/Cursor.cs:27",
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
         Notes = "Both rays are in EGO space (origin at the camera, ecliptic axes) and Ray's "
             + "constructor normalizes Direction (KSA/Ray.cs:11). ScreenToEgoRay takes framebuffer "
-            + "pixels, not NDC, and Cursor.InputRay is refreshed from Cursor.UpdateInputRay each "
-            + "frame — it is the stale ray of the previous frame if the cursor has not moved, which "
-            + "is exactly what the player last saw. The camera aim is the default because it works "
+            + "pixels, not NDC. 5402: Cursor.InputRay (a per-frame cached ray) was REMOVED; Cursor.GetEgoRay(IViewport) "
+            + "computes the ray live from the desktop cursor position minus the viewport's Position, "
+            + "through that viewport's own camera (the main viewport's Position is ImGui's main-viewport "
+            + "origin, set every frame in OnDrawUiViewports) — the same call the game's own hover "
+            + "picking (Vehicle.UpdateHighlight) now makes. Cursor positions are float2 desktop "
+            + "coordinates (were double2 screen coordinates). The camera aim is the default because it works "
             + "headless and /sim/camera can point it.")]
     internal static bool TryPick(bool cursor, double range, out PickResult result)
     {
@@ -70,7 +73,7 @@ internal static class StickerPicker
             return false;
 
         var ray = cursor
-            ? Cursor.InputRay
+            ? Cursor.GetEgoRay(Program.MainViewport)
             : camera.ScreenToEgoRay(new float2(camera.FramebufferSize.X * 0.5f, camera.FramebufferSize.Y * 0.5f));
         if (!double.IsFinite(ray.Direction.X) || ray.Direction.LengthSquared() <= 0)
             return false;

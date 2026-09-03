@@ -185,11 +185,12 @@ internal sealed class WeldManager
     }
 
     [KsaAnchor("Universe.CurrentSystem.All.UnsafeAsList(); Vehicle.Parts.Parts; Part.{InstanceId,SubParts}",
-        SourceFile = "KSA/Universe.cs / KSA/Part.cs", Verified = "2026-07-16", GameVersion = "2026.7.6.4939",
+        SourceFile = "KSA/Universe.cs / KSA/Part.cs", Verified = "2026-09-02", GameVersion = "2026.9.7.5402",
         Risk = ChurnRisk.Low, Notes = "Liveness check + anchor re-resolution for the weld driver. The "
             + "anchor may be a top-level part OR a subpart (a Part with its own InstanceId; the weld "
             + "math's PositionVehicleAsmb/Asmb2VehicleAsmb are subpart-aware, so an animated subpart "
-            + "anchor tracks — the purrTTY in-world quad pattern).")]
+            + "anchor tracks — the purrTTY in-world quad pattern)."
+            + "5402: members unchanged. New failure mode from KSA's part-failure system: a weld anchor Part can migrate — InstanceId intact — into a fragment/debris Vehicle ('<id>_N') between frames; IsLive is by vehicle reference + FindPart within THAT vehicle, so the anchor resolves null and the weld degrades through the existing null path (dormant, not garbage). Re-resolving InstanceIds across all vehicles is a follow-up option.")]
     private static bool IsLive(Vehicle vehicle)
     {
         if (Universe.CurrentSystem is not { } system)

@@ -256,9 +256,9 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
             + "Program.SetViewport(cmd); Vehicle.GetMatrixAsmb2Ego(Camera); Vehicle.Asmb2Ego; "
             + "Part.PositionEgo(in double4x4); Part.Asmb2Ego(doubleQuat); double3.Transform",
         SourceFile = "KSA/Program.cs / KSA/Camera.cs / KSA/Vehicle.cs / KSA/Part.cs",
-        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
         Notes = "Per-frame ego-space model matrix + draw for one thug-life quad, per rendered viewport "
-            + "(main + the two crew-portrait viewports at indices 4/5 — Program.RenderViewport calls "
+            + "(main + the two ViewportType.CharacterPortrait viewports — Program.RenderViewport calls "
             + "RenderMainPass for every visible viewport, and the portrait targets share the offscreen "
             + "target's color/depth formats and sample count, so one pipeline serves all passes). "
             + "Program.SetViewport already sizes to RenderedViewport.Size. 5348: the crew-portrait "
@@ -267,7 +267,8 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
             + "can simply not occur. SuperMeshRenderSystem.RenderMainPass is still a single overload but "
             + "its body is now wrapped in commandBuffer.TagRegion(Profiler.GpuTag.MeshRendererV2); a "
             + "Harmony postfix runs after the finally, so these quads are attributed OUTSIDE that GPU "
-            + "tag — profiler attribution only, no mis-draw.")]
+            + "tag — profiler attribution only, no mis-draw."
+            + "5402: RenderedViewport is an IViewport (GetRenderCamera still returns RenderedViewport.GetCamera(), :642); RenderMainPass(CommandBuffer) is still the single overload with the same three call sites (RenderViewport :4395, RenderGame :4656, RenderEditor :4856); SetViewport (:4293) still sizes from RenderedViewport.Size; the per-viewport camera/lighting UBOs are now indexed by IViewport.ShaderSlot, which this renderer never touches.")]
     public void RecordDraw(CommandBuffer cmd, ThugLifeEntry entry)
     {
         if (_disposed || !entry.Visible)

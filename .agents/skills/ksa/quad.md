@@ -269,7 +269,7 @@ Key facts:
 
 ## Ray-vs-quad picking (mouse / clicks)
 
-`Cursor.InputRay` is built each frame by `Camera.ScreenToEgoRay` and is in **ego space**. The model matrix above is ego-space too, so they're directly compatible — no extra transform:
+`Cursor.GetEgoRay(IViewport)` (2026.9.7.5402+; it replaced the per-frame cached `Cursor.InputRay` property) computes the mouse ray live — the desktop cursor position minus `viewport.Position`, through that viewport's camera's `ScreenToEgoRay` — and is in **ego space**. Pass `Program.MainViewport`. The model matrix above is ego-space too, so they're directly compatible — no extra transform:
 
 ```csharp
 public bool TryRaycast(Ray ray, out double t)

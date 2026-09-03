@@ -291,15 +291,16 @@ internal sealed class IvaPhysicsManager
     ///     — it is what the player is looking at, not part of the flight simulation.
     /// </remarks>
     [KsaAnchor("JobSystems.VehicleSolver.Wait(); Universe.{CurrentSystem.All.UnsafeAsList,SimulationSpeed}; "
-            + "Program.{Editor,MainViewport}; Viewport.Mode; CameraMode.IVA; "
+            + "Program.{Editor,MainViewport}; IViewport.Mode; CameraMode.IVA; "
             + "Vehicle.{Id,AccelerationBody,AngularAccelerationBody,BodyRates,CenterOfMassAsmb,Parts.Count}",
-        SourceFile = "KSA/Universe.cs / KSA/Program.cs / KSA/Viewport.cs / KSA/Vehicle.cs / KSA/JobSystems.cs",
-        Verified = "2026-08-11", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Low,
+        SourceFile = "KSA/Universe.cs / KSA/Program.cs / KSA/IViewport.cs / KSA/Vehicle.cs / KSA/JobSystems.cs",
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Low,
         Notes = "The IVA cabin driver's forcing-term reads. AccelerationBody is a true accelerometer "
             + "in every flight situation (VehicleUpdateTask: zero in Freefall, GM/r² normal force when "
             + "Landed/Floating, thrust+drag when Maneuvering; normalized to m/s² at the end of the "
             + "step), which is why one formula covers pad, coast, burn and landing. Parks in the "
-            + "editor: Program.Editor != null disables Part's transform caching.")]
+            + "editor: Program.Editor != null disables Part's transform caching."
+            + "5402: Program.MainViewport.Mode is now the IViewport.Mode property (read-only from outside); the read is unchanged.")]
     public void Update(double dt)
     {
         if (IsIdle)

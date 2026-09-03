@@ -373,6 +373,19 @@ authority-exempt). SPEC §3.4.1 has the full semantics.
 - **`debug/terrain/.../tessellation/range_m` re-baselined (KSA `2026.8.22.5348`)** — the engine default
   moved 220 → 50 m and the shader's displacement falloff moved from `range×0.1…0.95` to
   `range×0.75…0.975`. Read the live value before writing; old tunings look wrong.
+- **`debug/plumetrail/render/trail_color` is gone (KSA `2026.9.7.5402`).** The renderer's global debug
+  tint was removed — trail colour/density/lifetime are per plume-trail template asset now. Reading or
+  writing it answers `ENOENT`; the other ten `render/*` fields are unchanged.
+- **`parts/<n>/display_name` is the authored template name since KSA `2026.9.7.5402`** ("Parachute
+  Bay", "Drogue Radial A"…) and therefore **not unique** — key on `instance_id`, never on the name.
+- **Crashes can spawn debris/fragment vessels (KSA `2026.9.7.5402`).** Parts now have crash
+  tolerances; a hard contact can split a vessel into `<id>_1`, `<id>_2`… fragments plus single-part
+  debris, all of which appear under `vessels/` (`controllable`=0, one part, orbit events frozen), and
+  control moves to the largest controllable fragment on its own. Programs that enumerate `vessels/`
+  should tolerate ids appearing mid-flight; there is no `debris` flag yet.
+- **`ctl/stage` also arms parachutes and fires cut modules (KSA `2026.9.7.5402`)** — the new
+  `ParachuteDeploy`/`ParachuteCut` modules are `ISequenced`, so a stage press behaves exactly like the
+  stage key on a chute bay. `animations/<n>/goal` on a chute-bay door fights the chute state machine.
 - **`POST /v1/command` / `gatos/command` require `vessel_id` even for globally addressed actions** —
   the whole `camera.*`, `schedule.*`, `audio.*` families and `debug.warp`/`debug.thug_life_*`/… name
   no vessel, so send `"vessel_id": ""`. Omitting it (or sending `null`) is `400 EINVAL`.

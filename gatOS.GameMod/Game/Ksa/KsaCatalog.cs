@@ -489,8 +489,9 @@ internal sealed class KsaCatalog(KsaHealth health, bool allVessels, WeldManager 
     }
 
     [KsaAnchor("Universe.CurrentSystem.All.UnsafeAsList(); Vehicle.Id", SourceFile = "KSA/Universe.cs",
-        Verified = "2026-06-12", Risk = ChurnRisk.Low,
-        Notes = "Same enumeration the telemetry sampler uses to find vessels by id.")]
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Low,
+        Notes = "Same enumeration the telemetry sampler uses to find vessels by id."
+            + "5402: unchanged (UnsafeAsList :210, CelestialSystem.Get :288). Fragment/debris vehicles ('<id>_N') spawned by the new part-failure system are ordinary Vehicles in All, so they resolve here like any other id.")]
     private static Vehicle? ResolveVehicle(string id)
     {
         if (Universe.CurrentSystem is not { } system)

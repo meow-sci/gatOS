@@ -37,12 +37,13 @@ internal static class IvaForceRender
     public static bool Enabled => _enabled;
 
     [KsaAnchor("PartModel.Instances; PartModel..ctor(PartModelModule.Template); "
-            + "PartModel.AddInstance(PerInstanceData,Viewport,int); PartModel.ViewportData.Get(...).InstanceList; "
+            + "PartModel.AddInstance(PerInstanceData,IViewport,int); PartModel.ViewportData.Get(PartModel,IViewport).InstanceList; "
             + "PartModelModule.Template.{Internal,RayTracing}; PartModelModule.RaytracingMode.ShadowProxy; "
-            + "Program.{Editor,MainViewport}; Viewport.Mode; CameraMode.IVA",
-        SourceFile = "KSA/PartModel.cs / KSA/PartModelModule.cs / KSA/Viewport.cs", Verified = "2026-06-28",
-        GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium,
-        Notes = "The always_render_iva cheat. Patches are dynamic — installed only while enabled.")]
+            + "Program.{Editor,MainViewport}; IViewport.{Mode,OptionFlags}; ViewportOptionFlags.RenderPartModels; CameraMode.IVA",
+        SourceFile = "KSA/PartModel.cs:408 / KSA/PartModelModule.cs / KSA/IViewport.cs / KSA/ViewportOptionFlags.cs", Verified = "2026-09-02",
+        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
+        Notes = "The always_render_iva cheat. Patches are dynamic — installed only while enabled."
+            + "5402: AddInstance now early-outs unless the viewport HasAny(RenderPartModels) (every stock preset has it) and keys ViewportData on ViewportId; the postfix mirrors that gate so it never adds an instance the engine refused. The raytracing branch now also requires viewport.HasAll(UseRaytracing) (main only).")]
     public static void SetEnabled(bool value)
     {
         if (_enabled == value)
@@ -116,10 +117,14 @@ internal static class IvaForceRender
     }
 
     /// <summary>Editor-only: interior previews are never drawn through an IVA camera, so force them in.</summary>
-    private static void AddInstancePostfix(PartModel __instance, PartModel.PerInstanceData __0, Viewport __1)
+    private static void AddInstancePostfix(PartModel __instance, PartModel.PerInstanceData __0, IViewport __1)
     {
         try
         {
+            // 5402: the original early-outs for a viewport without RenderPartModels; mirror that gate so
+            // the postfix never adds an instance the engine itself refused.
+            if (!__1.HasAny(ViewportOptionFlags.RenderPartModels))
+                return;
             if (Program.Editor is null
                 || !__instance.Template.Internal
                 || Program.MainViewport.Mode == CameraMode.IVA

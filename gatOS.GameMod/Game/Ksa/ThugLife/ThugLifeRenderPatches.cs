@@ -17,8 +17,8 @@ internal static class ThugLifeRenderPatches
     private static bool _loggedFault;
 
     [KsaAnchor("SuperMeshRenderSystem.RenderMainPass(CommandBuffer) — Harmony postfix",
-        SourceFile = "KSA/SuperMeshRenderSystem.cs:338", Verified = "2026-08-23",
-        GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
+        SourceFile = "KSA/SuperMeshRenderSystem.cs:347", Verified = "2026-09-02",
+        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
         Notes = "The only injection point for a world-space draw into KSA's offscreen scene pass. "
             + "Dynamic — installed only while a thug-life entry exists. 5348: re-verified — still "
             + "exactly ONE RenderMainPass overload in the whole tree, so both AccessTools lookups "
@@ -26,7 +26,8 @@ internal static class ThugLifeRenderPatches
             + "The body is now wrapped in using (commandBuffer.TagRegion(Profiler.GpuTag.MeshRendererV2)) "
             + "and a Harmony postfix runs after that finally, so our draws are attributed outside the "
             + "MeshRendererV2 GPU tag — profiler attribution only, recording after the end timestamp is "
-            + "legal and nothing mis-draws.")]
+            + "legal and nothing mis-draws."
+            + "5402: still exactly one RenderMainPass overload (now :347) and three call sites; the body gained the two-sided skinned technique (MeshRendererSkinnedPbrTwoSided, drawn inside its own SkinnedTwoSidedMeshes GPU tag) — additional opaque draws before this postfix, nothing that changes the pass state the quad draws into.")]
     public static void Apply(Harmony harmony)
     {
         var original = AccessTools.Method(

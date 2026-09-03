@@ -39,16 +39,17 @@ internal static class CameraReader
     /// <param name="anchor">The resolved anchor, for the position back-projection.</param>
     /// <param name="resolvedPositionEcl">The absolute ecliptic point the placement resolved to.</param>
     /// <param name="player">The live camera-track player, or null when nothing is playing.</param>
-    [KsaAnchor("Viewport.{Mode,MapController} (public fields); MapController.Scope (public double); "
+    [KsaAnchor("IGameViewport.{Mode,MapController} (interface properties); MapController.Scope (public double); "
             + "Camera.{Following,TidalLocking,PositionEcl,LocalRotation,GetFieldOfView,Orthographic}",
-        SourceFile = "KSA/Viewport.cs / KSA/MapController.cs / KSA/Camera.cs", Verified = "2026-08-09",
-        GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/IViewport.cs / KSA/IGameViewport.cs / KSA/MapController.cs / KSA/Camera.cs", Verified = "2026-09-02",
+        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
         Notes = "GetFieldOfView() returns RADIANS while SetFieldOfView(float) takes DEGREES — the "
             + "asymmetry is converted here, once, at the boundary, so nothing downstream carries a "
-            + "radian. Viewport.Mode is read (not GetCameraMode(), which reads the FRAME viewport). "
+            + "radian. IViewport.Mode is read (not GetCameraMode(), which reads the FRAME viewport). "
             + "MapController.Scope is a plain public field the controller clamps to the followed "
-            + "object's MeanRadius on every map frame, so a smaller written value reads back clamped.")]
-    internal static CameraStatus Sample(Viewport viewport, KsaCamera camera, bool owned,
+            + "object's MeanRadius on every map frame, so a smaller written value reads back clamped."
+            + "5402: Mode and MapController moved from public fields on Viewport to read-only interface properties (IViewport.Mode, IGameViewport.MapController) — reads are unchanged. MapController.Scope is still a plain public field with the same clamp.")]
+    internal static CameraStatus Sample(IGameViewport viewport, KsaCamera camera, bool owned,
         in CameraPose pose, in CameraTarget anchor, double3 resolvedPositionEcl,
         CameraPlayback? player)
         => new(

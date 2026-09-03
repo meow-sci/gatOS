@@ -503,7 +503,7 @@ Key gotchas:
 - Don't bake `part.MatrixAsmb2Ego` directly — it includes the part's scale, which you usually want to exclude.
 - If the source texture is gamma-encoded (as ImGui output is), use `R8G8B8A8UNorm` for the source; SRGB formats double-decode and darken the result.
 
-See [quad.md](quad.md) for the complete pipeline setup, vertex/index layout, per-frame model-matrix composition, ray-vs-quad picking via `Cursor.InputRay`, and lifecycle / disposal rules.
+See [quad.md](quad.md) for the complete pipeline setup, vertex/index layout, per-frame model-matrix composition, ray-vs-quad picking via `Cursor.GetEgoRay(Program.MainViewport)` (`Cursor.InputRay` before 5402), and lifecycle / disposal rules.
 
 # Numerics
 
