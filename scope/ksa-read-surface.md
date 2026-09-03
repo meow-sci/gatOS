@@ -542,6 +542,41 @@ read-back publishes the clamped transform, so a placement solved below terrain r
 main viewport gatOS drives; `Scope` and its clamp are unchanged (`camera/map/scope` reads back exactly as
 before). (3) `camera/target` can move on a vehicle destruction (`HandOffCameras`, above).
 
+### ⚠️ Render-side reads: viewport classification, first-person head hiding (5402)
+
+Two reads in the render area changed shape without changing what a guest sees, and one new draw-time
+behaviour is worth knowing before a live pass:
+
+- **`ThugLifeManager.CurrentPassBit()` classifies off `IViewport.Type` now.** `Program.GetCrewPortraitViewport(int)`
+  and `_crewPortraitViewportStart` are gone with the viewport rework; the pass bit is a
+  `ReferenceEquals` against `Program.MainViewport` (`:485`, `IGameViewport`) followed by
+  `RenderedViewport.Type` (`:491`, `IViewport`) → `CharacterPortrait` ⇒ `Crew`, `Secondary` ⇒ `Other`.
+  `PartThumbnail` maps to **no bit**, which is stricter than before and correct — a thumbnail can never
+  receive a quad. The 5348 caveat still stands: with crew portraits off or unoccupied those viewports are
+  `Visible = false`, `RenderViewport` skips them, and the `Cameras & Crew` bit simply goes unused.
+- **EVA paint slots can be invisible in first-person IVA.** `CharacterCore.HeadMeshIndices`
+  (`CharacterAvatar.cs:46`; `CharacterAssets.xml` lists meshes 0,1,2,3,5,6,7,8),
+  `AnimatedRenderable.{MaskedMeshIndices,HideMaskedMeshes,PrePassIgnoreMeshIndices,SkinningPoseIsViewportInvariant}`
+  and `KittenRenderable.HideHead` (`:98`) are new; `IVASeat.IsCameraInThisSeat(viewport)`
+  (`viewport.Mode == IVA && gameViewport.IvaController.Seat == this`) sets it. While true, `Draw()` skips
+  the masked meshes and the whole `CatFurRenderable` draw, so the occupant's own `body` slots 0–3/5–8 and
+  `fur` paint are **not drawn in that viewport**. `EvaPaintBridge` is unaffected structurally: masking is
+  draw-time, `MaterialIndices` array lengths and ordinal slot names are unchanged, and hidden meshes stay
+  material-bound (clones still allocated, `Uses` accounting unchanged). A `/sim/paint` read still reports
+  the rule; only the first-person view omits it.
+- **Every `FxReflect` field name still resolves** (12/12, same types); two moved in the
+  `VolumetricExhaustRenderer` reshuffle (`_currentAtmosphericPressure :278 → :290`,
+  `_debugThrottle :306 → :310`) and the `Program`/`CloudRenderer`/`PlanetRenderer` handles moved lines
+  only. Because revs 5349–5399 have no changelog and that renderer grew ~1248 lines, confirm the two
+  names against `/sim/debug/fx` health on first launch (`docs/VALIDATION.md`, 5402 card).
+- **Coverage gaps** (nothing broken, candidates only): the `ViewportOptionFlags` presets themselves are
+  not readable through `/sim`; the new **clutter physics** path
+  (`BubbleClutterStatics.GatherNearestInstances`, `ClutterEcotypePhysicalData.ComputeBoundingRadius`,
+  per-cell collider draw) adds a ground-contact surface `/sim` does not expose; and `Part.IsAttachedInternal`
+  / `AttachedInternal.{InstanceOf,PositionParentAsmb,Asmb2ParentAsmb}` is a **third transform holder** the
+  IVA driver does not know about — it classifies interior geometry by `PartModelModule.Template.Internal`
+  and only adopts `SubParts`.
+
 ### Verified clean
 
 Byte-identical KSA files behind bound reads: `EngineController`, `EngineControllerState`, `Battery`,

@@ -133,13 +133,15 @@ internal static class DisplayRenderPatch
     ///     </para>
     /// </remarks>
     [KsaAnchor("GameSettings.UiPixelCulling() (Harmony prefix)",
-        SourceFile = "KSA/GameSettings.cs / KSA/UiCoverageMaskSystem.cs / KSA/PrePassRenderer.cs",
-        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
+        SourceFile = "KSA/GameSettings.cs:3154 / KSA/UiCoverageMaskSystem.cs:466 / KSA/PrePassRenderer.cs",
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
         Notes = "Born at 2026.8.22.5348 (rev 5283). Setting defaults ON, so without this the screen "
                 + "stream ships UI-shaped unshaded holes. Single game-side caller "
                 + "(UiCoverageMaskSystem.RecordMaskGeneration), which re-reads it per frame and clears "
                 + "the tile masks when false. Install is best-effort: a missing target only costs "
-                + "capture fidelity, never the stream.")]
+                + "capture fidelity, never the stream. "
+                + "5402: unchanged — UiPixelCulling() is still a single overload at GameSettings.cs:3154 "
+                + "and RecordMaskGeneration (UiCoverageMaskSystem.cs:466) is still its only caller.")]
     private static bool UiPixelCullingPrefix(ref bool __result)
     {
         if (!IsCapturing)
@@ -184,17 +186,21 @@ internal static class DisplayRenderPatch
     ///     unchanged (the feature simply stays dark) rather than corrupting the method.
     /// </summary>
     [KsaAnchor("Program.RenderGame (Harmony transpiler) + Brutal.VulkanApi.VkDeviceExtensions.End",
-        SourceFile = "KSA/Program.cs", Verified = "2026-08-23", GameVersion = "2026.8.22.5348",
+        SourceFile = "KSA/Program.cs:4764", Verified = "2026-09-02", GameVersion = "2026.9.7.5402",
         Risk = ChurnRisk.Medium,
-        Notes = "Injects the capture call before the frame's final commandBuffer.End() (Program.cs:4595), where the "
+        Notes = "Injects the capture call before the frame's final commandBuffer.End() (Program.cs:4764), where the "
                 + "offscreen ColorImage is ShaderReadOnlyOptimal and recording is outside any render pass. Matches the "
                 + "single 1-arg End extension; degrades to no injection (feature dark) if the site moves. "
-                + "5348: the injection site is verified and the cited line moved :4130 -> :4595. RenderGame's "
-                + "new tail is _screenshotCapture.OnRenderGameSwapchainGrab(...); Profiler.Gpu.EndFrame("
+                + "RenderGame's tail is _screenshotCapture.OnRenderGameSwapchainGrab(...); Profiler.Gpu.EndFrame("
                 + "commandBuffer2); commandBuffer2.End() — EndFrame is not named End and KSA.Profiler is not in "
-                + "the Brutal.VulkanApi namespace, so both filters reject it, and the new TagRegion using blocks "
-                + "emit GpuRegion.Dispose() rather than an inlined End. codes[callIdx-1] is still the ldloc of "
-                + "commandBuffer2, and VkDeviceExtensions.End<T> has zero diff.")]
+                + "the Brutal.VulkanApi namespace, so both filters reject it, and the TagRegion using blocks "
+                + "emit GpuRegion.Dispose() rather than an inlined End. "
+                + "5402: line move only (:4595 -> :4764). Scanning RenderGame (:4470-4765) backwards there is "
+                + "still no other Call to a 1-arg End declared in Brutal.VulkanApi — the new UiCoverageMask."
+                + "Profiler.End(cb, idx, Section) calls are 3-arg KSA methods, Profiler.MainThread.End() is "
+                + "0-arg KSA, and EndRendering/EndRenderPass are differently named. codes[callIdx-1] is still "
+                + "the ldloc of commandBuffer2, VkDeviceExtensions.cs has zero diff, RenderGame is still "
+                + "single-declared, and RenderEditor's own End() (:4887) is not patched.")]
     private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
     {
         var codes = new List<CodeInstruction>(instructions);

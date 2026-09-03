@@ -117,10 +117,15 @@ internal sealed class IvaPhysicsManager
     /// </summary>
     [KsaAnchor("Vehicle.{Id,Parts}; Part.{InstanceId,SubParts,PartParent,DisplayName,Template.Id,"
             + "PositionParentAsmb,Asmb2ParentAsmb,Scale,Modules}",
-        SourceFile = "KSA/Vehicle.cs / KSA/Part.cs", Verified = "2026-07-24",
-        GameVersion = "2026.7.9.5018", Risk = ChurnRisk.Low,
+        SourceFile = "KSA/Vehicle.cs / KSA/Part.cs:574,660,680,700,752,766,815,1079", Verified = "2026-09-02",
+        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Low,
         Notes = "SubPart lookup + rest-pose capture for an IVA floating object. Top-level parts are "
-            + "REFUSED: their transform is serialized into the save, a SubPart's is not.")]
+            + "REFUSED: their transform is serialized into the save, a SubPart's is not. "
+            + "5402: every bound member is intact (the ResetCachedPosMatrixValues setter idiom too). "
+            + "One cosmetic drift: Part.DisplayName now initialises to Template.DisplayName when the "
+            + "template names one different from its Id (Part.cs:165-166), instead of always the "
+            + "instance Id — so the /sim/iva listing label can read the authored part name. Lookup is "
+            + "by InstanceId, so nothing resolves differently.")]
     public CommandResult Adopt(Vehicle vehicle, uint subPartInstanceId, double3 velocity)
     {
         if (!Enabled)

@@ -79,23 +79,19 @@ var pipelineLayout = device.CreatePipelineLayout(
 
 ### Pipeline — **the critical bits**
 
-```csharp
-// CRITICAL: bind to Program.OffScreenPass, NOT Program.MainPass.
-// Program.MainPass is the SWAPCHAIN pass (1-bit samples, hard-coded).
-// The scene — parts, SuperMesh draws, and a postfix on
-// SuperMeshRenderSystem.RenderMainPass — actually runs inside Program._offscreenPass,
-// whose sample count is GameSettings.GetSampleCount() (e.g. 4x/8x MSAA).
-// Binding to MainPass with 1-bit samples while the active framebuffer is 4x
-// makes depth state silently misbehave: the quad renders but does not test
-// against the depth values parts wrote, so it always paints on top.
-var multisample = new VkPipelineMultisampleStateCreateInfo {
-    RasterizationSamples = Program.OffScreenPass.SampleCount,
-};
+> **`Program.OffScreenPass` is gone.** Rev 5154 (shipped in `2026.8.5.5168`) moved offscreen
+> rendering off `VkRenderPass`/framebuffers onto **Vulkan dynamic rendering** and deleted
+> `Program.OffScreenPass` along with `RenderPassState`/the old `OffscreenTarget`. Do **not**
+> set `RenderPass`/`Subpass`/`RasterizationSamples` yourself: hand the create-info to
+> `Program.OffscreenTarget.SetupGraphicsPipeline(ref info)` (`KSA.Rendering/RenderTarget.cs:356`),
+> which stamps `VkPipelineRenderingCreateInfo` (colour/depth/stencil formats), forces
+> `RenderPass = NullHandle` and sets the sample count from the live target. That is what KSA's own
+> `GenericMeshRenderer`/`PartModelRenderer`/`PartModelGlass` do, so the pipeline tracks the engine's
+> MSAA + CMAA2 choice for free. Verified at `2026.9.7.5402`.
 
+```csharp
 var pipelineInfo = new VkGraphicsPipelineCreateInfo {
     Layout             = pipelineLayout,
-    RenderPass         = Program.OffScreenPass.Pass,  // NOT Program.MainPass
-    Subpass            = 0,
     StageCount         = 2,
     Stages             = stagesArr,                  // {Vert, Frag} from UnlitMesh
     DynamicState       = renderer.DynamicStateInfo,
@@ -105,14 +101,18 @@ var pipelineInfo = new VkGraphicsPipelineCreateInfo {
     RasterizationState = Presets.Rasterization.Fill.CullNone, // double-sided
     DepthStencilState  = RenderingPresets.ReverseZDepthStencil.DepthTestWrite,
     ColorBlendState    = Presets.BlendState.BlendNone,
-    MultisampleState   = &multisample,
 };
+// Stamps rendering-create-info, RenderPass = NullHandle and RasterizationSamples from the
+// live main target. Never hard-bind a sample count.
+Program.OffscreenTarget.SetupGraphicsPipeline(ref pipelineInfo);
 var pipeline = device.CreateGraphicsPipeline(default(VkPipelineCache), pipelineInfo, null);
 ```
 
 Key choices and why:
-- **`Program.OffScreenPass`, not `Program.MainPass`.** The scene draws inside `_offscreenPass`. Binding to the wrong pass passes pipeline-creation validation but produces broken depth at runtime.
-- **`RasterizationSamples = Program.OffScreenPass.SampleCount`.** Must match the active framebuffer, including when the user has MSAA on.
+- **`Program.OffscreenTarget.SetupGraphicsPipeline`, never a hand-written `RenderPass`/sample count.**
+  The scene draws into the main viewport's offscreen target (`Program.OffscreenTarget`, `Program.cs:457`,
+  which `MainViewport` is bound to via `AttachSharedTargets` at `:1526`); letting the target stamp the
+  pipeline is the only way to stay correct across MSAA settings and future target changes.
 - **`RenderingPresets.ReverseZDepthStencil.DepthTestWrite`.** KSA's offscreen pass is reverse-Z (clear value 0, compare op `GreaterOrEqual`). Forward-Z presets will look fine when the quad is the nearest thing on screen and wrong when it isn't.
 - **`Presets.Rasterization.Fill.CullNone`.** A single quad whose orientation the user controls: cull none keeps the back face visible so the user never sees a mysteriously-invisible orientation.
 

@@ -428,8 +428,8 @@ build at the `[KsaAnchor]` site.
 | Anchor site | KSA / Brutal members | Assemblies | Risk |
 |---|---|---|---|
 | `ThugLifeRenderPatches.Apply` | dynamic Harmony **postfix on `SuperMeshRenderSystem.RenderMainPass(CommandBuffer)`** (`KSA/SuperMeshRenderSystem.cs:329`) — the only injection point for a world-space draw; installed lazily on the first entry, removed with the last/at unload | KSA | **H** |
-| `ThugLifeQuadRenderer.BuildPipeline` (`unsafe`) | `Program.OffScreenPass.{Pass,SampleCount}`; `ModLibrary.Get<ShaderReference>("UnlitMeshVert"/"UnlitMeshFrag")`; `RenderTechnique.CreateShaderStages`; `Presets`/`RenderingPresets`; `Renderer.{Device,Allocator,DynamicStateInfo,ViewportState,Graphics}`; `VkUtils.StageAndUploadToBuffer` | Planet.Render.Core, Brutal.Vulkan(.Abstractions) | **H** |
-| `ThugLifeQuadRenderer.RecordDraw` (per-frame draw + ego-space anchor math, in `TryComputeModelEgo`) | `Program.GetMainCamera()`/`Camera.MVP.viewProjection`; `Vehicle.GetMatrixAsmb2Ego(Camera)`; `Vehicle.Asmb2Ego`; `Part.PositionEgo(in double4x4)`; `Part.Asmb2Ego(doubleQuat)`; `double3.Transform`; `Program.SetViewport` | KSA, Brutal numerics | **H** |
+| `ThugLifeQuadRenderer.BuildPipeline` (`unsafe`) | `Program.OffscreenTarget.SetupGraphicsPipeline(ref info)` (`Program.cs:457` / `KSA.Rendering/RenderTarget.cs:356` — stamps the dynamic-rendering formats, `RenderPass = NullHandle` and the live sample count; `Program.OffScreenPass` was deleted at rev 5154); `ModLibrary.Get<ShaderReference>("UnlitMeshVert"/"UnlitMeshFrag")`; `RenderTechnique.CreateShaderStages`; `Presets`/`RenderingPresets`; `Renderer.{Device,Allocator,DynamicStateInfo,ViewportState,Graphics}`; `VkUtils.StageAndUploadToBuffer` | Planet.Render.Core, Brutal.Vulkan(.Abstractions) | **H** |
+| `ThugLifeQuadRenderer.RecordDraw` (per-frame draw + ego-space anchor math, in `TryComputeModelEgo`) | `Program.GetRenderCamera()` (`:642`, = `RenderedViewport.GetCamera()`)/`Camera.MVP.viewProjection` (`:63`); `Vehicle.GetMatrixAsmb2Ego(Camera)`; `Vehicle.Asmb2Ego`; `Part.PositionEgo(in double4x4)`; `Part.Asmb2Ego(doubleQuat)`; `double3.Transform`; `Program.SetViewport` | KSA, Brutal numerics | **H** |
 | `ThugLifeTextureFactory.UploadPixels` | `SimpleVkTexture` ctor; `Renderer.Allocator.CreateStagingPool`/`AddStagingBuffer`; `VkUtils.UploadBufferToImage`; `DeviceEx.CreateSampler` (builds an `R8G8B8A8UNorm` texture + sampler) | Planet.Render.Core, Brutal.Vulkan(.Abstractions) | **H** |
 | `ThugLifeManager.{Update,IsLive}` | `Universe.CurrentSystem.All.UnsafeAsList()`; `Vehicle.Parts.Parts`; `Part.InstanceId` (per-frame validation / anchor re-resolve) | KSA | **L** |
 | `ThugLifeManager.EnsureGpu` | `Program.GetRenderer()` (lazy GPU lifecycle) | Planet.Render.Core | M |
@@ -442,7 +442,7 @@ welds/IVA "only active while toggled on" discipline) and **runtime-only** (never
 self-disables it (`Active=false`). `UpdateThugLife()` (game thread, `OnBeforeUi`) revalidates/re-resolves
 each entry per frame; `_thugLife?.Clear()` in `Mod.TeardownGameCheats` tears it down at unload. Pipeline
 assumptions (the `"UnlitMeshVert"/"UnlitMeshFrag"` shader keys, `R8G8B8A8UNorm`, reverse-Z depth,
-`Program.OffScreenPass` MSAA sample count) and the new render-DLL references are catalogued in
+the sample count `SetupGraphicsPipeline` stamps from the live target) and the new render-DLL references are catalogued in
 [`../scope/ksa-assets-and-versions.md`](../scope/ksa-assets-and-versions.md). Anchors verified
 `2026-06-28` against `2026.6.9.4750`; re-verified (static) 2026-07-03 against `2026.7.3.4826` —
 `RenderMainPass` byte-identical, shader keys/assets and `OffScreenPass` unchanged; the live quad-draw
@@ -462,6 +462,20 @@ goes unused. `PartModel.AddInstance` also gained a `viewport == Program.MainView
 signature and single-overload-ness unchanged, so the positional `__0`/`__1` args still bind, and the
 narrowing is *helpful*. Multi-viewport leak audit re-run: `RenderMainPass` call count is still 3 and
 `ResolveAttachments` still 3, with no gatOS injection leaks.
+
+Re-verified (static) **2026-09-02 against `2026.9.7.5402`**: `SuperMeshRenderSystem.RenderMainPass(
+CommandBuffer)` is still a single overload with a body-only diff, and `RenderTarget.SetupGraphicsPipeline`
+(`:356`), `RenderingPresets.cs`, `Presets.cs`, `RenderTechnique.cs`, `Core/Renderer.cs` and the
+`UnlitMesh.{vert,frag}` shaders are **byte-identical**, with the `UnlitMeshVert`/`UnlitMeshFrag`
+`DefaultAssets.xml` keys still at `:53`/`:54`. `RenderMainPass` and `ResolveAttachments` call counts are
+still 3 each. The viewport rework retyped the classification path — `Program.RenderedViewport` (`:491`)
+is `IViewport`, `Program.MainViewport` (`:485`) is `IGameViewport` from `ViewportRegistry`, and
+`GetCrewPortraitViewport`/`_crewPortraitViewportStart` are gone — so `ThugLifeManager.CurrentPassBit()`
+now classifies off `IViewport.Type` (`CharacterPortrait` → `Crew`, `Secondary` → `Other`) after a
+`ReferenceEquals` against `MainViewport`. The rev-5308 `viewport == Program.MainViewport` guard in
+`PartModel.AddInstance` became the broader `!viewport.HasAny(ViewportOptionFlags.RenderPartModels)`
+early-out (`PartModel.cs:410-413`); every stock preset carries that flag. Line moves only for
+`Program.{OffscreenTarget :457, GetRenderer :558, SetViewport :4293}` and `SuperMeshRenderSystem.cs`.
 
 **`stickers` — gatOS's second render-thread draw injection.** The `paint.sticker_*` actions
 (`/sim/paint/stickers`) project a user PNG onto whatever geometry sits inside a box anchored to a

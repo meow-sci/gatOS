@@ -107,9 +107,9 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
             + "ModLibrary.Get<ShaderReference>(\"UnlitMeshVert\"/"
             + "\"UnlitMeshFrag\"); RenderTechnique.CreateShaderStages; Presets/RenderingPresets; "
             + "Renderer.{Device,Allocator,DynamicStateInfo,ViewportState,Graphics}; VkUtils.StageAndUploadToBuffer",
-        SourceFile = "KSA/Program.cs:411 / KSA.Rendering/RenderTarget.cs:356 / KSA/ModLibrary.cs / "
+        SourceFile = "KSA/Program.cs:457 / KSA.Rendering/RenderTarget.cs:356 / KSA/ModLibrary.cs / "
             + "KSA/RenderingPresets.cs / Planet.Render.Core / Brutal.Vulkan*",
-        Verified = "2026-08-05", GameVersion = "2026.8.5.5168", Risk = ChurnRisk.High,
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
         Notes = "Builds the GPU pipeline for the thug-life quad against KSA's offscreen scene target + stock "
             + "UnlitMesh shaders. Deepest render-internals coupling in gatOS; off by default and self-disables "
             + "on fault. Rev 5154 moved offscreen rendering off VkRenderPass/framebuffers onto Vulkan dynamic "
@@ -118,7 +118,12 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
             + "VkPipelineRenderingCreateInfo (color/depth/stencil formats), forces RenderPass=NullHandle and "
             + "sets RasterizationSamples from the target — the same call KSA's own GenericMeshRenderer/"
             + "PartModelRenderer/PartModelGlass make, so gatOS tracks the engine's MSAA + CMAA2 (rev 5156) "
-            + "sample-count choice automatically instead of hard-binding a sample count.")]
+            + "sample-count choice automatically instead of hard-binding a sample count. "
+            + "5402: verified intact — RenderTarget.SetupGraphicsPipeline (:356), RenderingPresets.cs, "
+            + "Presets.cs, RenderTechnique.cs, Core/Renderer.cs and the UnlitMesh.{vert,frag} shaders "
+            + "are all byte-identical, and the DefaultAssets.xml UnlitMeshVert/UnlitMeshFrag keys are "
+            + "still at :53/:54. Only Program.OffscreenTarget moved (:411 -> :457); the ModLibrary.cs "
+            + "diff is the star-technique viewport loop plus log line numbers, nothing this binds.")]
     private static VkPipeline BuildPipeline(DeviceEx device, Renderer renderer, VkPipelineLayout layout)
     {
         var shaderRefs = new[]

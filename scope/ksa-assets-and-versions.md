@@ -101,10 +101,40 @@ animation); `Part.DisplayName` is now the **authored** template name (not unique
 `Camera.ClampCamera` is camera-local and terrain-aware; `MapController` only juggles control for the
 main viewport; `Program.ControlledVehicle`'s setter clears held input.
 
-**Lockstep:** 30 anchors re-stamped + 2 new (**177** total); `#5402-findings` on both scope surfaces;
+**Render internals held completely.** `KSA.Rendering/RenderTarget.cs` is **byte-identical**, so both
+GPU seams that hang off it — the sticker `ResolveAttachments` postfix and the thug_life
+`SetupGraphicsPipeline` stamp — are unchanged; so are `GameSettings.cs`/`UiCoverageMaskSystem.cs`
+(the `/sim/display` mask prefix), `BindlessTextureLibrary.cs` (clutter + sticker texture binding),
+`GlobalShaderBindings` (`DescriptorSetLayout`/`DescriptorSet`/`DynamicOffset(int)`, slot count now a
+constant 8), `ShaderModuleUtils`, `RenderTechnique`, `Presets`/`RenderingPresets`, `Core/Renderer.cs`,
+`TextureLoader`/`TextureAsset`/`SimpleVkTexture`/`VkUtils`, and every shader gatOS touches or includes
+(`MeshIndirect(.Raytraced).frag`, `UnlitMesh.{vert,frag}`, `Grid.{vert,frag}`,
+`Common/{Global,Camera,TextureSet,Extensions,Shared}.glsl`). Only asset-line and `Program.cs` member
+lines moved (`GridFrag` `:373 → :374` behind the new `StaticObjectPrePassIndirectFrag` at `:62`;
+`OffscreenTarget :457`, `PointClampedSampler :469`, `MainViewport :485`, `ResourceFrameIndex :218`,
+`ColorFormat :222`, `GetRenderer :558`, `GetRenderCamera :642`, `SetViewport :4293`, the `RenderGame`
+final `End()` `:4595 → :4764`). `GridPass` did change — per-`ShaderSlot` `SceneDepthDescriptorSets[8]`
+with `Rebuild(IViewport)` from `Program.RebuildViewport :4909` — but gatOS binds no `GridPass` member;
+it ports the pattern and writes its own descriptor against `Program.OffscreenTarget.DepthImage`, still
+the main viewport's shared target.
+
+**Render-area coverage gaps opened at 5402** (candidates, nothing broken): per-`PlumeTrailTemplate`
+colour/density/lifetime (the C2 follow-up); the volumetric-exhaust **plume bend/fold** deformation
+(`ExhaustPlumeDeformation.cs`, `ExhaustPlumeGasDynamics.cs`, `PlumeBend.glsl`, spec constants 22–24,
+permutation count 32) — air-velocity driven with no template knobs, so `/sim/debug/engineplume` still
+covers everything author-visible; **first-person head hiding** (`CharacterCore.HeadMeshIndices`,
+`AnimatedRenderable.MaskedMeshIndices`, `KittenRenderable.HideHead`, `IVASeat.IsCameraInThisSeat`),
+which hides an EVA-paint subject's own `body`/`fur` slots in the seat's own viewport only;
+**attached-internal parts** (`Part.IsAttachedInternal`, `AttachedInternal.{InstanceOf,PositionParentAsmb,
+Asmb2ParentAsmb}`), a third transform holder the IVA driver — which adopts only `SubParts` — does not
+know about; **clutter physics** (`BubbleClutterStatics.GatherNearestInstances`,
+`ClutterEcotypePhysicalData.ComputeBoundingRadius`, per-cell collider draw); and the
+`ViewportOptionFlags` presets themselves.
+
+**Lockstep:** 47 anchors re-stamped + 2 new (**177** total); `#5402-findings` on both scope surfaces;
 this record; FULL_SCOPE §0; the matrix header + camera/trail/IVA/always-render rows; the
 runtime-coupling hook table, camera-driver section and reflection-accessor table; SPEC §3.4 (`vessels/`
-debris note, `display_name`, `ctl/stage`), §3.7 (trail row), §3.10 (camera hook); `docs/VALIDATION.md`
+debris note, `display_name`, `ctl/stage`), §3.7 (trail row), §3.11 (camera hook); `docs/VALIDATION.md`
 (a 5402 card + item 5 of the FX card); `plans/FX_EDITORS_PLAN.md`; the `gatos` skill's version notes;
 and the `ksa`/`harmony` skills' viewport, menu-bar, quad and vehicle-API passages (the KSA API they
 document changed). **Live re-checks queued in [`../docs/VALIDATION.md`](../docs/VALIDATION.md).**

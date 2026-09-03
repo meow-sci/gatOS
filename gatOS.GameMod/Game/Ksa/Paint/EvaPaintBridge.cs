@@ -116,8 +116,9 @@ internal static class EvaPaintBridge
     }
 
     [KsaAnchor("KittenEva._renderable -> KittenRenderable._characterAvatar; CharacterAvatar Core/Fur/Attachments; protected MaterialIndices",
-        SourceFile = "KSA/KittenEva.cs / KittenRenderable.cs / CharacterAvatar.cs / *Renderable.cs",
-        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
+        SourceFile = "KSA/KittenEva.cs:15 / KittenRenderable.cs:12,98 / CharacterAvatar.cs:32,46,61,107,109,128,211,213,219 / "
+            + "*Renderable.cs:31,34",
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
         Notes = "5348: the MMU changed asset and shape. Content/Core/CharacterAssets.xml swapped "
             + "Characters/KittenMMU/KSA_Cat_MMU.gltf for the skinned SK_KSA_MMU.glb, so "
             + "Attachments.Mmu.MmuMesh is retyped StaticMeshRenderable -> AnimatedRenderable (the "
@@ -125,7 +126,18 @@ internal static class EvaPaintBridge
             + "and the two <Materials> blocks were REORDERED — KSA_MMU_Color is now index 0 and "
             + "KSA_MMU_Texts index 1, the reverse of before. Because slots are named by array ordinal, "
             + "a saved rule targeting 'mmu' now repaints the MMU body instead of the label decals; the "
-            + "array LENGTH is a live check, since the .glb is not in the repo.")]
+            + "array LENGTH is a live check, since the .glb is not in the repo. "
+            + "5402: every reflected name above still resolves with the same type. NEW draw-time "
+            + "masking that does NOT change registration: CharacterCore.HeadMeshIndices "
+            + "(CharacterAvatar.cs:46; CharacterAssets.xml lists meshes 0,1,2,3,5,6,7,8), "
+            + "AnimatedRenderable.{MaskedMeshIndices,HideMaskedMeshes,PrePassIgnoreMeshIndices,"
+            + "SkinningPoseIsViewportInvariant} and KittenRenderable.HideHead (:98), which IVASeat sets "
+            + "from IsCameraInThisSeat(viewport) (viewport.Mode == IVA && gameViewport.IvaController"
+            + ".Seat == this). While true, Draw() skips the masked meshes and the whole CatFurRenderable "
+            + "draw, so in first-person IVA the occupant's own 'body' slots 0-3/5-8 and 'fur' paint are "
+            + "simply not visible IN THAT VIEWPORT — expected, not a break. MaterialIndices array length "
+            + "and ordinal slot naming are unaffected, and the hidden meshes stay material-bound, so "
+            + "clone allocation and Uses accounting are unchanged.")]
     private static List<Slot> BuildSlots(CharacterAvatar avatar)
     {
         var slots = new List<Slot>();

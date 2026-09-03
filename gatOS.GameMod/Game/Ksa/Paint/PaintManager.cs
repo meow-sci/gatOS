@@ -127,9 +127,18 @@ internal sealed class PaintManager : IDisposable
     }
 
     [KsaAnchor("Part.InstanceId; Part.Template.Id; PartModel PerInstanceData.StateBitFlag bits 11..31",
-        SourceFile = "KSA/Part.cs / KSA/PartModel.cs / KSA/PartModelDynamic.cs", Verified = "2026-08-15",
-        GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
-        Notes = "Stock uses bits 0..10; every KSA upgrade must re-audit all state-flag writers.")]
+        SourceFile = "KSA/Part.cs / KSA/PartModel.cs:408 / KSA/PartModelDynamic.cs:412 / "
+            + "KSA/PartModelModule.cs:87-155 / KSA/PartModelDynamicModule.cs:55-127", Verified = "2026-09-02",
+        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
+        Notes = "Stock uses bits 0..10; every KSA upgrade must re-audit all state-flag writers. "
+            + "5402: all writers re-audited (PartModelModule.UpdateRenderData, PartModelDynamicModule."
+            + "UpdateRenderData, PartModelGlassModule :91) — stock still tops out at bit 10, so 11..31 "
+            + "remain ours. Both PartModel.AddInstance and PartModelDynamic.AddInstance now early-return "
+            + "when !viewport.HasAny(ViewportOptionFlags.RenderPartModels) (PartModel.cs:410-413, "
+            + "PartModelDynamic.cs:414-418), and ViewportData dictionaries are keyed by ViewportId and "
+            + "cleared on Dispose. The paint prefix runs BEFORE that gate and only ORs bits into the "
+            + "struct, and the module finalizer restores _part, so a gated-out instance leaks nothing; "
+            + "every stock viewport preset carries RenderPartModels, so paint still reaches them all.")]
     internal bool TryGetPartBits(Part part, out int bits)
     {
         bits = 0;

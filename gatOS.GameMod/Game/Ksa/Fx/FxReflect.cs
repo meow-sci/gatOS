@@ -87,7 +87,7 @@ internal static class FxReflect
     ///     public instance fields the renderer re-reads every frame, so no apply call exists.
     /// </summary>
     [KsaAnchor("Program.Instance._volumetricTrailRenderer (private instance field)",
-        SourceFile = "KSA/Program.cs:160", Verified = "2026-08-01", GameVersion = "2026.8.3.5117",
+        SourceFile = "KSA/Program.cs:184", Verified = "2026-09-02", GameVersion = "2026.9.7.5402",
         Risk = ChurnRisk.High,
         Notes = "Reflection: the only handle on the one VolumetricTrailRenderer. The renderer type and "
             + "every field gatOS writes are public; only the Program field is private. Null while the "
@@ -129,7 +129,7 @@ internal static class FxReflect
     [KsaAnchor("VolumetricTrailRenderer._plumeTrailSegmentsManager (private) → "
             + "PlumeTrailSegmentsManager._settings (private) → PlumeTrailSettings.ExpansionTimeSeconds (public)",
         SourceFile = "KSA/VolumetricTrailRenderer.cs:166 / KSA/PlumeTrailSegmentsManager.cs:19 / "
-            + "KSA/PlumeTrailSettings.cs:11", Verified = "2026-08-01", GameVersion = "2026.8.3.5117",
+            + "KSA/PlumeTrailSettings.cs:11", Verified = "2026-09-02", GameVersion = "2026.9.7.5402",
         Risk = ChurnRisk.High,
         Notes = "Was VolumetricTrailRenderer.ExpansionTimeSeconds (a public field) up to 2026.7.10.5056; "
             + "revs 5059/5097 moved it onto the new PlumeTrailSettings. Same default (5f) and meaning. "
@@ -160,8 +160,8 @@ internal static class FxReflect
     ///     the whole binding.
     /// </summary>
     [KsaAnchor("VolumetricExhaustTemplate.References (internal static field) .GetList()",
-        SourceFile = "KSA/VolumetricExhaustTemplate.cs:37 / KSA/SerializedCollection.cs",
-        Verified = "2026-08-01", GameVersion = "2026.7.10.5056", Risk = ChurnRisk.High,
+        SourceFile = "KSA/VolumetricExhaustTemplate.cs:38 / KSA/SerializedCollection.cs",
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
         Notes = "Enumeration only — resolution by id uses the public VolumetricExhaustTemplate.Get(id). "
             + "The reader falls back to harvesting ids off live nozzles when this fails.")]
     internal static List<VolumetricExhaustTemplate>? PlumeTemplates(out string error)
@@ -187,11 +187,14 @@ internal static class FxReflect
     /// </summary>
     [KsaAnchor("VolumetricExhaustRenderer._currentAtmosphericPressure/_debugThrottle (private fields); "
             + "Program.VolumetricExhaustRenderer (public static)",
-        SourceFile = "KSA/VolumetricExhaustRenderer.cs:253,277 / KSA/Program.cs:421",
-        Verified = "2026-08-01", GameVersion = "2026.7.10.5056", Risk = ChurnRisk.High,
+        SourceFile = "KSA/VolumetricExhaustRenderer.cs:290,310 / KSA/Program.cs:467",
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
         Notes = "Mirrors the in-game editor's propagation arguments. AddInstance() re-runs UpdateModifiers "
             + "with the live pressure + per-nozzle throttle every frame, so these values cannot disturb a "
-            + "live plume beyond the current frame — hence best-effort rather than health-latched.")]
+            + "live plume beyond the current frame — hence best-effort rather than health-latched. "
+            + "5402: VolumetricExhaustRenderer was heavily reworked (+1248 lines) and the two fields "
+            + "moved in the reshuffle (:278 -> :290, :306 -> :310) with names and types (double, float) "
+            + "intact; every other reflected FX field name in this file also still resolves.")]
     internal static (float Pressure, float Throttle) PlumeModifierArgs()
     {
         var renderer = Program.VolumetricExhaustRenderer;
@@ -213,8 +216,8 @@ internal static class FxReflect
 
     /// <summary>The cloud renderer, or null with a reason.</summary>
     [KsaAnchor("Program.Instance._planetTransparenciesRenderer (private) .GetCloudRenderer() (public)",
-        SourceFile = "KSA/Program.cs:152 / KSA/PlanetTransparenciesRenderer.cs:87",
-        Verified = "2026-08-01", GameVersion = "2026.7.10.5056", Risk = ChurnRisk.High,
+        SourceFile = "KSA/Program.cs:176 / KSA/PlanetTransparenciesRenderer.cs:75",
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
         Notes = "One private field hop; the renderer accessor itself is public. Needed only for the apply "
             + "path — the cloud DATA hangs off the public AtmosphericBody.BodyTemplate.CloudsReference.")]
     internal static CloudRenderer? Clouds(out string error)
@@ -250,8 +253,8 @@ internal static class FxReflect
     ///     repopulate picks up.
     /// </summary>
     [KsaAnchor("CloudRenderer._renderer/_cloudShadowsRenderer/_worleyNoise3dTarget (private fields)",
-        SourceFile = "KSA.Atmosphere.Rendering/CloudRenderer.cs:95,151,160",
-        Verified = "2026-08-05", GameVersion = "2026.8.5.5168", Risk = ChurnRisk.High,
+        SourceFile = "KSA.Atmosphere.Rendering/CloudRenderer.cs:105,161,233",
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
         Notes = "The three arguments CloudLayerRenderData.UpdateStaticData + CloudShadowsRenderer."
             + "PopulatePlanets need; the render-data map itself (_planetToCloudRenderData) is public. "
             + "_worleyNoise3dTarget was KSA.RenderTarget up to 2026.8.3.5117; rev 5154's dynamic-rendering "
@@ -280,8 +283,8 @@ internal static class FxReflect
     }
 
     /// <summary>The planet (terrain) renderer, or null with a reason.</summary>
-    [KsaAnchor("Program.GetPlanetRenderer() (public static)", SourceFile = "KSA/Program.cs:491",
-        Verified = "2026-08-01", GameVersion = "2026.7.10.5056", Risk = ChurnRisk.Medium,
+    [KsaAnchor("Program.GetPlanetRenderer() (public static)", SourceFile = "KSA/Program.cs:563",
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
         Notes = "Public accessor; null before the renderer exists. Backs the zero-reflection "
             + "PlanetRenderer.Wireframe toggle and the per-body slot lookups.")]
     internal static PlanetRenderer? Terrain(out string error)
@@ -305,8 +308,8 @@ internal static class FxReflect
     ///     the next renderer rebuild.
     /// </summary>
     [KsaAnchor("PlanetRenderer._renderUboMap/_meshUboMap (private readonly MappedMemory fields)",
-        SourceFile = "KSA/PlanetRenderer.cs:250-252", Verified = "2026-08-01",
-        GameVersion = "2026.7.10.5056", Risk = ChurnRisk.High,
+        SourceFile = "KSA/PlanetRenderer.cs:263,265", Verified = "2026-09-02",
+        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
         Notes = "Host-visible coherent UBO rings, indexed (NumCelestials*frame + slot)*Stride with the "
             + "public PlanetUboStride/MeshUboStride/NumCelestials and the public RenderUboSlot/MeshUboSlot "
             + "helpers. gatOS writes frame slot 0 and mirrors into the other MaxFramesInFlight copies, "

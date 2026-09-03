@@ -497,7 +497,7 @@ See [camera.md](camera.md) for full details including `Transform3D`, `Controller
 Draw a flat textured quad in the scene, anchored to a `Part` / `SubPart` on a `Vehicle`, sampling any `VkImageView` (e.g. an offscreen render target). Reuses KSA's `UnlitMesh.{vert,frag}` (`vec3 pos + vec2 uv`, `mat4` MVP push constant, one combined-image-sampler). Injects the draw via a Harmony **postfix on `SuperMeshRenderSystem.RenderMainPass`** — that runs inside the already-begun offscreen pass on the active command buffer.
 
 Key gotchas:
-- Bind the pipeline to `Program.OffScreenPass` (NOT `Program.MainPass`) and set `RasterizationSamples = Program.OffScreenPass.SampleCount` — otherwise depth silently misbehaves under MSAA.
+- Stamp the pipeline with `Program.OffscreenTarget.SetupGraphicsPipeline(ref info)` — never hand-write `RenderPass`/`Subpass`/`RasterizationSamples`. `Program.OffScreenPass` was **deleted at rev 5154** when offscreen rendering moved to Vulkan dynamic rendering; the target stamps the rendering-create-info and the live sample count for you, so the quad tracks MSAA + CMAA2 automatically.
 - Use `RenderingPresets.ReverseZDepthStencil.DepthTestWrite` (KSA's offscreen pass is reverse-Z) and `Presets.Rasterization.Fill.CullNone` (double-sided).
 - Compose the model matrix in **ego space**: combine `part.PositionEgo(...)` + `part.Asmb2Ego(...)` with your own scale / rotation / offset; multiply by `camera.MVP.viewProjection` for the MVP push constant.
 - Don't bake `part.MatrixAsmb2Ego` directly — it includes the part's scale, which you usually want to exclude.

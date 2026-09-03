@@ -874,6 +874,52 @@ byte-identical; `VehicleUpdateState` gained `ActiveChutes`/`PartFailureEvent`/`I
   gatOS binds is compile-time checked (green) and byte-identical in declared surface; behaviour is a
   live check.
 
+### ⚠️ D5 — render-internals write seams: all four hold, one new gate mirrored
+
+The three GPU seams gatOS writes through are intact. `KSA.Rendering/RenderTarget.cs` is **byte-identical**,
+so the sticker resolve postfix (`ResolveAttachments`, still one overload, still 3 call sites —
+`Program.cs:4430`/`:4737`/`:4864`, were `:4268`/`:4568`/`:4694`) and the thug_life pipeline stamp
+(`SetupGraphicsPipeline :356`) both hold; `SuperMeshRenderSystem.RenderMainPass(CommandBuffer)` is still
+a single overload with a body-only diff and 3 call sites; `Program.RenderGame`'s final
+`CommandBuffer.End()` (the `/sim/display` capture transpiler) just moved `:4595 → :4764`, and scanning
+the method backwards there is still no other 1-arg `End` declared in `Brutal.VulkanApi` — the new
+`UiCoverageMask.Profiler.End(cb, idx, Section)` calls are 3-arg KSA methods and `Profiler.MainThread.End()`
+is 0-arg. `GameSettings.UiPixelCulling()` (`:3154`) and its sole caller
+`UiCoverageMaskSystem.RecordMaskGeneration` (`:466`) are byte-identical.
+
+- **New `RenderPartModels` gate (the write-side consequence of C1).** Both `PartModel.AddInstance`
+  (`:408`, gate at `:410-413`) and `PartModelDynamic.AddInstance` (`:412`, gate at `:414-418`) now
+  early-return when `!viewport.HasAny(ViewportOptionFlags.RenderPartModels)`, and `ViewportData` is keyed
+  on `ViewportId` and cleared on `Dispose`. The **paint** prefix runs *before* the gate and only ORs bits
+  into the `PerInstanceData` struct, and the module finaliser restores `_part`, so a gated-out instance
+  leaks nothing; every stock preset (Main, Secondary ×4, CharacterPortrait ×2, PartThumbnail) carries
+  `RenderPartModels`, so paint still reaches every viewport it used to. `IvaForceRender`'s postfix
+  **mirrors the gate** — an unconditional add would create a `ViewportData` entry the engine never
+  flushes. The raytracing branch's old `viewport == Program.MainViewport` check became
+  `viewport.HasAll(UseRaytracing)` (only the `Main` preset has it).
+- **Paint bit budget unchanged.** All `PerInstanceData.StateBitFlag` writers were re-audited
+  (`PartModelModule.UpdateRenderData :87-155`, `PartModelDynamicModule.UpdateRenderData :55-127`,
+  `PartModelGlassModule :91`): stock still tops out at **bit 10**, so gatOS keeps bits **11..31**.
+- **Sticker pipeline.** `ShaderModuleUtils.FromString :79`, `Presets.cs`, `RenderingPresets.cs` and
+  `Grid.{vert,frag}` are byte-identical; only `Program.ColorFormat :203 → :222` (still
+  `R16G16B16A16_SFLOAT`) and the `GridFrag` asset (`DefaultAssets.xml:373 → :374`, shifted by the new
+  `StaticObjectPrePassIndirectFrag` entry at `:62`) moved. `GridPass` itself changed — its single
+  `SceneDepthDescriptorSet` became `SceneDepthDescriptorSets[8]` indexed by `ShaderSlot`, with
+  `UpdateDescriptorSet(IViewport)`/`Rebuild(IViewport)` driven from `Program.RebuildViewport :4909`, and
+  `Run` reads `inViewport.OffscreenTarget` — but gatOS **binds no `GridPass` member** (it ports the
+  pattern and cites it), and keeps its own single per-frame depth descriptor written against
+  `Program.OffscreenTarget.DepthImage`, which is still the main viewport's target.
+- **thug_life pipeline.** `RenderingPresets.cs`, `Presets.cs`, `RenderTechnique.cs`, `Core/Renderer.cs`
+  and `UnlitMesh.{vert,frag}` are byte-identical, and the `UnlitMeshVert`/`UnlitMeshFrag`
+  `DefaultAssets.xml` keys are still `:53`/`:54`. `RenderMainPass` is **not** flag-gated, so quads still
+  draw in every viewport that renders at all.
+- **Coverage gaps opened on the write side** (candidates, nothing broken): per-`PlumeTrailTemplate`
+  colour/density/lifetime (see C2); the volumetric-exhaust **plume bend/fold** deformation
+  (`ExhaustPlumeDeformation.cs`, `ExhaustPlumeGasDynamics.cs`, `PlumeBend.glsl`, spec constants 22–24,
+  `AddInstance(…, airVelocity, airDensity)`) — driven by relative air velocity with **no template-level
+  knobs**, so `/sim/debug/engineplume` still covers everything author-visible; and the new
+  `ViewportOptionFlags` presets themselves, which gatOS reads but never writes.
+
 ### Verified clean
 
 `ThrottleActuator`/`TranslateActuator`/`RotateActuator`'s `Vehicle._manualControlInputs :238` →

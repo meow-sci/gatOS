@@ -25,24 +25,30 @@ internal static class StickerRenderPatches
 
     /// <summary>Installs the postfix. Throws <see cref="MissingMethodException"/> if the seam moved.</summary>
     [KsaAnchor("KSA.Rendering.RenderTarget.ResolveAttachments(CommandBuffer) — Harmony postfix",
-        SourceFile = "KSA.Rendering/RenderTarget.cs:315 / KSA/Program.cs:4568",
-        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
+        SourceFile = "KSA.Rendering/RenderTarget.cs:315 / KSA/Program.cs:4737",
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
         Notes = "Program.RenderGame calls RenderedViewport.OffscreenTarget.ResolveAttachments("
-            + "commandBuffer) UNCONDITIONALLY at Program.cs:4568 (and at :4268 for secondary "
-            + "viewports). The method BODY is MSAA-gated — it does nothing when neither attachment is "
-            + "multisampled — but a postfix fires either way, which is exactly what makes this a "
-            + "reliable seam at every MSAA setting. It is an instance method, so __instance identifies "
-            + "the target: the main viewport's is literally Program.OffscreenTarget (Program.cs:438, "
-            + "assigned to MainViewport.OffscreenTarget at :1477). Both that identity check and the "
-            + "RenderedViewport == MainViewport check are required — crew-portrait viewports have "
-            + "their own targets and their own cameras, and stickers are main-viewport-only in v1. "
-            + "There is a THIRD call site: RenderEditor (Program.cs:4598) resolves the SAME "
-            + "_offscreenTarget at :4694 after setting _renderedViewportIndex = _mainViewportIndex at "
-            + ":4621, so both identity checks pass in the VAB — Program.EditorFlag (:205, the flag "
-            + "OnFrame picks the path on at :2279) is the only thing that separates the two. "
-            + "5348: KSA.Rendering/RenderTarget.cs is untouched — ResolveAttachments is byte-identical "
-            + "— so the seam holds exactly; only the Program.cs call-site line numbers moved (~+95..+150, "
-            + "updated above), and the RenderMainPass/ResolveAttachments call counts are still 3 each.")]
+            + "commandBuffer) UNCONDITIONALLY at Program.cs:4737 (and at :4430 in RenderViewport for "
+            + "secondary/portrait/thumbnail targets). The method BODY is MSAA-gated — it does nothing "
+            + "when neither attachment is multisampled — but a postfix fires either way, which is "
+            + "exactly what makes this a reliable seam at every MSAA setting. It is an instance "
+            + "method, so __instance identifies the target: the main viewport's is literally "
+            + "Program.OffscreenTarget (Program.cs:457 => Instance._offscreenTarget), which the main "
+            + "viewport is bound to via ((IViewportLifecycle)MainViewport).AttachSharedTargets("
+            + "_offscreenTarget) at :1526 (ViewportBase.cs:94-96 -> ViewportRenderSurface.AttachShared "
+            + ":79-87), so ReferenceEquals(__instance, Program.OffscreenTarget) still isolates the "
+            + "main pass. Both that identity check and the RenderedViewport == MainViewport check are "
+            + "required — crew-portrait viewports have their own targets and their own cameras, and "
+            + "stickers are main-viewport-only in v1. There is a THIRD call site: RenderEditor "
+            + "resolves the SAME _offscreenTarget at :4864, so both identity checks pass in the VAB — "
+            + "Program.EditorFlag (:224) is the only thing that separates the two. "
+            + "5402: KSA.Rendering/RenderTarget.cs is still byte-identical and ResolveAttachments is "
+            + "still a single overload, so the seam holds exactly; only Program.cs call-site lines "
+            + "moved (:4268/:4568/:4694 -> :4430/:4737/:4864) and the viewport rework retyped the "
+            + "identity operands: RenderedViewport (:491) is now IViewport (_renderedViewport ?? "
+            + "MainViewport, set to MainViewport at :4508) and MainViewport (:485) is IGameViewport "
+            + "from ViewportRegistry — the same object, so ReferenceEquals across the two interface "
+            + "types is still correct. Call counts are still 3.")]
     public static void Apply(Harmony harmony)
     {
         var original = AccessTools.Method(typeof(RenderTarget), nameof(RenderTarget.ResolveAttachments));

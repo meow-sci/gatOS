@@ -224,25 +224,26 @@ internal sealed unsafe class StickerDecalRenderer : IDisposable
             + "RenderingPresets.{ReverseZDepthStencil.NoDepthTest,BlendState.BlendColorAlphaOver}; "
             + "Renderer.{Device,DynamicStateInfo,ViewportState}",
         SourceFile = "RenderCore/ShaderModuleUtils.cs:79 / KSA/ModLibrary.cs / KSA/FileReference.cs:24 / "
-            + "KSA/Program.cs:203 / Brutal.VulkanApi.Abstractions/Presets.cs:167,213 / "
+            + "KSA/Program.cs:222 / Brutal.VulkanApi.Abstractions/Presets.cs:167,213 / "
             + "KSA/RenderingPresets.cs:63,95 / Core/Renderer.cs:21-23 / KSA/GridPass.cs:137-198",
-        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
         Notes = "A null CompileOptions uses ShaderModuleUtils' own defaults, which already carry the "
             + "device's Vulkan/SPIR-V target and the default include callbacks "
             + "(ShaderModuleUtils.cs:16-22). #include resolves relative to the DIRECTORY OF THE "
             + "debugName (Brutal.ShaderCApi/ShaderC.cs:253 Utf8.Path.Combine(GetDirectoryName("
             + "requestingSource), source)), so the debug name is a real path next to Grid.frag — "
-            + "found through the shipped GridFrag asset (Content/Core/DefaultAssets.xml:367) rather "
+            + "found through the shipped GridFrag asset (Content/Core/DefaultAssets.xml:374) rather "
             + "than hard-coded — and it MUST be NUL-terminated, like Game/Ksa/Paint/PartPaintPatches"
             + ".cs:56-59. Modules we compile are OURS to destroy (unlike ModLibrary's), which happens "
             + "as soon as the pipeline is created. Program.Instance.ColorFormat is the format the main "
             + "offscreen target is constructed with (Program.cs:1462), i.e. R16G16B16A16_SFLOAT. "
-            + "5348: KSA/RenderingPresets.cs, Brutal.VulkanApi.Abstractions/Presets.cs and "
-            + "Content/Core/Shaders/Grid.{vert,frag} are all untouched, so the reverse-Z/no-depth-test, "
-            + "cull-front and alpha-over presets still mean what they did. Vulkan moved 1.3 -> 1.4 (rev "
-            + "5315) but ShaderModuleUtils maps 1.4 to the SAME SPIR-V target (_1_6), so this runtime "
-            + "compile is unaffected. Line numbers moved: ShaderModuleUtils.FromString :77 -> :79, "
-            + "ColorFormat :199 -> :203, the GridFrag asset DefaultAssets.xml:367 -> :373.")]
+            + "5402: RenderCore/ShaderModuleUtils.cs, KSA/RenderingPresets.cs, "
+            + "Brutal.VulkanApi.Abstractions/Presets.cs and Content/Core/Shaders/Grid.{vert,frag} are "
+            + "all still byte-identical, so the reverse-Z/no-depth-test, cull-front and alpha-over "
+            + "presets still mean what they did and FromString is unchanged at :79. Two line moves: "
+            + "Program.ColorFormat :203 -> :222 (still R16G16B16A16_SFLOAT) and the GridFrag asset "
+            + "DefaultAssets.xml:373 -> :374, shifted by the new StaticObjectPrePassIndirectFrag entry "
+            + "at :62. Vulkan is still 1.4, mapped to SPIR-V _1_6.")]
     private static VkPipeline BuildPipeline(DeviceEx device, Renderer renderer, VkPipelineLayout layout)
     {
         var directory = ShaderIncludeDirectory();
@@ -416,24 +417,33 @@ internal sealed unsafe class StickerDecalRenderer : IDisposable
     [KsaAnchor("Program.{OffscreenTarget,SetViewport,Instance.ResourceFrameIndex,PointClampedSampler,"
             + "MainViewport}; RenderTarget.{DepthImage,ColorImage,Extent}; BarrierBatch; "
             + "ImageBarrierInfo.Presets.{DepthSampledReadF,ColorAttachmentReadWrite}; "
-            + "GlobalShaderBindings.{DescriptorSet,DynamicOffset}; Program.Instance.BindlessTextures.DescriptorSet",
-        SourceFile = "KSA/Program.cs:438,450,468,199,4148 / KSA.Rendering/RenderTarget.cs:36,38,48 / "
+            + "GlobalShaderBindings.{DescriptorSet,DynamicOffset}; IViewport.ShaderSlot; "
+            + "Program.Instance.BindlessTextures.DescriptorSet",
+        SourceFile = "KSA/Program.cs:457,469,485,218,4293 / KSA.Rendering/RenderTarget.cs:36,38,48 / "
             + "KSA.Rendering/BarrierBatch.cs / KSA.Rendering/ImageBarrierInfo.cs:18,41 / "
-            + "KSA/GlobalShaderBindings.cs:57,64 / KSA/GridPass.cs:427-471",
-        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
+            + "KSA/GlobalShaderBindings.cs:57,64 / KSA/GridPass.cs:445-500",
+        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
         Notes = "A near-verbatim port of GridPass.Run, the engine's own post-resolve overlay. Depth is "
             + "moved to DepthSampledReadF and LEFT there, exactly as GridPass leaves it — the engine's "
             + "tracked-state barriers tolerate that for the rest of the frame and next frame's "
             + "ClearDepthImages barriers from the tracked state. The scene depth is REVERSE-Z, so 0 is "
             + "the far plane and 'nothing was drawn' (Content/Core/Shaders/Grid.frag:67-72). The "
             + "descriptor set for this frame's slot is safe to rewrite because the engine has already "
-            + "waited on that slot's fence (Program.cs:2168-2183 advances ResourceFrameIndex modulo "
+            + "waited on that slot's fence (Program.cs advances ResourceFrameIndex modulo "
             + "MaxFramesInFlight). The depth descriptor is written with DepthReadOnlyOptimal and the "
-            + "point-clamped sampler, both copied from GridPass.UpdateDescriptorSet (:120-135). "
-            + "5348: GridPass and KSA.Rendering (RenderTarget, BarrierBatch, ImageBarrierInfo) are "
-            + "unchanged and this pass is verified intact; only the Program.cs member line numbers "
-            + "moved (OffscreenTarget :432 -> :438, PointClampedSampler :442 -> :450, MainViewport "
-            + ":458 -> :468, ResourceFrameIndex :195 -> :199, SetViewport :4062 -> :4148).")]
+            + "point-clamped sampler, both copied from GridPass.UpdateDescriptorSet (:128-143). "
+            + "5402: KSA.Rendering (RenderTarget, BarrierBatch, ImageBarrierInfo) is still unchanged "
+            + "and every bound member is intact; Program.cs member lines moved (OffscreenTarget :438 "
+            + "-> :457, PointClampedSampler :450 -> :469, MainViewport :468 -> :485, "
+            + "ResourceFrameIndex :199 -> :218, SetViewport :4148 -> :4293). The viewport rework "
+            + "renamed Viewport.Index -> IViewport.ShaderSlot, which is what DynamicOffset now takes. "
+            + "GridPass itself changed (SceneDepthDescriptorSet -> SceneDepthDescriptorSets[8] indexed "
+            + "by ShaderSlot, per-viewport UpdateDescriptorSet(IViewport)/Rebuild(IViewport) from "
+            + "Program.RebuildViewport :4909, and Run now reads inViewport.OffscreenTarget instead of "
+            + "Program.OffscreenTarget) — gatOS binds no GridPass member, only ports the pattern, and "
+            + "keeps its own single per-frame depth descriptor against Program.OffscreenTarget, which "
+            + "is still the main viewport's target (StickerRenderPatches.Apply anchor). The barrier "
+            + "sequence around the RenderGame resolve (:4737) is unchanged.")]
     internal void RecordPass(CommandBuffer commandBuffer, ReadOnlySpan<StickerEntry> entries, bool debug)
     {
         if (_disposed || entries.Length == 0)
