@@ -74,7 +74,18 @@ cut.
 > solar link intact) + the pass record live in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope
 > pages; live re-check items appended to [`docs/VALIDATION.md`](docs/VALIDATION.md).
 >
-> **KSA baseline → `2026.9.7.5402`** (upgrade-ksa playbook pass 2026-09-02, from 5348; the 5261 and 5348
+> **Current KSA upgrade → `2026.9.10.5438`** (2026-09-14, from audited 5402; 35 logged
+> revisions 5403–5437, no gap). Eight compile errors addressed in particle density/buoyancy,
+> exhaust propagation and Vulkan enum bindings; compiler-invisible paint/IVA `AddInstance` overload
+> ambiguity and sticker color-only resolve fixed. IVA preserves paired dent descriptors; paint
+> hooks the private shared submission overload. Scale writes remain transform-only, but KSA saves
+> top-level scale and now physically refreshes all loaded parts: do not promise reset on reload,
+> staging or undocking. Source, binary and automated validation details are maintained in
+> [`scope/ksa-assets-and-versions.md#5438-pass`](scope/ksa-assets-and-versions.md#5438-pass).
+> Full build: 0 warnings/errors; tests: 1646 passed / 12 skipped; docs: 123 pages built;
+> live rendering/flight checks remain pending in [`docs/VALIDATION.md`](docs/VALIDATION.md#ksa-5438-upgrade).
+>
+> **Prior KSA baseline → `2026.9.7.5402`** (upgrade-ksa playbook pass 2026-09-02, from 5348; the 5261 and 5348
 > passes are recorded in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 only). **Three compile breaks,
 > all fixed:** KSA deleted the `Viewport` class (→ `IViewport`/`IGameViewport`/`GameViewport` +
 > `ViewportRegistry`; the camera director's `Mode`/`FixedController` writes now go through a reflection

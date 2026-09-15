@@ -10,8 +10,8 @@ namespace gatOS.GameMod.Game.Ksa.Actuators;
 ///     Uniform vessel model scaling (<c>/sim/vessels/by-id/&lt;id&gt;/scale</c>). Ported from the
 ///     sibling unscience mod's <c>WeldEngine.ApplyVehicleScale</c> but decoupled from welds and
 ///     taking a <see cref="double"/> factor (<see cref="Part.Scale"/> is a <see cref="double3"/>).
-///     One-shot: applied once per write, never re-driven per frame — the game keeps the scale until
-///     it rebuilds the vessel (scene reload / staging / undock), at which point it reverts to 1:1.
+///     One-shot: applied once per write, never re-driven per frame. KSA saves top-level part scales;
+///     reloading can apply physical scaling through RefreshScale, including non-root parts at 5438.
 ///     Game-thread only (drained in the Frame command phase). All KSA access confined here.
 /// </summary>
 internal static class ScaleActuator
@@ -29,7 +29,7 @@ internal static class ScaleActuator
     [KsaAnchor("Vehicle.Parts.Parts; Part.{Scale(set),SubParts}; "
             + "KittenEva._renderable._characterAvatar.Core.Scale (reflected)",
         SourceFile = "KSA/Vehicle.cs / KSA/PartTree.cs / KSA/Part.cs / KSA/KittenEva.cs",
-        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
+        Verified = "2026-09-14", GameVersion = "2026.9.10.5438", Risk = ChurnRisk.High,
         Notes = "Uniform recursive Part.Scale write (double3; public setter, invalidates cached transform "
             + "matrices). KittenEva avatar scaled via reflected Core.Scale = factor*0.01f (0.01 == 1:1); "
             + "the GetType().Name gate is a brittle string check. Ported from unscience "
@@ -41,7 +41,10 @@ internal static class ScaleActuator
             + "so the GAME's editor scaling is now physical (colliders, StorageVolume, inert mass, "
             + "nozzle areas, separation force) and clamped 0.5x-2x with 0.25 m quantization — /sim "
             + "scale does none of that and still admits any finite value > 0, a deliberate cheat-mod "
-            + "divergence that no longer means what the in-game gizmo means.")]
+            + "divergence that no longer means what the in-game gizmo means. "
+            + "5438: GetReferenceWithChildren saves top-level Scale; RegenerateFromPartInstance now "
+            + "calls RefreshScale for non-root parts too (rev 5434). Reloading saved scale can therefore "
+            + "change colliders, mass, tanks and nozzle geometry. Staging/undocking need not reset Scale.")]
     private static void Apply(Vehicle vehicle, double factor)
     {
         foreach (var part in vehicle.Parts.Parts)
@@ -62,7 +65,7 @@ internal static class ScaleActuator
     /// <summary>
     ///     Best-effort readback: a representative part's uniform scale (X is representative — writes
     ///     are always uniform), else the KittenEva avatar scale, else <c>1.0</c>. Never throws — a
-    ///     read must never fail the file. Stays truthful when KSA rebuilds the vessel and resets it.
+    ///     read must never fail the file. Reports the live value after rebuilds too; no reset or persistence is promised.
     /// </summary>
     [KsaAnchor("Part.Scale (get); KittenEva avatar Core.Scale (reflected)",
         SourceFile = "KSA/Part.cs / KSA/KittenEva.cs", Verified = "2026-08-23",

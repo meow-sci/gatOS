@@ -1275,3 +1275,27 @@ tessellation displacement, so the surface point can be off by decimetres near th
 projection box's depth absorbs that entirely, which is exactly why this is a projected decal and not
 a flat quad. Exact members and baseline are in
 [`plans/STICKERS_PLAN.md`](../plans/STICKERS_PLAN.md).
+
+## 5438 read findings {#5438-findings}
+
+No read binding needs relocation. Revs 5414/5432 fix SRB geometry/profile and active-sequence
+remaining Δv; rev 5433 fixes resource availability and drain shares, so propellant availability,
+engine output, mass flow and planned Δv may differ with the same hardware. The existing
+`DeltaVVacuumMs` name remains a historical mismatch: the game supplies active-sequence Δv.
+
+Rev 5416 makes flight plans own orbit-line buffers; reads copy scalar telemetry and retain no
+pooled geometry. Revs 5426/5427 correct encounter derivatives and convergence. Revs 5409–5411 add
+physical mass and revise crash thresholds; 5423/5424 preserve debris identity and remove bubble
+companions on recovery. Roster rows/events reflect those actual live vehicles.
+
+Content changes add masses: inline batteries 87/452 kg, radial batteries 11/52 kg, lights 5/6/6 kg,
+solar panels 2/19 kg, fuel cell 49 kg, medium landing leg 131 kg, large radial decoupler 138 kg.
+Electrical W/J ratings and celestial body/orbit/atmosphere/ocean data are unchanged. Parts reads,
+animations, tanks, battery energy and control flags retain their units.
+
+`scale` reads the live representative part value: top-level scales can survive saves, and rev 5434
+applies physical rescaling on every loaded part. See [write findings](ksa-write-surface.md#5438-findings).
+The source audit of all readers, body accessors, sampler and catalog found no new gating or frame
+convention. Numerical implementations changed through SIMD; finite-value conventions remain intact.
+
+Full evidence and automated validation: [5438 pass](ksa-assets-and-versions.md#5438-pass).

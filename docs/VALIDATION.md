@@ -3,6 +3,30 @@
 Manual pass results live here. Record machine, date, purrTTY/gatOS versions and the outcome of
 each item; failures get a short note plus the relevant `logs/qemu-*.log` excerpt.
 
+## KSA 5438 upgrade — live pass pending {#ksa-5438-upgrade}
+
+Static upgrade: 2026-09-14, `2026.9.7.5402` → `2026.9.10.5438`.
+Source/binary review and automated results are in
+[the pass record](../scope/ksa-assets-and-versions.md#5438-pass). **None of these live checks has
+been run by this upgrade task.** Record game/mod versions, platform, graphics settings and outcome.
+
+| Check | Result |
+|---|---|
+| Enable part paint on static and dynamic/animated parts; add a dent, confirm paint survives and does not bleed to the next part. Disable/re-enable and verify shader restoration. | ☐ |
+| Enable/disable `always_render_iva` in flight and VAB; exercise IVA and non-IVA secondary views. Confirm no duplicate interiors, missing dent data, corrupted geometry or patch-install errors. | ☐ |
+| Place a translucent sticker with MSAA 1×/2×/4× and CMAA2. Confirm one application per frame, correct foreground depth occlusion and no stale-depth flash; exclude editor/portraits. Try nominal and dented hull surfaces (CPU picking still uses undeformed art). | ☐ |
+| Thug-life draw: verify correct index binding, depth, main/crew/other filtering and cleanup across a renderer rebuild/fullscreen change. | ☐ |
+| Stream `/sim/display` with opaque UI open, F2 hidden UI, resize/fullscreen and moving scene. Confirm complete current frames after bloom/translucency reorder. | ☐ |
+| Edit/reset shared engine-plume template on several nearby burning engines that merge. Confirm all source/merged plumes update and reset; no degraded FX latch. | ☐ |
+| Spawn party/sparkle/danger/death at roughly 1.225 kg/m³ and in vacuum. Confirm documented buoyancy, burst completion/count→0 and clear; graphics Particles-off still returns EOPNOTSUPP. | ☐ |
+| Exercise global plume-trail raymarch controls during a nearby explosion; confirm broadened rendering scope and that clear removes trails only. Recheck cloud/terrain write/read/reset. | ☐ |
+| Clutter texture upload/bind/rebind/unbind, EVA paint apply/reset, and audio play/seek/loop/reupload/finished events work with current native dependencies. | ☐ |
+| Camera take/track/release on a moving target through warp and a viewport switch; protected setters restore stock behavior. Read `/sim/status/accessors` after camera, throttle, translate/rotate, lights and FX operations. | ☐ |
+| Multi-part scale: observe transform-only immediate write, then save/load in a disposable test save and compare scale, mass and tank capacities. Confirm non-root physical rescaling; check separate subpart/EVA lifetime. Restore intended scale before preserving a normal save. | ☐ |
+| Check active-sequence Δv before/after staging, SRB geometry/refill/burnout, engine own-part fuel and reactants at different drain levels with empty/disabled peers. | ☐ |
+| Check encounters after replanning/teleport; welded pair and IVA forcing across bubble merge/split and physics-radius crossing. No stale pooled orbit lines or command-phase/timing failures. | ☐ |
+| Crash/split/save/load/recover: debris flags persist, recovery removes bubble debris, and disappeared vessels leave no active weld/IVA references. | ☐ |
+
 ## Guest-v3 transport-env validation (run 2026-06-13, Windows 11 game machine, TCG)
 
 Guest image **v3** built + fetched (`GUEST_VERSION=3`, host-key pin verified). The v3-only
@@ -288,7 +312,7 @@ and `docs/KSA_INTEGRATION_MATRIX.md` (per-vessel nodes). **All items pending a l
 | 2 | `echo 0`, `echo -1`, `echo abc` into `scale` each fail with `EINVAL`; `cat scale` reflects the current factor | ☐ | `ScaleRules` + parse-level rejection |
 | 3 | Scaling a **non-active** vessel by id works even with `control_all_vessels = false` | ☐ | authority exemption |
 | 4 | A KittenEva (EVA kitten) scales via the avatar path (`Core.Scale`) | ☐ | reflection special-case |
-| 5 | Scene reload / staging / undock reverts `scale` to 1 and the read-back honestly shows it | ☐ | accepted D1 limitation |
+| 5 | Observe scale through staging/undock and save/load; read-back matches actual top-level scale. Reload may physically rescale parts; do not require reset to 1 | ☐ | corrected at 5438: top-level scale is saved; non-root reload now calls RefreshScale too |
 | 6 | Fly (or warp) away from a vessel until it disappears (< 1 px); `echo 1 > /sim/vessels/by-id/<id>/always_render` makes it visible again and it **stays** rendered at any distance; `echo 0 >` restores the stock cull (it vanishes again) | ☐ | first mark installs the `gatos.always_render` prefixes |
 | 7 | `cat always_render` reads back `1` while marked, `0` after; marking a **non-active** vessel works with `control_all_vessels = false` | ☐ | read-back + authority exemption |
 | 8 | The mark **survives a scene rebuild** (staging/undock — same vessel id); despawning the vessel (recover/destroy) drops the mark automatically (`cat` of a re-spawned same-id vessel reads `0`… unless it truly is the same id, in which case still marked — verify the prune only fires on despawn) | ☐ | id-keyed registry + sampler prune |

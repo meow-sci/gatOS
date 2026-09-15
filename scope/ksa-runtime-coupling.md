@@ -250,11 +250,12 @@ and all are still single-overload where gatOS relies on that:
 The `debug/always_render_iva` cheat (`Game/Ksa/Render/IvaForceRender.cs`, ported from `unscience`)
 installs **two more** Harmony patches on its **own** `Harmony("gatos.iva")` instance — a postfix on
 `PartModel..ctor(PartModelModule.Template)` and an editor-only postfix on
-`PartModel.AddInstance(PerInstanceData,Viewport,int)` — but **only while the toggle is on**: enabling
+the private shared `PartModel.AddInstance(PerInstanceData,PerInstanceDent,IViewport,int)`
+(since 5438) — but **only while the toggle is on**: enabling
 bulk-flips `PartModelModule.Template.Internal=false` over `PartModel.Instances` (tracking each) and
 installs the patches; disabling restores the tracked templates and `UnpatchAll("gatos.iva")`. So the
 default-off state carries **zero** IVA patches. The patch targets are `[KsaAnchor]`-documented in
-`IvaForceRender` (Risk Medium; verified `2026-06-28` / `2026.6.9.4750`; re-verified 2026-07-03 against
+`IvaForceRender` (High since the private 5438 seam; originally Medium, verified `2026-06-28` / `2026.6.9.4750`; re-verified 2026-07-03 against
 `2026.7.3.4826` — the render gate at `PartModel.cs:387` and all patched members are unchanged; the only
 `PerInstanceData` change is a struct pad → `Wetness` float, passed through opaquely; re-verified
 2026-07-14 against `2026.7.5.4892` — `PartModel.cs`/`Viewport.cs` untouched; the
@@ -432,13 +433,15 @@ Projected PNG decals (`/sim/paint/stickers`, `Game/Ksa/Paint/Stickers/`) are gat
 only other — custom GPU rendering**, and share **nothing** with `thug_life`: a different method, a
 different Harmony instance, a different pass shape, and their own pipeline, mesh, descriptor pool and
 texture ring. `StickerRenderPatches.Apply` installs a **dynamic Harmony postfix on
-`KSA.Rendering.RenderTarget.ResolveAttachments(CommandBuffer)`** (`KSA.Rendering/RenderTarget.cs:315`)
+`KSA.Rendering.RenderTarget.ResolveAttachments(CommandBuffer,bool)`** (`KSA.Rendering/RenderTarget.cs:315`)
 on its **own** `Harmony("gatos.stickers")` instance, and throws `MissingMethodException` if the seam
 moved (caught by `StickerManager.EnsurePatch` → `Degrade`, so the feature reports
 `renderer=degraded` + `last_error` instead of crashing).
 
 **Why that seam.** `Program.RenderGame` calls `RenderedViewport.OffscreenTarget.ResolveAttachments(
-commandBuffer)` **unconditionally** at `KSA/Program.cs:4418` (and at `:4174` for secondary viewports).
+commandBuffer)` **unconditionally** at `KSA/Program.cs:4765` (and at `:4452` for secondary viewports).
+Since 5438 a color-only `ResolveAttachments(commandBuffer,false)` also runs at `:4737`; the postfix
+skips it, because its scene depth is not yet resolved.
 The method *body* is MSAA-gated — it does nothing when neither attachment is multisampled — but a
 **postfix fires either way**, which is what makes this reliable at every MSAA setting. Immediately
 after it, the resolved single-sample `DepthImage` and `ColorImage` are both current and neither is
@@ -446,7 +449,7 @@ bound as an attachment: the one window in the frame where a decal can read full 
 also exactly the window KSA's own `GridPass` draws the map grid in, and the pass is a near-verbatim
 port of `GridPass.Run` (`KSA/GridPass.cs:427-471`).
 
-**Four gates before anything is recorded.** (1) the static `StickerManager.Active` volatile — false
+**Five gates before anything is recorded.** The new 5438 `inResolveDepth` flag must be true. (1) the static `StickerManager.Active` volatile — false
 whenever the draw path is not live or has faulted, so the postfix is a single branch; (2)
 `ReferenceEquals(__instance, Program.OffscreenTarget)` — the target being resolved must be the main
 viewport's (the main viewport's *is* literally `Program.OffscreenTarget`, `Program.cs:432`, assigned
@@ -886,7 +889,6 @@ through those handles is public API. The write/read rows are on
 |---|---|---|---|
 | `fx.trail_renderer` | `FxReflect.Trail` | `Program.Instance._volumetricTrailRenderer` (private instance field) — the only handle on the one `VolumetricTrailRenderer` | ✅ present (`Program.cs:160`) |
 | `fx.plume_templates` | `FxReflect.PlumeTemplates` | `VolumetricExhaustTemplate.References` (internal static `SerializedCollection<…>`) → public `GetList()` | ✅ present (`VolumetricExhaustTemplate.cs:37`); degrade falls back to harvesting ids off live nozzles |
-| (best-effort, unlatched) | `FxReflect.PlumeModifierArgs` | `VolumetricExhaustRenderer._currentAtmosphericPressure` / `_debugThrottle` (private) off the public `Program.VolumetricExhaustRenderer` | ✅ present (`VolumetricExhaustRenderer.cs:253,277`); falls back to `(0, 1)` — the per-frame draw path recomputes both for every live nozzle, so it cannot disturb a plume |
 | `fx.cloud_renderer` | `FxReflect.Clouds` | `Program.Instance._planetTransparenciesRenderer` (private) → `GetCloudRenderer()` (public) | ✅ present (`Program.cs:152`, `PlanetTransparenciesRenderer.cs:87`) |
 | `fx.cloud_apply` | `FxReflect.CloudApply` | `CloudRenderer._renderer` / `_cloudShadowsRenderer` / `_worleyNoise3dTarget` (private) — the three arguments the layer re-upload needs (`_planetToCloudRenderData` itself is public) | ✅ present (`CloudRenderer.cs:95,151,235`) |
 | `fx.terrain_renderer` | `FxReflect.Terrain` | *(none — `Program.GetPlanetRenderer()` is public)*; the latch exists so a missing renderer degrades terrain alone | ✅ present (`Program.cs:491`) |
@@ -989,3 +991,24 @@ takes a discrete `Renderer.Allocator.CreateStagingPool(...)` + `Submit().Wait()`
 out-of-band alongside the engine's in-flight frames corrupts the device. The reconciliation is
 reasoning, not evidence, and needs a live check. See
 [`plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`](../plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md).
+
+## 5438 runtime findings {#5438-findings}
+
+The compiler-invisible break set is `PartModel`/`PartModelDynamic.AddInstance` overload ambiguity
+and the new color-only `RenderTarget.ResolveAttachments(...,false)` call. Paint and IVA use the
+private shared overload, IVA pairs dent/instance writes, and stickers skip the early resolve.
+See the [pass record](ksa-assets-and-versions.md#5438-pass) for old/new source evidence.
+
+All remaining reflection chains retain their members: manual controls, EVA scale and material
+clones, template enumeration, trail/cloud/terrain handles, mapped UBO pointers, and the protected
+camera setters. `FxReflect.PlumeModifierArgs` is retired with upstream `UpdateModifiers`; its
+`_debugThrottle` lookup would now miss. No missing member is silently accepted as an audit pass.
+
+All other Harmony targets retain compatible signatures; `GameViewport.OnFrame(double)` and the
+solver/menu seams preserve their calling order. Numerics rev 5419 is a real SIMD/generic-math
+rewrite; source review preserves coordinate algebra but does not prove every hardware branch.
+`VehicleSolver.Wait()` still joins all bubble-horizon jobs before weld and IVA writes. Typed FMOD
+calls compile, but native audio, reflected live object chains, and GPU correctness require the
+[5438 live checklist](../docs/VALIDATION.md#ksa-5438-upgrade).
+
+Full evidence and automated validation: [5438 pass](ksa-assets-and-versions.md#5438-pass).

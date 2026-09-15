@@ -1,3 +1,10 @@
+> **5438 binding update (2026-09-14):** plume propagation now matches the current editor:
+> `OnSettingsChanged()` then `RocketNozzle.RecomputeVolumetricExhaustLimits(in instance)`.
+> `UpdateModifiers`, renderer `_debugThrottle` and the old gas-visibility method were removed;
+> gatOS no longer reflects propagation arguments. Global plume-trail raymarch controls also
+> affect explosion volumes; clearing trails does not clear explosions. The propagation recipe
+> below reflects the current binding.
+
 # FX editors — `/sim/debug/{engineplume,plumetrail,clouds,terrain}` (issue #2)
 
 > **Status:** design locked; implementation phases below. Tracks
@@ -145,7 +152,7 @@ debug/engineplume/
 **Deferred (documented in SPEC as such):** startup/shutdown transient durations + curves
 (`CubicHermiteSpline` + a private-field LUT re-bake), test grid, wireframe debug.
 
-### Apply — the propagation loop (MANDATORY after each write; `VolumetricExhaustRenderer.cs:2316-2337`)
+### Apply — the propagation loop (MANDATORY after each write; `VolumetricExhaustRenderer.cs:2697-2721 (5438)`)
 
 ```csharp
 foreach (Vehicle v in Universe.CurrentSystem.All.OfType<Vehicle>())
@@ -154,19 +161,15 @@ foreach (Vehicle v in Universe.CurrentSystem.All.OfType<Vehicle>())
         VolumetricExhaustInstance inst = m.FxState.VolumetricExhaust;
         if (inst != null)
         {
-            inst.OnSettingsChanged();                        // public
-            inst.UpdateModifiers(pressure, throttle);        // public — see note
-            m.Module.RecomputeGasVisibilityDensity(in inst); // public
+            inst.OnSettingsChanged();
+            m.Module.RecomputeVolumetricExhaustLimits(in inst);
         }
     }
 ```
 
-The editor passes its private `_currentAtmosphericPressure`/`_debugThrottle` to
-`UpdateModifiers`; those drive test-grid rendering — for live nozzles the per-frame update path
-re-derives them, so the actuator may pass the instance's current values or re-read them
-reflectively; verify against `VolumetricExhaustInstance.UpdateModifiers` (`:179`) semantics and
-prefer the choice that doesn't disturb live plumes. Skip the `TransientAnimationLut` re-bake —
-only needed for the deferred transient curves.
+The 5438 editor uses this two-call loop. It no longer reads private pressure/throttle arguments:
+`UpdateModifiers` and `_debugThrottle` were removed upstream. Skip the transient-animation LUT
+re-bake, which is needed only for the deferred transient curves.
 
 ## 3. `/sim/debug/plumetrail` — the volumetric trail renderer (global)
 

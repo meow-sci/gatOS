@@ -30,7 +30,7 @@ A new read/write node:
 
 | # | Decision | Rationale |
 |---|---|---|
-| **D1** | **One-shot apply on write. No per-frame re-application.** | Re-applying every game tick is wasteful. Scaling writes `Part.Scale` once (like `unscience`), which the game persists until it rebuilds the vessel. |
+| **D1** | **One-shot apply on write. No per-frame re-application.** | Re-applying every game tick is wasteful. Scaling writes `Part.Scale` once (like `unscience`), whose top-level value KSA also saves; loading may physically rescale it (5438 correction). |
 | **D2** | **Read-back is best-effort** from the live part scale. A successful write does **not** depend on a readable value — if a vessel can't yield a representative scale we report `1.0` (never error the read). | The requester accepted "one-way write is fine if a guaranteed readback isn't viable." Reading `Part.Scale.X` is cheap and reliable in the normal case, so we provide the readback; it stays truthful (shows `1.0` if KSA later resets the vessel). No jank. |
 | **D3** | **Any vessel by id** — scaling is exempt from the active-vessel authority gate. | The use case is resizing *arbitrary* vessels by path. This is the first deliberate step of moving per-vessel controls **out of `/sim/debug`**. |
 | **D4** | **Placed under the regular vessel area** (`/sim/vessels/by-id/<id>/`), **not** `/sim/debug/`. | Requester wants to break this class of control out of the cumbersome debug namespace. |
@@ -87,10 +87,10 @@ public static void SetPartScaleRecursive(Part part, float factor)
 | `Part.Scale` | `KSA.Part` | `Brutal.Numerics.double3` (**settable**) | **the one write**; default `(1,1,1)`; setter invalidates cached transform matrices; drives rendered size + bounding/raycast geometry. Does **not** touch mass/inertia/colliders/joints directly. |
 | `KittenEva._renderable → _characterAvatar → Core → Core.Scale` | reflected | `float` | avatar scaled at `factor * 0.01f` (`0.01` = 1:1). Gate is a `GetType().Name == "KittenEva"` string check (brittle — flag as High churn). |
 
-Behavioral facts we preserve (D1): apply once on write; the game keeps `Part.Scale` until it rebuilds
-the vessel (scene reload / staging / undock), at which point it reverts to `1.0` — **the same
-limitation as `unscience`**, which the requester accepted. Removal/reset semantics: writing `1` returns
-the vessel to 1:1.
+D1 preserves one-shot writes, not a guaranteed reset on rebuild. **5438 audit correction:** KSA saves
+top-level `Part.Scale`; loading can physically rescale colliders, mass, tanks and nozzles, now on
+every non-root part as well as the root. Staging/undocking need not reset it. Writing `1` restores
+the live model transform; restore the intended scale before saving a cosmetic experiment.
 
 ### One deliberate deviation from `unscience`: `double` factor, not `float`
 
@@ -315,9 +315,8 @@ the failing `write`. This matches every other gatOS control file.
   game-thread mutation site or driver, AGENTS.md's threading rules, `docs/ARCHITECTURE.md`
   "game-thread cheats", and `scope/ksa-runtime-coupling.md` genuinely require **no** edit (consistent
   with D6). This is the concrete payoff of D1 (one-shot).
-- Teardown: nothing to tear down (no registry). A vessel left scaled simply stays scaled until the game
-  rebuilds it or the user writes `1`. (Optional nicety, out of scope: reset scaled vessels on `Unload`
-  — skipped to honor "no new driver/state.")
+- Teardown: nothing to tear down (no registry). A vessel left scaled can retain that top-level scale
+  in its save. No unload reset or per-frame restoration is implemented.
 
 ---
 
@@ -405,8 +404,8 @@ serializes.
   (`factor * 0.01f`). Read falls back to the avatar scale only if the vessel has no parts. The
   `GetType().Name == "KittenEva"` gate is a brittle string check → `[KsaAnchor]` Risk **High**.
 - **Vessels with no representative part**: `Read` returns `1.0` (never throws) — a truthful best-effort.
-- **KSA rebuild reverts scale** (scene reload / staging / undock): expected and accepted (D1) — same as
-  `unscience`. The read-back honestly reflects the reverted value.
+- **KSA saves top-level scale:** reload can physically refresh it; staging/undocking need not reset it.
+  Subpart transforms and EVA avatar scale have separate lifetimes. Read-back reflects the live value.
 - **Extreme factors** (100,000+): allowed (no clamp, per requirement). KSA physics/rendering/floating
   origin may misbehave at extremes — **out of gatOS's control**; we do not clamp or guard. Worth a
   one-line caveat in an in-game test note.

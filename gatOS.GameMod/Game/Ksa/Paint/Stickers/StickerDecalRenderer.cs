@@ -418,32 +418,15 @@ internal sealed unsafe class StickerDecalRenderer : IDisposable
             + "MainViewport}; RenderTarget.{DepthImage,ColorImage,Extent}; BarrierBatch; "
             + "ImageBarrierInfo.Presets.{DepthSampledReadF,ColorAttachmentReadWrite}; "
             + "GlobalShaderBindings.{DescriptorSet,DynamicOffset}; IViewport.ShaderSlot; "
-            + "Program.Instance.BindlessTextures.DescriptorSet",
-        SourceFile = "KSA/Program.cs:457,469,485,218,4293 / KSA.Rendering/RenderTarget.cs:36,38,48 / "
+            + "Program.Instance.BindlessTextures.DescriptorSet; VkIndexType.UInt16",
+        SourceFile = "KSA/Program.cs:457,469,485,218,4315 / KSA.Rendering/RenderTarget.cs:36,38,48 / "
             + "KSA.Rendering/BarrierBatch.cs / KSA.Rendering/ImageBarrierInfo.cs:18,41 / "
             + "KSA/GlobalShaderBindings.cs:57,64 / KSA/GridPass.cs:445-500",
-        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
-        Notes = "A near-verbatim port of GridPass.Run, the engine's own post-resolve overlay. Depth is "
-            + "moved to DepthSampledReadF and LEFT there, exactly as GridPass leaves it — the engine's "
-            + "tracked-state barriers tolerate that for the rest of the frame and next frame's "
-            + "ClearDepthImages barriers from the tracked state. The scene depth is REVERSE-Z, so 0 is "
-            + "the far plane and 'nothing was drawn' (Content/Core/Shaders/Grid.frag:67-72). The "
-            + "descriptor set for this frame's slot is safe to rewrite because the engine has already "
-            + "waited on that slot's fence (Program.cs advances ResourceFrameIndex modulo "
-            + "MaxFramesInFlight). The depth descriptor is written with DepthReadOnlyOptimal and the "
-            + "point-clamped sampler, both copied from GridPass.UpdateDescriptorSet (:128-143). "
-            + "5402: KSA.Rendering (RenderTarget, BarrierBatch, ImageBarrierInfo) is still unchanged "
-            + "and every bound member is intact; Program.cs member lines moved (OffscreenTarget :438 "
-            + "-> :457, PointClampedSampler :450 -> :469, MainViewport :468 -> :485, "
-            + "ResourceFrameIndex :199 -> :218, SetViewport :4148 -> :4293). The viewport rework "
-            + "renamed Viewport.Index -> IViewport.ShaderSlot, which is what DynamicOffset now takes. "
-            + "GridPass itself changed (SceneDepthDescriptorSet -> SceneDepthDescriptorSets[8] indexed "
-            + "by ShaderSlot, per-viewport UpdateDescriptorSet(IViewport)/Rebuild(IViewport) from "
-            + "Program.RebuildViewport :4909, and Run now reads inViewport.OffscreenTarget instead of "
-            + "Program.OffscreenTarget) — gatOS binds no GridPass member, only ports the pattern, and "
-            + "keeps its own single per-frame depth descriptor against Program.OffscreenTarget, which "
-            + "is still the main viewport's target (StickerRenderPatches.Apply anchor). The barrier "
-            + "sequence around the RenderGame resolve (:4737) is unchanged.")]
+        Verified = "2026-09-14", GameVersion = "2026.9.10.5438", Risk = ChurnRisk.High,
+        Notes = "Near-verbatim post-resolve overlay using the current dynamic-rendering target members. "
+            + "Depth remains reverse-Z and is sampled after the full resolve; the unit-cube index buffer "
+            + "continues to use VkIndexType.UInt16. The existing barrier, descriptor-slot, main-target, "
+            + "and bindless assumptions remain valid in 5438.")]
     internal void RecordPass(CommandBuffer commandBuffer, ReadOnlySpan<StickerEntry> entries, bool debug)
     {
         if (_disposed || entries.Length == 0)
@@ -510,7 +493,7 @@ internal sealed unsafe class StickerDecalRenderer : IDisposable
                 new ReadOnlySpan<VkBuffer>(ref vertexHandle),
                 new ReadOnlySpan<ByteSize64>(ref vertexOffset));
             commandBuffer.BindIndexBuffer(_indexBuffer.VkBuffer, (ByteSize64)_indexBuffer.BindOffset,
-                VkIndexType.Uint16);
+                VkIndexType.UInt16);
 
             foreach (var entry in entries)
             {

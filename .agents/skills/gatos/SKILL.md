@@ -325,11 +325,12 @@ schema: [SPEC §3.11](../../../SPEC_9P_FILESYSTEM.md); frames in
 
 **First-class per-vessel nodes (NOT under `/sim/debug`; also ported from `unscience`):**
 `vessels/by-id/<id>/scale` — write any finite value `> 0` to uniformly rescale the whole vessel model
-one-shot (`echo 50000 > scale` = planet-sized; `echo 1 >` restores; `0`/negative → `EINVAL`; KSA
-reverts it when it rebuilds the vessel). It is **visual/transform-only** — no collider, mass or
-performance change — and since KSA `2026.8.22.5348` (rev 5329) that deliberately differs from the
-in-game gizmo, whose scaling is now *physical* (`IRescale`: colliders, tank volume, inert mass, nozzle
-areas, decoupler force), clamped 0.5×–2× and quantized to 0.25 m steps.
+one-shot (`echo 50000 > scale` = planet-sized; `echo 1 >` restores the live transform;
+`0`/negative → `EINVAL`). The live write changes transforms without refreshing physics, unlike the
+physical in-game editor gizmo (clamped 0.5×–2×, quantized to 0.25 m). **KSA saves top-level part scale**:
+loading can rescale colliders, mass, tanks and nozzles, including every non-root part since
+`2026.9.10.5438` (rev 5434). Restore the intended scale before saving a cosmetic experiment.
+Staging/undocking need not reset it; subpart and EVA avatar transforms have distinct lifetimes.
 `vessels/by-id/<id>/always_render` — write `1` to keep that vessel rendered at **any** distance
 (bypasses the sub-pixel cull that normally hides far vessels; the mark survives scene rebuilds and
 auto-drops when the vessel despawns; EVA kittens are unaffected).

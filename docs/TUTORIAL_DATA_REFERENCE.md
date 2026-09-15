@@ -431,7 +431,7 @@ editors** (the game's built-in render editors as files, one writable leaf per kn
 bonus material, animatable at 10–60 Hz, every entity has a `reset`):
 
 - `debug/engineplume/templates/<id>/…` — engine plume look; **per template, shared** by every nozzle using it.
-- `debug/plumetrail/render/…` — the exhaust trail renderer; **global** (plus a one-shot `clear`).
+- `debug/plumetrail/render/…` — the exhaust trail renderer; **global** (plus a one-shot `clear`). Since KSA 5438, global raymarch settings also affect explosion volumes; `clear` only removes trails.
 - `debug/clouds/bodies/<body>/layers/<n>/…` — a body's cloud layers and cloud types.
 - `debug/terrain/wireframe` + `debug/terrain/bodies/<body>/…` — terrain height range, tessellation, biome fades.
 
@@ -566,3 +566,13 @@ Facts a tutorial needs that are not guessable from the grammar:
   instead of its image — a global development aid, not a per-sticker knob.
 
 See `SPEC_9P_FILESYSTEM.md` §Stickers for the full leaf table, formats and errno list.
+
+## KSA 5438 visual behavior notes
+
+The live `vessels/<id>/scale` write changes transforms without refreshing physics. KSA saves
+top-level scales; loading a save can apply physical scaling to colliders, mass, tanks and nozzles
+(now every non-root loaded part as well as the root, rev 5434). Do not promise reset on staging,
+undocking or reload. Restore the intended scale before saving a cosmetic experiment.
+
+`debug/fx/spawn` keeps its grammar and four profiles. Their particle motion now follows density-based
+buoyancy with zero authored drag, calibrated at 1.225 kg/m³; below 100 Pa all receive local gravity.

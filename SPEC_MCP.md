@@ -203,6 +203,13 @@ sample at which it was accepted. Failed commands use the error fields in §1.2.
 | `gatos.execute_batch` | `{commands:[<canonical command>, ...]}`. Atomically submits one same-tick group. |
 | `gatos.schedule_batch` | `{id?, group?, clock, rate, loop, entries:[{at_ms, command:<canonical command>}, ...]}`. Registers a non-blocking timed command player. |
 
+**KSA 5438 behavior notes:** `vessel_control` scale writes update the live transform, but KSA saves
+top-level part scales and loading can apply physical rescaling. Restore the intended scale before
+saving a cosmetic experiment. Face-FX profiles use atmosphere-dependent buoyancy (full local gravity
+below 100 Pa). Plume-trail global raymarch settings also affect explosion volumes; clear removes
+trail geometry only. These behaviors are shared with the filesystem/HTTP/MQTT surfaces; action
+schemas and command phases are unchanged.
+
 The fields above define the outer v1 wire envelopes; the discriminator branches in §5.1 define the
 legal operation-specific payloads. There is no untyped `control` patch object or `/sim` path payload.
 The action catalog validates field arity, range, unit, gate, and phase. CCI vectors/quaternions retain

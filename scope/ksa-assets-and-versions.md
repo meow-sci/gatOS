@@ -27,14 +27,107 @@ Two checkouts are kept side by side for diffing:
 
 | Checkout dir | Build | Date | Revisions | Role |
 |---|---|---|---|---|
-| `…/ksa-game-assemblies` | **2026.9.7.5402** | 2026-09-02 | 5348 → 5402 (**changelog gapped**: `version.json` logs only rev 5401, `fromRevision` 5400) | **current / verified baseline** — full playbook pass 2026-09-02 (see [`#5402-pass`](#5402-pass)): **three compile breaks** (the `Viewport` class rework, `DebugTrailColor` removed, `Cursor.InputRay` removed) fixed, one `/sim` node retired, two new High-risk reflection accessors, binary surface diff 907/907 member refs resolved. `KSAFolder` default resolves here (commit `57e6040`). PREVIOUS for the diff was **`git worktree add <tmp> c465abb`** (the 5348 drop) — the git history is the `_prev` checkout now |
-| (git `c465abb`) | 2026.8.22.5348 | 2026-08-23 | 5261 → 5348 (85 commits, revs 5262–5348) | prior baseline — full playbook pass 2026-08-23 (see [`#5348-pass`](#5348-pass)): **zero compile breaks — the first pass in the project's history with none** (5261 had ten, 5168 had four); three real breaks the compiler could not see found and fixed, plus one long-standing **pre-existing** bug diagnosed and fixed. `KSAFolder` default resolves here (commit `c465abb`). The checkout is a **git repo whose history holds every prior drop** (`1401af7` = 5261, `13595c1` = 5056, `3106557` = 5018, `cdb7391` = 4980, `7cf5c0a` = 4892, …) — diff drops with `git diff <old>..<new>` inside it |
-| `…/ksa-game-assemblies_prev` | 2026.8.19.5261 | 2026-08-11 | 5168 → 5261 | prior side-by-side checkout — itself a **fully audited baseline** (the 5261 pass closed its own findings, [`#5261-pass`](#5261-pass)), and CURRENT's `fromRevision` is 5261, so the two trees **chained with no gap** and the 5348 pass diffed them directly (no git-history fallback needed) |
+| `…/ksa-game-assemblies` | **2026.9.10.5438** | 2026-09-15 (artifact date) | 5402 → 5438; 35 logged revisions, 5403–5437 | Current build / statically audited baseline; upgrade pass 2026-09-14, [5438 record](#5438-pass). Live flight validation pending. |
+| `…/ksa-game-assemblies_prev` | **2026.9.7.5402** | 2026-09-02 | 5348 → 5402 (**changelog gapped**: `version.json` logs only rev 5401, `fromRevision` 5400) | **previous audited baseline** — full playbook pass 2026-09-02 (see [`#5402-pass`](#5402-pass)): **three compile breaks** (the `Viewport` class rework, `DebugTrailColor` removed, `Cursor.InputRay` removed) fixed, one `/sim` node retired, two new High-risk reflection accessors, binary surface diff 907/907 member refs resolved. Build source at the time was commit `57e6040`; the current default now resolves 5438. PREVIOUS for the diff was **`git worktree add <tmp> c465abb`** (the 5348 drop) — prior drops remain available in the assemblies git history |
+| (git `c465abb`) | 2026.8.22.5348 | 2026-08-23 | 5261 → 5348 (85 commits, revs 5262–5348) | prior baseline — full playbook pass 2026-08-23 (see [`#5348-pass`](#5348-pass)): **zero compile breaks — the first pass in the project's history with none** (5261 had ten, 5168 had four); three real breaks the compiler could not see found and fixed, plus one long-standing **pre-existing** bug diagnosed and fixed. Build source at the time was commit `c465abb`. The checkout is a **git repo whose history holds every prior drop** (`1401af7` = 5261, `13595c1` = 5056, `3106557` = 5018, `cdb7391` = 4980, `7cf5c0a` = 4892, …) — diff drops with `git diff <old>..<new>` inside it |
+| (git `1401af7`) | 2026.8.19.5261 | 2026-08-11 | 5168 → 5261 | prior side-by-side checkout — itself a **fully audited baseline** (the 5261 pass closed its own findings, [`#5261-pass`](#5261-pass)), and that pass's CURRENT `fromRevision` was 5261, so the two trees **chained with no gap** and the 5348 pass diffed them directly (no git-history fallback needed) |
 
 gatOS was originally built against the 4680-era sources (most `[KsaAnchor]` `Verified` dates span
 2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27; the touched
 anchors carry `GameVersion="2026.6.9.4750"` (see
 [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)).
+
+## 5402 → 5438 upgrade pass (2026-09-14) {#5438-pass}
+
+CURRENT is `2026.9.10.5438` (`version.json` artifact date 2026-09-15); PREVIOUS is
+`2026.9.7.5402`. Both complete side-by-side trees include DLLs, decomp and Content.
+`fromRevision=5402` matches the audited baseline: all 35 logged revisions 5403–5437 were reviewed.
+The date here is the local audit date, not the upstream artifact date. Changes remain uncommitted.
+
+### Confirmed incompatibilities and fixes
+
+| Finding / revisions | PREVIOUS evidence | CURRENT evidence | gatOS resolution |
+|---|---|---|---|
+| Particle gravity model (5407) | `KSA.Rendering.Particles/ParticleEmitterReference.cs:100,208`: `GravityStrength` | `ParticleEmitterReference.cs:103,106,228`; `ParticleEmitter.cs:474–481`: `Density`, `Drag`, buoyancy recomputed from atmosphere | `FaceFxManager`: four density profiles calibrated at 1.225 kg/m³, zero authored drag. Below 100 Pa particles receive full local gravity. SPEC and public docs describe the changed motion. |
+| Exhaust propagation (5421/5436) | `VolumetricExhaustInstance.UpdateModifiers`; `RocketNozzle.RecomputeGasVisibilityDensity` | `KSA/RocketNozzle.cs:190–205` and editor `VolumetricExhaustRenderer.cs:2697–2721`: `OnSettingsChanged` + `RecomputeVolumetricExhaustLimits` | `PlumeActuator` follows the new editor loop. Delete obsolete `FxReflect.PlumeModifierArgs` and its private-field caches; `_debugThrottle` was removed. No exposed plume leaf retired. |
+| Vulkan index enum (5419) | `Brutal.VulkanApi/VkIndexType.cs`: `Uint16 = 0` | `UInt16 = 0` | Rebind thug-life and sticker index draws; ushort index buffers unchanged. |
+| Paint and IVA hooks (5404/5406), **compiler-invisible** | One `PartModel.AddInstance` (`:408`) and `PartModelDynamic.AddInstance` (`:412`) | Three overloads each (`:459,465,470` / `:463,469,474`); dented module draws call new public overload | Exact private shared `(PerInstanceData, PerInstanceDent, IViewport, int)` hooks handle both public paths once. IVA appends the supplied dent descriptor alongside the instance and checks the actual viewport's mode. |
+| Sticker resolve (5407/5408 render changes), **compiler-invisible** | `RenderTarget.ResolveAttachments(CommandBuffer)` at `:315`; one main resolve | `(CommandBuffer, bool inResolveDepth=true)`; `Program.cs:4737` color-only resolve, `:4765` full resolve | Bind exact signature; skip `false` so stickers draw once with current scene depth. Keep editor/main-viewport exclusions. |
+
+The initial single-process GameMod build reported **eight errors**: four removed gravity fields,
+two exhaust members, and two enum uses. The two hook families above require source/binary review;
+a green compiler alone would not catch them. Final automated results are recorded below.
+
+### Automated validation
+
+- Full `gatos.slnx` build against the explicit CURRENT DLL directory: **0 warnings, 0 errors**.
+  Build output deployed to `/tmp/gatos-5438-upgrade-dist/gatOS`, leaving the installed game untouched.
+- Full suite: **1646 passed, 12 skipped, 0 failed**, all ten test projects. `GATOS_IT` was not enabled;
+  VM-dependent integration tests retain their normal skips. VSTest/transport sockets needed a run
+  outside the filesystem/network sandbox. No test was skipped to hide a failure.
+- Public documentation site: **123 pages built** with `pnpm build`; changed existing routes verified.
+- Shipping-DLL metadata survey of the rebuilt `gatOS.GameMod.dll`: **482/482 referenced game
+  types resolve in CURRENT**; 481 exist in PREVIOUS, with `KSA.Deformation.PerInstanceDent` the
+  expected new type. **69 shared types changed member shape**; 412 were unchanged. No metadata
+  catalog-load error occurred. The source inventory resolves 32 explicit game reflection/target
+  lookups with no missing or ambiguous match; 10 other lookups target gatOS's own callbacks, and
+  18 runtime-typed reflection sites require the separately audited object chains. Exact shipping
+  signatures confirm both private dent-aware overloads, the bool resolve flag, protected camera
+  setters, solver/menu targets and the new exhaust refresh call. This is a type/member-shape
+  survey, not a full IL linker or a claim that live reflection objects were exercised.
+- Temporary old/current `Brutal.Core.Numerics` runtime probe: **62 assertions and 64 observations
+  per assembly, all passed; 64 cross-version comparisons, zero meaningful differences** at double
+  tolerance 1e-12 and float tolerance 1e-5. Tested axis/non-axis rotations, noncommuting concatenation,
+  matrix/quaternion agreement, normalization, pack/unpack and scalar-field layouts. Runtime was
+  .NET 10.0.0 on macOS ARM64; this does not execute Windows/Linux x64 SIMD paths.
+- `git diff --check`: clean. No commit created.
+
+### Full coupling audit
+
+- Read/write: all readers, control/debug actuators, sampler/catalog, body assets, welds, IVA forcing,
+  solver drain and menu target checked. No command phase or authority-gate change is needed.
+- Rendering: `SuperMeshRenderSystem` unchanged; thug-life's three call sites remain within valid
+  passes. `RenderTarget.SetupGraphicsPipeline`, reverse-Z and live MSAA configuration remain valid.
+  Both `UnlitMesh` shaders and `Common/Shared.glsl` are identical. The display transpiler still lands
+  before final `CommandBuffer.End` after `SampledReadVfc` (`Program.cs:4778,4787`), and UI pixel-culling
+  suppression remains valid.
+- Paint: both fragment shaders are identical. Vertex deformation adds separate dent descriptors;
+  the 80-byte instance stride and reserved state bits 11–31 are intact. EVA material clone objects
+  and reflection chains are unchanged. Sticker depth projection follows dented rendered geometry;
+  CPU picking still uses the undeformed mesh.
+- Reflection: manual input fields, EVA scale/material chain, camera protected setters, FX handles,
+  template registry and terrain UBO pointers checked. Only the now-unused plume modifier lookup was
+  removed. `GameViewport`/`ViewportBase` are identical; same-frame camera timing remains valid.
+- Clutter/clouds/terrain: bindless ownership, decode/upload API, UBO layouts and field-wise mirrors
+  remain compatible. FMOD gained generated-handle changes but gatOS's typed sound/channel calls
+  remain compatible; actual playback still needs the shipped native runtime.
+- Numerics: rev 5419 changes generic math and SIMD substantially. Audited finite-value algebra
+  preserves CCI/CCE/CCF conventions, quaternion concatenation order and matrix signs. Do not call
+  these files byte-identical or promise bitwise equality across architectures.
+
+### Inherited behavior and documentation corrections
+
+Revs 5414/5432 correct SRB geometry/profile and active-sequence remaining Δv; 5433 fixes multi-level
+reactant availability and drain sharing; 5416 gives flight plans owned orbit-line buffers; 5426/5427
+correct closest-approach derivatives. gatOS copies telemetry values and owns none of those caches.
+Revs 5420/5428 improve mid-frame bubble merges and CCF fictitious forces; all child work still joins
+inside `VehicleSolver`, so the existing weld/IVA wait and Solver-phase debug writes remain correct.
+Revs 5409–5411 change destruction tolerances and add authored mass to twelve electrical/landing/
+structural parts (electrical W/J ratings and celestial XML unchanged); 5423/5424 improve debris
+recovery, save/load and split identity. See [read findings](ksa-read-surface.md#5438-findings).
+
+**Scale contract correction:** `Part.GetReferenceWithChildren` already saved full-part scale in
+5402 (`Part.cs:2018–2032`; CURRENT `:2058–2072`). Rev 5434 adds `RefreshScale` on every non-root
+loaded part (`:2331–2338`), extending physical reapplication beyond the root. The live `/sim` write
+remains transform-only, but saving/reloading can change physics. The old blanket reset-on-rebuild
+promise was false; SPEC, anchors and public guidance now distinguish write from reload.
+
+Plume templates now blend into merged exhausts (5421/5436); global plume-trail raymarch controls
+also govern explosion volumes (5425), while `clear` clears trails only. Particle buoyancy and
+scale persistence are documented on every relevant shared API view; no path/action/phase was added.
+
+Live render, reflection-chain and flight checks remain pending in
+[`docs/VALIDATION.md`](../docs/VALIDATION.md#ksa-5438-upgrade). This pass does not claim a live flight.
 
 **The 5348 → 5402 pass (2026-09-02) — three compile breaks fixed (one viewport-class rework, two
 removed members), one `/sim` node retired, two new High-risk reflection accessors, no silent breaks
@@ -142,7 +235,7 @@ document changed). **Live re-checks queued in [`../docs/VALIDATION.md`](../docs/
 
 **The 5261 → 5348 pass (2026-08-23) — ZERO compile breaks (a first), three compiler-invisible breaks
 found and fixed, one pre-existing bug diagnosed and fixed.** {#5348-pass}
-PREVIOUS (`2026.8.19.5261`) was itself a fully audited baseline and CURRENT's `fromRevision` is 5261,
+PREVIOUS (`2026.8.19.5261`) was itself a fully audited baseline and that pass's CURRENT `fromRevision` was 5261,
 so the two trees chain with no gap and were diffed directly (revs 5262–5348, 85 commits).
 
 **The build said nothing.** A clean `-t:Rebuild` of the whole solution against the 5348 DLLs produced

@@ -3,6 +3,7 @@ using Brutal.ShaderCApi;
 using Brutal.VulkanApi;
 using HarmonyLib;
 using KSA;
+using KSA.Deformation;
 using RenderCore;
 
 namespace gatOS.GameMod.Game.Ksa.Paint;
@@ -28,9 +29,11 @@ internal static class PartPaintPatches
                 Method(nameof(DynamicModulePrefix)), false, "PartModelDynamicModule.UpdateRenderData prefix"),
             (AccessTools.Method(typeof(PartModelDynamicModule), nameof(PartModelDynamicModule.UpdateRenderData)),
                 Method(nameof(DynamicModuleFinalizer)), true, "PartModelDynamicModule.UpdateRenderData finalizer"),
-            (AccessTools.Method(typeof(PartModel), nameof(PartModel.AddInstance)),
+            (AccessTools.Method(typeof(PartModel), nameof(PartModel.AddInstance),
+                    [typeof(PartModel.PerInstanceData), typeof(PerInstanceDent), typeof(IViewport), typeof(int)]),
                 Method(nameof(AddInstancePrefix)), false, "PartModel.AddInstance"),
-            (AccessTools.Method(typeof(PartModelDynamic), nameof(PartModelDynamic.AddInstance)),
+            (AccessTools.Method(typeof(PartModelDynamic), nameof(PartModelDynamic.AddInstance),
+                    [typeof(PartModelDynamic.PerInstanceData), typeof(PerInstanceDent), typeof(IViewport), typeof(int)]),
                 Method(nameof(AddDynamicPrefix)), false, "PartModelDynamic.AddInstance"),
         ];
 

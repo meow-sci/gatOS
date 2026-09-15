@@ -20,6 +20,10 @@ echo 1 > /sim/vessels/by-id/Hunter/always_render
 `scale` is a one-shot render scale and `always_render` bypasses the distant sub-pixel cull. Both are
 first-class vessel controls rather than debug leaves, and both can target any vessel.
 
+Restore the intended scale before saving a cosmetic experiment. KSA saves top-level part scales,
+and loading them can apply physical scaling to colliders, mass, tanks and nozzles. Staging or
+undocking need not reset the scale.
+
 ## Add glasses
 
 ```sh

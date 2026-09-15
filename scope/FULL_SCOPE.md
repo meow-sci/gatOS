@@ -95,7 +95,16 @@ update's blast radius is small and discoverable. The procedure:
    (`EOPNOTSUPP`), logs once, and shows up in `/sim/status/accessors`. The guest sees a failed sensor,
    not a crashed mod. This is the safety net for the things steps 2–3 miss.
 
-> **Current applied result of this playbook:** the **2026.8.22.5348 → 2026.9.7.5402** update was run
+> **Current upgrade: 2026.9.7.5402 → 2026.9.10.5438**, audited 2026-09-14.
+> The gapless 35-revision source/Content review found eight compile errors (particle gravity,
+> exhaust propagation, Vulkan enum spelling), plus compiler-invisible paint/IVA overload and sticker
+> resolve breaks. Fixes preserve dent descriptors and skip color-only sticker resolves. Scale docs
+> now distinguish live transform writes from physical rescaling on save reload. All other control
+> phases remain valid. Full evidence and final automated results:
+> [5438 pass](ksa-assets-and-versions.md#5438-pass). **Live validation remains pending** in
+> [the 5438 checklist](../docs/VALIDATION.md#ksa-5438-upgrade).
+>
+> **Prior applied result of this playbook:** the **2026.8.22.5348 → 2026.9.7.5402** update was run
 > through it on 2026-09-02 — **three compile breaks fixed, one `/sim` node retired, two new High-risk
 > reflection seams, no compiler-invisible break found.** CURRENT's changelog is **gapped** (its
 > `version.json` logs only rev 5401; revs 5349–5399 have no messages), so the discovery mechanism was
@@ -140,7 +149,7 @@ update's blast radius is small and discoverable. The procedure:
 > [pass record](ksa-assets-and-versions.md#5402-pass)). **Live re-checks queued in
 > [`../docs/VALIDATION.md`](../docs/VALIDATION.md)** — the reflection camera seam, the sticker cursor
 > aim, thug_life across the new viewport types, a provoked crash, and the plumetrail surface without
-> `trail_color`. **5402 is now the verified baseline.**
+> `trail_color`. **5402 is the previous audited baseline for the 5438 pass.**
 >
 > The prior **2026.8.19.5261 → 2026.8.22.5348** update was run
 > through it on 2026-08-23 — **zero compile breaks, a first in this project's history; three

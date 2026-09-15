@@ -3,6 +3,7 @@ using gatOS.GameMod.Game.Ksa;
 using gatOS.Logging;
 using HarmonyLib;
 using KSA;
+using KSA.Deformation;
 
 namespace gatOS.GameMod.Game.Ksa.Render;
 
@@ -37,13 +38,15 @@ internal static class IvaForceRender
     public static bool Enabled => _enabled;
 
     [KsaAnchor("PartModel.Instances; PartModel..ctor(PartModelModule.Template); "
-            + "PartModel.AddInstance(PerInstanceData,IViewport,int); PartModel.ViewportData.Get(PartModel,IViewport).InstanceList; "
+            + "PartModel.AddInstance(PerInstanceData,PerInstanceDent,IViewport,int) private common overload; "
+            + "PartModel.ViewportData.Get(PartModel,IViewport).{InstanceList,DentInstanceList}; "
             + "PartModelModule.Template.{Internal,RayTracing}; PartModelModule.RaytracingMode.ShadowProxy; "
             + "Program.{Editor,MainViewport}; IViewport.{Mode,OptionFlags}; ViewportOptionFlags.RenderPartModels; CameraMode.IVA",
-        SourceFile = "KSA/PartModel.cs:408 / KSA/PartModelModule.cs / KSA/IViewport.cs / KSA/ViewportOptionFlags.cs", Verified = "2026-09-02",
-        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
-        Notes = "The always_render_iva cheat. Patches are dynamic — installed only while enabled."
-            + "5402: AddInstance now early-outs unless the viewport HasAny(RenderPartModels) (every stock preset has it) and keys ViewportData on ViewportId; the postfix mirrors that gate so it never adds an instance the engine refused. The raytracing branch now also requires viewport.HasAll(UseRaytracing) (main only).")]
+        SourceFile = "KSA/PartModel.cs:459-490 / KSA/PartModelModule.cs / KSA/IViewport.cs / KSA/ViewportOptionFlags.cs", Verified = "2026-09-14",
+        GameVersion = "2026.9.10.5438", Risk = ChurnRisk.High,
+        Notes = "The always_render_iva cheat. Patches are dynamic — installed only while enabled. "
+            + "The private common AddInstance overload receives the actual viewport and paired dent "
+            + "descriptor; the editor fallback appends both lists, matching KSA's normal path.")]
     public static void SetEnabled(bool value)
     {
         if (_enabled == value)
@@ -72,7 +75,8 @@ internal static class IvaForceRender
             BindingFlags.NonPublic | BindingFlags.Static)!;
         _harmony.Patch(_ctorOriginal, postfix: new HarmonyMethod(_ctorPostfix));
 
-        _addInstanceOriginal = AccessTools.Method(typeof(PartModel), nameof(PartModel.AddInstance));
+        _addInstanceOriginal = AccessTools.Method(typeof(PartModel), nameof(PartModel.AddInstance),
+            [typeof(PartModel.PerInstanceData), typeof(PerInstanceDent), typeof(IViewport), typeof(int)]);
         _addInstancePostfix = typeof(IvaForceRender).GetMethod(nameof(AddInstancePostfix),
             BindingFlags.NonPublic | BindingFlags.Static)!;
         _harmony.Patch(_addInstanceOriginal, postfix: new HarmonyMethod(_addInstancePostfix));
@@ -117,20 +121,22 @@ internal static class IvaForceRender
     }
 
     /// <summary>Editor-only: interior previews are never drawn through an IVA camera, so force them in.</summary>
-    private static void AddInstancePostfix(PartModel __instance, PartModel.PerInstanceData __0, IViewport __1)
+    private static void AddInstancePostfix(PartModel __instance, PartModel.PerInstanceData __0,
+        PerInstanceDent __1, IViewport __2)
     {
         try
         {
-            // 5402: the original early-outs for a viewport without RenderPartModels; mirror that gate so
-            // the postfix never adds an instance the engine itself refused.
-            if (!__1.HasAny(ViewportOptionFlags.RenderPartModels))
+            // Mirror the common overload's gate so the postfix never adds an instance the engine refused.
+            if (!__2.HasAny(ViewportOptionFlags.RenderPartModels))
                 return;
             if (Program.Editor is null
                 || !__instance.Template.Internal
-                || Program.MainViewport.Mode == CameraMode.IVA
+                || __2.Mode == CameraMode.IVA
                 || __instance.Template.RayTracing == PartModelModule.RaytracingMode.ShadowProxy)
                 return;
-            PartModel.ViewportData.Get(__instance, __1).InstanceList.Add(__0);
+            var viewportData = PartModel.ViewportData.Get(__instance, __2);
+            viewportData.InstanceList.Add(__0);
+            viewportData.DentInstanceList.Add(__1);
         }
         catch (Exception ex)
         {

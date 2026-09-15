@@ -191,21 +191,19 @@ internal static class PlumeActuator
     ///     transient-animation LUT re-bake — gatOS does not expose the transient curves.
     /// </summary>
     [KsaAnchor("Universe.CurrentSystem.All.UnsafeAsList(); Vehicle.Parts.RocketNozzles.ModulesAndAllStates; "
-            + "RocketNozzleFxState.VolumetricExhaust; VolumetricExhaustInstance.{OnSettingsChanged,UpdateModifiers}; "
-            + "RocketNozzle.RecomputeGasVisibilityDensity(in VolumetricExhaustInstance)",
-        SourceFile = "KSA/VolumetricExhaustRenderer.cs:2316-2337 / KSA/VolumetricExhaustInstance.cs:179,231 / "
-            + "KSA/RocketNozzle.cs:156",
-        Verified = "2026-08-01", GameVersion = "2026.7.10.5056", Risk = ChurnRisk.High,
-        Notes = "Mirrors the editor's post-edit loop. UpdateModifiers takes the renderer's own "
-            + "pressure/throttle (FxReflect.PlumeModifierArgs, best-effort) — the per-frame AddInstance "
-            + "path recomputes them for every drawn nozzle, so this cannot disturb a live plume. Each "
-            + "vehicle is isolated: one mid-teardown vessel must not abort the propagation.")]
+            + "RocketNozzleFxState.VolumetricExhaust; VolumetricExhaustInstance.OnSettingsChanged; "
+            + "RocketNozzle.RecomputeVolumetricExhaustLimits(in VolumetricExhaustInstance)",
+        SourceFile = "KSA/VolumetricExhaustRenderer.cs:2697-2721 / KSA/VolumetricExhaustInstance.cs / "
+            + "KSA/RocketNozzle.cs:190-205",
+        Verified = "2026-09-14", GameVersion = "2026.9.10.5438", Risk = ChurnRisk.High,
+        Notes = "Mirrors the current in-game editor's post-edit loop: OnSettingsChanged followed by "
+            + "RecomputeVolumetricExhaustLimits for each live nozzle instance. Each vehicle is isolated "
+            + "so one mid-teardown vessel cannot abort propagation for the rest.")]
     private static void Propagate()
     {
         if (Universe.CurrentSystem is not { } system)
             return;
 
-        var (pressure, throttle) = FxReflect.PlumeModifierArgs();
         foreach (var astronomical in system.All.UnsafeAsList())
         {
             if (astronomical is not Vehicle vehicle)
@@ -220,8 +218,7 @@ internal static class PlumeActuator
                     if (module.FxState.VolumetricExhaust is not { } instance)
                         continue;
                     instance.OnSettingsChanged();
-                    instance.UpdateModifiers(pressure, throttle);
-                    module.Module.RecomputeGasVisibilityDensity(in instance);
+                    module.Module.RecomputeVolumetricExhaustLimits(in instance);
                 }
             }
             catch (Exception)

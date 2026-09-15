@@ -77,7 +77,7 @@ target in 4750 (verify live). Full record: [`../plans/FIX_CURRENT_GAPS_PLAN.md`]
 | `ctl/shutdown` | `vessel.shutdown` | `EngineActuator.Shutdown` | `Vehicle.SetEnum(VehicleEngine.MainShutdown)` | `KSA/Vehicle.cs` | Medium | ✅¹ |
 | `ctl/engine` | `vessel.engine` | `EngineActuator.SetEngineOn` | ignite/shutdown by flag | `KSA/Vehicle.cs` | Medium | ✅¹ |
 | `engines/<n>/active` | `engine.active` | `EngineActuator.SetActive` | `EngineController.SetIsActive(vehicle,bool)` | `KSA/EngineController.cs` | Low | ✅ |
-| `engines/<n>/min_throttle` | `engine.min_throttle` | `EngineActuator.SetMinThrottle` | `EngineController.MinimumThrottle` (float) | `KSA/EngineController.cs` | Medium | ⚠️ **5348: the FC's floor fold inverted** `Min`→`Max` (rev 5317 era) — the write still lands, the *effective* floor moved; see [5348 findings](#5348-findings) |
+| `engines/<n>/min_throttle` | `engine.min_throttle` | `EngineActuator.SetMinThrottle` | `EngineController.MinimumThrottle` (float) | `KSA/EngineController.cs` | Medium | ⚠️ **5348: the FC's floor fold inverted** `Min`→`Max` (rev 5317 era) — the write still lands, the *effective* floor moved; see [5438 findings](#5438-findings) |
 | `ctl/lights` | `vessel.lights` | `LightActuator.SetMaster` | `Vehicle.LightsOn`; `PowerConsumer.{LightSwitch,LightIsActive}` | `KSA/Vehicle.cs`, `KSA/LightModule.cs` | Low | ✅ |
 | `animations/<n>/goal`, `solar/<n>/goal`, `lights/<n>/goal` | `animation.goal` | `AnimationActuator.SetGoal` | `KeyframeAnimationModule.TimeGoal = f × Shared.Duration` | `KSA/KeyframeAnimationModule.cs` | Low | ✅ |
 
@@ -256,7 +256,7 @@ deliberate by-id operation on an arbitrary vessel). Gated only by the `control_e
 
 | `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 5018 |
 |---|---|---|---|---|---|---|
-| `vessels/by-id/<id>/scale` | `vessel.scale` | `ScaleActuator.Set` (one-shot; > 0 only, `EINVAL` otherwise; KSA resets on vessel rebuild) | recursive `Part.Scale = (f,f,f)` over `Vehicle.Parts.Parts`/`Part.SubParts` (public `double3` setter); KittenEva avatar via reflected `_renderable._characterAvatar.Core.Scale = f*0.01f` | `KSA/Part.cs`, `KSA/PartTree.cs`, `KSA/KittenEva.cs` | **High** (reflection + `GetType().Name` gate) | ⚠️ **5348: still visual/transform-only, but no longer what the in-game gizmo means** — `ScaleTotal` composition went additive → multiplicative and the editor's own scaling became physical via `IRescale` (clamped 0.5×–2×); see [5348 findings](#5348-findings) |
+| `vessels/by-id/<id>/scale` | `vessel.scale` | `ScaleActuator.Set` (one-shot; > 0 only, `EINVAL` otherwise; KSA saves top-level scale; load may refresh physics) | recursive `Part.Scale = (f,f,f)` over `Vehicle.Parts.Parts`/`Part.SubParts` (public `double3` setter); KittenEva avatar via reflected `_renderable._characterAvatar.Core.Scale = f*0.01f` | `KSA/Part.cs`, `KSA/PartTree.cs`, `KSA/KittenEva.cs` | **High** (reflection + `GetType().Name` gate) | ⚠️ **5438: live write is transform-only; saved top-level scale can become physical on reload** — `ScaleTotal` composition went additive → multiplicative and the editor's own scaling became physical via `IRescale` (clamped 0.5×–2×); see [5348 findings](#5348-findings) |
 | `vessels/by-id/<id>/always_render` | `vessel.always_render` | `VesselForceRender.Set` (registry op; installs/removes the `gatos.always_render` prefixes — patches exist **only while ≥ 1 vessel is marked**) | prefixes on `Vehicle.GetWorldMatrix(Camera)` + `Vehicle.UpdateRenderData(IViewport,int)` (`Viewport` through 5348) reproduce the stock bodies minus the `< 1 px` cull: `Camera.GetPositionEgo`, `Vehicle.Body2Cce`, `Vehicle.GetMatrixAsmb2Ego`, `PartTree.UpdateRenderData`, `Vehicle.IsEditedVehicle` | `KSA/Vehicle.cs`, `KSA/Camera.cs`, `KSA/PartTree.cs` | Medium (dynamic Harmony; KittenEva override unaffected) | ✅ |
 
 Read-backs ride `VesselReader.SampleCore` (always on): `scale` ← representative `Part.Scale.X`
@@ -303,7 +303,7 @@ command `Token` (the source is the command's `vessel_id`).
 
 | `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 5018 |
 |---|---|---|---|---|---|---|
-| `debug/always_render_iva` | `debug.always_render_iva` | `IvaActuator.SetAlwaysRender`→`IvaForceRender.SetEnabled` | `PartModel.Instances`; `PartModel..ctor(PartModelModule.Template)`; `PartModel.AddInstance(PerInstanceData,IViewport,int)` (+ its 5402 `HasAny(RenderPartModels)` early-out, mirrored by the postfix); `PartModel.ViewportData.Get(PartModel,IViewport).InstanceList` (keyed on `ViewportId`); `PartModelModule.Template.{Internal,RayTracing}`; `PartModelModule.RaytracingMode.ShadowProxy`; `Program.{Editor,MainViewport}`; `IViewport.Mode`; `CameraMode.IVA` (render gate `PartModel.cs:408`) | `KSA/PartModel.cs`, `KSA/PartModelModule.cs`, `KSA/IViewport.cs` | Medium (dynamic `gatos.iva` Harmony — recheck live) | ✅ |
+| `debug/always_render_iva` | `debug.always_render_iva` | `IvaActuator.SetAlwaysRender`→`IvaForceRender.SetEnabled` | `PartModel.Instances`; `PartModel..ctor(PartModelModule.Template)`; `PartModel.AddInstance(PerInstanceData,PerInstanceDent,IViewport,int)` (+ its 5402 `HasAny(RenderPartModels)` early-out, mirrored by the postfix); `PartModel.ViewportData.Get(PartModel,IViewport).{InstanceList,DentInstanceList}` (keyed on `ViewportId`); `PartModelModule.Template.{Internal,RayTracing}`; `PartModelModule.RaytracingMode.ShadowProxy`; `Program.{Editor,MainViewport}`; `IViewport.Mode`; `CameraMode.IVA` (render gate `PartModel.cs:470`) | `KSA/PartModel.cs`, `KSA/PartModelModule.cs`, `KSA/IViewport.cs` | **High** (private shared overload since 5438 — recheck live) | ✅ |
 | `debug/vessels/<id>/weld` | `debug.weld_create` | `WeldManager.Create`→`WeldEngine.UpdateWeld` | `Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,BodyRates,CenterOfMassAsmb,Parent,Orbit,Teleport,UpdatePerFrameData}`; `Orbit.{OrbitLineColor,CreateFromStateCci}`; `IParentBody.GetCci2Cce`; `Universe.GetJobSimStep(double).NextTime`; `Program.GetPlayerDeltaTime`; `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` (subpart-aware). `<part_iid>` resolution (`WeldManager.FindPart`) searches `Vehicle.Parts.Parts` **and** each part's `Part.SubParts` — the anchor may be a top-level part or a subpart | `KSA/Vehicle.cs`, `KSA/Orbit.cs`, `KSA/Universe.cs`, `KSA/Part.cs` | **High** (per-frame `Teleport`) | ✅ |
 | `debug/vessels/<id>/weld_here` | `debug.weld_here` | `WeldManager.CreateAtCurrentPose`→`WeldEngine.CapturePose` | inverse transform: `Vehicle.{GetPositionCci,GetBody2Cci,CenterOfMassAsmb}`; `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` | `KSA/Vehicle.cs`, `KSA/Part.cs` | Medium | ✅ |
 | `debug/vessels/<id>/unweld` | `debug.weld_remove` | `WeldManager.Remove(vehicle.Id)` | (registry op — no KSA) | — | Low | ✅ |
@@ -521,9 +521,8 @@ entity in `Token` and the **concrete field path** in `Aux`.
 | `/sim` path | action key | phase | KSA member | Decomp file | Risk | 5056 |
 |---|---|---|---|---|---|---|
 | `debug/engineplume/templates/<id>/**` | `debug.engineplume_set` | Frame | `PlumeActuator.TryWrite` → `VolumetricExhaustTemplate.{LengthWeights,Absorption,Emission,Noise,Quality}`: `DoubleReference.Value` / `BoolReference.Value` in place; `ColorGradient.Color0..3 = new ColorRgbReference(float3)` + `OnDataLoad(Mod.Empty)` | `KSA/VolumetricExhaustTemplate.cs`, `KSA/VolumetricExhaustRenderer.cs:2052-2290` (the editor's write sites) | **High** | ✅ |
-| (apply after every write) | — | Frame | `PlumeActuator.Propagate` → `Universe.CurrentSystem.All.UnsafeAsList()`; `Vehicle.Parts.RocketNozzles.ModulesAndAllStates`; `RocketNozzleFxState.VolumetricExhaust`; `VolumetricExhaustInstance.{OnSettingsChanged,UpdateModifiers}`; `RocketNozzle.RecomputeGasVisibilityDensity(in …)` | `KSA/VolumetricExhaustRenderer.cs:2316-2337`, `KSA/VolumetricExhaustInstance.cs:179,231`, `KSA/RocketNozzle.cs:156` | **High** | ✅ |
+| (apply after every write) | — | Frame | `PlumeActuator.Propagate` → `Universe.CurrentSystem.All.UnsafeAsList()`; `Vehicle.Parts.RocketNozzles.ModulesAndAllStates`; `RocketNozzleFxState.VolumetricExhaust`; `VolumetricExhaustInstance.OnSettingsChanged`; `RocketNozzle.RecomputeVolumetricExhaustLimits(in …)` | `KSA/VolumetricExhaustRenderer.cs:2697-2721`, `KSA/VolumetricExhaustInstance.cs`, `KSA/RocketNozzle.cs:190-205` | **High** | ✅ |
 | (id resolution) | — | — | `VolumetricExhaustTemplate.Get(string)` (public static; null ⇒ `ENOENT`) | `KSA/VolumetricExhaustTemplate.cs:48` | Medium | ✅ |
-| (propagation args) | — | — | `FxReflect.PlumeModifierArgs` → `Program.VolumetricExhaustRenderer` (public static) + reflected `_currentAtmosphericPressure` / `_debugThrottle` — **best-effort**, falls back to `(0, 1)` | `KSA/VolumetricExhaustRenderer.cs:253,277`, `KSA/Program.cs:421` | **High** | ✅ |
 | `debug/engineplume/templates/<id>/reset` | `debug.engineplume_reset` | Frame | `FxPristine.Restore` replays the captured values through `TryWrite`, then `Propagate` | — | **High** | ✅ |
 
 **plumetrail** — scope is the **one global renderer**; all exposed settings are public instance fields the
@@ -1650,3 +1649,29 @@ a **cube-face seam**, where the CPU height sampler changed (see [5348 findings](
 **The live draw is unvalidated** — see the stickers card in `docs/VALIDATION.md`.
 Pipeline, shader and GLSL-layout assumptions:
 [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md).
+
+## 5438 write findings {#5438-findings}
+
+Confirmed fixes: part paint and IVA bind the private shared `AddInstance(PerInstanceData,
+PerInstanceDent,IViewport,int)` overloads introduced with dents, and IVA preserves paired instance/
+dent arrays. Sticker injection binds `ResolveAttachments(CommandBuffer,bool)` and skips color-only
+resolves. Plume propagation uses `OnSettingsChanged` and `RecomputeVolumetricExhaustLimits`; obsolete
+modifier reflection is deleted. `VkIndexType.UInt16` replaces the old enum spelling in both draws.
+
+`FaceFxManager.Spawn` uses the same burst/handle/graphics gate, but authored profiles now use
+`ParticleEmitterReference.Density` and zero `Drag`. Densities calibrated at 1.225 kg/m³ produce the
+former gentle-fall/neutral/gentle-rise looks there; motion varies with atmosphere and becomes full
+local gravity below 100 Pa. The face origin is `(0.25,0,-0.70)` (correcting stale SPEC prose).
+
+`ScaleActuator.Apply` still only writes transforms. However `GetReferenceWithChildren` saves full-part
+scale, and `RegenerateFromPartInstance` now refreshes non-root parts physically (rev 5434). A reload
+can alter mass, volume, colliders and nozzles. Staging/undocking need not reset scales; subpart and EVA
+avatar transforms have distinct lifetimes. The old universal reset promise is removed.
+
+No control phase or authority change is needed. The `VehicleSolver` orchestrator still joins its
+new horizon/merge jobs, so weld/IVA waits and Solver-phase teleport/impulse remain valid. Refills,
+engine ignition/staging, FlightComputer, RCS, lights, animations and docking retain their entry points.
+New resource/drain behavior is inherited from the game. Plume-trail global render knobs also affect
+explosion volumes; `clear` does not clear explosions.
+
+Full evidence and automated validation: [5438 pass](ksa-assets-and-versions.md#5438-pass).

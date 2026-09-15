@@ -34,6 +34,17 @@ part, position, rotation, size, visible, remove, and spec. The relevant vessel m
 face-anchored cosmetics. `vessels/<id>/scale` and `always_render` are not debug paths: they are normal
 per-vessel visual states and deliberately authority-gate exempt.
 
+A `scale` write changes the live model transform without recomputing physics. KSA saves top-level
+part scales, and loading them can rescale colliders, mass, tanks and nozzle geometry (all loaded
+parts since KSA 5438). Restore the intended scale before saving a cosmetic experiment. Staging or
+undocking need not reset it.
+
+`fx/spawn` bursts `party`, `sparkle`, `danger`, or `death` particles at a vessel or kitten face.
+In KSA 5438 these use density-based buoyancy with zero authored drag: at 1.225 kg/m³, party falls
+gently, sparkle is neutral, and danger/death rise gently. Other atmospheres change that motion;
+below 100 Pa all four receive full local gravity. `fx/clear` stops emission; existing particles
+finish their lifetimes.
+
 ## IVA cabin physics
 
 `iva/enabled` defaults to `0`: no physics world exists until it is enabled. `adopt`, `adopt_all`,
@@ -49,7 +60,8 @@ warp unless `run_outside_iva=1`. `iva.impact`, `iva.escape`, and `iva.release` a
 `engineplume`, `plumetrail`, `clouds`, and `terrain` expose the four in-game render editors as writable
 files. Each family has `help`, JSON discovery, field leaves with inclusive ranges, and `reset`.
 Engine-plume changes are per template, plume trail is global, clouds are body/layer/type scoped, and terrain
-is body-scoped with global `wireframe`. FX values are float32 on read-back, session-only, and restored on
+is body-scoped with global `wireframe`. Since KSA 5438, global plume-trail raymarch controls also
+affect explosion volumes; `clear` removes trail geometry only. FX values are float32 on read-back, session-only, and restored on
 unload. Use `help` and the root specification for each individual range and unit; `*_km`, `*_deg`, `*_px`,
 and channel names tell the truth more reliably than an assumption that every number is meters.
 

@@ -287,7 +287,8 @@ a projected decal cannot be drawn there. The two features stay separate (`gatos.
 ### 3.2 The render hook — installed only while ≥ 1 sticker is live
 
 ```
-Harmony("gatos.stickers") postfix on KSA.Rendering.RenderTarget.ResolveAttachments(CommandBuffer)
+Harmony("gatos.stickers") postfix on KSA.Rendering.RenderTarget.ResolveAttachments(CommandBuffer,bool)
+  skip inResolveDepth=false (5438 color-only resolve; wait for current scene depth)
   if (!StickerManager.Active) return;                                   // volatile, cleared before any teardown
   if (!ReferenceEquals(__instance, Program.OffscreenTarget)) return;    // main viewport's target only
   if (!ReferenceEquals(Program.RenderedViewport, Program.MainViewport)) return;

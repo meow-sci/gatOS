@@ -259,9 +259,9 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
     /// </remarks>
     [KsaAnchor("Program.GetRenderCamera() (RenderedViewport.GetCamera()); Camera.MVP.viewProjection; "
             + "Program.SetViewport(cmd); Vehicle.GetMatrixAsmb2Ego(Camera); Vehicle.Asmb2Ego; "
-            + "Part.PositionEgo(in double4x4); Part.Asmb2Ego(doubleQuat); double3.Transform",
+            + "Part.PositionEgo(in double4x4); Part.Asmb2Ego(doubleQuat); double3.Transform; VkIndexType.UInt16",
         SourceFile = "KSA/Program.cs / KSA/Camera.cs / KSA/Vehicle.cs / KSA/Part.cs",
-        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
+        Verified = "2026-09-14", GameVersion = "2026.9.10.5438", Risk = ChurnRisk.High,
         Notes = "Per-frame ego-space model matrix + draw for one thug-life quad, per rendered viewport "
             + "(main + the two ViewportType.CharacterPortrait viewports — Program.RenderViewport calls "
             + "RenderMainPass for every visible viewport, and the portrait targets share the offscreen "
@@ -273,7 +273,9 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
             + "its body is now wrapped in commandBuffer.TagRegion(Profiler.GpuTag.MeshRendererV2); a "
             + "Harmony postfix runs after the finally, so these quads are attributed OUTSIDE that GPU "
             + "tag — profiler attribution only, no mis-draw."
-            + "5402: RenderedViewport is an IViewport (GetRenderCamera still returns RenderedViewport.GetCamera(), :642); RenderMainPass(CommandBuffer) is still the single overload with the same three call sites (RenderViewport :4395, RenderGame :4656, RenderEditor :4856); SetViewport (:4293) still sizes from RenderedViewport.Size; the per-viewport camera/lighting UBOs are now indexed by IViewport.ShaderSlot, which this renderer never touches.")]
+            + "5438: RenderedViewport remains an IViewport and RenderMainPass(CommandBuffer) remains the "
+            + "single seam across the valid offscreen viewport passes; SetViewport still sizes from the "
+            + "rendered viewport, and the 16-bit index buffer uses the current VkIndexType.UInt16 name.")]
     public void RecordDraw(CommandBuffer cmd, ThugLifeEntry entry)
     {
         if (_disposed || !entry.Visible)
@@ -302,7 +304,7 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
         cmd.BindVertexBuffers(0,
             new ReadOnlySpan<VkBuffer>(ref vbHandle),
             new ReadOnlySpan<ByteSize64>(ref vbOff));
-        cmd.BindIndexBuffer(_ib.VkBuffer, (ByteSize64)_ib.BindOffset, VkIndexType.Uint16);
+        cmd.BindIndexBuffer(_ib.VkBuffer, (ByteSize64)_ib.BindOffset, VkIndexType.UInt16);
         cmd.DrawIndexed(_indexCount, 1, 0, 0, 0);
     }
 

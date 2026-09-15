@@ -20,9 +20,8 @@ using EmitterHandle = ParticleEmitter<ParticleUpdateData, ParticleRenderData>.Ha
 ///         <c>EmitterPool.Get(1)</c> + <c>InitializeEmitter(e, new ParticleEmitterReference {…})</c> —
 ///         a template built entirely in C#, no XML, no content pipeline, no <c>ModLibrary</c>
 ///         registration. Every profile uses the <c>SimpleColor</c> renderer and built-in meshes
-///         (<c>ParticleSphere</c>/<c>Plane</c>), so there are zero material/asset dependencies; the
-///         <c>Volumetric</c> renderer is deliberately avoided (it only draws when the off-by-default
-///         ScreenSpaceParticles setting is on) and <c>Billboard</c> needs a material we don't ship.
+///         (<c>ParticleSphere</c>/<c>Plane</c>); <c>SimpleColor</c> supplies these profiles' authored
+///         appearance without additional material assets.
 ///     </para>
 ///     <para>
 ///         <b>Placement:</b> <c>Context.Vehicle</c> + <c>LocalOffset</c> (a translation in the vessel's
@@ -30,7 +29,7 @@ using EmitterHandle = ParticleEmitter<ParticleUpdateData, ParticleRenderData>.Ha
 ///         emitter transform from the vehicle's live kinematics every frame, so the emission point
 ///         rides the kitten with no per-frame work here; <c>AddEmitter(handle)</c> keeps already-spawned
 ///         particles correct across floating-origin snaps. A kitten's face sits at assembly
-///         <c>(0, 0, -0.85)</c> (the crew-portrait camera's own face point) and the default anchor
+///         <c>(0, 0, -0.70)</c> (the crew-portrait camera's own face point) and the default anchor
 ///         pushes 0.25 m forward along +X (the axis the portrait camera looks down); other vessels
 ///         default to their assembly origin.
 ///     </para>
@@ -50,6 +49,13 @@ internal sealed class FaceFxManager
 {
     /// <summary>Concurrent gatOS-held emitters (the game's pool has 1024 slots; stay tiny).</summary>
     private const int MaxLive = 24;
+
+    /// <summary>
+    ///     Reference sea-level atmospheric density used to calibrate each profile's authored
+    ///     buoyancy. KSA recomputes gravity from the local density on every particle update; below
+    ///     100 Pa it uses full local gravity regardless of this profile density.
+    /// </summary>
+    private const float ReferenceAtmosphericDensity = 1.225f;
 
     /// <summary>
     ///     A kitten's face point in its assembly frame (the crew-portrait camera's own numbers).
@@ -80,14 +86,16 @@ internal sealed class FaceFxManager
             + "GameSettings.Current.Graphics.Particles",
         SourceFile = "KSA.Rendering.Particles/ParticleSystem.cs / ParticleEmitter.cs / "
             + "ParticleEmitterReference.cs / KSA/Vehicle.cs / KSA/GameSettings.cs",
-        Verified = "2026-08-12", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
+        Verified = "2026-09-14", GameVersion = "2026.9.10.5438", Risk = ChurnRisk.Medium,
         Notes = "The ParticleEmitterDebugEditor.Spawn path: pool Get + InitializeEmitter with an "
             + "in-memory reference. Burst mode self-retires (slot returns to the pool once every "
             + "particle decays), so only Endless could leak — and no profile uses it. LocalOffset "
             + "translation is ASSEMBLY-frame when Context.Vehicle is set (the engine subtracts "
-            + "CenterOfMassAsmb itself). Origin is REQUIRED or the emitter never renders. With "
-            + "Graphics.Particles off, UpdateEmitters never runs and an acquired slot would leak — "
-            + "hence the spawn-time gate. MaxParticles ≥ 4: the getter divides by ParticleQuality.")]
+            + "CenterOfMassAsmb itself). Origin is REQUIRED or the emitter never renders. Density and "
+            + "Drag are native atmosphere-dependent particle fields; at pressures below 100 Pa KSA "
+            + "uses full local gravity. With Graphics.Particles off, UpdateEmitters never runs and an "
+            + "acquired slot would leak — hence the spawn-time gate. MaxParticles ≥ 4: the getter divides "
+            + "by ParticleQuality.")]
     internal CommandResult Spawn(Vehicle vehicle, string profile, double scale, double3? offsetAsmb)
     {
         if (!FaceFxRules.TryParseProfile(profile, out var canonical))
@@ -165,7 +173,8 @@ internal sealed class FaceFxManager
     /// </summary>
     private static ParticleEmitterReference BuildProfile(string profile, float scale) => profile switch
     {
-        // Confetti: flat Plane chips, wide hue spread, tumbling fast, falling gently.
+        // Confetti: flat Plane chips, wide hue spread, tumbling fast, settling at 12% local gravity at
+        // reference atmospheric density. KSA recalculates this from local atmosphere each update.
         "party" => new ParticleEmitterReference
         {
             MaxParticles = new IntegerReference(96),
@@ -184,7 +193,8 @@ internal sealed class FaceFxManager
             ParticleVelocityShift = new FloatReference(0.45f),
             ParticleAngularVelocity = new Vector3Reference(new float3(12f)),
             ParticleExtra = new Vector4Reference(0.6f, 0f, 0f, 0f),
-            GravityStrength = new FloatReference(0.12f),
+            Density = ReferenceAtmosphericDensity / (1f - 0.12f),
+            Drag = 0f,
             Updaters =
             {
                 ParticleEmitterReference.ParticleUpdater.SimpleMovement,
@@ -195,7 +205,8 @@ internal sealed class FaceFxManager
             },
         },
 
-        // Gold glitter: tiny HDR spheres that catch bloom, no gravity, quick fade.
+        // Gold glitter: tiny HDR spheres that catch bloom, neutrally buoyant at reference atmospheric
+        // density and fully gravity-driven below 100 Pa, with a quick fade.
         "sparkle" => new ParticleEmitterReference
         {
             MaxParticles = new IntegerReference(64),
@@ -213,7 +224,8 @@ internal sealed class FaceFxManager
             ParticleVelocity = new Vector3Reference(new float3(0.5f * scale)),
             ParticleVelocityShift = new FloatReference(0.35f),
             ParticleExtra = new Vector4Reference(0.5f, 0f, 0f, 0f),
-            GravityStrength = new FloatReference(0f),
+            Density = ReferenceAtmosphericDensity,
+            Drag = 0f,
             Updaters =
             {
                 ParticleEmitterReference.ParticleUpdater.SimpleMovement,
@@ -223,7 +235,8 @@ internal sealed class FaceFxManager
             },
         },
 
-        // Fire flash: hot HDR red-orange, grows on spawn then shrinks, short and violent.
+        // Fire flash: hot HDR red-orange, 5% buoyant at reference atmospheric density, grows on spawn
+        // then shrinks, short and violent.
         "danger" => new ParticleEmitterReference
         {
             MaxParticles = new IntegerReference(72),
@@ -241,7 +254,8 @@ internal sealed class FaceFxManager
             ParticleVelocity = new Vector3Reference(new float3(0.7f * scale)),
             ParticleVelocityShift = new FloatReference(0.5f),
             ParticleExtra = new Vector4Reference(0.4f, 0f, 0f, 0f),
-            GravityStrength = new FloatReference(-0.05f), // negative = buoyancy: flame licks upward
+            Density = ReferenceAtmosphericDensity / (1f + 0.05f),
+            Drag = 0f,
             Updaters =
             {
                 ParticleEmitterReference.ParticleUpdater.SimpleMovement,
@@ -253,7 +267,8 @@ internal sealed class FaceFxManager
             },
         },
 
-        // The end: a slow grey puff that swells and drifts upward, then thins out.
+        // The end: a slow grey puff, 4% buoyant at reference atmospheric density, that swells and
+        // drifts upward, then thins out.
         _ => new ParticleEmitterReference
         {
             MaxParticles = new IntegerReference(48),
@@ -270,7 +285,8 @@ internal sealed class FaceFxManager
             ParticleSize = new Vector2Reference(0.010f * scale, 0.022f * scale),
             ParticleVelocity = new Vector3Reference(new float3(0.22f * scale)),
             ParticleVelocityShift = new FloatReference(0.3f),
-            GravityStrength = new FloatReference(-0.04f), // gentle rise
+            Density = ReferenceAtmosphericDensity / (1f + 0.04f),
+            Drag = 0f,
             Updaters =
             {
                 ParticleEmitterReference.ParticleUpdater.SimpleMovement,

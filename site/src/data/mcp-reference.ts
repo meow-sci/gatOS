@@ -529,7 +529,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         action: "vessel.scale",
         callShape: '{ operation: "scale", vessel_id, value: number  // finite and > 0 }',
         example: '{"operation":"scale","vessel_id":"Hunter","value":25}',
-        description: "Set session render scale. Value 1 restores ordinary scale.",
+        description: "Set the live model scale. KSA saves top-level part scales; reloading can apply physical scaling to mass, tanks and colliders. Restore the intended scale before saving a cosmetic experiment.",
       },
       {
         name: "focus | take_control",
@@ -1239,7 +1239,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         callShape:
           '{ operation: "fx_spawn", token: vessel_id, aux: profile, values?: [scale, off_x, off_y, off_z] } OR { operation: "fx_clear" }',
         example: '{"operation":"fx_spawn","token":"Valentina","aux":"sparkle","values":[1,0,0,0]}',
-        description: "Spawn a face/vehicle-anchored particle burst or stop all gatOS effects.",
+        description: "Spawn a face/vehicle-anchored particle burst or stop all gatOS effects. Profiles use atmosphere-dependent buoyancy; below 100 Pa they receive full local gravity.",
       },
     ],
     returns: "Canonical debug command outcome.",
@@ -1306,7 +1306,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         example:
           '{"family":"engine_plume","operation":"set","entity":"MethaloxVac","field":"emission/brightness","value":35}',
         description:
-          "Validate and set one declared FxCatalog field. engine_plume entity is a template id; plume_trail entity is omitted; clouds entity is a body id; terrain uses a body id or an empty entity for wireframe.",
+          "Validate and set one declared FxCatalog field. engine_plume entity is a template id; plume_trail entity is omitted and global raymarch controls also affect explosion volumes; clouds entity is a body id; terrain uses a body id or an empty entity for wireframe.",
       },
       {
         name: "reset",

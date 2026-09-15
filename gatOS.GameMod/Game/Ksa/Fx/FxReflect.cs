@@ -55,8 +55,6 @@ internal static class FxReflect
     private static FieldInfo? _trailSettingsField;
     private static FieldInfo? _transparenciesField;
     private static FieldInfo? _templateReferencesField;
-    private static FieldInfo? _exhaustPressureField;
-    private static FieldInfo? _exhaustThrottleField;
     private static FieldInfo? _cloudRendererField;
     private static FieldInfo? _cloudShadowsField;
     private static FieldInfo? _worleyField;
@@ -66,7 +64,6 @@ internal static class FxReflect
     private static bool _trailSettingsResolved;
     private static bool _transparenciesResolved;
     private static bool _templateReferencesResolved;
-    private static bool _exhaustModifiersResolved;
     private static bool _cloudApplyResolved;
     private static bool _terrainUboResolved;
 
@@ -177,41 +174,6 @@ internal static class FxReflect
             return collection.GetList();
         error = "VolumetricExhaustTemplate.References is missing in this build";
         return null;
-    }
-
-    /// <summary>
-    ///     The pressure/throttle pair the exhaust renderer feeds <c>UpdateModifiers</c> with, so the
-    ///     propagation pass uses exactly the game's own inputs. Best-effort: falls back to
-    ///     <c>(0, 1)</c> (vacuum, full throttle) when the private fields moved — harmless, because the
-    ///     per-frame draw path recomputes the modifiers for every live nozzle anyway.
-    /// </summary>
-    [KsaAnchor("VolumetricExhaustRenderer._currentAtmosphericPressure/_debugThrottle (private fields); "
-            + "Program.VolumetricExhaustRenderer (public static)",
-        SourceFile = "KSA/VolumetricExhaustRenderer.cs:290,310 / KSA/Program.cs:467",
-        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
-        Notes = "Mirrors the in-game editor's propagation arguments. AddInstance() re-runs UpdateModifiers "
-            + "with the live pressure + per-nozzle throttle every frame, so these values cannot disturb a "
-            + "live plume beyond the current frame — hence best-effort rather than health-latched. "
-            + "5402: VolumetricExhaustRenderer was heavily reworked (+1248 lines) and the two fields "
-            + "moved in the reshuffle (:278 -> :290, :306 -> :310) with names and types (double, float) "
-            + "intact; every other reflected FX field name in this file also still resolves.")]
-    internal static (float Pressure, float Throttle) PlumeModifierArgs()
-    {
-        var renderer = Program.VolumetricExhaustRenderer;
-        if (renderer is null)
-            return (0f, 1f);
-
-        if (!_exhaustModifiersResolved)
-        {
-            _exhaustModifiersResolved = true;
-            var type = typeof(VolumetricExhaustRenderer);
-            _exhaustPressureField = type.GetField("_currentAtmosphericPressure", AnyInstance);
-            _exhaustThrottleField = type.GetField("_debugThrottle", AnyInstance);
-        }
-
-        var pressure = _exhaustPressureField?.GetValue(renderer) is double p ? (float)p : 0f;
-        var throttle = _exhaustThrottleField?.GetValue(renderer) is float t ? t : 1f;
-        return (pressure, throttle);
     }
 
     /// <summary>The cloud renderer, or null with a reason.</summary>

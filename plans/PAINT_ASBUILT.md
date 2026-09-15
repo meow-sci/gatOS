@@ -180,7 +180,9 @@ On every KSA baseline change, re-audit all of these even if compilation is green
    `PerInstanceData` layout/stride and signed OR behavior.
 4. exact signatures and call topology of `PartModelModule.UpdateRenderData`,
    `PartModelDynamicModule.UpdateRenderData`, `PartModel.AddInstance`, and
-   `PartModelDynamic.AddInstance`. Confirm one scoped Part maps to the intended submission.
+   `PartModelDynamic.AddInstance`. At 5438 both bind the private shared `(PerInstanceData,
+   PerInstanceDent,IViewport,int)` overload: dented and ordinary public paths funnel through once.
+   Confirm one scoped Part maps to the intended submission.
 5. `Program.RendererRebuildNeeded` remains the safe deferred pipeline boundary. Never replace it
    with an inline `ColorData.Rebuild()`.
 6. `KittenEva._renderable`, `KittenRenderable._characterAvatar`, `CharacterAvatar` core/fur/
@@ -190,7 +192,8 @@ On every KSA baseline change, re-audit all of these even if compilation is green
    barrier behavior, and the fur-material construction recipe.
 8. Live-test conflict refusal with humble-arteest, disable/enable cycles, scene changes, EVA avatar
    replacement, clone-cap failure, and conditional restore beside another material-rebinding mod.
-9. **Stickers, render seam:** `RenderTarget.ResolveAttachments(CommandBuffer)` still exists, is still
+9. **Stickers, render seam:** Skip color-only resolves (`inResolveDepth=false` at 5438); only the
+   full resolve has current scene depth. `RenderTarget.ResolveAttachments(CommandBuffer,bool)` still exists, is still
    called unconditionally for the main viewport in `Program.RenderGame`, and `Program.OffscreenTarget`
    is still the main viewport's target; `Program.{RenderedViewport,MainViewport,SetViewport,
    PointClampedSampler,ColorFormat}` and `Program.Instance.ResourceFrameIndex` unchanged;

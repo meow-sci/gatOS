@@ -27,7 +27,7 @@ namespace gatOS.GameMod.Game.Ksa.Render;
 ///     sampler's <see cref="Prune"/>, unload); the prefixes run on the render-prep path and read one
 ///     volatile immutable set, so they are safe on any thread and cost two hash lookups per vehicle
 ///     per frame while installed. Marks key on the stable vehicle id, so a marked vessel survives a
-///     scene rebuild (unlike <c>scale</c>, which KSA resets); a despawned vessel's mark is pruned at
+///     scene rebuild; top-level <c>scale</c> also has KSA save semantics. A despawned vessel's mark is pruned at
 ///     sampler cadence. A prefix fault logs once and falls back to the stock cull.</para>
 /// </remarks>
 internal static class VesselForceRender
