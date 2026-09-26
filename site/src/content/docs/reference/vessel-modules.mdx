@@ -36,4 +36,15 @@ volume, and burn-depth values.
 
 `decouplers/<n>/fire` returns `EOPNOTSUPP` when the player has disabled the decoupler module, and `EBUSY`
 when it already fired. An encounter list may now include small moons; an empty list is not proof that a
-transfer is impossible.
+transfer is impossible. KSA 2026.9.22.5482 also refined how closest approaches are sampled, so the list
+can differ from earlier builds.
+
+KSA 2026.9.22.5482 turned the CoreFairingA `InterstageBridge2W1WB` and `InterstageBridge3W2WB` adapters into
+fuel tanks with no decoupler, and gave Nosecone C/E/F/G/H tanks. A craft built with them loses those
+`decouplers/<n>` rows (later indices shift, so re-list before firing by index), no longer separates there on
+`ctl/stage`, and gains `tanks/` entries.
+
+`engines/<n>/min_throttle` feeds two clamps. Manual `ctl/throttle` is held at or above the **lowest** floor of
+all the vessel's engines, and a write takes effect from the next solve. The flight computer's burn
+throttle instead uses the **highest** floor among the active engines, so one high floor raises it for the
+whole stack.

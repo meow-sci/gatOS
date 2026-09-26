@@ -241,8 +241,9 @@ TWR = thrust / (mass · g(r))
 ```
 
 `/sim` orbit `apoapsis`/`periapsis` are **altitudes above the surface** (add `radius` for geocentric
-radius). Angles (`inc`, `lan`, `argpe`, `true_anomaly`, lat/lon, navball) are in **degrees** — convert
-to radians for trig.
+radius). `apoapsis` (like `time_to_ap`) is `0` on an unbound/escape orbit — tutorials test `ecc >= 1`
+for escape, never a negative apoapsis (KSA 2026.9.22.5482+). Angles (`inc`, `lan`, `argpe`,
+`true_anomaly`, lat/lon, navball) are in **degrees** — convert to radians for trig.
 
 ---
 
@@ -421,7 +422,8 @@ Tutorials often need to *place* a vessel before demonstrating control. `debug/**
   ```
   Host: `POST /v1/command {"vessel_id":"Hunter","action":"debug.impulse","values":[10,0,0],"token":"body","aux":"dv"}`.
   Full semantics: [SPEC §6](../SPEC_9P_FILESYSTEM.md).
-- **Refuel / batteries** — `echo 1 > /sim/debug/vessels/<id>/refill_fuel` (and `refill_battery`).
+- **Refuel / batteries** — `echo 1 > /sim/debug/vessels/<id>/refill_fuel` (and `refill_battery`). Since KSA
+  2026.9.22.5482 a refill also re-lights an engine that had run dry.
 - **Set time-warp** — `echo 100 > /sim/debug/time/warp`.
 - **Switch controlled vessel** — `echo Polaris > /sim/debug/control_vessel` (focuses + takes control).
 
@@ -431,9 +433,9 @@ editors** (the game's built-in render editors as files, one writable leaf per kn
 bonus material, animatable at 10–60 Hz, every entity has a `reset`):
 
 - `debug/engineplume/templates/<id>/…` — engine plume look; **per template, shared** by every nozzle using it.
-- `debug/plumetrail/render/…` — the exhaust trail renderer; **global** (plus a one-shot `clear`). Since KSA 5438, global raymarch settings also affect explosion volumes; `clear` only removes trails.
-- `debug/clouds/bodies/<body>/layers/<n>/…` — a body's cloud layers and cloud types.
-- `debug/terrain/wireframe` + `debug/terrain/bodies/<body>/…` — terrain height range, tessellation, biome fades.
+- `debug/plumetrail/render/…` — the exhaust trail renderer; **global** (plus a one-shot `clear`). Since KSA 5438, global raymarch settings also affect explosion volumes; `clear` only removes trails. Since KSA 2026.9.22.5482 trails and explosions also draw on airless bodies and with clouds off.
+- `debug/clouds/bodies/<body>/layers/<n>/…` — a body's cloud layers and cloud types (with clouds turned off in the game's settings, writes apply but draw nothing).
+- `debug/terrain/wireframe` + `debug/terrain/bodies/<body>/…` — terrain height range, tessellation, biome fades (a live height-range edit reaches the distant-planet sphere only when that renderer is rebuilt, KSA 2026.9.22.5482+).
 
 Ranges, units and the per-family caveats are in [SPEC §3.7](../SPEC_9P_FILESYSTEM.md).
 

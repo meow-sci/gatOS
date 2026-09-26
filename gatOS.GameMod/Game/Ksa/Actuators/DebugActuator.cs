@@ -110,8 +110,15 @@ internal static class DebugActuator
         return CommandResult.Ok;
     }
 
-    [KsaAnchor("Vehicle.RefillConsumables()", SourceFile = "KSA/Vehicle.cs", Verified = "2026-06-12",
-        Risk = ChurnRisk.Medium, Notes = "Solver phase (resource state is solver-visible).")]
+    [KsaAnchor("Vehicle.RefillConsumables() → PartTree.RefillConsumables → ResourceManager.RefillAllTanks",
+        SourceFile = "KSA/Vehicle.cs:3201 / KSA/PartTree.cs:1039 / KSA/ResourceManager.cs:454,482-487",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482",
+        Risk = ChurnRisk.Medium, Notes = "Solver phase (resource state is solver-visible). "
+            + "5482 (rev 5478, inherited fix): RefillAllTanks now ends in OnContentsReplaced, which sets "
+            + "Moles…ValuesUpdated = true and PerformanceSequences.SetDirty() — before, rocket cores only "
+            + "re-checked propellant on that flag, so an engine that had run dry stayed dry after "
+            + "debug/refill_fuel. It now re-lights; Δv is recomputed. Same call path, no gatOS change. "
+            + "Rev 5475 converted parts gain tanks, so the refill now fills those too.")]
     internal static CommandResult RefillFuel(Vehicle vehicle)
     {
         vehicle.RefillConsumables();

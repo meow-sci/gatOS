@@ -441,12 +441,13 @@ internal sealed class StickerManager : IDisposable
     /// </summary>
     [KsaAnchor("Universe.CurrentSystem.Get(string) → Astronomical; Vehicle; Celestial; "
             + "Vehicle.Parts.Parts; Part.{SubParts,InstanceId}",
-        SourceFile = "KSA/Universe.cs / KSA/CelestialSystem.cs / KSA/Vehicle.cs / KSA/Part.cs:1005",
-        Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Low,
+        SourceFile = "KSA/Universe.cs / KSA/CelestialSystem.cs / KSA/Vehicle.cs / KSA/Part.cs:1127",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Low,
         Notes = "The same id lookup /sim/camera and the game's own follow/control actions use; returns "
             + "null for a despawned target rather than throwing. Sub-parts are searched too because "
-            + "Part.RayCastEgo anchors to a SUB-part (KSA/Part.cs:1918-1952) and a sticker placed by "
-            + "spray therefore names a sub-part's InstanceId.")]
+            + "Part.RayCastEgo anchors to a SUB-part (KSA/Part.cs:2534-2572) and a sticker placed by "
+            + "spray therefore names a sub-part's InstanceId. 5482: SubParts is now _subParts.AsSpan() (same "
+            + "ReadOnlySpan<Part>); CelestialSystem changes are orbit-hover/target/clutter-save only.")]
     private static void ResolveAnchor(StickerEntry entry)
     {
         var system = Universe.CurrentSystem;
@@ -507,10 +508,10 @@ internal sealed class StickerManager : IDisposable
     }
 
     /// <summary>Brings the pipeline, mesh and descriptor ring up once, on the first live sticker.</summary>
-    [KsaAnchor("Program.GetRenderer()", SourceFile = "KSA/Program.cs:525", Verified = "2026-08-22",
-        GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
+    [KsaAnchor("Program.GetRenderer()", SourceFile = "KSA/Program.cs:557", Verified = "2026-09-25",
+        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "Lazy GPU init on the 0->1 live transition; the renderer is live from OnFullyLoaded "
-            + "onwards, which is well before any command can be drained.")]
+            + "onwards, which is well before any command can be drained. 5482: line move only.")]
     private bool EnsureGpu()
     {
         if (_gpuFailed)
@@ -643,11 +644,12 @@ internal sealed class StickerManager : IDisposable
     }
 
     [KsaAnchor("Program.GetRenderer().GraphicsAndCompute.WaitIdle()",
-        SourceFile = "KSA/Program.cs:525 / Core/Renderer.cs:53", Verified = "2026-08-22",
-        GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Program.cs:557 / Core/Renderer.cs:64", Verified = "2026-09-25",
+        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "The same queue drain the display-capture teardown uses (Game/Mod.Game.cs:792-821). "
             + "KSA has no deferred-destroy helper at all, so this is the only way to know that no "
-            + "recorded frame can still reference the pipeline or the images.")]
+            + "recorded frame can still reference the pipeline or the images. 5482: line moves only "
+            + "(Renderer.cs gained rev 5443 present-wait fields; GraphicsAndCompute unchanged).")]
     private static void WaitIdle()
     {
         try

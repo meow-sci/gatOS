@@ -168,8 +168,8 @@ internal static class TerrainActuator
             + "DetailFadeInEnd}; PlanetUbo/MeshUbo writes at (NumCelestials*frame + slot)*Stride "
             + "over the reflected _renderUboMap/_meshUboMap",
         SourceFile = "KSA/PlanetRenderer.cs:2107-2398 (the in-game Terrain Editor's write + mirror loop) / "
-            + "KSA/AstronomicalTemplate.cs:27,51 / KSA/BiomeMaterialsReference.cs",
-        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
+            + "KSA/AstronomicalTemplate.cs:27,51 / KSA/BiomeMaterialsReference.cs / KSA/DistantSphereRenderer.cs:99-105",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
         Notes = "INVESTIGATION (plan §5 directive): PlanetRenderer has NO public repopulate/invalidate that "
             + "would re-derive a body's UBO from its reference objects — the two population loops the plan "
             + "pointed at (:684-720 for PlanetUbo, :1086-1114 for MeshUbo) are inline CONSTRUCTOR code, not "
@@ -179,7 +179,12 @@ internal static class TerrainActuator
             + "host-coherent, written on the same (main) thread the game's own editor writes it from. "
             + "5348: the mirror is now FIELD-WISE, not a struct copy — MeshUbo gained per-frame "
             + "DirAnchorHi/Lo + DirAnchorUvHi/Lo (revs 5319-5325) that GenerateMeshData rewrites every "
-            + "frame from the live camera; see the Mirror remarks.")]
+            + "frame from the live camera; see the Mirror remarks. "
+            + "5482 (rev 5457): PlanetRenderer.cs is byte-identical, but the far-away sphere now does heightmap "
+            + "displacement and copies HeightReference.Minimum/Maximum into its OWN material once, at "
+            + "construction (DistantSphereRenderer.cs:99-105, DistantSphereMaterialData). Live min_height/"
+            + "max_height writes therefore reach near terrain immediately but not the distant-sphere view "
+            + "until KSA rebuilds that renderer.")]
     private static bool Write(PlanetRenderer renderer, FxReflect.TerrainUboMaps maps, Celestial body,
         FxFieldSpec spec, IReadOnlyList<double> v)
     {

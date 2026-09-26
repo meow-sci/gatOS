@@ -3,6 +3,35 @@
 Manual pass results live here. Record machine, date, purrTTY/gatOS versions and the outcome of
 each item; failures get a short note plus the relevant `logs/qemu-*.log` excerpt.
 
+## KSA 5482 upgrade — live pass pending {#ksa-5482-upgrade}
+
+Static upgrade: 2026-09-25, `2026.9.10.5438` → `2026.9.22.5482` (43 revisions, 5439–5481, gapless).
+Source/binary review, the runtime seam test and automated results are in
+[the pass record](../scope/ksa-assets-and-versions.md#5482-pass). **None of these live checks has
+been run by this upgrade task.** The 5438 checklist below is still pending too; run both. Record
+game/mod versions, platform, graphics settings (MSAA/CMAA2, raytracing, clouds, explosions) and outcome.
+
+| Check | Result |
+|---|---|
+| **Part paint, new cached seam (rev 5456):** arm `paint/parts/enabled`, set global, template, vessel and per-part rules; confirm static parts, dynamic/animated parts (gimbals, solar panels) and a dented part all paint, with no bleed onto the neighbouring part and stock highlight/selection/battery-light bits still visible. With raytracing on, enter IVA and confirm raytraced parts carry the same colour. | ☐ |
+| Paint change detection: change a rule colour, clear it, switch blend and change precedence; each must show on the next frame without touching the part. Disarm → every part returns to stock (no stale colour left in the cache); re-arm → paint returns. | ☐ |
+| Paint across structural change (index-hash invalidation): stage, decouple, dock and undock a painted vessel and spawn a new one under a vessel rule. New and moved parts follow the live-vessel rule within a frame; per-instance rules follow their part. `paint/status` keeps `parts=active`, never `parts=degraded`. | ☐ |
+| Put a vessel on an escape trajectory: `orbit/apoapsis` (and the compact `telemetry` `ap`, HTTP/MQTT/MCP mirrors) reads `0`, not a large negative number; `orbit/periapsis`, `sma` (negative) and `time_to_ap` (`0`) unchanged. A bound orbit still reports its apoapsis altitude. | ☐ |
+| Write `engines/<n>/min_throttle` on a deep-throttling engine, then command a manual throttle below it: the manual-throttle floor moves on the next solve (no staging or restructure needed), and lowering it again releases the floor. | ☐ |
+| `debug/always_render_iva` in flight and in the VAB (editor trees now render through the same `PartTreeRenderData.Compose` gate): interiors visible outside IVA, no duplicates, no missing geometry; disable restores stock and leaves no patch installed. | ☐ |
+| Thug-life quad on the new `RenderMainPass(IViewport, CommandBuffer)` (rev 5474): draws in main/crew/other viewports with correct depth; survives a renderer rebuild; no postfix fault logged. | ☐ |
+| Stickers: spray on a hull (confirm picking still hits after the new `Part.RayCastEgo` bounds early-out, including a scaled part), terrain and ground clutter. Then knock the clutter rock loose (rev 5447): the sticker stays at its geodetic spot and projects onto whatever fills its box. | ☐ |
+| `/sim/display` under the new present-wait frame pacing (rev 5443; test both *Frames Queued Ahead* settings): complete, current frames, no tearing/stale slot, UI-pixel-culling suppression still works. | ☐ |
+| `always_render` on a distant/tiny vessel: it still renders below 1 px (stock cull moved into `Vehicle.IsLargeEnoughToRender`). | ☐ |
+| Burn an engine dry, `debug/refill_fuel`, re-ignite: it lights (rev 5478 — previously stayed dry). `debug/refill_battery` unchanged. | ☐ |
+| Clouds FX with clouds **off** but plume trails/explosions **on**: `/sim/debug/clouds/**` writes return OK (as they always did) and `/sim/status/accessors` now shows `fx.cloud_renderer` **healthy** (renderer constructed, layers applied, nothing drawn until clouds are on) instead of latching it degraded; with clouds, trails and explosions all off the latch still reports degraded. | ☐ |
+| Plume-trail `render/*` knobs during an explosion on an airless body and with clouds off (revs 5446/5454): explosions render and the knobs affect them; the separate *Explosions* graphics setting disables them. | ☐ |
+| Terrain `min_height`/`max_height` edit: near terrain updates live; the distant-sphere view keeps the old range until that renderer is rebuilt (rev 5457) — record what triggers the rebuild. `reset` restores both. | ☐ |
+| Load a craft using `InterstageBridge2W1WB`/`3W2WB` and `NoseconeC/E/F/G/H` (rev 5475): `tanks/<n>` gains rows, `decouplers/<n>` loses the two bridges (ordinals shift), `ctl/stage` no longer separates there, `debug/refill_fuel` fills the new tanks. Note contents/substance at spawn. | ☐ |
+| Welds and time-warp near disturbed (displaced) ground clutter: loose clutter forces full physics (warp may lag / refuse rails); welds stay attached; a lone distant vessel may now go on rails (revs 5455/5479). | ☐ |
+| Encounters after a Hohmann plan (new unimodal sampling interval): rows and `closest_distance` plausible; Phobos/Deimos-class moons still listed. | ☐ |
+| After exercising paint, IVA, camera, throttle/translate/rotate, FX and stickers, `/sim/status/accessors` shows no degraded accessor. | ☐ |
+
 ## KSA 5438 upgrade — live pass pending {#ksa-5438-upgrade}
 
 Static upgrade: 2026-09-14, `2026.9.7.5402` → `2026.9.10.5438`.

@@ -224,9 +224,9 @@ internal sealed unsafe class StickerDecalRenderer : IDisposable
             + "RenderingPresets.{ReverseZDepthStencil.NoDepthTest,BlendState.BlendColorAlphaOver}; "
             + "Renderer.{Device,DynamicStateInfo,ViewportState}",
         SourceFile = "RenderCore/ShaderModuleUtils.cs:79 / KSA/ModLibrary.cs / KSA/FileReference.cs:24 / "
-            + "KSA/Program.cs:222 / Brutal.VulkanApi.Abstractions/Presets.cs:167,213 / "
-            + "KSA/RenderingPresets.cs:63,95 / Core/Renderer.cs:21-23 / KSA/GridPass.cs:137-198",
-        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
+            + "KSA/Program.cs:223 / Brutal.VulkanApi.Abstractions/Presets.cs:167,213 / "
+            + "KSA/RenderingPresets.cs:63,95 / Core/Renderer.cs:22-24 / KSA/GridPass.cs:137-198",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
         Notes = "A null CompileOptions uses ShaderModuleUtils' own defaults, which already carry the "
             + "device's Vulkan/SPIR-V target and the default include callbacks "
             + "(ShaderModuleUtils.cs:16-22). #include resolves relative to the DIRECTORY OF THE "
@@ -236,14 +236,17 @@ internal sealed unsafe class StickerDecalRenderer : IDisposable
             + "than hard-coded — and it MUST be NUL-terminated, like Game/Ksa/Paint/PartPaintPatches"
             + ".cs:56-59. Modules we compile are OURS to destroy (unlike ModLibrary's), which happens "
             + "as soon as the pipeline is created. Program.Instance.ColorFormat is the format the main "
-            + "offscreen target is constructed with (Program.cs:1462), i.e. R16G16B16A16_SFLOAT. "
+            + "offscreen target is constructed with (Program.cs:1508), i.e. R16G16B16A16_SFLOAT. "
             + "5402: RenderCore/ShaderModuleUtils.cs, KSA/RenderingPresets.cs, "
             + "Brutal.VulkanApi.Abstractions/Presets.cs and Content/Core/Shaders/Grid.{vert,frag} are "
             + "all still byte-identical, so the reverse-Z/no-depth-test, cull-front and alpha-over "
             + "presets still mean what they did and FromString is unchanged at :79. Two line moves: "
             + "Program.ColorFormat :203 -> :222 (still R16G16B16A16_SFLOAT) and the GridFrag asset "
             + "DefaultAssets.xml:373 -> :374, shifted by the new StaticObjectPrePassIndirectFrag entry "
-            + "at :62. Vulkan is still 1.4, mapped to SPIR-V _1_6.")]
+            + "at :62. Vulkan is still 1.4, mapped to SPIR-V _1_6. "
+            + "5482: ShaderModuleUtils, RenderingPresets, Presets, GridPass and the Grid shaders are byte-identical; "
+            + "line moves only (ColorFormat :222 -> :223, offscreen construction :1508, Renderer ViewportState/"
+            + "DynamicStateInfo :22/:24 after rev 5443 added present-wait fields).")]
     private static VkPipeline BuildPipeline(DeviceEx device, Renderer renderer, VkPipelineLayout layout)
     {
         var directory = ShaderIncludeDirectory();
@@ -419,14 +422,17 @@ internal sealed unsafe class StickerDecalRenderer : IDisposable
             + "ImageBarrierInfo.Presets.{DepthSampledReadF,ColorAttachmentReadWrite}; "
             + "GlobalShaderBindings.{DescriptorSet,DynamicOffset}; IViewport.ShaderSlot; "
             + "Program.Instance.BindlessTextures.DescriptorSet; VkIndexType.UInt16",
-        SourceFile = "KSA/Program.cs:457,469,485,218,4315 / KSA.Rendering/RenderTarget.cs:36,38,48 / "
+        SourceFile = "KSA/Program.cs:456,468,484,219,4395 / KSA.Rendering/RenderTarget.cs:36,38,48 / "
             + "KSA.Rendering/BarrierBatch.cs / KSA.Rendering/ImageBarrierInfo.cs:18,41 / "
             + "KSA/GlobalShaderBindings.cs:57,64 / KSA/GridPass.cs:445-500",
-        Verified = "2026-09-14", GameVersion = "2026.9.10.5438", Risk = ChurnRisk.High,
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
         Notes = "Near-verbatim post-resolve overlay using the current dynamic-rendering target members. "
             + "Depth remains reverse-Z and is sampled after the full resolve; the unit-cube index buffer "
             + "continues to use VkIndexType.UInt16. The existing barrier, descriptor-slot, main-target, "
-            + "and bindless assumptions remain valid in 5438.")]
+            + "and bindless assumptions remain valid in 5438. 5482: RenderTarget, BarrierBatch, ImageBarrierInfo, "
+            + "GlobalShaderBindings and GridPass are byte-identical; only Program.cs line citations moved. "
+            + "Displaced ground clutter (rev 5447) is drawn through the same clutter pipeline and still writes "
+            + "scene depth, so per-fragment occlusion/conformance hold on it.")]
     internal void RecordPass(CommandBuffer commandBuffer, ReadOnlySpan<StickerEntry> entries, bool debug)
     {
         if (_disposed || entries.Length == 0)

@@ -117,15 +117,20 @@ internal sealed class IvaPhysicsManager
     /// </summary>
     [KsaAnchor("Vehicle.{Id,Parts}; Part.{InstanceId,SubParts,PartParent,DisplayName,Template.Id,"
             + "PositionParentAsmb,Asmb2ParentAsmb,Scale,Modules}",
-        SourceFile = "KSA/Vehicle.cs / KSA/Part.cs:574,660,680,700,752,766,815,1079", Verified = "2026-09-02",
-        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Low,
+        SourceFile = "KSA/Vehicle.cs / KSA/Part.cs:574,660,680,704,756,770,819,1127", Verified = "2026-09-25",
+        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Low,
         Notes = "SubPart lookup + rest-pose capture for an IVA floating object. Top-level parts are "
             + "REFUSED: their transform is serialized into the save, a SubPart's is not. "
             + "5402: every bound member is intact (the ResetCachedPosMatrixValues setter idiom too). "
             + "One cosmetic drift: Part.DisplayName now initialises to Template.DisplayName when the "
             + "template names one different from its Id (Part.cs:165-166), instead of always the "
             + "instance Id — so the /sim/iva listing label can read the authored part name. Lookup is "
-            + "by InstanceId, so nothing resolves differently.")]
+            + "by InstanceId, so nothing resolves differently. "
+            + "5482: bound members unchanged (line moves). Part render transforms are now cached in "
+            + "PartTreeRenderData (rev 5456), but the PositionParentAsmb/Asmb2ParentAsmb/Scale setters still call "
+            + "ResetCachedPosMatrixValues(), which now also calls Tree?.RenderData.InvalidateTransforms() "
+            + "(Part.cs:1243), so a written pose still renders — at the cost of a whole-tree transform rewrite "
+            + "per frame while an object floats.")]
     public CommandResult Adopt(Vehicle vehicle, uint subPartInstanceId, double3 velocity)
     {
         if (!Enabled)

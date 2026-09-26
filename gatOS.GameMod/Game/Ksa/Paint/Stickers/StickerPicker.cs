@@ -55,8 +55,8 @@ internal static class StickerPicker
     /// <param name="result">The resolved anchor; undefined when this returns false.</param>
     /// <returns>False when nothing was hit — the caller maps that to ENOENT.</returns>
     [KsaAnchor("Program.GetMainCamera(); Program.MainViewport; Camera.{ScreenToEgoRay(float2),FramebufferSize}; Cursor.GetEgoRay(IViewport)",
-        SourceFile = "KSA/Program.cs:632,485 / KSA/Camera.cs:47 / KSA/Cursor.cs:27",
-        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Program.cs:631,484 / KSA/Camera.cs:47 / KSA/Cursor.cs:27",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "Both rays are in EGO space (origin at the camera, ecliptic axes) and Ray's "
             + "constructor normalizes Direction (KSA/Ray.cs:11). ScreenToEgoRay takes framebuffer "
             + "pixels, not NDC. 5402: Cursor.InputRay (a per-frame cached ray) was REMOVED; Cursor.GetEgoRay(IViewport) "
@@ -65,7 +65,7 @@ internal static class StickerPicker
             + "origin, set every frame in OnDrawUiViewports) — the same call the game's own hover "
             + "picking (Vehicle.UpdateHighlight) now makes. Cursor positions are float2 desktop "
             + "coordinates (were double2 screen coordinates). The camera aim is the default because it works "
-            + "headless and /sim/camera can point it.")]
+            + "headless and /sim/camera can point it. 5482: line moves only; Camera.cs/Cursor.cs members unchanged.")]
     internal static bool TryPick(bool cursor, double range, out PickResult result)
     {
         result = default;
@@ -104,13 +104,18 @@ internal static class StickerPicker
     [KsaAnchor("Universe.CurrentSystem.All.UnsafeAsList(); Vehicle.{BoundingSphereRadiusBody,Parts.Parts,"
             + "GetMatrixAsmb2Ego(Camera)}; Part.{RayCastEgo(in double4x4, Ray, out ...),InstanceId}; "
             + "Camera.GetPositionEgo(IPosition)",
-        SourceFile = "KSA/Universe.cs / KSA/Vehicle.cs:518,1202 / KSA/Part.cs:1884,1918 / KSA/Camera.cs:231",
-        Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
-        Notes = "The identical sweep KSA's own flight-mode hover picking runs (Vehicle.cs:2745-2773): "
+        SourceFile = "KSA/Universe.cs / KSA/Vehicle.cs:527,1270 / KSA/Part.cs:2534,2574 / KSA/Camera.cs:231",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
+        Notes = "The identical sweep KSA's own flight-mode hover picking runs (Vehicle.UpdateHighlight, Vehicle.cs:2903-2927): "
             + "broad-phase against the part's bounding sphere scaled by ScaleTotal, then "
             + "Ray.RaycastWatertight over the view mesh's de-indexed double3[] triangle soup. "
             + "minDistance is the ray parameter in ego metres. Bepu raycasts are deliberately NOT used "
-            + "— KSA never does, and its colliders are coarse primitives, not the art surface.")]
+            + "— KSA never does, and its colliders are coarse primitives, not the art surface. "
+            + "5482 SEMANTIC DRIFT (minor): Part.RayCastEgo now opens with a top-level broad-phase against a "
+            + "sphere of |BoundingBoxPartAsmb| * ScaleTotal around the part (Part.cs:2544-2549) before the "
+            + "per-sub-part sphere + RaycastWatertight. Bounds are refreshed on sub-part attach, but a "
+            + "transform-only sub-part write (IVA floating object, /sim scale) that moves geometry outside the "
+            + "part's original box can now be missed by a spray pick. Signature unchanged.")]
     private static bool TryPickVehicle(KsaCamera camera, Ray ray, double range, out PickResult result)
     {
         result = default;
@@ -165,15 +170,16 @@ internal static class StickerPicker
     [KsaAnchor("Camera.{NearbyCelestial,GetPositionEgo}; Celestial.{GetCce2Ccf,GetCcf2Cce,GetCci2Cce,"
             + "MeanRadius,GetTerrainHeightFromDirCcf,GetLatitudeFromCcf,GetLongitudeFromCcf}; "
             + "Vehicle.ComputeEnu2Cce",
-        SourceFile = "KSA/Camera.cs:71,231 / KSA/Celestial.cs:540,534,522,91,792,708,743 / "
-            + "KSA/Vehicle.cs:2997 / KSA/TerrainImpactFinder.cs:64 (the march+bisect shape)",
-        Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Camera.cs:71,231 / KSA/Celestial.cs:536,530,518,87,787,703,738 / "
+            + "KSA/Vehicle.cs:3175 / KSA/TerrainImpactFinder.cs:64 (the march+bisect shape)",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "accurate:false is 4 bilinear texel taps (the physics hot path); the final sample uses "
             + "accurate:true, which adds bicubic filtering and the CPU procedural-modifier chain. "
             + "GetLatitudeFromCcf/GetLongitudeFromCcf are STATIC and return DEGREES; both normalize "
             + "internally, so an unnormalized CCF point is fine. Ego axes are ecliptic axes and CCE "
             + "axes are ecliptic axes too, so the ray direction converts to CCF with GetCce2Ccf alone "
-            + "— no translation is involved for a direction.")]
+            + "— no translation is involved for a direction. 5482: Celestial.cs/Camera.cs/TerrainImpactFinder.cs "
+            + "unchanged; line citations refreshed (Vehicle.ComputeEnu2Cce moved to :3175, semantics identical).")]
     private static bool TryPickTerrain(KsaCamera camera, Ray ray, double range, out PickResult result)
     {
         result = default;

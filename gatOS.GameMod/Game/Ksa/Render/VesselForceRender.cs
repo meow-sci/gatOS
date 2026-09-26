@@ -112,14 +112,19 @@ internal static class VesselForceRender
     private static void Publish() => _published = Marked.Count == 0 ? null : new HashSet<string>(Marked, StringComparer.Ordinal);
 
     [KsaAnchor("Vehicle.GetWorldMatrix(Camera) (prefix); Vehicle.UpdateRenderData(IViewport,int) (prefix, virtual)",
-        SourceFile = "KSA/Vehicle.cs", Verified = "2026-09-02", GameVersion = "2026.9.7.5402",
+        SourceFile = "KSA/Vehicle.cs:3694,3707,3713", Verified = "2026-09-25", GameVersion = "2026.9.22.5482",
         Risk = ChurnRisk.Medium,
         Notes = "The always_render patch targets — both cull on GetObjectDiameterPixelsAsDouble < 1.0. "
             + "UpdateRenderData is virtual: the patch binds Vehicle's implementation, so overrides "
             + "(KittenEva renders via its own KittenRenderable path) are NOT force-rendered — same "
             + "limitation as the unscience original. Patches are dynamic — installed only while ≥1 "
             + "vessel is marked."
-            + "5402: the UpdateRenderData parameter is IViewport; both bodies are otherwise identical (the terrain-debug branch now tests viewport.IsMain() instead of == Program.MainViewport — it was never reproduced here).")]
+            + "5402: the UpdateRenderData parameter is IViewport; both bodies are otherwise identical (the terrain-debug branch now tests viewport.IsMain() instead of == Program.MainViewport — it was never reproduced here)."
+            + " 5482: GetWorldMatrix (:3694) is byte-identical. UpdateRenderData (:3713) now delegates its < 1 px "
+            + "cull to the new public Vehicle.IsLargeEnoughToRender(Camera) (:3707, same math, no other caller) and "
+            + "adds a debug-only SubmitClutterTerrainDebugOverlay beside the terrain one. Both prefixes still "
+            + "replace the whole body for marked vessels, so the helper is simply bypassed; parameter names "
+            + "(camera / viewport, inFrameIndex) unchanged.")]
     private static void InstallPatches()
     {
         if (_harmony is not null)
@@ -176,11 +181,11 @@ internal static class VesselForceRender
     ///     stock implementation.
     /// </summary>
     [KsaAnchor("Camera.GetPositionEgo(Vehicle); Vehicle.Body2Cce; float3.Pack; floatQuat.Pack",
-        SourceFile = "KSA/Vehicle.cs / KSA/Camera.cs", Verified = "2026-09-02",
-        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Vehicle.cs:3694 / KSA/Camera.cs:231", Verified = "2026-09-25",
+        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "Reproduces the GetWorldMatrix body (rotation * translation) without the "
             + "< 1 px visibility check. Ported from unscience i-feel-seen."
-            + "5402: GetWorldMatrix is byte-identical.")]
+            + "5402: GetWorldMatrix is byte-identical. 5482: still byte-identical.")]
     private static bool GetWorldMatrixPrefix(Vehicle __instance, KsaCamera camera, ref float4x4? __result)
     {
         try
@@ -207,11 +212,15 @@ internal static class VesselForceRender
     /// </summary>
     [KsaAnchor("Vehicle.GetMatrixAsmb2Ego(Camera); IViewport.GetCamera(); Vehicle.IsEditedVehicle; "
             + "PartTree.UpdateRenderData(in double4x4,bool,IViewport,int)",
-        SourceFile = "KSA/Vehicle.cs / KSA/PartTree.cs", Verified = "2026-09-02",
-        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Vehicle.cs:3713 / KSA/PartTree.cs:1158", Verified = "2026-09-25",
+        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "Reproduces the UpdateRenderData body without the < 1 px visibility check. "
             + "Ported from unscience i-feel-seen."
-            + "5402: PartTree.UpdateRenderData takes IViewport; its module fan-out is unchanged.")]
+            + "5402: PartTree.UpdateRenderData takes IViewport; its module fan-out is unchanged. "
+            + "5482: PartTree.UpdateRenderData(ref readonly double4x4, bool, IViewport, int) (:1158) keeps its "
+            + "call shape, but its fan-out is now the cached PartTreeRenderData (EnsureBuilt + Compose/"
+            + "ComposeDynamic/ComposeGlass, rev 5456) instead of per-module UpdateRenderData — transparent to "
+            + "this call. The only stock step not reproduced is the debug-only terrain/clutter overlay.")]
     private static bool UpdateRenderDataPrefix(Vehicle __instance, IViewport viewport, int inFrameIndex)
     {
         try

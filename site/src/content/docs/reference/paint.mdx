@@ -61,6 +61,10 @@ active requests another deferred renderer rebuild.
 To opt out, write `0` to `paint/parts/enabled`. gatOS removes its hooks and requests a stock shader
 rebuild. Desired rules remain in memory, ready for re-enable; use `paint/parts/clear` to discard them.
 
+If something goes wrong after opting in — a patched shader fails to compile, or (since KSA 2026.9.22.5482)
+the part state-bit render hook throws — gatOS disarms paint by itself. `paint/status` then reports
+`parts=degraded` with the reason in `part_error`, the master reads `0`, and stock rendering returns.
+
 ## Choose a vehicle scope
 
 | Scope    | Path                                                       | Meaning                                          |
@@ -276,7 +280,8 @@ place: <image> body <body_id> <lat> <lon> [heading=] [w=] [h=] [d=] [alpha=] [br
 `aim=camera` fires down the main camera's forward axis, which works headless and lets a
 [`/sim/camera`](/gatOS/reference/camera/) track do the pointing for you; `aim=cursor` uses the mouse
 cursor's picking ray. The ray hits a vehicle part first and the terrain behind it; nothing hit is
-`ENOENT`, and `last` records the miss. On `spray`, `roll=` is **added to** the orientation the picker
+`ENOENT`, and `last` records the miss. Since KSA 2026.9.22.5482 the part test starts with a bounding-sphere
+check, so a sub-part moved outside its part's bounds (by IVA cabin physics, say) can be missed. On `spray`, `roll=` is **added to** the orientation the picker
 chose to make the image read upright from where you are standing, rather than replacing it — so
 `roll=0` is upright and `roll=90` is a quarter turn from upright.
 
@@ -350,6 +355,8 @@ a decal conforms to hull curvature and tessellated terrain instead of floating f
   by the projection, never by the aim: a `spray` ray passes through a rock to the terrain behind it,
   and the box then paints the rock anyway. Widen `d` to reach more geometry, narrow it to stop a
   terrain decal bleeding onto a nearby rock.
+- Since KSA 2026.9.22.5482 a vessel can knock clutter loose. A sticker's geodetic anchor stays where
+  you sprayed it, so a decal on a rock that rolls away paints whatever then fills its box.
 - It draws in the **main viewport only** — not crew portraits, not secondary windows. It is in the
   colour image before display capture, so `/sim/display` shows it.
 - Lighting is an **approximation** of the surface it sits on: sun direction and colour, plus a small

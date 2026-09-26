@@ -245,13 +245,41 @@ and all are still single-overload where gatOS relies on that:
   (`Profiler.Gpu.EndFrame(commandBuffer2)` is not named `End`, and `Profiler` is in namespace `KSA`).
   Full render treatment: [`ksa-assets-and-versions.md#render-refs`](ksa-assets-and-versions.md#render-refs).
 
+**Re-verified 2026-09-25 against `2026.9.22.5482`** (revs 5439–5481, gapless). The binary survey found
+482/482 game TypeRefs and 1081/1081 MemberRefs resolving in the shipping 5482 DLLs (37 referenced types
+changed shape); every permanent target is still a single overload:
+
+- **Solver-drain prefix.** `Universe.ExecuteNextVehicleSolvers(double dtPlayer, SimStep simStep)` unchanged
+  (`Universe.cs:2034`). Two ordering changes around it, both harmless: `Program` now calls
+  `PartTree.FlushDirtyDerived()` + `PartTree.FlushDirtyResourceManagers()` **immediately before** it
+  (`Program.cs:2209-2211`, rev 5464 lazy derived data), so the prefix sees freshly flushed trees; and
+  `_vehicleUpdateTask.RemoveEligibleVehicles()` left the method start — bubble eviction runs on the worker
+  (rev 5476). The prefix still precedes `PrepareVehicleWorkers` → `Vehicle.PrepareWorker` (`:2396`, body
+  byte-identical) → `VehicleUpdateData.Prepare` → `NewFlightComputer.CopyFrom` (`VehicleUpdateData.cs:100`),
+  and apply (`Vehicle.cs:2530`) is unchanged, so Solver-phase FlightComputer writes are still captured.
+  Bubble **islands** (rev 5452) are solved inside the one `VehicleUpdateTask.Run` (`using ParallelBatch`),
+  still a single `VehicleSolver` job joined by the next `Wait()`. No Solver action calls `MarkDerivedDirty`.
+- **Menu postfix.** `Program.DrawProgramMenusHook()` moved `:3897` → `:3961`, same shape; `OnFrame`'s
+  `PrepareFrame → OnFrameViewports → if (DrawUI) {OnDrawUiFrame; OnDrawUiViewports} → render → PostRender`
+  order is identical (`App.cs` only adds input-to-display latency bookkeeping).
+- **Display transpiler + `UiPixelCulling` prefix.** `RenderGame` still declared once (`:4571`); its tail is
+  unchanged through `commandBuffer2.End()` (`:4871`); the backward scan still meets that `End` before the
+  pre-existing `_clutterPrePass.End(commandBuffer2)` (`:4706`). `UiPixelCulling()` (`:3293`) still one
+  overload, one caller. Rev 5443's present-wait pacing is CPU-side in `PrepareFrame` and leaves
+  `MaxFramesInFlight = 2` — see [the capture section](#display-capture).
+
 ### Dynamic IVA patches (`gatos.iva`) {#iva-patches}
 
 The `debug/always_render_iva` cheat (`Game/Ksa/Render/IvaForceRender.cs`, ported from `unscience`)
-installs **two more** Harmony patches on its **own** `Harmony("gatos.iva")` instance — a postfix on
-`PartModel..ctor(PartModelModule.Template)` and an editor-only postfix on
-the private shared `PartModel.AddInstance(PerInstanceData,PerInstanceDent,IViewport,int)`
-(since 5438) — but **only while the toggle is on**: enabling
+installs **one** Harmony patch on its **own** `Harmony("gatos.iva")` instance — a postfix on
+`PartModel..ctor(PartModelModule.Template)` — but **only while the toggle is on**. (Through 5438 it also
+installed an editor-only postfix on the private shared
+`PartModel.AddInstance(PerInstanceData,PerInstanceDent,IViewport,int)`; **removed at 5482** — rev 5456
+moved part rendering into the cached `PartTreeRenderData`, whose rasterized `Compose` path writes
+`ViewportData.InstanceList` directly and never reaches `AddInstance`, and the render gate
+`(!Template.Internal || viewport.Mode == CameraMode.IVA)` is now re-read per batch, per frame in
+`Compose` (`PartTreeRenderData.cs:1300`), so the template flip alone covers flight and editor trees.)
+Enabling
 bulk-flips `PartModelModule.Template.Internal=false` over `PartModel.Instances` (tracking each) and
 installs the patches; disabling restores the tracked templates and `UnpatchAll("gatos.iva")`. So the
 default-off state carries **zero** IVA patches. The patch targets are `[KsaAnchor]`-documented in
@@ -265,8 +293,11 @@ untouched; re-verified 2026-07-16 against `2026.7.6.4939` — `PartModel.cs` aga
 2026-07-22 against `2026.7.8.4980` — neither `PartModel.cs` nor `PartModelModule.cs` is in the changed
 set; re-verified 2026-07-24 against `2026.7.9.5018` — `PartModel.cs`, `PartModelModule.cs`,
 `PartModelDynamicModule.cs` and `Viewport.cs` are all byte-identical again); a ctor/`AddInstance`
-signature change surfaces at install time (caught, logged). (Un)patching runs on the game thread (the command
-drain / unload). Torn down by `Mod.TeardownGameCheats`.
+signature change surfaces at install time (caught, logged). Re-verified 2026-09-25 against
+`2026.9.22.5482`: `PartModel.Instances` (`:409`), the protected ctor (`:435`) and
+`PartModelModule.Template.{Internal,RayTracing}` (`:31,39`) unchanged; `RebuildAll` batches every
+`PartModelModule`, internals included; live VAB re-check queued. (Un)patching runs on the game thread
+(the command drain / unload). Torn down by `Mod.TeardownGameCheats`.
 
 ### Dynamic vessel force-render patches (`gatos.always_render`) {#always-render-patches}
 
@@ -292,7 +323,12 @@ emitters, fuel-transfer statics, collider flags) leaves both stock bodies untouc
 collision-avoidance pairs, navball markers) again leaves `GetWorldMatrix`/`UpdateRenderData` untouched;
 re-verified 2026-07-24 against `2026.7.9.5018` — the `Vehicle.cs` diff (`Parts.Tanks` →
 `Parts.SubstanceStores` in mass recompute, the `IFlowManagerHost` UI loop, plume-trail LOD and the
-`AverageThrottle` → `AverageThrustFraction` FX rename) once more leaves both stock bodies untouched);
+`AverageThrottle` → `AverageThrustFraction` FX rename) once more leaves both stock bodies untouched;
+re-verified 2026-09-25 against `2026.9.22.5482` — `GetWorldMatrix(Camera)` (`:3694`) byte-identical, and
+stock `UpdateRenderData(IViewport, int)` (`:3713`) now calls the new public `IsLargeEnoughToRender(Camera)`
+(`:3707`, the same `< 1 px` math, no other caller) plus a debug-only `SubmitClutterTerrainDebugOverlay`;
+the prefix still replaces the whole body, so marked vessels bypass the helper, and
+`PartTree.UpdateRenderData(ref readonly double4x4, bool, IViewport, int)` (`:1158`) is unchanged);
 a missing target
 throws at install time (caught by `KsaCatalog` → the
 actuator latches degraded, EOPNOTSUPP), and a prefix fault logs once and falls back to the stock cull.
@@ -412,7 +448,16 @@ bindings, sampler pool 10 → 8) — the quad builds its **own** descriptor-set 
 unaffected; plume-trail LOD (revs 4996–4998, 5013) and ground-clutter shadow work (revs 5008–5016) are
 separate passes. The rev-4942 screenshot transient above is unchanged and still open); a
 `RenderMainPass`/pipeline signature change surfaces at install time (caught, logged, feature
-self-disables).
+self-disables). ⚠️ **5482 (rev 5474, verified 2026-09-25):** the super-mesh bucket systems were rebuilt
+around render-pass + view handles (`RenderCore.Systems.{MeshPassBucketSystem,PassId,ViewHandle}` added,
+`MeshBucketSystem`/`ShadowBucketSystem` deleted — gatOS used neither) and the target is now
+**`RenderMainPass(IViewport viewport, CommandBuffer commandBuffer)`** (`:364`), delegating to a new
+`RenderPass(ViewHandle, PassId, …)`. It is still the only overload, so the name-only `AccessTools.Method`
+is unambiguous, and the postfix declares `CommandBuffer commandBuffer`, which Harmony binds **by name** —
+it now receives argument 1 with **no code change**. The three call sites pass `RenderedViewport`
+(`Program.cs:4496` RenderViewport, `:4756` RenderGame, `:4964` RenderEditor); the new
+`drawCommandCount == 0` early return is inside `RenderPass`, so the postfix still runs, and the quad binds
+its own pipeline/buffers regardless.
 
 KSA runs `SuperMeshRenderSystem.RenderMainPass` on the **main thread** (the same thread as the GUI hooks
 and the command drain — per the ksa skill `quad.md`), so the render postfix, the command drain, and entry
@@ -441,7 +486,11 @@ moved (caught by `StickerManager.EnsurePatch` → `Degrade`, so the feature repo
 **Why that seam.** `Program.RenderGame` calls `RenderedViewport.OffscreenTarget.ResolveAttachments(
 commandBuffer)` **unconditionally** at `KSA/Program.cs:4765` (and at `:4452` for secondary viewports).
 Since 5438 a color-only `ResolveAttachments(commandBuffer,false)` also runs at `:4737`; the postfix
-skips it, because its scene depth is not yet resolved.
+skips it, because its scene depth is not yet resolved. At 5482 (re-verified 2026-09-25) the method is
+unchanged and the call sites only moved: `:4531` secondary viewports, `:4821` colour-only (skipped),
+`:4849` full resolve (the pass fires here, `GridPass` follows at `:4851`), `:4972` editor (filtered). The
+new `else if (UseCloudUpscaling())` depth barrier (`:4828`) runs before the resolve and does not touch
+the post-resolve window.
 The method *body* is MSAA-gated — it does nothing when neither attachment is multisampled — but a
 **postfix fires either way**, which is what makes this reliable at every MSAA setting. Immediately
 after it, the resolved single-sample `DepthImage` and `ColorImage` are both current and neither is
@@ -576,7 +625,13 @@ nearest-neighbour convert. **KSA members touched:** `Program.GetRenderer/MainVie
 `CreateBuffer`/`CreateImage`, `CommandBuffer.BlitImage`/`CopyImageToBuffer`, `BufferEx.Map` — full row in
 [`docs/KSA_INTEGRATION_MATRIX.md`](../docs/KSA_INTEGRATION_MATRIX.md). Break behavior: the transpiler
 degrades to no-injection; a capture-time managed fault latches the feature off for the session
-(`DisplayRenderPatch._faulted`, one error log).
+(`DisplayRenderPatch._faulted`, one error log). Re-verified 2026-09-25 against `2026.9.22.5482`:
+`RenderGame` (`:4571`) tail unchanged — colour-only resolve `:4821`, full resolve `:4849`,
+`SampledReadVfc` barrier `:4862`, `RenderFinalComposite` `:4866`, `OnRenderGameSwapchainGrab` `:4869`,
+`Profiler.Gpu.EndFrame` `:4870`, final `commandBuffer2.End()` `:4871`. Rev 5443 added present-wait frame
+pacing (`Renderer.WaitForPreviousPresent` → `vkWaitForPresentKHR` in `PrepareFrame`, before `PollEvents`;
+default `FrameQueueLimit.OneFrame`); `MaxFramesInFlight` stays 2 and the fence/frame-slot logic is
+untouched, so the deferred one-slot-revisit readback still holds.
 
 ### Camera director same-frame viewport driver {#camera-driver}
 
@@ -869,6 +924,26 @@ both born of the viewport rework ([`ksa-assets-and-versions.md#5402-pass`](ksa-a
 | `ViewportSeam.TrySetMode` → `ViewportBase.Mode` **protected `set`** (`set_Mode`) | ➕ **new** — the silent Fixed park / mode restore that used to be a public-field write. A miss falls back to `GameViewport.SetCameraMode`, which parks correctly but runs the controllers' switch hooks and `ClearHeldPlayerInput()` |
 | every 5348 chain above (`_manualControlInputs` + struct fields, the `KittenEva` scale chain, the six `FxReflect` handles, `PlanetRenderer._renderUboMap`/`_meshUboMap`, the EVA paint `_renderable`/`_characterAvatar` fields) | see the binary surface diff in the pass record |
 
+**Re-verified 2026-09-25 against `2026.9.22.5482`** — this pass **added four compiler-blind bindings**
+(all in the part-paint seam, [`ksa-assets-and-versions.md#5482-pass`](ksa-assets-and-versions.md#5482-pass))
+and **retired one** (the IVA `AddInstance` postfix):
+
+| Accessor chain | 5482 status |
+|---|---|
+| `PartPaintPatches` → private `PartTreeRenderData.WriteState(Batch inBatch, int inSlot, Part inPart)` (Harmony **postfix**, resolved by name + exact parameter types via `GetNestedType("Batch", NonPublic)`) | ➕ **new** — the only writer of cached static-part state bits (IL 255 bytes, not `AggressiveInlining`, far over the JIT inline budget). The postfix takes the private nested batch as `object` |
+| `PartPaintPatches` → private `PartTreeRenderData.WriteDynamicState(DynamicBatch inBatch, int inSlot, PartModelDynamicModule inModule)` (postfix) | ➕ **new** — the only writer of cached dynamic-part state bits (IL 304 bytes) |
+| nested `PartTreeRenderData+Batch.StateBitFlags` / `+DynamicBatch.StateBitFlags` (`int[]`, public field on a private type) via `AccessTools.FieldRefAccess<int[]>` | ➕ **new** — type-checked at resolve; any miss nulls the target so paint refuses to arm (`EOPNOTSUPP`, `degraded`) instead of arming a no-op |
+| `PartTreeRenderData.InvalidateStates()` (public) via `Vehicle.Parts.RenderData` | ➕ new public binding (compile-checked) — the cache invalidation `PaintManager.SyncPartStates` drives |
+| `IvaForceRender` → private `PartModel.AddInstance(PerInstanceData, PerInstanceDent, IViewport, int)` postfix | ➖ **retired** — unreachable on the rasterized path since rev 5456 |
+| part-paint `PartModel{,Dynamic}Module.UpdateRenderData` prefix/finalizer pairs + the `PartModel{,Dynamic}.AddInstance` prefixes | ➖ **retired** — the targets were deleted (the 4 CS0117 errors) / bypassed |
+| every 5402 chain above (`_manualControlInputs` + struct fields, `KittenEva` scale chain, `ViewportSeam` protected setters, all 11 `FxReflect` names, `PlanetRenderer._renderUboMap`/`_meshUboMap`, EVA paint fields) | ✅ resolve with the same types; only FX line numbers moved |
+
+Unlike the earlier passes, the new paint seam was also **executed**, not just resolved: `KSA.dll` is
+IL-only (no ReadyToRun) but x64-flagged, so an IL-identical scratch copy with only the COFF `Machine`
+field set to ARM64 was loaded under .NET 10 (macOS ARM64) with Harmony 2.4.2, and gatOS's own
+`PartPaintPatches.Resolve` + `PaintManager.ApplyPatches`/`RemovePatches` were driven against KSA's real
+`WriteState`/`WriteDynamicState` — **18/18 checks passed** (see the pass record).
+
 **This does not retire the live check.** A `MetadataLoadContext` diff proves the members exist with
 the right shapes; it cannot prove the *chain* resolves through live objects, that the Harmony installs
 took, or that a value still means what it meant. `cat /sim/status/accessors` after a flight exercising
@@ -908,7 +983,16 @@ else to unwind: no patch to remove, no GPU object to free.
 The terrain UBO write is the one place gatOS writes **GPU-mapped memory** (unsafe `ref` spans over the
 reflected `MappedMemory`, frame slot 0 + the frames-in-flight mirror copy) — on the same main thread the
 game's own Terrain Editor writes it from, into host-visible + host-coherent memory. Verified
-`2026-08-01` against `2026.7.10.5056`; because none of these can fail the build, they belong on the
+`2026-08-01` against `2026.7.10.5056`; re-verified 2026-09-25 against `2026.9.22.5482` — all 11
+reflected names resolve with the same types, only lines moved (`Program._planetTransparenciesRenderer`
+`:177`, `_volumetricTrailRenderer` `:185`, `GetPlanetRenderer` `:562`; `CloudRenderer._renderer`/
+`_worleyNoise3dTarget`/`_cloudShadowsRenderer` `:109/165/245`; `_plumeTrailSegmentsManager` `:170`;
+`VolumetricExhaustTemplate.References` `:56`), and `PlanetRenderer.cs` (UBO structs, strides, slots) is
+unchanged. ⚠️ One latch-behaviour drift: since rev 5446 the cloud renderer is constructed whenever
+`GameSettings.UseCloudUpscaling()` is true — clouds **or** plume trails **or** explosions — so with clouds
+off but trails/explosions on, `fx.cloud_renderer` no longer latches degraded (the data write already
+returned `Ok` either way; it now also re-uploads to a renderer that does not draw clouds). Because none
+of these can fail the build, they belong on the
 "re-verify live after every update" list with the throttle field — live pass pending in
 [`../docs/VALIDATION.md`](../docs/VALIDATION.md).
 
@@ -991,6 +1075,30 @@ takes a discrete `Renderer.Allocator.CreateStagingPool(...)` + `Submit().Wait()`
 out-of-band alongside the engine's in-flight frames corrupts the device. The reconciliation is
 reasoning, not evidence, and needs a live check. See
 [`plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`](../plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md).
+
+## 5482 runtime findings {#5482-findings}
+
+The compiler-visible break (rev 5456 deleted `PartModel{,Dynamic}Module.UpdateRenderData`) hid a
+compiler-invisible one: `PartTreeRenderData.Compose` writes rasterized static instances straight into
+`ViewportData.InstanceList` without calling `PartModel.AddInstance`, so the old paint seam would have
+installed and painted nothing. Paint now postfixes the two private cached-state writers and invalidates
+trees on change; the IVA editor `AddInstance` postfix is retired. See the
+[pass record](ksa-assets-and-versions.md#5482-pass) and the [reflection accessors](#reflection-accessors).
+
+Every other Harmony target holds: the solver-drain prefix (now preceded by `PartTree.FlushDirtyDerived`/
+`FlushDirtyResourceManagers`, with bubble eviction on the worker and islands solved inside the same
+`VehicleSolver` job), the menu postfix, the display transpiler + `UiPixelCulling` prefix, the sticker
+resolve postfix, both `gatos.always_render` prefixes, the camera `GameViewport.OnFrame(double)` hook, and
+`thug_life`'s postfix on the re-signatured `RenderMainPass(IViewport, CommandBuffer)`, which binds its
+`commandBuffer` parameter by name. `VehicleSolver.Wait()` still joins all work before weld and IVA
+writes; `JobSystems.ConcurrentWorkers` → `NearestOrbitAndPerformanceWorker` (rev 5480) is unreferenced.
+Part pose/scale writes raise `PartTreeRenderData.InvalidateTransforms()` through the setters gatOS
+already uses, so IVA floating objects and scaled parts still render at the written pose.
+`PartTree`'s new structure lock (`AssertStructureWritable`) is satisfied: gatOS never calls
+`Split`/`Merge`/`TransferPartSubtreeTo`, and its structural edits go through `InputEvents` on the main
+thread. Brutal/Planet decomp is unchanged (numerics conventions carry over) and Bepu is byte-identical.
+Live GPU, reflected live-object chains and paint rendering require the
+[5482 live checklist](../docs/VALIDATION.md#ksa-5482-upgrade).
 
 ## 5438 runtime findings {#5438-findings}
 

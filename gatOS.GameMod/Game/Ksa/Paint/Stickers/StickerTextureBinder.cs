@@ -186,17 +186,18 @@ internal sealed class StickerTextureBinder
     /// </summary>
     [KsaAnchor("Program.GetRenderer(); Program.Instance.BindlessTextures (public field) → "
             + "BindlessTextureLibrary.AddTexture(VkImageView)",
-        SourceFile = "KSA/Program.cs:89,525 / RenderCore.Systems/BindlessTextureLibrary.cs:155",
-        Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
+        SourceFile = "KSA/Program.cs:111,557 / RenderCore.Systems/BindlessTextureLibrary.cs:155",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
         Notes = "All public; no reflection. AddTexture takes a slot from the library's free list and "
             + "writes the descriptor immediately: the table's layout is UpdateAfterBind|PartiallyBound "
             + "(BindlessTextureLibrary.cs:95-99), so writing a slot while command buffers referencing "
             + "OTHER slots are in flight is legal — that is the whole point of the flags. The table has "
-            + "1024 slots (Program.cs:774) shared with the game; stickers are capped by "
+            + "1024 slots (Program.cs:828) shared with the game; stickers are capped by "
             + "paint_texture_max_files (32 by default). Sampler slot 0 is linear-clamped with "
             + "MaxLod = 1000 (BindlessTextureLibrary.cs:127-130), exactly the sampler a mip-mapped "
             + "clamp-to-edge decal wants, which is why the shader passes samplerId 0. The decode/upload "
-            + "half lives in UserTextureGpu.Upload, which carries its own anchor.")]
+            + "half lives in UserTextureGpu.Upload, which carries its own anchor. 5482: BindlessTextureLibrary.cs "
+            + "is unchanged; Program.cs line citations refreshed.")]
     private Bound Bind(TextureFile file)
     {
         if (Program.GetRenderer() is not { } renderer)
@@ -231,12 +232,13 @@ internal sealed class StickerTextureBinder
     ///     texture — but the image is not, so it waits out every frame in flight.
     /// </summary>
     [KsaAnchor("Program.Instance.BindlessTextures → BindlessTextureLibrary.FreeTexture(int)",
-        SourceFile = "KSA/Program.cs:89 / RenderCore.Systems/BindlessTextureLibrary.cs:198",
-        Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
+        SourceFile = "KSA/Program.cs:111 / RenderCore.Systems/BindlessTextureLibrary.cs:198",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
         Notes = "FreeTexture writes the slot back to _emptyTexture/_emptySampler and returns the index "
             + "to the free list (BindlessTextureLibrary.cs:198-218), so a draw already recorded against "
             + "that slot samples a 1x1 white texel instead of a destroyed image. Destroying the image "
-            + "itself must still wait MaxFramesInFlight+1 ticks — that is what RetireQueue is for.")]
+            + "itself must still wait MaxFramesInFlight+1 ticks — that is what RetireQueue is for. "
+            + "5482: unchanged (Program.BindlessTextures moved to :111; MaxFramesInFlight still 2).")]
     private void Release((string Name, int Version) key)
     {
         if (!_bound.Remove(key, out var bound))

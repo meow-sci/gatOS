@@ -182,13 +182,15 @@ internal static class CloudActuator
     [KsaAnchor("Cloud reference writes: DistanceReference/Vector3Reference/DoubleReference/ColorRgbReference "
             + "construct-new (+ ColorRgbReference.OnDataLoad), RaymarchingStepReference.Scale and "
             + "CloudShapeReference.InterpolateShapes in place",
-        SourceFile = "KSA.Atmosphere.Rendering/CloudRenderer.cs:1370-1560 (the in-game editor's write sites)",
-        Verified = "2026-08-01", GameVersion = "2026.7.10.5056", Risk = ChurnRisk.High,
+        SourceFile = "KSA.Atmosphere.Rendering/CloudRenderer.cs:1587-1759 (the in-game editor's write sites)",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
         Notes = "DistanceReference and Vector3Reference cache a derived value behind a private field and "
             + "ColorRgbReference.Value has a protected setter, so all three MUST be replaced wholesale — "
             + "mutating them in place silently does nothing. DoubleReference exposes a plain public Value "
             + "field with no cache, so those are written in place (both idioms appear in the game's own "
-            + "editor). NoiseScale is deliberately absent (it would force a pipeline rebuild).")]
+            + "editor). NoiseScale is deliberately absent (it would force a pipeline rebuild). "
+            + "5482: the editor's write idioms are unchanged (construct-new Distance/Vector3/ColorRgbReference, "
+            + "in-place DoubleReference/RaymarchingStepReference.Scale/InterpolateShapes); the block moved to :1587-1759.")]
     private static bool TryWrite(CloudsReference c, FxFieldSpec spec, IReadOnlyList<int> idx,
         IReadOnlyList<double> v)
     {
@@ -288,13 +290,16 @@ internal static class CloudActuator
             + "CloudLayerRenderData.UpdateStaticData(Renderer, AtmosphericBody, CloudLayerReference, "
             + "float, float, float); CloudShadowsRenderer.PopulatePlanets(Dictionary<KeyHash, "
             + "CloudLayerRenderData[]>, RenderImage)",
-        SourceFile = "KSA.Atmosphere.Rendering/CloudRenderer.cs:1570-1595 / CloudLayerRenderData.cs:347 / "
-            + "CloudShadowsRenderer.cs:74",
-        Verified = "2026-08-05", GameVersion = "2026.8.5.5168", Risk = ChurnRisk.High,
+        SourceFile = "KSA.Atmosphere.Rendering/CloudRenderer.cs:1780-1795 / CloudLayerRenderData.cs:347 / "
+            + "CloudShadowsRenderer.cs:75",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
         Notes = "Keyed on the public Astronomical.Hash, per-layer index into the render-data array, then "
             + "one shadow-atlas repopulate — the editor's exact sequence. NoiseScale (the only field that "
             + "would additionally need RecreateLayerPipelines) is not exposed, so this never rebuilds a "
-            + "pipeline.")]
+            + "pipeline. 5482: the editor's apply sequence (OnDataLoad -> UpdateStaticData -> PopulatePlanets, "
+            + "CloudRenderer.cs:1780-1795) is unchanged; CloudLayerRenderData.cs and CloudShadowsRenderer.cs are "
+            + "byte-identical. Rev 5446: the renderer now also exists with clouds off when plume trails or "
+            + "explosions are on (see FxReflect.Clouds), so this path can run against layers that are not drawn.")]
     private static CommandResult Apply(KsaHealth health, AtmosphericBody body, CloudsReference clouds, int layer)
     {
         if (FxReflect.Clouds(out var rendererError) is not { } renderer)

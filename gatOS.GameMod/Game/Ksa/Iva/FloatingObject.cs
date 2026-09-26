@@ -89,19 +89,27 @@ internal sealed class FloatingObject
     ///     Writes a body pose (assembly frame) onto the driven SubPart, converting into the parent
     ///     part's frame — the inverse of <c>Part.PositionVehicleAsmb</c>/<c>Asmb2VehicleAsmb</c>, which
     ///     compose a SubPart through its parent. The setters invalidate KSA's cached transform
-    ///     matrices, and <c>PartModelModule.UpdateRenderData</c> re-reads them every frame, so there is
-    ///     no dirty flag to defeat.
+    ///     matrices — since 5482 that includes the tree's cached render transforms
+    ///     (<c>ResetCachedPosMatrixValues</c> → <c>PartTreeRenderData.InvalidateTransforms</c>), so the
+    ///     next <c>EnsureBuilt</c> rewrites them and there is no dirty flag to defeat.
     /// </summary>
     [KsaAnchor("Part.{PositionParentAsmb(set),Asmb2ParentAsmb(set),PartParent,PositionVehicleAsmb,"
             + "Asmb2VehicleAsmb,Scale}; double3.Transform(double3,doubleQuat); "
             + "doubleQuat.{Concatenate,Conjugate,NormalizeOrZero}",
-        SourceFile = "KSA/Part.cs / Brutal.Numerics/double3.cs / Brutal.Numerics/doubleQuat.cs",
-        Verified = "2026-07-24", GameVersion = "2026.7.9.5018", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Part.cs:756-830,1241-1243 / KSA/PartTreeRenderData.cs:318-321,755-766 / "
+            + "Brutal.Numerics/double3.cs / Brutal.Numerics/doubleQuat.cs",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "The per-frame SubPart transform driver. Both setters call ResetCachedPosMatrixValues, "
             + "which is what makes per-frame writes correct. KSA drives these exact properties itself "
             + "for keyframe animations and the solar tracker, so this is the game's own idiom for a "
             + "runtime-animated part transform. SubParts ONLY — a top-level Part's transform IS "
-            + "serialized into the save (Part.GetReferenceWithChildren).")]
+            + "serialized into the save (Part.GetReferenceWithChildren). "
+            + "5482 (rev 5456): part render transforms are now CACHED per tree in PartTreeRenderData and only "
+            + "rewritten when _transformsDirty is set; ResetCachedPosMatrixValues now also calls "
+            + "Tree?.RenderData.InvalidateTransforms() (Part.cs:1243) and sub-parts carry Tree, so a per-frame "
+            + "pose write still renders — at the cost of one whole-tree RewriteTransforms (+ dent-cache refresh) "
+            + "per frame while an object floats. RewriteTransforms composes ComputeMatrixAsmb2VehicleAsmb() as "
+            + "Scale*Rot*Trans, exactly as MatrixAsmb2Ego did.")]
     public void ApplyPose(Vector3 bodyPosition, Quaternion bodyOrientation)
     {
         if (Part.PartParent is not { } parent)

@@ -1,6 +1,8 @@
 # gatOS paint — as built and maintenance contract
 
-Status: code complete; live KSA validation pending. Baseline audited: KSA `2026.8.19.5261`.
+Status: code complete; live KSA validation pending. Baseline audited: KSA `2026.9.22.5482` (part-paint
+seam rebuilt for the cached `PartTreeRenderData` at that pass; EVA/texture/sticker halves last
+changed at `2026.8.19.5261`–`2026.9.10.5438`).
 
 ## Purpose and ownership
 
@@ -37,13 +39,15 @@ Rules are session-only. Disabling a runtime master retains desired rules for re-
 The part master is `/sim/paint/parts/enabled`, default `0`. Enabling is transactional:
 
 1. resolve the exact four-argument `ShaderModuleUtils.FromFile(Device,string,out
-   VkShaderStageFlags,CompileOptions?)` overload and all PartModel methods;
+   VkShaderStageFlags,CompileOptions?)` overload, the two private `PartTreeRenderData` state writers
+   and their nested batch `StateBitFlags` fields (any miss refuses to arm — never a silent no-op);
 2. reject activation if any non-gatOS `FromFile` prefix is installed (notably standalone
    humble-arteest), because two prefixes that can skip the global compiler cannot compose safely;
 3. resolve and transform required `MeshIndirect.frag`; probe optional
    `MeshIndirectRaytraced.frag`;
 4. install all exact Harmony methods; if any patch fails, remove the methods already installed;
-5. arm interception and set `Program.RendererRebuildNeeded = true`.
+5. arm interception, invalidate every loaded tree's cached part states, and set
+   `Program.RendererRebuildNeeded = true`.
 
 The shader files on disk are never written. The prefix compiles transformed UTF-8 source through
 `ShaderModuleUtils.FromString`, preserving KSA's compile options and original path. The transform
@@ -53,9 +57,33 @@ second deferred stock rebuild, and exposes `degraded` plus `last_error` in paint
 
 Colour is quantized in sRGB to 7:7:7 and packed into `PartModel.PerInstanceData.StateBitFlag` bits
 11..31. Zero means unpainted, so literal black encodes as packed value `1`. The current game uses
-only bits 0..10. Static and dynamic `UpdateRenderData` enter a thread-static Part scope; Harmony
-finalizers restore the prior scope even when KSA throws. The matching static/dynamic `AddInstance`
-prefix consumes that Part and ORs the bits. Glass has a separate shader and remains stock.
+only bits 0..10 (`PartTreeRenderData.StateBit` 1..1024; `Compose` ORs the per-viewport 0x10/0x20).
+
+**The seam (since KSA 5482, rev 5456).** Part render data is a per-tree cache,
+`PartTree.RenderData` (`PartTreeRenderData`). `PartTree.UpdateRenderData` calls `EnsureBuilt` once per
+frame, then `Compose`/`ComposeDynamic`/`ComposeGlass` for each viewport. `EnsureBuilt` writes each
+part's state bits into a pooled batch slot (`Batch`/`DynamicBatch.StateBitFlags`) and keeps them until
+the tree is invalidated; the rasterized static `Compose` copies them straight into
+`PartModel.ViewportData.InstanceList` **without calling `AddInstance`** (only the raytraced-IVA branch
+and `ComposeDynamic` still go through it, carrying the same cached bits). The only writers of those
+slots are the private `WriteState(Batch,int,Part)` and `WriteDynamicState(DynamicBatch,int,
+PartModelDynamicModule)` — reached from membership rebuilds, full rewrites and dirty-part rewrites;
+the per-frame sim-driven refresh touches only matrices and temperature. Paint postfixes those two
+methods (the batch parameters bind as `object`; the slot array through a `FieldRef` compiled once at
+arm) and ORs the resolved bits into the slot for `inPart` / `inModule.Parent` — the same Part the old
+module scope used. Because the result is cached, `PaintManager.SyncPartStates` calls the public
+`PartTreeRenderData.InvalidateStates()` on every loaded vehicle tree whenever an input to the bits
+moves: arm and disarm (unpatch first, so the rewrite is stock), a new rule snapshot (the store swaps
+its published reference on every mutation), or a change in the Part→vessel index hash rebuilt each
+tick (staging, docking, undocking, spawn). A new or restructured tree rebuilds its membership through
+the same writers on its own. Idle cost is one reference and one integer compare per tick; nothing is
+rewritten while inputs are unchanged. A postfix that throws never unwinds KSA's build: it logs once,
+disarms (`degraded`, `last_error`) and the patches come off on the next tick. Glass has a separate
+shader and remains stock.
+
+The 5438 design — a thread-static Part scope entered by prefixes/finalizers on the per-module
+`PartModelModule`/`PartModelDynamicModule.UpdateRenderData` and consumed by an `AddInstance` prefix —
+is gone: rev 5456 deleted those methods, and the rasterized path no longer reaches `AddInstance`.
 
 Part precedence is:
 
@@ -176,13 +204,21 @@ On every KSA baseline change, re-audit all of these even if compilation is green
    out semantics, and whether prefixes on the global compiler remain the correct seam.
 2. `MeshIndirect.frag` and optional raytraced path/id, the `vec3 sampledColor` anchor,
    `inStateFlags`, `gammaToLinear`, include behavior, and all feature variants.
-3. every stock write/use of `StateBitFlag`; bits 11..31 must remain free. Confirm the static/dynamic
-   `PerInstanceData` layout/stride and signed OR behavior.
-4. exact signatures and call topology of `PartModelModule.UpdateRenderData`,
-   `PartModelDynamicModule.UpdateRenderData`, `PartModel.AddInstance`, and
-   `PartModelDynamic.AddInstance`. At 5438 both bind the private shared `(PerInstanceData,
-   PerInstanceDent,IViewport,int)` overload: dented and ordinary public paths funnel through once.
-   Confirm one scoped Part maps to the intended submission.
+3. every stock write/use of `StateBitFlag` (the `PartTreeRenderData.StateBit` constants, the shared
+   per-viewport flags `Compose`/`ComposeDynamic` OR in, and both shaders); bits 11..31 must remain
+   free. Confirm the static/dynamic `PerInstanceData` layout/stride and signed OR behavior.
+4. call topology `PartTree.UpdateRenderData` → `PartTreeRenderData.EnsureBuilt` →
+   `Compose`/`ComposeDynamic`/`ComposeGlass`, and that `WriteState(Batch,int,Part)` /
+   `WriteDynamicState(DynamicBatch,int,PartModelDynamicModule)` are still the **only** writers of
+   `Batch`/`DynamicBatch.StateBitFlags` (grep every `StateBitFlags[` assignment; confirm
+   `RefreshSimDrivenDynamicSlots` still leaves them alone). Re-check the exact private signatures,
+   parameter names, the nested type/field names and `int[]` type, and that both bodies stay far above
+   the JIT inline budget without `AggressiveInlining` (5482: IL 255 / 304 bytes) — an inlined target
+   would silently bypass the postfix. Confirm `PartTreeRenderData.InvalidateStates()` is still public
+   and still forces a full rewrite on the next `EnsureBuilt`, and that `PartTree.RenderData` is still
+   reachable from `Vehicle.Parts`. At 5482 this seam was exercised end-to-end against the shipped IL
+   (Harmony 2.4.2): resolve, arm, static + dynamic OR, stock bits preserved, rule-change sync, disarm
+   to stock, re-arm, and a throwing lookup disarming instead of unwinding KSA.
 5. `Program.RendererRebuildNeeded` remains the safe deferred pipeline boundary. Never replace it
    with an inline `ColorData.Rebuild()`.
 6. `KittenEva._renderable`, `KittenRenderable._characterAvatar`, `CharacterAvatar` core/fur/

@@ -109,11 +109,12 @@ internal static class FxEditorReader
     /// </summary>
     [KsaAnchor("Universe.CurrentSystem.All.UnsafeAsList(); Vehicle.Parts.RocketNozzles.ModulesAndAllStates; "
             + "RocketNozzle.ReactionPlumes[].VolumetricExhaust.Id; VolumetricExhaustTemplate.Get(string)",
-        SourceFile = "KSA/RocketNozzle.cs:15,40 / KSA/VolumetricExhaustReference.cs / "
-            + "KSA/VolumetricExhaustTemplate.cs:48",
-        Verified = "2026-08-01", GameVersion = "2026.7.10.5056", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/RocketNozzle.cs:19,46 / KSA/VolumetricExhaustReference.cs / "
+            + "KSA/VolumetricExhaustTemplate.cs:56",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "Fallback enumeration only; all members public. Each vehicle is isolated so a "
-            + "mid-teardown vessel cannot abort the harvest.")]
+            + "mid-teardown vessel cannot abort the harvest. 5482: RocketNozzle gained DrawDesignInfo only; "
+            + "the enumerated members are unchanged (line moves).")]
     private static List<VolumetricExhaustTemplate> HarvestPlumeTemplates()
     {
         var found = new List<VolumetricExhaustTemplate>();

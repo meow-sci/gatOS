@@ -360,6 +360,12 @@ Why dynamic install is safe here: enabling IVA is a rare user action, runs on th
 per-frame hot path (parts are built on vessel load/staging, not each frame). The editor `AddInstance`
 postfix is the only per-render patch and it exists **only while enabled**.
 
+> **5482 update (as built):** gatOS now installs **only the ctor postfix**. KSA rev 5456 moved part
+> rendering into the cached `PartTreeRenderData`; its `Compose` re-reads `Template.Internal` per batch,
+> per frame (flight and editor trees alike) and writes the rasterized instances straight into the
+> viewport lists without calling `AddInstance`, so the editor re-add postfix could no longer fire and
+> was removed. The template flip alone covers flight and VAB. (unscience still carries both patches.)
+
 > Threading note: `debug.always_render_iva` is **Frame phase** → drains in `OnBeforeUi` on the game
 > thread (`IvaActuator.SetEnabled`). Correct thread for both the template flip and (un)patching.
 

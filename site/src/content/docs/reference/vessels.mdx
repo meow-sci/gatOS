@@ -27,7 +27,8 @@ silent game lockout into a new error, so check it before assuming your cat-shape
 
 `orbit/{apoapsis,periapsis,ecc,inc,lan,argpe,sma,period,true_anomaly,time_to_ap,time_to_pe,next_patch}`
 reports apoapsis and periapsis as altitude in m; `sma` is m; time leaves are seconds; angles are degrees.
-Time-to-apse is `0` when no such apsis exists.
+Time-to-apse is `0` when no such apsis exists, and so is `apoapsis` on an escape trajectory (since KSA
+2026.9.22.5482; earlier builds reported a large negative number). Test `ecc >= 1` to detect escape.
 
 `navball/{pitch,yaw,roll,twr,deltav,frame,speed}` reports integer angles in degrees, TWR, remaining
 active-sequence Δv in m/s, reference-frame name, and displayed speed. Treat the current Δv field as the

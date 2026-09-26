@@ -3,7 +3,6 @@ using gatOS.GameMod.Game.Ksa;
 using gatOS.Logging;
 using HarmonyLib;
 using KSA;
-using KSA.Deformation;
 
 namespace gatOS.GameMod.Game.Ksa.Render;
 
@@ -11,17 +10,23 @@ namespace gatOS.GameMod.Game.Ksa.Render;
 ///     The <c>/sim/debug/always_render_iva</c> cheat: forces interior (IVA) part meshes to render
 ///     outside the IVA camera by flipping <c>PartModelModule.Template.Internal</c> to <c>false</c> on
 ///     every internal template (KSA's render gate skips internal meshes unless the camera is in IVA
-///     mode — <c>PartModel.cs</c> <c>(!Template.Internal || viewport.Mode == CameraMode.IVA)</c>).
+///     mode — since 5482 re-evaluated per batch, per frame in <c>PartTreeRenderData.Compose</c>
+///     <c>(!Template.Internal || viewport.Mode == CameraMode.IVA)</c>; the raytraced-IVA branch still
+///     routes through <c>PartModel.AddInstance</c>'s identical gate).
 /// </summary>
 /// <remarks>
-///     <para>Ported from the sibling <c>unscience</c> mod, with one change: the two Harmony patches are
+///     <para>Ported from the sibling <c>unscience</c> mod, with one change: the Harmony patch is
 ///     installed <b>only while enabled</b> (on the <c>0→1</c> toggle) and removed on <c>1→0</c>, so the
 ///     default-off state carries zero patches — minimally invasive, exactly per the feature brief.</para>
 ///     <para>Game-thread only: <see cref="SetEnabled"/> runs in the command drain, which is the correct
 ///     thread for both the <see cref="PartModel.Instances"/> bulk flip and Harmony (un)patching. The
-///     ctor postfix catches part types first seen after enabling; the (editor-only) AddInstance postfix
-///     keeps interiors visible in VAB previews. Flipping the shared <em>template</em> flag is global by
-///     design (this is a global cheat); the tracked-template restore + unpatch fully revert it.</para>
+///     ctor postfix catches part types first seen after enabling. The flip alone covers VAB previews too:
+///     editor trees render through the same <c>PartTree.UpdateRenderData</c> → <c>Compose</c> path. (The
+///     editor-only <c>AddInstance</c> re-add postfix unscience keeps was dropped at 5482 — <c>Compose</c>
+///     no longer calls <c>AddInstance</c> on the rasterized path, and while enabled no flipped template
+///     reaches that postfix's <c>Template.Internal</c> condition anyway.) Flipping the shared
+///     <em>template</em> flag is global by design (this is a global cheat); the tracked-template restore +
+///     unpatch fully revert it.</para>
 /// </remarks>
 internal static class IvaForceRender
 {
@@ -31,22 +36,23 @@ internal static class IvaForceRender
 
     private static MethodBase? _ctorOriginal;
     private static MethodInfo? _ctorPostfix;
-    private static MethodBase? _addInstanceOriginal;
-    private static MethodInfo? _addInstancePostfix;
 
     /// <summary>Whether the cheat is currently on (read into the snapshot for the <c>/sim</c> read-back).</summary>
     public static bool Enabled => _enabled;
 
-    [KsaAnchor("PartModel.Instances; PartModel..ctor(PartModelModule.Template); "
-            + "PartModel.AddInstance(PerInstanceData,PerInstanceDent,IViewport,int) private common overload; "
-            + "PartModel.ViewportData.Get(PartModel,IViewport).{InstanceList,DentInstanceList}; "
-            + "PartModelModule.Template.{Internal,RayTracing}; PartModelModule.RaytracingMode.ShadowProxy; "
-            + "Program.{Editor,MainViewport}; IViewport.{Mode,OptionFlags}; ViewportOptionFlags.RenderPartModels; CameraMode.IVA",
-        SourceFile = "KSA/PartModel.cs:459-490 / KSA/PartModelModule.cs / KSA/IViewport.cs / KSA/ViewportOptionFlags.cs", Verified = "2026-09-14",
-        GameVersion = "2026.9.10.5438", Risk = ChurnRisk.High,
-        Notes = "The always_render_iva cheat. Patches are dynamic — installed only while enabled. "
-            + "The private common AddInstance overload receives the actual viewport and paired dent "
-            + "descriptor; the editor fallback appends both lists, matching KSA's normal path.")]
+    [KsaAnchor("PartModel.Instances; PartModel..ctor(PartModelModule.Template) (protected); "
+            + "PartModelModule.Template.Internal; the render gate (!Template.Internal || viewport.Mode == CameraMode.IVA) "
+            + "in PartTreeRenderData.Compose and PartModel.AddInstance",
+        SourceFile = "KSA/PartTreeRenderData.cs:708-753,1258-1322 / KSA/PartModel.cs:409,435,470-490 / "
+            + "KSA/PartModelModule.cs:31", Verified = "2026-09-25",
+        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
+        Notes = "The always_render_iva cheat. The ctor patch is dynamic — installed only while enabled. "
+            + "5482 (rev 5456): part rendering moved into the cached PartTreeRenderData. RebuildAll batches "
+            + "EVERY PartModelModule (internals included) and Compose re-reads model.Template.Internal per batch "
+            + "every frame, so the flip takes effect with no cache invalidation. Compose writes the rasterized "
+            + "instances straight into ViewportData.InstanceList (AddInstance is reached only on the "
+            + "raytraced-IVA branch, where the gate passes anyway), so the former editor-only AddInstance re-add "
+            + "postfix could never fire and was removed; editor trees use the same Compose path.")]
     public static void SetEnabled(bool value)
     {
         if (_enabled == value)
@@ -75,12 +81,6 @@ internal static class IvaForceRender
             BindingFlags.NonPublic | BindingFlags.Static)!;
         _harmony.Patch(_ctorOriginal, postfix: new HarmonyMethod(_ctorPostfix));
 
-        _addInstanceOriginal = AccessTools.Method(typeof(PartModel), nameof(PartModel.AddInstance),
-            [typeof(PartModel.PerInstanceData), typeof(PerInstanceDent), typeof(IViewport), typeof(int)]);
-        _addInstancePostfix = typeof(IvaForceRender).GetMethod(nameof(AddInstancePostfix),
-            BindingFlags.NonPublic | BindingFlags.Static)!;
-        _harmony.Patch(_addInstanceOriginal, postfix: new HarmonyMethod(_addInstancePostfix));
-
         ModLog.Log.Info("gatOS IVA force-render patches installed.");
     }
 
@@ -98,8 +98,6 @@ internal static class IvaForceRender
         _harmony = null;
         _ctorOriginal = null;
         _ctorPostfix = null;
-        _addInstanceOriginal = null;
-        _addInstancePostfix = null;
         ModLog.Log.Info("gatOS IVA force-render patches removed.");
     }
 
@@ -117,30 +115,6 @@ internal static class IvaForceRender
         catch (Exception ex)
         {
             ModLog.Log.Debug($"gatOS IVA ctor postfix error: {ex.Message}");
-        }
-    }
-
-    /// <summary>Editor-only: interior previews are never drawn through an IVA camera, so force them in.</summary>
-    private static void AddInstancePostfix(PartModel __instance, PartModel.PerInstanceData __0,
-        PerInstanceDent __1, IViewport __2)
-    {
-        try
-        {
-            // Mirror the common overload's gate so the postfix never adds an instance the engine refused.
-            if (!__2.HasAny(ViewportOptionFlags.RenderPartModels))
-                return;
-            if (Program.Editor is null
-                || !__instance.Template.Internal
-                || __2.Mode == CameraMode.IVA
-                || __instance.Template.RayTracing == PartModelModule.RaytracingMode.ShadowProxy)
-                return;
-            var viewportData = PartModel.ViewportData.Get(__instance, __2);
-            viewportData.InstanceList.Add(__0);
-            viewportData.DentInstanceList.Add(__1);
-        }
-        catch (Exception ex)
-        {
-            ModLog.Log.Debug($"gatOS IVA add-instance postfix error: {ex.Message}");
         }
     }
 

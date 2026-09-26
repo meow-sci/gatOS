@@ -22,6 +22,13 @@ internal sealed class PaintManager : IDisposable
     private readonly List<(System.Reflection.MethodBase Target, System.Reflection.MethodInfo Patch)> _patches = [];
     private bool _cleanupPatches;
 
+    // KSA caches each part's StateBitFlag (PartTreeRenderData, 5482), so painted bits persist until the
+    // tree rewrites them. The cache is invalidated whenever the inputs to TryGetPartBits move: the
+    // published rule snapshot (reference swap on every store mutation) or the Part→vessel index.
+    private int _indexHash;
+    private PaintSnapshot? _syncedRules;
+    private int _syncedIndexHash;
+
     private readonly ClutterTextureBridge? _textures;
     private readonly Stickers.StickerManager? _stickers;
 
@@ -122,20 +129,26 @@ internal sealed class PaintManager : IDisposable
         _stickers?.Tick();
         var state = _store.Current;
         if (!state.PartsEnabled && !state.KittensEnabled) return;
-        if (state.PartsEnabled) RebuildPartIndex();
+        if (state.PartsEnabled)
+        {
+            RebuildPartIndex();
+            SyncPartStates();
+        }
         if (state.KittensEnabled) EvaPaintBridge.Tick(_store);
     }
 
-    [KsaAnchor("Part.InstanceId; Part.Template.Id; PartModel/PartModelDynamic PerInstanceData.StateBitFlag bits 11..31; "
-            + "AddInstance(PerInstanceData,PerInstanceDent,IViewport,int) private common seams",
-        SourceFile = "KSA/Part.cs / KSA/PartModel.cs:459-490 / KSA/PartModelDynamic.cs:463-481 / "
-            + "KSA/PartModelModule.cs:157-165 / KSA/PartModelDynamicModule.cs:129-137", Verified = "2026-09-14",
-        GameVersion = "2026.9.10.5438", Risk = ChurnRisk.High,
-        Notes = "Stock uses bits 0..10; every KSA upgrade must re-audit all state-flag writers. "
-            + "5438: both public AddInstance overloads funnel into a private common overload carrying "
-            + "PerInstanceDent; the paint prefix targets that exact seam, so ordinary and dented module "
-            + "paths both retain the paint bits. The prefix runs before the viewport RenderPartModels "
-            + "gate and the module finalizer restores _part, so a gated-out instance leaks nothing.")]
+    [KsaAnchor("Part.InstanceId; Part.Template.Id; PartModel/PartModelDynamic PerInstanceData.StateBitFlag bits 11..31 "
+            + "(via the cached PartTreeRenderData Batch/DynamicBatch.StateBitFlags slots)",
+        SourceFile = "KSA/Part.cs / KSA/PartTreeRenderData.cs:196-219,1088-1136,1210-1335 / "
+            + "KSA/PartModel.cs:459-490 / KSA/PartModelDynamic.cs:463-481", Verified = "2026-09-25",
+        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
+        Notes = "Stock uses bits 0..10 (PartTreeRenderData.StateBit 1..1024; Compose ORs the shared 0x10/0x20 "
+            + "per viewport); every KSA upgrade must re-audit all state-flag writers. "
+            + "5482 (rev 5456): PartModelModule/PartModelDynamicModule.UpdateRenderData were deleted and the "
+            + "rasterized static path no longer calls AddInstance at all, so the 5438 scoped-Part + AddInstance "
+            + "prefix seam is gone. Paint now postfixes the two cached-state writers (PartPaintPatches) and "
+            + "SyncPartStates invalidates every loaded tree when the rules or the Part→vessel index change. "
+            + "Dented and raytraced-IVA submissions carry the same cached bits (ToPerInstanceData).")]
     internal bool TryGetPartBits(Part part, out int bits)
     {
         bits = 0;
@@ -165,6 +178,23 @@ internal sealed class PaintManager : IDisposable
         _store.PublishRuntime(s => ray
             ? s with { RaytracedCompileCount = s.RaytracedCompileCount + 1 }
             : s with { RasterCompileCount = s.RasterCompileCount + 1 });
+    }
+
+    /// <summary>
+    ///     A state-bit postfix threw inside KSA's render-data build. Disarm exactly like a shader fault;
+    ///     the patches are removed on the next tick, never from inside the patched method.
+    /// </summary>
+    internal void FaultRender(Exception ex)
+    {
+        if (!PartsArmed) return;
+        PartsArmed = false;
+        _store.SetPartsMaster(false);
+        _sources.Clear();
+        _cleanupPatches = true;
+        Program.RendererRebuildNeeded = true;
+        var message = $"part state-bit seam failed: {ex.Message}";
+        _store.PublishRuntime(s => s with { PartsStatus = PartPaintStatus.Degraded, PartError = message });
+        ModLog.Log.Error($"gatOS paint disabled: {message}");
     }
 
     internal void FaultShader(string path, Exception ex)
@@ -256,40 +286,88 @@ internal sealed class PaintManager : IDisposable
         {
             foreach (var entry in resolved)
             {
-                if (entry.Finalizer) _harmony.Patch(entry.Target!, finalizer: new HarmonyMethod(entry.Patch));
+                if (entry.Postfix) _harmony.Patch(entry.Target!, postfix: new HarmonyMethod(entry.Patch));
                 else _harmony.Patch(entry.Target!, prefix: new HarmonyMethod(entry.Patch));
                 _patches.Add((entry.Target!, entry.Patch));
             }
         }
         catch { RemovePatches(); throw; }
+        // Trees built before arming hold stock bits; force one rewrite through the new postfixes.
+        _syncedRules = null;
+        InvalidateAllPartStates();
     }
 
     private void RemovePatches()
     {
+        var hadPatches = _patches.Count > 0;
         foreach (var (target, patch) in _patches) _harmony.Unpatch(target, patch);
         _patches.Clear();
         _cleanupPatches = false;
+        _syncedRules = null;
+        // The cached slots still carry paint bits; rewrite them unpatched so every part returns to stock.
+        if (hadPatches) InvalidateAllPartStates();
+    }
+
+    /// <summary>
+    ///     Invalidates the cached part state bits of every loaded tree when the inputs to
+    ///     <see cref="TryGetPartBits"/> moved since the last rewrite. Idle cost: one reference and one
+    ///     integer compare per tick.
+    /// </summary>
+    private void SyncPartStates()
+    {
+        if (!PartsArmed) return;
+        var rules = _store.Current;
+        if (ReferenceEquals(rules, _syncedRules) && _indexHash == _syncedIndexHash) return;
+        _syncedRules = rules;
+        _syncedIndexHash = _indexHash;
+        InvalidateAllPartStates();
+    }
+
+    [KsaAnchor("Vehicle.Parts (PartTree).RenderData (PartTreeRenderData).InvalidateStates()",
+        SourceFile = "KSA/PartTree.cs:30 / KSA/PartTreeRenderData.cs:323-326,444-507", Verified = "2026-09-25",
+        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
+        Notes = "Public; sets _allStatesDirty, so the tree's next EnsureBuilt (once per frame, from "
+            + "PartTree.UpdateRenderData) re-runs WriteState/WriteDynamicState for every slot. A membership "
+            + "rebuild (new or restructured tree) calls the same writers on its own.")]
+    private static void InvalidateAllPartStates()
+    {
+        try
+        {
+            if (Universe.CurrentSystem is not { } system) return;
+            foreach (var astronomical in system.All.UnsafeAsList())
+                if (astronomical is Vehicle vehicle)
+                    vehicle.Parts.RenderData.InvalidateStates();
+        }
+        catch (Exception ex)
+        {
+            ModLog.Log.Debug($"gatOS paint state invalidation skipped: {ex.Message}");
+        }
     }
 
     private void RebuildPartIndex()
     {
         _partVessels.Clear();
         _livePartKeys.Clear();
+        var hash = new HashCode();
         if (Universe.CurrentSystem is { } system)
             foreach (var astronomical in system.All.UnsafeAsList())
                 if (astronomical is Vehicle vehicle)
                     foreach (var part in vehicle.Parts.Parts)
                     {
-                        Index(part, vehicle.Id, _livePartKeys);
-                        foreach (var subpart in part.SubParts) Index(subpart, vehicle.Id, _livePartKeys);
+                        Index(part, vehicle.Id, ref hash);
+                        foreach (var subpart in part.SubParts) Index(subpart, vehicle.Id, ref hash);
                     }
+        hash.Add(_partVessels.Count);
+        _indexHash = hash.ToHashCode();
         _store.PruneParts(_livePartKeys);
     }
 
-    private void Index(Part part, string vesselId, ISet<PartPaintKey> live)
+    private void Index(Part part, string vesselId, ref HashCode hash)
     {
         _partVessels[part] = vesselId;
-        live.Add(new(vesselId, part.InstanceId));
+        _livePartKeys.Add(new(vesselId, part.InstanceId));
+        hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(part));
+        hash.Add(vesselId);
     }
 
     private CommandResult SetKittensEnabled(bool enabled)

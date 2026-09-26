@@ -838,6 +838,12 @@ public sealed partial class Mod
     ///     mutation is visible to the physics solvers that same tick. Called from the Harmony
     ///     prefix on <see cref="Universe.ExecuteNextVehicleSolvers"/> — still the game thread
     ///     (threading rule 1).
+    ///     <para>Un-anchored Harmony target, re-verified at 2026.9.22.5482: still the single
+    ///     <c>(double dtPlayer, SimStep simStep)</c> overload (<c>Universe.cs:2034</c>). <c>Program.PrepareFrame</c>
+    ///     now calls <c>PartTree.FlushDirtyDerived()</c>/<c>FlushDirtyResourceManagers()</c> immediately before it
+    ///     (<c>Program.cs:2209-2211</c>, rev 5464), so this prefix runs after KSA's lazy derived-data flush; bubble
+    ///     eviction moved onto the worker (rev 5476). The prefix still precedes <c>PrepareVehicleWorkers</c> →
+    ///     <c>FlightComputer.CopyFrom</c>, so Solver-phase setpoints are still captured.</para>
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     internal void DrainSolverCommands()

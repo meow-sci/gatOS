@@ -95,14 +95,31 @@ update's blast radius is small and discoverable. The procedure:
    (`EOPNOTSUPP`), logs once, and shows up in `/sim/status/accessors`. The guest sees a failed sensor,
    not a crashed mod. This is the safety net for the things steps 2–3 miss.
 
-> **Current upgrade: 2026.9.7.5402 → 2026.9.10.5438**, audited 2026-09-14.
+> **Current upgrade: 2026.9.10.5438 → 2026.9.22.5482**, audited 2026-09-25.
+> The gapless 43-revision review (revs 5439–5481; 227 changed decomp/Content files) found **four
+> compile errors, all one break**: rev 5456 deleted `PartModel{,Dynamic}Module.UpdateRenderData` and moved
+> part rendering into a per-tree `PartTreeRenderData` cache whose rasterized `Compose` path no longer
+> calls `AddInstance` — so the paint seam was also broken **behind** the compile error. Part paint now
+> postfixes the two private cached-state writers (`WriteState`/`WriteDynamicState`) and invalidates trees
+> on change; the dead IVA editor `AddInstance` postfix was removed. Two pre-existing issues were fixed
+> alongside: `orbit/apoapsis` (and the body mirror) now reads `0` on an unbound orbit instead of a finite
+> negative `a·(1+e)`, and `engines/<n>/min_throttle` now refreshes the cached tree-wide throttle floor.
+> Everything else held with no code change — notably `thug_life`'s postfix, which binds `commandBuffer`
+> by name on the re-signatured `RenderMainPass(IViewport, CommandBuffer)`. Binary survey 482/482 types
+> and 1081/1081 member refs; the new paint seam was additionally **executed** against the real 5482 IL
+> (18/18). Build 0 warnings; **1647 passed / 12 skipped / 0 failed**. Full evidence:
+> [5482 pass](ksa-assets-and-versions.md#5482-pass). **Live validation remains pending** in
+> [the 5482 checklist](../docs/VALIDATION.md#ksa-5482-upgrade).
+>
+> **Prior applied result: 2026.9.7.5402 → 2026.9.10.5438**, audited 2026-09-14.
 > The gapless 35-revision source/Content review found eight compile errors (particle gravity,
 > exhaust propagation, Vulkan enum spelling), plus compiler-invisible paint/IVA overload and sticker
 > resolve breaks. Fixes preserve dent descriptors and skip color-only sticker resolves. Scale docs
 > now distinguish live transform writes from physical rescaling on save reload. All other control
 > phases remain valid. Full evidence and final automated results:
-> [5438 pass](ksa-assets-and-versions.md#5438-pass). **Live validation remains pending** in
-> [the 5438 checklist](../docs/VALIDATION.md#ksa-5438-upgrade).
+> [5438 pass](ksa-assets-and-versions.md#5438-pass). Live checklist:
+> [5438](../docs/VALIDATION.md#ksa-5438-upgrade). **5438 is the previous audited baseline for the 5482
+> pass.**
 >
 > **Prior applied result of this playbook:** the **2026.8.22.5348 → 2026.9.7.5402** update was run
 > through it on 2026-09-02 — **three compile breaks fixed, one `/sim` node retired, two new High-risk
@@ -481,13 +498,13 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/Ksa/Readers/BodyReader.cs` | 3 `[KsaAnchor]` reads (celestial catalog; statics cached per body — GP3) | sampler-level guard |
 | `Game/Ksa/Readers/PartsReader.cs` | 1 `[KsaAnchor]` read (parts + nested subparts; welds anchor picker) | per-call try/catch; `VesselParts` sampler gate |
 | `Game/Ksa/Actuators/*.cs` (15 anchored files; `IvaActuator.cs` delegates to `Render/IvaForceRender.cs`, no anchor) | 40 `[KsaAnchor]`s (all controls + debug; incl. `ScaleActuator`'s recursive `Part.Scale` write + best-effort read, `AudioActuator`'s 3 FMOD anchors — `GameAudio.System` create/play + the per-frame channel tick — and `CameraActuator.Focus`, **rebound** at C1.4 to set follow on **both** the base and map cameras) | `KsaCatalog` try/catch per command; `AudioActuator.Tick` under the `_audioDead` session latch |
-| `Game/Ksa/Render/IvaForceRender.cs` | 1 `[KsaAnchor]` (`always_render_iva` cheat; own dynamic `gatos.iva` Harmony) | per-postfix try/catch; restored + unpatched on disable/unload |
+| `Game/Ksa/Render/IvaForceRender.cs` | 1 `[KsaAnchor]` (`always_render_iva` cheat; own dynamic `gatos.iva` Harmony — since 5482 a single `PartModel` ctor postfix; the render gate lives in `PartTreeRenderData.Compose`) | per-postfix try/catch; restored + unpatched on disable/unload |
 | `Game/Ksa/Render/VesselForceRender.cs` | 3 `[KsaAnchor]` (per-vessel `always_render` override; own dynamic `gatos.always_render` Harmony prefixes on `Vehicle.GetWorldMatrix`/`UpdateRenderData`, installed only while ≥ 1 vessel is marked) | per-prefix try/catch → stock cull; install throw → `KsaCatalog` degrade latch; unpatched on last unmark/prune/unload |
 | `Game/Ksa/Welds/{WeldEngine,WeldManager}.cs` | 4 `[KsaAnchor]` (per-frame `Teleport` driver + registry/liveness) | per-weld try/catch in the driver; `_weldsDead` session latch |
 | `Game/Ksa/Iva/*.cs` (`InteriorGeometry`×1, `FloatingObject`×3, `IvaPhysicsManager`×6; `CabinSim`/`CabinCallbacks`/`CabinTuning` touch **Bepu only**, no KSA type) | 10 `[KsaAnchor]` (IVA cabin physics: the interior-mesh walk, the per-frame SubPart transform driver, adopt-time measurement/lookup, the forcing-term reads + park gates) | master switch off by default (nothing constructed); per-vessel try/catch in the driver → that cabin dropped; `_ivaDead` session latch releases everything and disables the feature |
 | `Game/Ksa/ThugLife/*.cs` (`ThugLifeTextureFactory`×1, `ThugLifeQuadRenderer`×2, `ThugLifeRenderPatches`×1, `ThugLifeManager`×4; `ThugLifeEntry`/`ThugLifeTexturePattern` have none) | 8 `[KsaAnchor]` render-internals (`thug_life` cheat: Vulkan GPU build, per-frame anchor math, dynamic `gatos.thug_life` Harmony postfix on `SuperMeshRenderSystem.RenderMainPass`) — **deepest / highest-churn coupling** | per-frame try/catch; self-disables (`Active=false`) on any GPU fault; unpatched + GPU freed on disable/unload |
-| `Game/Ksa/Paint/{PaintManager,EvaPaintBridge}.cs` | 4 `[KsaAnchor]` (vehicle shader lifecycle + EVA material clones) | dynamic `gatos.paint` Harmony only while `paint/parts/enabled=1`; conditional restore |
-| `Game/Ksa/Paint/{PartPaintPatches,PaintRuntime}.cs` | **0** `[KsaAnchor]`, but KSA types are present: `PartPaintPatches` resolves and hosts the seven part-paint Harmony methods (`ShaderModuleUtils.FromFile`, the `PartModel{,Dynamic}Module.UpdateRenderData` prefix/finalizer pairs, the `PartModel{,Dynamic}.AddInstance` prefixes) and `PaintRuntime` is the single game-thread owner they call back into (`Part`) | the targets themselves are anchored on `PaintManager`; enable is preflighted and transactional, a foreign compiler prefix is a hard conflict, and disable/unload removes only the stored gatOS methods |
+| `Game/Ksa/Paint/{PaintManager,EvaPaintBridge}.cs` | 5 `[KsaAnchor]` (vehicle shader lifecycle, the part state-bit contract, the `PartTreeRenderData.InvalidateStates()` tree sweep, EVA material clones) | dynamic `gatos.paint` Harmony only while `paint/parts/enabled=1`; conditional restore; a postfix throw disarms (`degraded`) |
+| `Game/Ksa/Paint/{PartPaintPatches,PaintRuntime}.cs` | 1 `[KsaAnchor]` (High, compiler-blind): `PartPaintPatches` resolves and hosts the three part-paint Harmony methods — the `ShaderModuleUtils.FromFile` prefix and, **since 5482**, postfixes on the private `PartTreeRenderData.WriteState`/`WriteDynamicState` that OR bits into the nested `Batch`/`DynamicBatch.StateBitFlags` slots via `FieldRef` (replacing the deleted `PartModel{,Dynamic}Module.UpdateRenderData` prefix/finalizer pairs and the `AddInstance` prefixes); `PaintRuntime` is the single game-thread owner they call back into (`Part`) | any target/field miss resolves to null and arming refuses (`EOPNOTSUPP`, `degraded`); enable is preflighted and transactional, a foreign compiler prefix is a hard conflict, and disable/unload removes only the stored gatOS methods and invalidates every tree so stock bits return next frame |
 | `Game/Ksa/Paint/ClutterTextureBridge.cs` | 2 `[KsaAnchor]` (one High `BindlessTextureLibrary.SetTexture` re-point of an **existing** stock slot, one Medium ground-clutter catalog walk reusing `FxReflect.Terrain`) | revision-gated tick; every slot restored before anything of ours is destroyed |
 | `Game/Ksa/Paint/UserTextureGpu.cs` | 1 `[KsaAnchor]` (the shared decode → `SimpleVkTexture` upload idiom + the deferred-destroy `RetireQueue`; **both** the clutter bridge and stickers use it, so there is one implementation and one anchor) | per-upload try/catch → the feature's health latch; images destroyed only after `MaxFramesInFlight + 1` ticks |
 | `Game/Ksa/Paint/Stickers/StickerRenderPatches.cs` | 1 `[KsaAnchor]` (dynamic `gatos.stickers` Harmony **postfix** on `RenderTarget.ResolveAttachments`) | `MissingMethodException` at install → feature degrades; per-postfix try/catch logs once; main-viewport identity filters |
@@ -506,9 +523,11 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/BrutalModLogger.cs` | `Brutal.Logging` sink | try/catch at install |
 | `Mod.cs`, `ModAssets.cs` | StarMap.API attributes, purrTTY contract — **no KSA game types** | n/a (mod-ecosystem ABI, not KSA) |
 
-Detail and per-member break-impact: the four `ksa-*.md` pages. **The census totals 175 `[KsaAnchor]`s**
-(the one further occurrence in `Game/Ksa/KsaAnchor.cs` is the attribute's own doc comment, not a
-binding). The **5348** pass added exactly one — `DisplayRenderPatch.UiPixelCullingPrefix`, the
+Detail and per-member break-impact: the four `ksa-*.md` pages. **The census totals 178 `[KsaAnchor]`s**
+at 5482 (176 before the pass; the one further occurrence in `Game/Ksa/KsaAnchor.cs` is the attribute's own
+doc comment, not a binding). The **5482** pass added two, both in part paint — the compiler-blind
+`PartTreeRenderData.WriteState`/`WriteDynamicState` + `StateBitFlags` seam on `PartPaintPatches.Resolve`
+and the `PartTreeRenderData.InvalidateStates()` sweep on `PaintManager`. The **5348** pass added exactly one — `DisplayRenderPatch.UiPixelCullingPrefix`, the
 first anchor in the project whose KSA target did not exist in the previous build (rev 5283's
 `UiCoverageMaskSystem`), which is why it needed a new row everywhere anchors are mirrored rather
 than a re-stamp. It grew with each ported cheat: the sampler's `Universe`/`VersionInfo` reads were anchored in
@@ -578,7 +597,13 @@ compiler can't see them. They are listed in [`ksa-runtime-coupling.md`](ksa-runt
 
 Paint adds a game-free rule/transform domain (`gatOS.Paint`) and one high-churn KSA adapter
 (`Game/Ksa/Paint`). It covers opt-in vehicle shader transformation and reversible shared/individual
-EVA coloration across 9P, HTTP, MQTT, and MCP. Its authoritative maintenance map is
+EVA coloration across 9P, HTTP, MQTT, and MCP. **Since 5482** the part half writes into KSA's cached
+per-tree render data: Harmony postfixes on the private `PartTreeRenderData.WriteState`/`WriteDynamicState`
+OR the colour bits into the pooled batch slots, and `PaintManager.SyncPartStates` calls the public
+`PartTreeRenderData.InvalidateStates()` on every loaded tree whenever the rule snapshot or the Part→vessel
+index changes (and on arm/disarm), at an idle cost of one reference and one integer compare per tick. The
+pre-5482 per-submission seam (module `UpdateRenderData` scope + `AddInstance` prefix) no longer exists in
+KSA ([5482 pass](ksa-assets-and-versions.md#5482-pass)). Its authoritative maintenance map is
 [`plans/PAINT_ASBUILT.md`](../plans/PAINT_ASBUILT.md); every KSA upgrade must run that document's
 shader/state-bit/material-clone audit and the paint checklist in `docs/VALIDATION.md`.
 

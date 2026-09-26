@@ -21,6 +21,7 @@ which is a nicer way of saying that a 50 km/s impulse will faithfully do exactly
 
 Teleport and impulse require a live parent body. Impulse is instantaneous, spends no propellant, and
 accepts zero as a no-op. A body-frame impulse follows the vessel's current body axes.
+Since KSA 2026.9.22.5482 `refill_fuel` also re-lights an engine that had run dry.
 
 ## Welds and cosmetics
 
@@ -61,7 +62,11 @@ warp unless `run_outside_iva=1`. `iva.impact`, `iva.escape`, and `iva.release` a
 files. Each family has `help`, JSON discovery, field leaves with inclusive ranges, and `reset`.
 Engine-plume changes are per template, plume trail is global, clouds are body/layer/type scoped, and terrain
 is body-scoped with global `wireframe`. Since KSA 5438, global plume-trail raymarch controls also
-affect explosion volumes; `clear` removes trail geometry only. FX values are float32 on read-back, session-only, and restored on
+affect explosion volumes; `clear` removes trail geometry only. Since KSA 2026.9.22.5482, trails and explosions also draw on
+airless bodies and with clouds off, and explosions have their own graphics setting, so those controls reach
+more of the scene. The cloud renderer now exists whenever clouds, trails or explosions are on: with clouds
+off, cloud writes apply but draw nothing until clouds return. Terrain `min_height`/`max_height` edits reach
+the distant-planet sphere only when that renderer is rebuilt. FX values are float32 on read-back, session-only, and restored on
 unload. Use `help` and the root specification for each individual range and unit; `*_km`, `*_deg`, `*_px`,
 and channel names tell the truth more reliably than an assumption that every number is meters.
 

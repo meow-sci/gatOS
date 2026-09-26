@@ -57,7 +57,7 @@ statics (+ `VersionInfo.Current`).
 | `attitude/rates` | `:85` | `Vehicle.BodyRates` | `KSA/Vehicle.cs` | rad/s `x y z` | Low | ✅ |
 | `altitude/{barometric,radar}` | `:102,103` | `Vehicle.GetBarometricAltitude()` / `GetRadarAltitude()` | `KSA/Vehicle.cs` | m | Low | ✅ |
 | `mass/{total,dry,propellant}` | `:104-106` | `Vehicle.TotalMass` / `InertMass` / `PropellantMass` | `KSA/Vehicle.cs` | kg | Low | ⚠️ ˢ · ✅ **5348** (aggregation moved to `IInertMass`, values unchanged — see [5348 findings](#5348-findings)) |
-| `orbit/{apoapsis,periapsis,ecc,inc,sma,period}` | `:75-82` | `Vehicle.Orbit` elements (radii→alt; inc rad→deg) | `KSA/Orbit.cs` | m / – / deg / s | Low | ✅ |
+| `orbit/{apoapsis,periapsis,ecc,inc,sma,period}` | `:75-82` | `Vehicle.Orbit` elements (radii→alt; inc rad→deg); `Orbit.IsBound()` gates `apoapsis` | `KSA/Orbit.cs` (`:1180`, `:1819`) | m / – / deg / s | Low | ✅ · ⚠️ **5482: `apoapsis` is now `0` on an unbound (hyperbolic/parabolic) orbit** via `Sanitize.ApoapsisToAltitude` — KSA's state-vector build stores `a·(1+e)`, finite and large-negative when `a < 0`, which leaked as an altitude (pre-existing; KSA fixed its own manifest the same way at rev 5439). See [5482 findings](#5482-findings) |
 | `battery/{charge,fraction}` | `:86,339` | `Vehicle.Parts.Batteries.GetState(b).Charge.Value()` ÷ `b.MaximumCapacity.Value()` | `KSA/Battery.cs` | fraction 0..1 | Low | ✅ (G2) |
 | `ctl/lights` (readback) | `:112` | `Vehicle.LightsOn` | `KSA/Vehicle.cs` | 0/1 | Low | ✅ |
 | `ctl/engine` (readback) | `:125` | `Vehicle.IsSet(VehicleEngine.MainIgnite, false)` | `KSA/Vehicle.cs` | 0/1 | Medium | ✅ ᵈ |
@@ -114,9 +114,9 @@ are cached per vehicle in `Readers/AnimationLinks.cs` (GP3), rebuilt on module-c
 |---|---|---|---|---|---|
 | `position/ecl`, `velocity/cci`, `com` | `:154-156` | `Vehicle.GetPositionEcl()`, `GetVelocityCci()`, `CenterOfMassAsmb` | `KSA/Vehicle.cs` | Low | ✅ |
 | `navball/{pitch,yaw,roll,twr,deltav,frame,speed}` | `:223` | `Vehicle.NavBallData.{AttitudeAngles(int3 deg),ThrustWeightRatio,DeltaV,Frame,Speed}` | `KSA/NavBallData.cs` | Medium | ⚠️ **5117: renamed + semantic drift** (rev 5114) — see below; ⚠️ **5348: `deltav`/`twr` values corrected** (rev 5318) — see [5348 findings](#5348-findings) |
-| `environment/{pressure,density,dynamic_pressure,ocean_density,terrain_radius,accel,angular_accel,g_force}` | `:235` | `Vehicle.PhysicsEnvironment.{AtmosphericPressure,AtmosphericDensity,OceanDensity,TerrainRadius}`; `PhysicalAtmosphereReference.GetDynamicPressure(vehicle)`; `Vehicle.AccelerationBody`/`AngularAccelerationBody` | `KSA/PhysicsEnvironment.cs`, `KSA/Vehicle.cs` | Low | ✅ |
+| `environment/{pressure,density,dynamic_pressure,ocean_density,terrain_radius,accel,angular_accel,g_force}` | `:235` | `Vehicle.PhysicsEnvironment.{AtmosphericPressure,AtmosphericDensity,OceanDensity,TerrainRadius}`; `PhysicalAtmosphereReference.GetDynamicPressure(vehicle)`; `Vehicle.AccelerationBody`/`AngularAccelerationBody` | `KSA/PhysicsEnvironment.cs`, `KSA/Vehicle.cs` | Low | ✅ · ⚠️ **5482:** positional values now use the closest-parent-relative position (rev 5451 wrong-body fix), and `TerrainRadius` comes from a `TerrainRadiusCache` that resamples after ~0.25 m of lateral motion (rev 5460) |
 | `orbit/{lan,argpe,true_anomaly,time_to_ap,time_to_pe,next_patch}` | `:199` | `Orbit.{LongitudeOfAscendingNode,ArgumentOfPeriapsis,StateVectors.TrueAnomaly.Degrees}`; `Vehicle.Next{Apoapsis,Periapsis,PatchEvent}Time` | `KSA/Orbit.cs`, `KSA/Vehicle.cs` | Low | ✅ |
-| `encounters` (NDJSON) | `:573` | `Vehicle.Patch.Encounters`; `Encounter.{Body.Id,GameTime,ClosestDistance}` | `KSA/PatchedConic.cs`, `KSA/Encounter.cs` | Medium | ✅ re-verified (static) 2026-08-23 against `2026.8.22.5348` (rev 5266 changed a *different* list) |
+| `encounters` (NDJSON) | `:573` | `Vehicle.Patch.Encounters`; `Encounter.{Body.Id,GameTime,ClosestDistance}` | `KSA/PatchedConic.cs`, `KSA/Encounter.cs` | Medium | ✅ re-verified (static) 2026-08-23 against `2026.8.22.5348` (rev 5266 changed a *different* list) · ⚠️ **5482: population drift** — `ConjunctionAssessment` samples with the new `ComputeUnimodalIntervalSeconds` (`0.5/(1/P1+1/P2)`, floored at `tMax/512`) |
 
 ### Writable-setpoint read-backs (so `ctl/*` files report the real state)
 
@@ -279,6 +279,11 @@ after the `finally`, so the quad draws are attributed outside that GPU tag; **pr
 no mis-draw**). ⚠️ **The crew-portrait viewports are no longer unconditionally `Visible`** (revs
 5276/5295), so on those two viewports these reads may simply never run — evidence on the write side,
 [`ksa-write-surface.md#5348-findings`](ksa-write-surface.md#5348-findings).
+Re-verified (static) 2026-09-25 against `2026.9.22.5482`: the postfix these reads run inside now hooks
+`RenderMainPass(IViewport, CommandBuffer)` (rev 5474; bound by parameter name, no code change — see
+[`ksa-write-surface.md#5482-findings`](ksa-write-surface.md#5482-findings)); `Part.{PositionEgo,Asmb2Ego,
+MatrixAsmb2Ego,InstanceId}` and `Vehicle.{GetMatrixAsmb2Ego,Asmb2Ego}` keep their signatures (lines moved
+only, e.g. `Part.cs:1203/1208/1213`); `Program.{GetRenderCamera,RenderedViewport,MainViewport}` intact.
 
 ---
 
@@ -1157,7 +1162,7 @@ differ, only change the values it observes. See [`non-ksa-surface.md`](non-ksa-s
 | `system/{name,home,sun}` | `:35` | `WorldSun.Id`, `HomeBody.Id` | `KSA/Universe.cs` | string | Low | ✅ |
 | `bodies/<id>/{id,class,parent,children,mass,radius,mu,soi,rotation_rate}` | `:42` | `Celestial.{Id,Class,Parent,Children,Mass,MeanRadius,SphereOfInfluence,GetAngularVelocity}`; `IParentBody.Mu` | `KSA/Celestial.cs`, `KSA/IParentBody.cs` | mixed SI | Low | ✅ |
 | `bodies/<id>/position/ecl`, `velocity/ecl` | `:71,72` | `Celestial.GetPositionEcl()` / `GetVelocityEcl()` | `KSA/Celestial.cs` | m, m/s (ECL) | Low | ✅ |
-| `bodies/<id>/orbit/{...}` | `:48` | `Celestial.Orbit` elements (radii→alt; angles rad→deg) | `KSA/Orbit.cs` | m / deg / s | Low | ✅ |
+| `bodies/<id>/orbit/{...}` | `:48` | `Celestial.Orbit` elements (radii→alt; angles rad→deg); `Orbit.IsBound()` gates `apoapsis` | `KSA/Orbit.cs` | m / deg / s | Low | ✅ · 5482: `apoapsis` shares the vessel `IsBound()` gate (`0` when unbound) for consistency |
 | `bodies/<id>/atmosphere/{present,height,scale_height,sea_level_pressure,sea_level_density}` | `:98` | `IParentBody.GetAtmosphereReference().Physical.{Height,ScaleHeight,SeaLevelPressure,SeaLevelDensity}` | `KSA/AtmosphereReference.cs` | SI | Medium | ✅ |
 | `bodies/<id>/ocean/{present,density}` | `:110` | `IParentBody.GetOceanReference().Density` | `KSA/OceanReference.cs` | kg/m³ | Medium | ✅ |
 | (star) | `:81` | `StellarBody.{Id,Mass,MeanRadius,SphereOfInfluence,GetAngularVelocity}`; `IParentBody.Mu` | `KSA/StellarBody.cs` | SI | Low | ✅ |
@@ -1275,6 +1280,41 @@ tessellation displacement, so the surface point can be off by decimetres near th
 projection box's depth absorbs that entirely, which is exactly why this is a projected decal and not
 a flat quad. Exact members and baseline are in
 [`plans/STICKERS_PLAN.md`](../plans/STICKERS_PLAN.md).
+
+## 5482 read findings {#5482-findings}
+
+Playbook pass 2026-09-25, `2026.9.10.5438` → `2026.9.22.5482` (gapless, revs 5439–5481). **No read
+binding needed relocation; one pre-existing value leak fixed; the rest is inherited drift.** Full
+evidence: [5482 pass](ksa-assets-and-versions.md#5482-pass).
+
+- ✅ **`orbit/apoapsis` / `bodies/<id>/orbit/apoapsis` on escape trajectories — fixed (code change).**
+  `Orbit.cs:1637` (identical at 5438) stores `apoapsis = a·(1+e)` for a state-vector hyperbolic orbit:
+  finite and large-negative, so `Sanitize.RadiusToAltitude` (which only scrubs NaN/Inf) passed it through.
+  Rev 5439 fixed exactly this in KSA's Universe Manifest with an `Orbit.IsBound()` gate. gatOS now routes
+  both readers through the game-free `Sanitize.ApoapsisToAltitude(radius, meanRadius, isBound)` →
+  `0` when unbound, matching `orbit/time_to_ap`'s "0 when none". The new `Orbit.ApoapsisAltitude`/
+  `PeriapsisAltitude` are plain `radius − MeanRadius` and would change nothing, so they are not used.
+- ⚠️ **Encounters (population drift).** New sampling interval in `ConjunctionAssessment` (shared with
+  `BubbleMergePredicate`): `encounters` rows and their `closest_distance`/`ut` can differ from 5438.
+- ⚠️ **Lazy part-tree derived data (rev 5464).** `SubstanceStores`/`StaticMassPropsAsmb`/`EngineThrottleMin`
+  became `EnsureDerived` getters; dirty trees flush in `Program.PrepareFrame`. The fields gatOS reads
+  (`EngineController.VacuumData`, `SolidMotor.Stack`, `tank.Moles`, `Vehicle` mass `_props`) are refreshed
+  by that flush, so after a structural change `engines/<n>/{thrust_vac,isp}` and `srb/<n>/stack_valid` can
+  lag **one frame**. `RocketControllerData.ComputeFromCores` lost an unused CoM parameter; values unchanged.
+- ⚠️ **Environment.** Closest-parent-relative positional values (rev 5451 wrong-body fix) and a cached
+  `TerrainRadius` resampled after ~0.25 m lateral motion (rev 5460).
+- ⚠️ **Content (rev 5475, `Content/Core/CoreFairingAGameData.xml`).** `NoseconeC/E/F/G/H` and the two
+  interstage bridges gained a `<Tank>` (some the new `ConicalTank` template); `InterstageBridge2W1WB`/
+  `3W2WB` **lost their `<Decoupler>`**. On craft using them, `tanks/<n>` gains rows and `decouplers/<n>`
+  loses rows (later ordinals shift); `parts/` membership is unchanged. Cylindrical tank capacity is
+  analytically unchanged (`ComputeCylindricalTank` now delegates to the conical path with equal radii).
+- ⚠️ **On-rails.** Revs 5455/5479 put more lone vessels on rails, which may change `environment`
+  acceleration/g-force and body-rate readings for those vessels (live check).
+- ✅ **Verified clean.** Module/state access (`Modules.Get<T>`, `TryGetTypeList`, `States.GetModuleAndState`)
+  unchanged; `Part.Tree` became nullable but gatOS never reads it; `NavBallData`, `FlightComputer`,
+  `Encounter`, `PatchedConic`, `Situation`, `Celestial`, `StellarBody`, atmosphere/ocean references,
+  `VersionInfo` and every module state struct gatOS reads are byte-identical; no body/electrical XML
+  changed; targets (revs 5462/5463) and the galactic plane (rev 5469) are not read by gatOS.
 
 ## 5438 read findings {#5438-findings}
 

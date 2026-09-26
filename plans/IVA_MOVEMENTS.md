@@ -251,7 +251,11 @@ Three facts make driving these per-frame the right rendering mechanism:
 
 1. **The renderer reads them every frame.** `PartModelModule.UpdateRenderData`
    (`PartModelModule.cs:79`) recomputes `Parent.MatrixAsmb2Ego(...)` and pushes a fresh
-   `PerInstanceData` each frame — there is no dirty-tracking to defeat. Lighting, PBR, ray tracing
+   `PerInstanceData` each frame — there is no dirty-tracking to defeat. *(KSA 5482, rev 5456: that
+   method is gone and part matrices are now **cached** in `PartTreeRenderData`. The pose setters used
+   here still call `Part.ResetCachedPosMatrixValues()`, which now also calls
+   `Tree?.RenderData.InvalidateTransforms()` (`Part.cs:1243`), so a written pose still renders on the
+   next frame — at the price of a whole-tree transform rewrite per frame while an object floats.)* Lighting, PBR, ray tracing
    and IVA gating all follow for free.
 2. **KSA already does exactly this.** `KeyframeAnimationModule.cs:237-243` and `SolarTracker.cs:97`
    both drive `PositionParentAsmb`/`Asmb2ParentAsmb` off a stored rest pose

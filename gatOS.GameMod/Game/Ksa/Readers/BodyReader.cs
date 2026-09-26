@@ -77,11 +77,13 @@ internal static class BodyReader
     }
 
     [KsaAnchor("Celestial.{Id,Class,Parent,Children,Mass,MeanRadius,SphereOfInfluence,GetAngularVelocity,Orbit}; "
-               + "IParentBody.{Mu,GetAtmosphereReference,GetOceanReference}",
-        SourceFile = "KSA/Celestial.cs", Verified = "2026-06-12", Risk = ChurnRisk.Low,
+               + "IParentBody.{Mu,GetAtmosphereReference,GetOceanReference}; Orbit.IsBound()",
+        SourceFile = "KSA/Celestial.cs / KSA/Orbit.cs:1819", Verified = "2026-09-25",
+        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Low,
         Notes = "The session-constant catalog members (everything but GetPositionEcl/GetVelocityEcl) are "
             + "read once per body instance and cached (GP3); bodies are on rails, so the orbit elements "
-            + "are constants too.")]
+            + "are constants too. 5482: apoapsis is gated on Orbit.IsBound() (0 when unbound), the gate "
+            + "KSA's own Universe Manifest adopted at rev 5439; Celestial.cs is unchanged.")]
     private static BodySnapshot FromCelestial(Celestial c)
     {
         var statics = CelestialCache.GetValue(c, BuildCelestialStatics);
@@ -95,7 +97,7 @@ internal static class BodyReader
         {
             var parentRadius = parent.MeanRadius;
             orbit = new OrbitSnapshot(
-                Sanitize.RadiusToAltitude(o.Apoapsis, parentRadius),
+                Sanitize.ApoapsisToAltitude(o.Apoapsis, parentRadius, o.IsBound()),
                 Sanitize.RadiusToAltitude(o.Periapsis, parentRadius),
                 Sanitize.Finite(o.Eccentricity),
                 Sanitize.Finite(o.Inclination * RadToDeg),

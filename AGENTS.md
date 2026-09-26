@@ -74,18 +74,33 @@ cut.
 > solar link intact) + the pass record live in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope
 > pages; live re-check items appended to [`docs/VALIDATION.md`](docs/VALIDATION.md).
 >
-> **Current KSA upgrade → `2026.9.10.5438`** (2026-09-14, from audited 5402; 35 logged
-> revisions 5403–5437, no gap). Eight compile errors addressed in particle density/buoyancy,
-> exhaust propagation and Vulkan enum bindings; compiler-invisible paint/IVA `AddInstance` overload
-> ambiguity and sticker color-only resolve fixed. IVA preserves paired dent descriptors; paint
-> hooks the private shared submission overload. Scale writes remain transform-only, but KSA saves
-> top-level scale and now physically refreshes all loaded parts: do not promise reset on reload,
-> staging or undocking. Source, binary and automated validation details are maintained in
-> [`scope/ksa-assets-and-versions.md#5438-pass`](scope/ksa-assets-and-versions.md#5438-pass).
-> Full build: 0 warnings/errors; tests: 1646 passed / 12 skipped; docs: 123 pages built;
-> live rendering/flight checks remain pending in [`docs/VALIDATION.md`](docs/VALIDATION.md#ksa-5438-upgrade).
+> **Current KSA upgrade → `2026.9.22.5482`** (2026-09-25, from audited 5438; 43 logged revisions
+> 5439–5481, no gap). **One break, compiler-visible only in part:** rev 5456 moved part render data into
+> a cached per-tree `PartTreeRenderData`, deleting `PartModelModule`/`PartModelDynamicModule.UpdateRenderData`
+> (the 4 CS0117 errors, all in `PartPaintPatches.cs`) *and* making the rasterized static path bypass
+> `AddInstance` — so rebinding alone would have painted nothing. Paint now postfixes KSA's only two
+> cached-state writers (`WriteState`/`WriteDynamicState`) and invalidates every loaded tree
+> (`PartTreeRenderData.InvalidateStates()`) on arm/disarm, rule changes and Part→vessel index changes;
+> verified end-to-end against the shipped IL (18/18). Also: `orbit/apoapsis` + `bodies/<id>/orbit/apoapsis`
+> are now `0` when unbound (the finite negative `a·(1+e)` leak KSA fixed in its own manifest at 5439);
+> `engine.min_throttle` refreshes the cached `PartTree.EngineThrottleMin` clamp; `always_render_iva`'s
+> dead editor `AddInstance` postfix removed. `thug_life`'s `RenderMainPass` is now `(IViewport,
+> CommandBuffer)` but still binds by name. Inherited drift documented: rev 5475 turned seven
+> nosecone/adapter parts into tanks (two interstage bridges lost their decoupler → `tanks/`/`decouplers/`
+> ordinals shift), `debug/refill_fuel` now re-lights dry engines (5478), clouds FX writes no longer latch
+> `fx.cloud_renderer` degraded with clouds off but trails/explosions on (they always returned OK), terrain height edits miss distant spheres until rebuild.
+> Binary survey: 482/482 types, 1081/1081 member refs resolve. Full build 0 warnings/errors; tests
+> 1647 passed / 12 skipped. Pass record:
+> [`scope/ksa-assets-and-versions.md#5482-pass`](scope/ksa-assets-and-versions.md#5482-pass); live checks
+> pending in [`docs/VALIDATION.md`](docs/VALIDATION.md#ksa-5482-upgrade).
 >
-> **Prior KSA baseline → `2026.9.7.5402`** (upgrade-ksa playbook pass 2026-09-02, from 5348; the 5261 and 5348
+> **Prior KSA baseline → `2026.9.10.5438`** (2026-09-14, from 5402; 35 revisions, no gap). Eight compile
+> errors (particle density/buoyancy, exhaust propagation, Vulkan enum) plus compiler-invisible paint/IVA
+> `AddInstance` overload and sticker color-only resolve breaks, all fixed; scale writes stay transform-only
+> but reload refreshes physics. [5438 pass](scope/ksa-assets-and-versions.md#5438-pass); live checks in
+> [`docs/VALIDATION.md`](docs/VALIDATION.md#ksa-5438-upgrade).
+>
+> **Earlier KSA baseline → `2026.9.7.5402`** (upgrade-ksa playbook pass 2026-09-02, from 5348; the 5261 and 5348
 > passes are recorded in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 only). **Three compile breaks,
 > all fixed:** KSA deleted the `Viewport` class (→ `IViewport`/`IGameViewport`/`GameViewport` +
 > `ViewportRegistry`; the camera director's `Mode`/`FixedController` writes now go through a reflection
@@ -503,7 +518,7 @@ host.
    welds per-frame driver (`Mod.DriveWelds`, run in `[StarMapAfterGui] OnAfterUi` after
    `JobSystems.VehicleSolver.Wait()`) — it teleports each welded source onto its anchor and self-gates to
    a no-op when no welds exist, so it needs **no** Harmony patch. The `always_render_iva` cheat installs its
-   own dynamic `Harmony("gatos.iva")` patches **only while the toggle is on** (removed on disable/unload).
+   own dynamic `Harmony("gatos.iva")` patch (a `PartModel` ctor postfix) **only while the toggle is on** (removed on disable/unload).
    The **`thug_life` cheat** (`Game/Ksa/ThugLife/`) adds gatOS's only **render-thread draw injection**: a
    dynamic `Harmony("gatos.thug_life")` postfix on `SuperMeshRenderSystem.RenderMainPass` (which KSA runs on
    the *main* thread — the same thread as the GUI hooks and the command drain, per `.agents/skills/ksa/quad.md`)

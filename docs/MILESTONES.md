@@ -666,9 +666,10 @@ per-publish `SnapshotTextFile` memo handles concurrent readers on top.
 
 **`always_render_iva`** — global render cheat at `/sim/debug/always_render_iva` (`debug.always_render_iva`,
 Frame, vessel-agnostic) that forces interior (IVA) part meshes to render outside the IVA camera by flipping
-`PartModelModule.Template.Internal=false`. `Game/Ksa/Render/IvaForceRender.cs` installs two Harmony patches
+`PartModelModule.Template.Internal=false`. `Game/Ksa/Render/IvaForceRender.cs` installs a Harmony patch
 on its **own** `Harmony("gatos.iva")` instance **only while enabled** (a `PartModel(PartModelModule.Template)`
-ctor postfix + an editor-only `PartModel.AddInstance` postfix) and bulk-flips/tracks the internal templates
+ctor postfix; the editor-only `PartModel.AddInstance` postfix was removed at KSA 5482, when the cached
+`PartTreeRenderData.Compose` stopped calling `AddInstance` on the rasterized path) and bulk-flips/tracks the internal templates
 over `PartModel.Instances`; disable restores the tracked templates and unpatches. `Actuators/IvaActuator.cs`
 is the thin actuator.
 
@@ -906,7 +907,8 @@ first so the accelerometer/rates/CoM readings are settled; `Timestep` runs with 
 so every Bepu callback is on that same thread.
 
 **Rendering is free**: an object drives a real shipped IVA prop **SubPart**'s
-`PositionParentAsmb`/`Asmb2ParentAsmb`, which `PartModelModule.UpdateRenderData` re-reads every frame —
+`PositionParentAsmb`/`Asmb2ParentAsmb`, which `PartModelModule.UpdateRenderData` re-reads every frame (since
+KSA 5482 the cached `PartTreeRenderData`, invalidated by those same setters via `ResetCachedPosMatrixValues`) —
 KSA's own idiom for a runtime-animated part transform (`KeyframeAnimationModule`, `SolarTracker`) — so
 lighting, PBR, ray tracing and IVA visibility gating all follow with no renderer code. **SubParts only,
 and binding**: `Part.GetReferenceWithChildren` serializes a `Transform` for top-level parts but not for
@@ -1183,9 +1185,11 @@ the single exception of T11.1 (QEMU win-x64 bundle) which was pulled forward and
 Vehicle and EVA paint is implemented as an isolated `gatOS.Paint` domain plus
 `Game/Ksa/Paint` adapter. It is opt-in at runtime, exposed through 9P/HTTP/MQTT/MCP, supports
 global/template/live-vessel/part precedence and shared/individual EVA semantic-material precedence,
-and owns a transactional shader patch lifecycle plus reversible GPU material clones. Maintenance
-contract and live checklist: [`plans/PAINT_ASBUILT.md`](../plans/PAINT_ASBUILT.md) and
-[`docs/VALIDATION.md`](VALIDATION.md).
+and owns a transactional shader patch lifecycle plus reversible GPU material clones. Since KSA 5482
+the part colour is ORed into KSA's cached `PartTreeRenderData` state slots by postfixes on its two
+private state writers, with a rules/part-index invalidation sync (rev 5456 removed the per-module
+`UpdateRenderData` + `AddInstance` seam). Maintenance contract and live checklist:
+[`plans/PAINT_ASBUILT.md`](../plans/PAINT_ASBUILT.md) and [`docs/VALIDATION.md`](VALIDATION.md).
 
 # Custom ground-clutter textures (post-paint, code complete; live validation pending)
 

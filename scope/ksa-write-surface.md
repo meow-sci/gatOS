@@ -77,7 +77,7 @@ target in 4750 (verify live). Full record: [`../plans/FIX_CURRENT_GAPS_PLAN.md`]
 | `ctl/shutdown` | `vessel.shutdown` | `EngineActuator.Shutdown` | `Vehicle.SetEnum(VehicleEngine.MainShutdown)` | `KSA/Vehicle.cs` | Medium | ✅¹ |
 | `ctl/engine` | `vessel.engine` | `EngineActuator.SetEngineOn` | ignite/shutdown by flag | `KSA/Vehicle.cs` | Medium | ✅¹ |
 | `engines/<n>/active` | `engine.active` | `EngineActuator.SetActive` | `EngineController.SetIsActive(vehicle,bool)` | `KSA/EngineController.cs` | Low | ✅ |
-| `engines/<n>/min_throttle` | `engine.min_throttle` | `EngineActuator.SetMinThrottle` | `EngineController.MinimumThrottle` (float) | `KSA/EngineController.cs` | Medium | ⚠️ **5348: the FC's floor fold inverted** `Min`→`Max` (rev 5317 era) — the write still lands, the *effective* floor moved; see [5438 findings](#5438-findings) |
+| `engines/<n>/min_throttle` | `engine.min_throttle` | `EngineActuator.SetMinThrottle` | `EngineController.MinimumThrottle` (float) + `PartTree.MarkDerivedDirty(DerivedData.RocketControls)` | `KSA/EngineController.cs`, `KSA/PartTree.cs` (`:480`, `:993-1017`), `KSA/Vehicle.cs` (`:1264`, `:2411`) | Medium | ⚠️ **5348: the FC's floor fold inverted** `Min`→`Max` (rev 5317 era) — the write still lands, the *effective* floor moved; **5482: the write now also dirties `RocketControls`** so the cached tree-wide `PartTree.EngineThrottleMin` (the manual-throttle clamp) refreshes before the next solve — a pre-existing staleness, see [5482 findings](#5482-findings) |
 | `ctl/lights` | `vessel.lights` | `LightActuator.SetMaster` | `Vehicle.LightsOn`; `PowerConsumer.{LightSwitch,LightIsActive}` | `KSA/Vehicle.cs`, `KSA/LightModule.cs` | Low | ✅ |
 | `animations/<n>/goal`, `solar/<n>/goal`, `lights/<n>/goal` | `animation.goal` | `AnimationActuator.SetGoal` | `KeyframeAnimationModule.TimeGoal = f × Shared.Duration` | `KSA/KeyframeAnimationModule.cs` | Low | ✅ |
 
@@ -257,7 +257,7 @@ deliberate by-id operation on an arbitrary vessel). Gated only by the `control_e
 | `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 5018 |
 |---|---|---|---|---|---|---|
 | `vessels/by-id/<id>/scale` | `vessel.scale` | `ScaleActuator.Set` (one-shot; > 0 only, `EINVAL` otherwise; KSA saves top-level scale; load may refresh physics) | recursive `Part.Scale = (f,f,f)` over `Vehicle.Parts.Parts`/`Part.SubParts` (public `double3` setter); KittenEva avatar via reflected `_renderable._characterAvatar.Core.Scale = f*0.01f` | `KSA/Part.cs`, `KSA/PartTree.cs`, `KSA/KittenEva.cs` | **High** (reflection + `GetType().Name` gate) | ⚠️ **5438: live write is transform-only; saved top-level scale can become physical on reload** — `ScaleTotal` composition went additive → multiplicative and the editor's own scaling became physical via `IRescale` (clamped 0.5×–2×); see [5348 findings](#5348-findings) |
-| `vessels/by-id/<id>/always_render` | `vessel.always_render` | `VesselForceRender.Set` (registry op; installs/removes the `gatos.always_render` prefixes — patches exist **only while ≥ 1 vessel is marked**) | prefixes on `Vehicle.GetWorldMatrix(Camera)` + `Vehicle.UpdateRenderData(IViewport,int)` (`Viewport` through 5348) reproduce the stock bodies minus the `< 1 px` cull: `Camera.GetPositionEgo`, `Vehicle.Body2Cce`, `Vehicle.GetMatrixAsmb2Ego`, `PartTree.UpdateRenderData`, `Vehicle.IsEditedVehicle` | `KSA/Vehicle.cs`, `KSA/Camera.cs`, `KSA/PartTree.cs` | Medium (dynamic Harmony; KittenEva override unaffected) | ✅ |
+| `vessels/by-id/<id>/always_render` | `vessel.always_render` | `VesselForceRender.Set` (registry op; installs/removes the `gatos.always_render` prefixes — patches exist **only while ≥ 1 vessel is marked**) | prefixes on `Vehicle.GetWorldMatrix(Camera)` + `Vehicle.UpdateRenderData(IViewport,int)` (`Viewport` through 5348) reproduce the stock bodies minus the `< 1 px` cull: `Camera.GetPositionEgo`, `Vehicle.Body2Cce`, `Vehicle.GetMatrixAsmb2Ego`, `PartTree.UpdateRenderData`, `Vehicle.IsEditedVehicle` | `KSA/Vehicle.cs`, `KSA/Camera.cs`, `KSA/PartTree.cs` | Medium (dynamic Harmony; KittenEva override unaffected) | ✅ 5482: stock `UpdateRenderData` (`:3713`) now calls the new public `IsLargeEnoughToRender(Camera)` (`:3707`, same math) plus a debug-only clutter-terrain overlay; the prefix still replaces the whole body; `GetWorldMatrix` (`:3694`) byte-identical |
 
 Read-backs ride `VesselReader.SampleCore` (always on): `scale` ← representative `Part.Scale.X`
 (best-effort, `1.0` fallback), `always_render` ← the gatOS registry (no KSA read). The patch lifecycle
@@ -277,7 +277,7 @@ debug_namespace`. Authority-exempt (own opt-in).
 | `debug/focus` | `camera.focus` | Frame | (same as `ctl/focus` — **both** viewport cameras since C1.4) | `KSA/Program.cs`, `KSA/IGameViewport.cs` | Medium | ✅ |
 | `debug/vessels/<id>/teleport` | `debug.teleport` | **Solver** | `Orbit.CreateFromStateCci` + `Vehicle.Teleport` + `Vehicle.UpdatePerFrameData` | `KSA/Orbit.cs`, `KSA/Vehicle.cs` | **High** | ⚠️ **moved Frame → Solver at 5348** (revs 5331/5339) — see [5348 findings](#5348-findings) |
 | `debug/vessels/<id>/impulse` | `debug.impulse` | **Solver** | `Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,TotalMass,Parent}` + `Orbit.CreateFromStateCci` + `Vehicle.Teleport` + `Vehicle.UpdatePerFrameData` (velocity-bump variant of the teleport pattern; Δv = J/`TotalMass` mirrors `Vehicle.Split`) | `KSA/Vehicle.cs`, `KSA/Orbit.cs` | **High** | ⚠️ **moved Frame → Solver at 5348** (revs 5331/5339) ⁷ |
-| `debug/vessels/<id>/refill_fuel` | `debug.refill_fuel` | **Solver** | `Vehicle.RefillConsumables()` | `KSA/Vehicle.cs` (`:2300`) | Medium | ✅ |
+| `debug/vessels/<id>/refill_fuel` | `debug.refill_fuel` | **Solver** | `Vehicle.RefillConsumables()` | `KSA/Vehicle.cs` (`:3201`), `KSA/ResourceManager.cs` (`:482-487`) | Medium | ✅ 5482 (rev 5478): `RefillAllTanks` now ends in `OnContentsReplaced` (moles flagged changed + `PerformanceSequences.SetDirty()`), so an engine that had **run dry relights** after a refill — previously it stayed dry |
 | `debug/vessels/<id>/refill_battery` | `debug.refill_battery` | **Solver** | `Battery.Refill(ref state)` via `Batteries.GetModuleAndAllMutableStatesForInitialization` | `KSA/Battery.cs` (`:59`) | Medium | ✅ |
 | `debug/vessels/<id>/docking/<n>/pushoff_impulse` | `debug.docking_pushoff` | Frame | `DockingPort.PushoffImpulse =` (live float, N·s) | `KSA/DockingPort.cs` | Medium | ✅ |
 
@@ -303,7 +303,7 @@ command `Token` (the source is the command's `vessel_id`).
 
 | `/sim` path | action key | actuator | KSA member | Decomp file | Risk | 5018 |
 |---|---|---|---|---|---|---|
-| `debug/always_render_iva` | `debug.always_render_iva` | `IvaActuator.SetAlwaysRender`→`IvaForceRender.SetEnabled` | `PartModel.Instances`; `PartModel..ctor(PartModelModule.Template)`; `PartModel.AddInstance(PerInstanceData,PerInstanceDent,IViewport,int)` (+ its 5402 `HasAny(RenderPartModels)` early-out, mirrored by the postfix); `PartModel.ViewportData.Get(PartModel,IViewport).{InstanceList,DentInstanceList}` (keyed on `ViewportId`); `PartModelModule.Template.{Internal,RayTracing}`; `PartModelModule.RaytracingMode.ShadowProxy`; `Program.{Editor,MainViewport}`; `IViewport.Mode`; `CameraMode.IVA` (render gate `PartModel.cs:470`) | `KSA/PartModel.cs`, `KSA/PartModelModule.cs`, `KSA/IViewport.cs` | **High** (private shared overload since 5438 — recheck live) | ✅ |
+| `debug/always_render_iva` | `debug.always_render_iva` | `IvaActuator.SetAlwaysRender`→`IvaForceRender.SetEnabled` | `PartModel.Instances`; `PartModel..ctor(PartModelModule.Template)` (protected; the only patch, a postfix); `PartModelModule.Template.Internal` flipped on every internal template; the render gate `(!Template.Internal \|\| viewport.Mode == CameraMode.IVA)` now evaluated per batch, per frame in `PartTreeRenderData.Compose` (`:1300`; the raytraced-IVA branch still reaches `PartModel.AddInstance`'s identical gate `:470-490`) | `KSA/PartTreeRenderData.cs`, `KSA/PartModel.cs`, `KSA/PartModelModule.cs` | **High** (template flag + render-cache path — recheck live, incl. VAB) | ⚠️ **5482 (rev 5456):** the editor-only `AddInstance` re-add postfix was **removed** — `Compose` writes rasterized instances straight into `ViewportData.InstanceList`, so it could never fire; the flip alone covers flight and editor trees. See [5482 findings](#5482-findings) |
 | `debug/vessels/<id>/weld` | `debug.weld_create` | `WeldManager.Create`→`WeldEngine.UpdateWeld` | `Vehicle.{GetPositionCci,GetVelocityCci,GetBody2Cci,BodyRates,CenterOfMassAsmb,Parent,Orbit,Teleport,UpdatePerFrameData}`; `Orbit.{OrbitLineColor,CreateFromStateCci}`; `IParentBody.GetCci2Cce`; `Universe.GetJobSimStep(double).NextTime`; `Program.GetPlayerDeltaTime`; `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` (subpart-aware). `<part_iid>` resolution (`WeldManager.FindPart`) searches `Vehicle.Parts.Parts` **and** each part's `Part.SubParts` — the anchor may be a top-level part or a subpart | `KSA/Vehicle.cs`, `KSA/Orbit.cs`, `KSA/Universe.cs`, `KSA/Part.cs` | **High** (per-frame `Teleport`) | ✅ |
 | `debug/vessels/<id>/weld_here` | `debug.weld_here` | `WeldManager.CreateAtCurrentPose`→`WeldEngine.CapturePose` | inverse transform: `Vehicle.{GetPositionCci,GetBody2Cci,CenterOfMassAsmb}`; `Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}` | `KSA/Vehicle.cs`, `KSA/Part.cs` | Medium | ✅ |
 | `debug/vessels/<id>/unweld` | `debug.weld_remove` | `WeldManager.Remove(vehicle.Id)` | (registry op — no KSA) | — | Low | ✅ |
@@ -391,7 +391,14 @@ single overload (its body now wrapped in a `TagRegion`, which only moves the GPU
 and `UnlitMesh.{vert,frag}` / `Common/Shared.glsl` are still byte-identical, but ⚠️ **the crew-portrait
 viewports are no longer unconditionally `Visible`** (revs 5276/5295), so the postfix can legitimately
 never run for them — the `Cameras & Crew` pass bit simply goes unused (see
-[5348 findings](#5348-findings));
+[5348 findings](#5348-findings)); re-verified (static) 2026-09-25 against `2026.9.22.5482` — ⚠️ rev 5474
+reworked the super-mesh buckets onto render-pass + view handles and the target became
+**`RenderMainPass(IViewport viewport, CommandBuffer commandBuffer)`** (`:364`). It is still the single
+overload, so gatOS's name-only lookup stays unambiguous, and the postfix binds `commandBuffer` **by
+parameter name**, so it moved to argument 1 with **no code change**; the three call sites now pass
+`RenderedViewport` (`Program.cs:4496/4756/4964`); the new `drawCommandCount == 0` early return sits inside
+`RenderPass`, so the postfix still runs; `UnlitMesh.{vert,frag}` / `Common/Shared.glsl` are unchanged (see
+[5482 findings](#5482-findings));
 **live quad-draw check still pending** (`docs/VALIDATION.md`). Pipeline
 assumptions + the new render-DLL references: [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md).
 
@@ -441,9 +448,12 @@ highest-value break check on this page.
 
 Driving `PositionParentAsmb`/`Asmb2ParentAsmb` per frame is KSA's **own** idiom for a runtime-animated
 part transform (`KeyframeAnimationModule` and `SolarTracker` do exactly this off a stored rest pose); both
-setters call `Part.ResetCachedPosMatrixValues`, and `PartModelModule.UpdateRenderData` re-reads the
-transform every frame, so there is no dirty flag to defeat and rendering/lighting/ray-tracing/IVA gating
-all follow for free. gatOS captures the rest pose into its **own** `FloatingObject` fields rather than
+setters call `Part.ResetCachedPosMatrixValues`, which since 5482 (rev 5456) also calls
+`Tree?.RenderData.InvalidateTransforms()` (`Part.cs:1243`), so the cached `PartTreeRenderData` rewrites the
+part→vehicle matrix (`ComputeMatrixAsmb2VehicleAsmb`, the same Scale×Rot×Trans composition) on the next
+`EnsureBuilt` — gatOS's pose writes use exactly the setters that raise that flag, so rendering/lighting/
+ray-tracing/IVA gating all still follow for free. (Perf note: while cabin physics runs, each adopted
+vessel pays one whole-tree transform rewrite plus a dent-cache refresh per frame.) gatOS captures the rest pose into its **own** `FloatingObject` fields rather than
 KSA's `PositionParentAsmbSafe`/`Asmb2ParentAsmbSafe` pair, so it cannot collide with the animation system.
 
 The `debug/iva/{count,stats,interior}` and `…/<id>/{vessel,part,name,template,position,velocity,
@@ -530,7 +540,7 @@ renderer re-reads every frame, so a write needs **no apply call**:
 
 | `/sim` path | action key | phase | KSA member | Decomp file | Risk | 5056 |
 |---|---|---|---|---|---|---|
-| `debug/plumetrail/render/*` | `debug.plumetrail_set` | Frame | `TrailActuator.TryWrite` → `VolumetricTrailRenderer.{MaxDistance,VoxelDepthFirstSliceThickness,MinStepSize,StepSizeDistanceScale,ErosionMaxDepth,ErosionEdgeSharpness,SelfShadowStepCount,LightBrightness,SkyAmbientBrightness}` (public `float`/`int` fields). ⚠️ **5402: `DebugTrailColor` (float4) was REMOVED** together with its debug-window row and the `VolumetricTrailParams.TrailColor` UBO slot; colour/density/lifetime are now per-`PlumeTrailTemplate` asset values passed on every `SubmitEmitter` — `render/trail_color` was **retired** ([5402 findings](#5402-findings)) | `KSA/VolumetricTrailRenderer.cs:172-192` | Medium | ✅ |
+| `debug/plumetrail/render/*` | `debug.plumetrail_set` | Frame | `TrailActuator.TryWrite` → `VolumetricTrailRenderer.{MaxDistance,VoxelDepthFirstSliceThickness,MinStepSize,StepSizeDistanceScale,ErosionMaxDepth,ErosionEdgeSharpness,SelfShadowStepCount,LightBrightness,SkyAmbientBrightness}` (public `float`/`int` fields). ⚠️ **5402: `DebugTrailColor` (float4) was REMOVED** together with its debug-window row and the `VolumetricTrailParams.TrailColor` UBO slot; colour/density/lifetime are now per-`PlumeTrailTemplate` asset values passed on every `SubmitEmitter` — `render/trail_color` was **retired** ([5402 findings](#5402-findings)) | `KSA/VolumetricTrailRenderer.cs:172-192` | Medium | ✅ · ⚠️ **5482 (revs 5446/5454): these global knobs now reach more of the scene** — explosions have their own game setting (`GameSettings.Graphics.Explosions` / `ShowExplosions()`, `VolumetricTrailRenderer.cs:246,302`), `ExplosionVolumeSystem.CanRender()` dropped its atmosphere requirement, and trails/explosions render on airless bodies and with clouds off (`CloudRenderer.RenderVolumetricTrailsOnly`); `MAX_VOLUMES` 64 → 2048. All nine fields and their defaults unchanged |
 | `debug/plumetrail/render/expansion_time` | `debug.plumetrail_set` | Frame | `TrailActuator.TryWrite` → `FxReflect.TrailSettings` → `PlumeTrailSettings.ExpansionTimeSeconds` (**two private hops**) | `KSA/VolumetricTrailRenderer.cs:166` → `KSA/PlumeTrailSegmentsManager.cs:19` → `KSA/PlumeTrailSettings.cs:11` | **High** | ⚠️ **5117: moved off the renderer** (revs 5059/5097), re-bound — see [5117 findings](#5117-findings) |
 | (renderer handle) | — | — | `FxReflect.Trail` → reflected `Program.Instance._volumetricTrailRenderer` (the only handle; latch `fx.trail_renderer`) | `KSA/Program.cs:160` | **High** | ✅ |
 | `debug/plumetrail/clear` | `debug.plumetrail_clear` | Frame | `Program.Instance.ClearPlumeTrails()` → `VolumetricTrailRenderer.ClearPlumeTrails()` | `KSA/Program.cs:4610`, `KSA/VolumetricTrailRenderer.cs:259` | Medium | ✅¹ |
@@ -544,7 +554,7 @@ renderer re-reads every frame, so a write needs **no apply call**:
 | `debug/clouds/bodies/<id>/**` | `debug.clouds_set` | Frame | `CloudActuator.TryWrite` → `CloudsReference.{OrbitTransitionStartAltitude,OrbitTransitionEndAltitude,MaxShadowsAltitude,Layers}`, `CloudLayerReference.{RotationSpeed,VolumetricCloud,TwoDimensionalCloud}`, `VolumetricCloudReference.{Detail.Size,ColorRgb,Noise.ScrollSpeed,Raymarching,CloudTypes}`, `RaymarchingReference.{Step.{Size,Scale,Maximum},LightDistance,LightSamples}`, `CloudTypeReference.{StartAltitude,Height,Density,EdgeSharpness,MultipleScatteringBrightness,CloudShape.InterpolateShapes}` — `DistanceReference`/`Vector3Reference`/`ColorRgbReference` **construct-new**, `DoubleReference.Value`/`Step.Scale`/`InterpolateShapes` in place | `KSA/CloudsReference.cs`, `CloudLayerReference.cs`, `VolumetricCloudReference.cs`, `TwoDimensionalCloudReference.cs`, `RaymarchingReference.cs`, `CloudTypeReference.cs`, `CloudShapeReference.cs`; editor at `KSA.Atmosphere.Rendering/CloudRenderer.cs:1370-1560` | **High** | ✅² |
 | (body resolution) | — | — | `AtmosphericBody.BodyTemplate.CloudsReference` over `Universe.CurrentSystem.All.UnsafeAsList()` | `KSA/AstronomicalTemplate.cs:60`, `KSA/Universe.cs` | Low | ✅ |
 | (apply after every write) | — | Frame | `CloudActuator.Apply` → `CloudLayerReference.OnDataLoad(Mod.Empty)`; `CloudRenderer._planetToCloudRenderData` (**public**) keyed on `Astronomical.Hash`; `CloudLayerRenderData.UpdateStaticData(Renderer, AtmosphericBody, CloudLayerReference, float, float, float)`; `CloudShadowsRenderer.PopulatePlanets(…, RenderTarget)` | `KSA.Atmosphere.Rendering/CloudRenderer.cs:1570-1595`, `CloudLayerRenderData.cs:347`, `CloudShadowsRenderer.cs:76` | **High** | ✅ |
-| (renderer + apply handles) | — | — | `FxReflect.Clouds` → reflected `Program.Instance._planetTransparenciesRenderer` → `GetCloudRenderer()` (public) — latch `fx.cloud_renderer`; `FxReflect.CloudApply` → reflected `CloudRenderer._renderer` / `_cloudShadowsRenderer` / `_worleyNoise3dTarget` — latch `fx.cloud_apply` | `KSA/Program.cs:152`, `KSA/PlanetTransparenciesRenderer.cs:87`, `KSA.Atmosphere.Rendering/CloudRenderer.cs:95,151,235` | **High** | ✅ |
+| (renderer + apply handles) | — | — | `FxReflect.Clouds` → reflected `Program.Instance._planetTransparenciesRenderer` → `GetCloudRenderer()` (public) — latch `fx.cloud_renderer`; `FxReflect.CloudApply` → reflected `CloudRenderer._renderer` / `_cloudShadowsRenderer` / `_worleyNoise3dTarget` — latch `fx.cloud_apply` | `KSA/Program.cs:152`, `KSA/PlanetTransparenciesRenderer.cs:87`, `KSA.Atmosphere.Rendering/CloudRenderer.cs:95,151,235` | **High** | ✅ · ⚠️ **5482 (rev 5446): the cloud renderer is now constructed when clouds *or* plume trails *or* explosions are on** (`GameSettings.UseCloudUpscaling()`, `PlanetTransparenciesRenderer.cs:129,359`); cloud *drawing* is still gated on `ShowClouds()`. With clouds off but trails/explosions on, `fx.cloud_renderer` no longer latches degraded and the write re-uploads data that is simply not drawn. Fields unchanged (`CloudRenderer.cs:109,165,245`) — see [5482 findings](#5482-findings) |
 | `debug/clouds/bodies/<id>/reset` | `debug.clouds_reset` | Frame | `FxPristine.Restore` + `Apply(layer: -1)` (re-uploads every layer) | — | **High** | ✅ |
 
 **terrain** — two tiers: a reflection-free **global** toggle, and per-body **paired** writes:
@@ -552,7 +562,7 @@ renderer re-reads every frame, so a write needs **no apply call**:
 | `/sim` path | action key | phase | KSA member | Decomp file | Risk | 5056 |
 |---|---|---|---|---|---|---|
 | `debug/terrain/wireframe` | `debug.terrain_set` (token `""`) | Frame | `PlanetRenderer.Wireframe` (public **instance** field) via `Program.GetPlanetRenderer()` | `KSA/PlanetRenderer.cs:216`, `KSA/Program.cs:491` | Medium | ✅³ |
-| `debug/terrain/bodies/<id>/**` | `debug.terrain_set` | Frame | `TerrainActuator.Write` → `Celestial.BodyTemplate.HeightReference.{Minimum,Maximum}` and `BodyTemplate.TerrainReference.BiomeMaterials.{BlendStrength.Value,DetailFadeInStart,DetailFadeInEnd}` (construct-new `DistanceReference`) **plus** the `PlanetUbo`/`MeshUbo` structs at `(NumCelestials*frame + slot)*Stride`, then the frame-in-flight mirror copy | `KSA/PlanetRenderer.cs:2107-2398` (the editor's write + mirror loop), `KSA/AstronomicalTemplate.cs:27,51`, `KSA/BiomeMaterialsReference.cs` | **High** | ✅⁴ · ⚠️ **5348: the frame-in-flight mirror is now field-wise** (revs 5319–5325 added per-frame `MeshUbo` anchor fields) — see [5348 findings](#5348-findings) |
+| `debug/terrain/bodies/<id>/**` | `debug.terrain_set` | Frame | `TerrainActuator.Write` → `Celestial.BodyTemplate.HeightReference.{Minimum,Maximum}` and `BodyTemplate.TerrainReference.BiomeMaterials.{BlendStrength.Value,DetailFadeInStart,DetailFadeInEnd}` (construct-new `DistanceReference`) **plus** the `PlanetUbo`/`MeshUbo` structs at `(NumCelestials*frame + slot)*Stride`, then the frame-in-flight mirror copy | `KSA/PlanetRenderer.cs:2107-2398` (the editor's write + mirror loop), `KSA/AstronomicalTemplate.cs:27,51`, `KSA/BiomeMaterialsReference.cs` | **High** | ✅⁴ · ⚠️ **5348: the frame-in-flight mirror is now field-wise** (revs 5319–5325 added per-frame `MeshUbo` anchor fields) — see [5348 findings](#5348-findings) · ⚠️ **5482 (rev 5457): distant spheres now displace too, but `DistantSphereRenderer` copies `HeightReference.Minimum/Maximum` into its own material once at construction** (`DistantSphereRenderer.cs:99-105`) — a live `min_height`/`max_height` write reaches near terrain immediately and the distant-sphere view only when that renderer is rebuilt |
 | (slot resolution) | — | — | `PlanetRenderer.RenderUboSlot(Celestial)` / `MeshUboSlot(Celestial)` (public; `-1` ⇒ no slot ⇒ the body is absent from the tree) | `KSA/PlanetRenderer.cs:374,379` | Medium | ✅ |
 | (UBO handles) | — | — | `FxReflect.TerrainUbo` → reflected `PlanetRenderer._renderUboMap` / `_meshUboMap` (`MappedMemory`, host-visible + coherent) with the public `PlanetUboStride`/`MeshUboStride`/`NumCelestials` and `Program.GetRenderer().MaxFramesInFlight` — latch `fx.terrain_ubo` | `KSA/PlanetRenderer.cs:250-252` | **High** | ✅ |
 | `debug/terrain/bodies/<id>/reset` | `debug.terrain_reset` | Frame | `FxPristine.Restore` replays through the same paired write | — | **High** | ✅ |
@@ -695,7 +705,7 @@ getter to `false` for as long as a capture is live. Gated by gatOS's own `IsCapt
 
 | what | actuator | KSA member | Decomp file | Risk | 5348 |
 |---|---|---|---|---|---|
-| suppress the UI coverage mask while `/sim/display` is streaming | `DisplayRenderPatch.UiPixelCullingPrefix` — installed on the existing `gatos.display` Harmony instance inside `DisplayRenderPatch.Install`, so it unpatches with the transpiler; **best-effort** (a missing target costs capture fidelity, never the stream) | Harmony **prefix** on `GameSettings.UiPixelCulling()` returning `false` while `DisplayRenderPatch.IsCapturing` | `KSA/GameSettings.cs` (`:388`), `KSA/UiCoverageMaskSystem.cs` (`:466`), `KSA/PrePassRenderer.cs` | **High** | ➕ **new 2026-08-23** |
+| suppress the UI coverage mask while `/sim/display` is streaming | `DisplayRenderPatch.UiPixelCullingPrefix` — installed on the existing `gatos.display` Harmony instance inside `DisplayRenderPatch.Install`, so it unpatches with the transpiler; **best-effort** (a missing target costs capture fidelity, never the stream) | Harmony **prefix** on `GameSettings.UiPixelCulling()` returning `false` while `DisplayRenderPatch.IsCapturing` | `KSA/GameSettings.cs` (`:388`; `:3293` at 5482), `KSA/UiCoverageMaskSystem.cs` (`:466`), `KSA/PrePassRenderer.cs` | **High** | ➕ **new 2026-08-23** · ✅ 5482: still one overload, sole caller `UiCoverageMaskSystem.cs:466`; the `RenderGame` transpiler's final `End()` moved to `Program.cs:4871` (after `SampledReadVfc :4862`); rev 5443 present-wait frame pacing (`Renderer.WaitForPreviousPresent`, `FrameQueueLimit.OneFrame`) leaves `MaxFramesInFlight = 2` and the readback ring intact |
 
 **Why it exists, why the getter, and why not `ActiveThisFrame`** — rev 5283's `UiCoverageMaskSystem`
 stamps the reverse-Z near plane into the pre-pass depth under opaque ImGui UI, which the offscreen
@@ -1571,8 +1581,16 @@ Harmony hook target is UNCHANGED** — no code change required. Highlights:
   refactor — the refill cheats' members (`Vehicle.RefillConsumables`, `Battery.Refill`) are untouched.
 # Paint writes
 
-Part paint ORs audited free state-flag bits 11..31 in static/dynamic per-instance data and toggles
+Part paint ORs audited free state-flag bits 11..31 into static/dynamic part state and toggles
 `Program.RendererRebuildNeeded`; GLSL is compiled from transformed memory and never written to disk.
+**Since 5482 (rev 5456) the write lands in KSA's cached render data**, not in a per-frame submission:
+Harmony postfixes on the private `PartTreeRenderData.WriteState(Batch,int,Part)` /
+`WriteDynamicState(DynamicBatch,int,PartModelDynamicModule)` OR the bits into the pooled
+`Batch`/`DynamicBatch.StateBitFlags[slot]` (reached through a `FieldRef`), and gatOS calls the public
+`vehicle.Parts.RenderData.InvalidateStates()` on every loaded tree whenever the rule snapshot or the
+Part→vessel index changes, and on arm/disarm, so the cache is rewritten through (or without) the postfix
+on the next `EnsureBuilt`. Disarm therefore restores stock bits on the very next frame. A throwing postfix
+disarms paint (`degraded`) and never unwinds KSA's build; the unpatch is deferred to the next tick.
 EVA paint allocates gatOS-owned `MaterialData` clones, writes only their initial upload, and replaces
 supported avatar `MaterialIndices` slots. Restore is conditional on the slot still carrying gatOS's
 handle; owned AssetMap entries are removed/disposed. Stock MaterialData is never overwritten.
@@ -1594,7 +1612,12 @@ change is the argument**: the catalog is re-keyed on `TextureReference.LocalPath
 bind returned `ENOENT`. See [5348 findings](#5348-findings). Desired state is authored
 game-free (`paint.texture_bind` / `texture_unbind` / `texture_clear`, all Frame phase, Global target)
 and the GPU follows on the next tick; the actions never touch Vulkan. `Dispose` restores every slot
-before anything of ours is destroyed. See
+before anything of ours is destroyed. Re-verified (static) 2026-09-25 against `2026.9.22.5482`:
+`BindlessTextureLibrary.{AddTexture,SetTexture,FreeTexture}` are unchanged (`SetTexture` now `:178`) and
+still have no KSA caller of `SetTexture`; displaced ground clutter (rev 5447) is copied into a tail of the
+same render buffers and drawn through the same pipelines with the same material bindless handles, so a
+re-pointed slot covers static **and** displaced instances; the "keep backface normals" variant (rev 5473)
+is a macro/pipeline flag only, and no clutter texture path, ecotype name or material slot moved. See
 [`plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`](../plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md).
 
 ## Stickers — `paint.sticker_*` (Frame phase) {#stickers}
@@ -1646,9 +1669,58 @@ receiving surface is reconstructed from the resolved depth buffer), and KSA's ow
 (revs 5335–5337) deforms terrain *height*, it does not paint colour. Two things a live pass must now
 cover: a pad sticker, where terrain is decal-flattened and new static-object geometry sits, and one near
 a **cube-face seam**, where the CPU height sampler changed (see [5348 findings](#5348-findings)).
+Re-verified (static) 2026-09-25 against `2026.9.22.5482`: `RenderTarget.ResolveAttachments(CommandBuffer,
+bool)` is unchanged (`:315`), the call sites moved only (`Program.cs:4531` secondary, `:4821` colour-only —
+still skipped, `:4849` full resolve where the pass fires, `:4972` editor), `GridPass` still follows at
+`:4851`, and `GridPass`/`GlobalShaderBindings`/`BindlessTextureLibrary`/`BarrierBatch` have empty diffs.
+Two inherited behaviour changes (no code change): ⚠️ **ground clutter can now be displaced** (rev 5447) —
+a sticker sprayed on a rock stays at its geodetic anchor when the rock is knocked away and projects onto
+whatever fills the box next; and `Part.RayCastEgo` gained a bounding-sphere early-out from
+`BoundingBoxPartAsmb × ScaleTotal` (`Part.cs:2541-2549`), so `spray` vehicle picking now relies on current
+part bounds (see [5482 findings](#5482-findings)).
 **The live draw is unvalidated** — see the stickers card in `docs/VALIDATION.md`.
 Pipeline, shader and GLSL-layout assumptions:
 [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md).
+
+## 5482 write findings {#5482-findings}
+
+Playbook pass 2026-09-25, `2026.9.10.5438` → `2026.9.22.5482` (gapless, revs 5439–5481). **One
+compile break, one compiler-invisible break behind it, three pre-existing issues fixed.** Full evidence:
+[5482 pass](ksa-assets-and-versions.md#5482-pass).
+
+- 🔴 **Part paint (rev 5456) — code change.** `PartModelModule.UpdateRenderData` and
+  `PartModelDynamicModule.UpdateRenderData` were deleted (the 4 CS0117 errors), and the replacement
+  `PartTree.UpdateRenderData` → `PartTreeRenderData.EnsureBuilt`/`Compose`/`ComposeDynamic`/`ComposeGlass`
+  caches each part's state bits in pooled batch slots. The rasterized static `Compose` path writes
+  `ViewportData.InstanceList` directly and never calls `PartModel.AddInstance`, so rebinding the old
+  scope + `AddInstance` prefix would have armed paint that painted nothing. The seam is now postfixes on
+  the two private cached-state writers plus tree invalidation — see [Paint writes](#paint-writes).
+- ⚠️ **`always_render_iva` (rev 5456) — dead code removed.** The template flip still works (the gate is
+  re-read per batch per frame in `Compose`); the editor-only `AddInstance` re-add postfix could never fire
+  and was deleted. Needs a live VAB re-check.
+- ✅ **`engine.min_throttle` — pre-existing staleness fixed.** `Vehicle.PrepareWorker` clamps the manual
+  throttle to `GetMinThrottle()` = `PartTree.EngineThrottleMin`, a cached MIN recomputed only by
+  `RecomputeRocketControls`. The write now calls the new public
+  `PartTree.MarkDerivedDirty(DerivedData.RocketControls)`; KSA flushes it in `PrepareFrame` before the
+  next solve (and the getter ensures it lazily).
+- ✅ **`debug.refill_fuel` — inherited fix (rev 5478).** `RefillAllTanks` now raises
+  `OnContentsReplaced`, so an engine that ran dry relights after a refill.
+- ✅ **Solver-drain prefix.** `Universe.ExecuteNextVehicleSolvers(double, SimStep)` unchanged (`:2034`);
+  `Program` now runs `PartTree.FlushDirtyDerived()`/`FlushDirtyResourceManagers()` immediately before it
+  (`Program.cs:2209-2211`) and bubble eviction moved onto the worker (rev 5476). The prefix still runs before
+  `PrepareVehicleWorkers` → `FlightComputer.CopyFrom`; no Solver action dirties derived data. Bubble
+  islands (rev 5452) solve inside the one `VehicleSolver` job, so the weld/IVA `Wait()` still joins all work.
+- ✅ **Render write seams hold with no code change:** thug_life's by-name `commandBuffer` postfix on the new
+  `RenderMainPass(IViewport, CommandBuffer)`; the sticker resolve postfix; the display transpiler +
+  `UiPixelCulling` prefix; both `gatos.always_render` prefixes; the camera viewport hook.
+- ⚠️ **Inherited behaviour, documented:** clouds renderer constructed with trails/explosions (health latch
+  no longer degrades in that config); plume-trail knobs reach explosions and airless bodies; terrain height
+  edits miss distant spheres until rebuilt; displaced clutter vs geodetic stickers; `RayCastEgo` bounds
+  early-out; interstage bridges `InterstageBridge2W1WB`/`3W2WB` **lost their `Decoupler`** and seven
+  nosecone/adapter parts gained tanks (rev 5475) — `decouplers/<n>`/`tanks/<n>` ordinals shift and
+  `ctl/stage` no longer separates at those adapters; more lone vessels go on rails (revs 5455/5479) and
+  simulated loose clutter forces full physics (rev 5447), which can slow warp/teleport/welds nearby.
+- **No control phase, action key or authority change.**
 
 ## 5438 write findings {#5438-findings}
 

@@ -225,7 +225,7 @@ internal sealed class ThugLifeManager
     [KsaAnchor("Program.RenderedViewport (IViewport; _renderedViewport, set at the top of RenderViewport and "
             + "reset to MainViewport before the main pass); Program.MainViewport; IViewport.Type; "
             + "ViewportType.{CharacterPortrait,Secondary,PartThumbnail}",
-        SourceFile = "KSA/Program.cs:491,4313,4508 / KSA/ViewportType.cs / KSA/ViewportRegistry.cs", Verified = "2026-09-02", GameVersion = "2026.9.7.5402",
+        SourceFile = "KSA/Program.cs:490,4417,4609 / KSA/ViewportType.cs / KSA/ViewportRegistry.cs", Verified = "2026-09-25", GameVersion = "2026.9.22.5482",
         Risk = ChurnRisk.Medium,
         Notes = "CrewPortraitPanel owns viewports 4 and 5 (IsOffscreen). GetCrewPortraitViewport "
             + "indexes by portrait slot (0/1). Identity comparison — never by viewport index "
@@ -236,7 +236,9 @@ internal sealed class ThugLifeManager
             + "Visible, so with portraits off or unoccupied RenderMainPass — and this postfix — never "
             + "runs for them and the Crew bit simply goes unused. GetCrewPortraitViewport(0|1) and "
             + "_crewPortraitViewportStart = 4 are unchanged, so the classification itself still holds."
-            + "5402 (viewport rework): the two crew-portrait viewports are ViewportType.CharacterPortrait (Program.CrewPortraitViewports[2], still reachable through GetCrewPortraitViewport(int)) and the four spare camera windows are ViewportType.Secondary, so the classification is now by IViewport.Type after the main-identity check — the same answer as the old identity test, without depending on how many portrait slots exist. The registry also holds ONE PartThumbnailViewport (ViewportType.PartThumbnail, a ViewportBase that is NOT an IGameViewport) which returns no bit: it never goes through RenderViewport/RenderMainPass anyway (RenderGame's secondary loop is gated on !IsMain() && Visible, and the thumbnail is rendered by ThumbnailRenderer), but a mask bit for it would be a quad drawn into part thumbnails. Portrait visibility gating from 5348 (ShowCrewPortraitCameras + occupied slot, now SetVisible) is unchanged.")]
+            + "5402 (viewport rework): the two crew-portrait viewports are ViewportType.CharacterPortrait (Program.CrewPortraitViewports[2], still reachable through GetCrewPortraitViewport(int)) and the four spare camera windows are ViewportType.Secondary, so the classification is now by IViewport.Type after the main-identity check — the same answer as the old identity test, without depending on how many portrait slots exist. The registry also holds ONE PartThumbnailViewport (ViewportType.PartThumbnail, a ViewportBase that is NOT an IGameViewport) which returns no bit: it never goes through RenderViewport/RenderMainPass anyway (RenderGame's secondary loop is gated on !IsMain() && Visible, and the thumbnail is rendered by ThumbnailRenderer), but a mask bit for it would be a quad drawn into part thumbnails. Portrait visibility gating from 5348 (ShowCrewPortraitCameras + occupied slot, now SetVisible) is unchanged."
+            + " 5482: line moves only (RenderedViewport :490, set in RenderViewport :4417, reset before the main pass "
+            + ":4609); ViewportBase/GameViewport/ViewportRegistry/ViewportType are byte-identical.")]
     private static int CurrentPassBit()
     {
         var rendered = Program.RenderedViewport;

@@ -508,6 +508,11 @@ material:
 
 ### 10.2 Why the lens is always white today
 
+> **5482 note:** `PartModelModule.UpdateRenderData` below no longer exists — KSA rev 5456 moved part
+> state-bit/emissive assembly into the cached `PartTreeRenderData` (`ComputeOwnerDynamicState` +
+> `WriteState`). The battery-light-only behavior is unchanged; a render hook for this plan would now
+> postfix `PartTreeRenderData.WriteState` the way gatOS paint does, plus an `InvalidateStates` sync.
+
 `PartModelModule.UpdateRenderData` (`PartModelModule.cs:79-144`) builds `PerInstanceData` **every
 frame** and sets bit 7 + a real `EmissiveColor` in exactly **one** case — a part that has a `Battery`
 module with `HasStatusLight` (the red→yellow→green charge indicator):

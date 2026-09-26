@@ -13,6 +13,8 @@ the old 9.8 habit on the launchpad.
 
 For an orbit with centre-to-vessel radius $r$, circular speed is $v_c = \sqrt{\mu/r}$. Here,
 `mu` is m³/s², `radius` is metres, and an apoapsis or periapsis is an altitude above the surface.
+An escape trajectory has no apoapsis, so `apoapsis` reads `0` there; check `ecc >= 1` rather than
+looking for a negative value.
 
 <Tabs syncKey="transport">
   <TabItem label="/sim (in guest)">

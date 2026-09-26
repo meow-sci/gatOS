@@ -25,12 +25,15 @@ internal static class StickerRenderPatches
 
     /// <summary>Installs the postfix. Throws <see cref="MissingMethodException"/> if the seam moved.</summary>
     [KsaAnchor("KSA.Rendering.RenderTarget.ResolveAttachments(CommandBuffer,bool) — Harmony postfix",
-        SourceFile = "KSA.Rendering/RenderTarget.cs:315-321 / KSA/Program.cs:4452,4737,4765,4887",
-        Verified = "2026-09-14", GameVersion = "2026.9.10.5438", Risk = ChurnRisk.High,
-        Notes = "The new inResolveDepth=false call at Program.cs:4737 resolves colour only before the "
-            + "final full resolve at :4765; the postfix skips that early call so stickers sample only "
+        SourceFile = "KSA.Rendering/RenderTarget.cs:315-321 / KSA/Program.cs:4531,4821,4849,4972",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
+        Notes = "The inResolveDepth=false call at Program.cs:4821 resolves colour only before the "
+            + "final full resolve at :4849; the postfix skips that early call so stickers sample only "
             + "fully resolved depth. Main-target identity and the editor exclusion retain the existing "
-            + "main-flight-only scope.")]
+            + "main-flight-only scope. 5482: RenderTarget.cs is byte-identical and the four call sites only "
+            + "moved (secondary viewports :4531, colour-only :4821, full :4849 with GridPass right after at :4852, "
+            + "editor :4972). The new UseCloudUpscaling depth barrier (:4828) runs BEFORE the full resolve and "
+            + "does not touch the post-resolve window.")]
     public static void Apply(Harmony harmony)
     {
         var original = AccessTools.Method(typeof(RenderTarget), nameof(RenderTarget.ResolveAttachments),

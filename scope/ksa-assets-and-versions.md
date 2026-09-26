@@ -27,8 +27,9 @@ Two checkouts are kept side by side for diffing:
 
 | Checkout dir | Build | Date | Revisions | Role |
 |---|---|---|---|---|
-| `…/ksa-game-assemblies` | **2026.9.10.5438** | 2026-09-15 (artifact date) | 5402 → 5438; 35 logged revisions, 5403–5437 | Current build / statically audited baseline; upgrade pass 2026-09-14, [5438 record](#5438-pass). Live flight validation pending. |
-| `…/ksa-game-assemblies_prev` | **2026.9.7.5402** | 2026-09-02 | 5348 → 5402 (**changelog gapped**: `version.json` logs only rev 5401, `fromRevision` 5400) | **previous audited baseline** — full playbook pass 2026-09-02 (see [`#5402-pass`](#5402-pass)): **three compile breaks** (the `Viewport` class rework, `DebugTrailColor` removed, `Cursor.InputRay` removed) fixed, one `/sim` node retired, two new High-risk reflection accessors, binary surface diff 907/907 member refs resolved. Build source at the time was commit `57e6040`; the current default now resolves 5438. PREVIOUS for the diff was **`git worktree add <tmp> c465abb`** (the 5348 drop) — prior drops remain available in the assemblies git history |
+| `…/ksa-game-assemblies` | **2026.9.22.5482** | 2026-09-24 (artifact date) | 5438 → 5482; 43 logged revisions, 5439–5481 (commit `a2f724f`) | Current build / statically audited baseline; upgrade pass 2026-09-25, [5482 record](#5482-pass). Live flight validation pending. |
+| `…/ksa-game-assemblies_prev` | **2026.9.10.5438** | 2026-09-15 (artifact date) | 5402 → 5438; 35 logged revisions, 5403–5437 (commit `93eb864`) | **previous audited baseline** — upgrade pass 2026-09-14 ([`#5438-pass`](#5438-pass)): eight compile errors plus the compiler-invisible paint/IVA `AddInstance` overload and sticker colour-only resolve breaks, all fixed. CURRENT's `fromRevision` is 5438, so the two trees **chained with no gap** |
+| (git `57e6040`) | 2026.9.7.5402 | 2026-09-02 | 5348 → 5402 (**changelog gapped**: `version.json` logs only rev 5401, `fromRevision` 5400) | prior audited baseline — full playbook pass 2026-09-02 (see [`#5402-pass`](#5402-pass)): **three compile breaks** (the `Viewport` class rework, `DebugTrailColor` removed, `Cursor.InputRay` removed) fixed, one `/sim` node retired, two new High-risk reflection accessors, binary surface diff 907/907 member refs resolved. PREVIOUS for that diff was **`git worktree add <tmp> c465abb`** (the 5348 drop) |
 | (git `c465abb`) | 2026.8.22.5348 | 2026-08-23 | 5261 → 5348 (85 commits, revs 5262–5348) | prior baseline — full playbook pass 2026-08-23 (see [`#5348-pass`](#5348-pass)): **zero compile breaks — the first pass in the project's history with none** (5261 had ten, 5168 had four); three real breaks the compiler could not see found and fixed, plus one long-standing **pre-existing** bug diagnosed and fixed. Build source at the time was commit `c465abb`. The checkout is a **git repo whose history holds every prior drop** (`1401af7` = 5261, `13595c1` = 5056, `3106557` = 5018, `cdb7391` = 4980, `7cf5c0a` = 4892, …) — diff drops with `git diff <old>..<new>` inside it |
 | (git `1401af7`) | 2026.8.19.5261 | 2026-08-11 | 5168 → 5261 | prior side-by-side checkout — itself a **fully audited baseline** (the 5261 pass closed its own findings, [`#5261-pass`](#5261-pass)), and that pass's CURRENT `fromRevision` was 5261, so the two trees **chained with no gap** and the 5348 pass diffed them directly (no git-history fallback needed) |
 
@@ -36,6 +37,140 @@ gatOS was originally built against the 4680-era sources (most `[KsaAnchor]` `Ver
 2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27; the touched
 anchors carry `GameVersion="2026.6.9.4750"` (see
 [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)).
+
+## 5438 → 5482 upgrade pass (2026-09-25) {#5482-pass}
+
+CURRENT is `2026.9.22.5482` (`version.json` artifact date 2026-09-24; `../ksa-game-assemblies`, commit
+`a2f724f`); PREVIOUS is `2026.9.10.5438` (`../ksa-game-assemblies_prev`, commit `93eb864`). Both are
+complete side-by-side trees (DLLs, decomp, Content). `fromRevision=5438` matches the audited baseline, so
+all 43 logged revisions 5439–5481 were reviewed with no gap. Discovery was the changelog plus the full
+tree diff inside the assemblies repo (`git diff 93eb864 a2f724f -- current/decomp current/Content`):
+**227 files, +12 841/−4 351**. Every `Brutal*`/`Planet*` DLL was rebuilt but their decomp is
+**unchanged** (only `KSA.dll` sources moved, `RenderCore.*` namespaces included), and `BepuPhysics`/
+`BepuUtilities` are byte-identical. 35 of the 112 decomp files named by `[KsaAnchor].SourceFile` changed.
+The date here is the local audit date. Changes remain uncommitted.
+
+### Confirmed incompatibilities and fixes
+
+| Finding / revisions | PREVIOUS evidence | CURRENT evidence | gatOS resolution |
+|---|---|---|---|
+| **Part paint seam (5456)** — compile break **and** a compiler-invisible break behind it | `PartTree.UpdateRenderData` (`PartTree.cs:942,948`) called `PartModelModule.UpdateRenderData` (`PartModelModule.cs:88`) / `PartModelDynamicModule.UpdateRenderData` (`PartModelDynamicModule.cs:56`), which built each instance and called `PartModel{,Dynamic}.AddInstance` (`:158,164` / `:130,136`) | Both module methods **deleted**. `PartTree.UpdateRenderData` (`PartTree.cs:1158-1171`) → `PartTreeRenderData.EnsureBuilt`/`Compose`/`ComposeDynamic`/`ComposeGlass`. State bits are **cached** per pooled batch slot, written only by private `WriteState` (`PartTreeRenderData.cs:1210-1256`) / `WriteDynamicState` (`:1088-1136`) on membership/transform/state invalidation. The rasterized static `Compose` branch writes `ViewportData.InstanceList` directly (`:1298-1316`) — `AddInstance` is reached only on the raytraced-IVA branch | `PartPaintPatches` postfixes both private writers and ORs the paint bits into `Batch`/`DynamicBatch.StateBitFlags[slot]` (`FieldRef`, private nested types bound as `object`). `PaintManager.SyncPartStates` calls the public `vehicle.Parts.RenderData.InvalidateStates()` on every loaded tree when the published rule snapshot reference or the Part→vessel index hash changes; arm/disarm invalidate too; `FaultRender` disarms on a postfix throw (unpatch deferred to the next tick). The scoped-Part prefixes, finalizers and `AddInstance` prefixes are deleted. **Rebinding the old seam alone would have armed paint that painted nothing.** |
+| **IVA editor fallback (5456)**, compiler-invisible | Editor-only postfix on private `PartModel.AddInstance(PerInstanceData,PerInstanceDent,IViewport,int)` (`PartModel.cs:470`) | Same private method, but unreachable on the rasterized path; the gate `(!Template.Internal \|\| viewport.Mode == CameraMode.IVA)` is re-read per batch per frame in `Compose` (`PartTreeRenderData.cs:1300`); `RebuildAll` (`:708-753`) batches every `PartModelModule`, internals included | Postfix removed. The template flip + ctor postfix alone cover flight and editor trees (both go through `PartTree.UpdateRenderData`). |
+| **`orbit/apoapsis` on escape trajectories** — pre-existing, surfaced by rev 5439 | State-vector build stores `apoapsis = a·(1+e)` (`Orbit.cs:1633`): finite and large-negative for `a < 0`; the Universe Manifest printed it (`UniverseManifest.cs:418`) | Same formula (`Orbit.cs:1637`); rev 5439 gates the manifest on `Orbit.IsBound()` (`UniverseManifest.cs:468`) and adds `ApoapsisAltitude`/`PeriapsisAltitude` (`:1182-1184`, plain `radius − MeanRadius`) | New game-free `Sanitize.ApoapsisToAltitude(radius, meanRadius, isBound)` (+ `SanitizeTests`); `VesselReader.CoreOrbit`/`FullOrbit` and `BodyReader` pass `o.IsBound()`. `orbit/apoapsis` and `bodies/<id>/orbit/apoapsis` now read **0** when unbound, matching `time_to_ap`. SPEC updated. |
+| **`engine.min_throttle` staleness** — pre-existing; rev 5464 made the fix a public call | `PartTree.EngineThrottleMin` was a plain field recomputed only by the eager derived-data pass (`PartTree.cs:81,786-793`) | Lazy getter `EnsureDerived(DerivedData.RocketControls)` (`PartTree.cs:176-183`) over `RecomputeRocketControls` (`:993-1017`); `Vehicle.GetMinThrottle()` (`Vehicle.cs:1264`) feeds the manual-throttle clamp in `PrepareWorker` (`:2411`); public `MarkDerivedDirty` (`:480`) | `EngineActuator.SetMinThrottle` now calls `vehicle.Parts.MarkDerivedDirty(DerivedData.RocketControls)`; KSA flushes it in `PrepareFrame` (`Program.cs:2209`) before the next solve. |
+
+The initial single-project build reported **four** `CS0117` errors, all `PartPaintPatches.cs:24-30`
+(`nameof` on the deleted module methods). They are method-body errors, so no declaration-phase error
+was masking others; the list was complete. The runtime half of the paint break is invisible to the
+compiler and was found by reading `PartTreeRenderData`.
+
+### Automated validation
+
+- Full `gatos.slnx` build against the CURRENT DLL directory: **0 warnings, 0 errors** (the game-free
+  projects built clean before the fix too — no KSA type leaks across the seam). Deploy redirected to a
+  scratch `GATOS_DIST_DIR`, leaving the installed game untouched.
+- Full suite: **1647 passed, 12 skipped, 0 failed** across all ten test projects (one new
+  `SanitizeTests.ApoapsisToAltitude_ZeroesUnboundOrbits`). `GATOS_IT` was not enabled; VM-dependent
+  integration tests keep their normal skips.
+- Binary member-surface survey (`MetadataLoadContext`, a 5438-built `gatOS.GameMod.dll` against both DLL
+  sets): **482/482 game TypeRefs and 1081/1081 MemberRefs resolve in both builds; 37 referenced types
+  changed shape** (bucket-system/pass-handle churn on `SuperMeshRenderSystem` and the renderables, the
+  `PartTree` lazy-derived surface, `PartModel{,Dynamic}Module.UpdateRenderData` removed, `Orbit` apsis
+  altitudes, `JobSystems.ConcurrentWorkers` → `NearestOrbitAndPerformanceWorker`, `GameSettings`
+  bindings/explosions/frame queue, `PhysicsEnvironment` signatures, `Generator`/`SolarPanel`/
+  `PowerConsumer.PowerManager` field → property). The deleted methods were reached only via `nameof`, so
+  they appear as compile errors rather than MemberRef misses.
+- **Runtime seam test (new technique).** The shipped `KSA.dll` is IL-only (no ReadyToRun header) but
+  x64-flagged, and this host is ARM64 with no x64 runtime. An IL-identical scratch copy with only the COFF
+  `Machine` field set to ARM64 was loaded under .NET 10 (macOS ARM64) with Harmony 2.4.2; gatOS's own
+  `PartPaintPatches.Resolve` and `PaintManager.ApplyPatches`/`SyncPartStates`/`RemovePatches` were driven
+  against KSA's **real** `WriteState`/`WriteDynamicState` on uninitialized `Part`/module objects:
+  **18/18 checks passed** — all three targets resolve; the `object`-typed private-nested-type parameters
+  bind; paint bits land in the cached slot with stock bits (`Selected`) preserved; the dynamic writer
+  paints; an unindexed part stays stock; change detection is idle without a change and re-syncs after a
+  rule publish; unpatch restores stock output; re-arm works; a throwing lookup is swallowed, disarms
+  paint (`Degraded`) and defers the unpatch. `WriteState`/`WriteDynamicState` are 255/304 bytes of IL with
+  no `AggressiveInlining`, far over the JIT inline budget, so the postfix cannot be bypassed by a
+  pre-inlined caller.
+- **Patch-install smoke test (same harness).** Every Harmony site gatOS installs was patched onto the
+  **real** 5482 target with gatOS's **real** patch method through its own install/remove entry points, then
+  unpatched: **12/12 PASS** — thug_life `RenderMainPass(IViewport,CommandBuffer)` (by-name `commandBuffer`
+  binding), the `/sim/display` `RenderGame(AcquiredFrame,double)` transpiler + `UiPixelCulling` prefix,
+  the sticker `RenderTarget.ResolveAttachments(CommandBuffer,bool)` postfix, both `VesselForceRender`
+  prefixes, the IVA `PartModel(Template)` ctor postfix (also via `SetEnabled`), the camera
+  `GameViewport.OnFrame(double)` prefix/postfix, the `Universe.ExecuteNextVehicleSolvers(double,SimStep)`
+  solver-drain prefix (`Priority.First`), the `Program.DrawProgramMenusHook` menu postfix, and the paint
+  trio. A negative control (a postfix with an unbound parameter name) was rejected at patch time, so
+  "installed" proves every named parameter binds. The display transpiler ran over the real `RenderGame`
+  IL (1448 instructions): its filter matched exactly one `Brutal.VulkanApi` `End(1)` (index 1445, after
+  `GpuProfiler.EndFrame`, followed only by `nop; ret`), inserted 3 instructions and logged no warning.
+  Every name-based reflection lookup (FxReflect's 11, `_manualControlInputs`/`EngineThrottle`/
+  `ThrusterCommandFlags`, the `ViewportSeam` protected setters, the EVA `_renderable → _characterAvatar →
+  Core.Scale` chain, the five paint `MaterialIndices` slots, `GpuMaterialSystem.AssetMap`, and both
+  `StateBitFlags` fields) resolved with the expected member type. The seam test re-ran 18/18 against the
+  final build. This proves resolution and patch construction against the shipped IL — not live draw
+  correctness, which stays in `docs/VALIDATION.md`.
+- Brutal/Planet decomp unchanged, so no numerics probe was re-run; the 5438 probe stands.
+
+### Full coupling audit
+
+- **Read surface:** no binding relocated. Encounter sampling interval changed (population drift);
+  lazy derived data can leave `engines/<n>/{thrust_vac,isp}` / `srb/<n>/stack_valid` one frame stale after
+  a structural change; environment uses closest-parent-relative positions (rev 5451) and a 0.25 m terrain
+  radius cache (rev 5460); module/state access, `NavBallData`, `FlightComputer`, `Encounter`,
+  `PatchedConic`, `Celestial`, `StellarBody`, atmosphere/ocean references and every module state struct
+  are byte-identical. [Read findings](ksa-read-surface.md#5482-findings).
+- **Write surface / solver:** `Universe.ExecuteNextVehicleSolvers(double, SimStep)` unchanged (`:2034`);
+  `PartTree.FlushDirtyDerived`/`FlushDirtyResourceManagers` now run immediately before it
+  (`Program.cs:2209-2211`) and bubble eviction moved to the worker (rev 5476); the prefix still precedes
+  `PrepareVehicleWorkers` → `FlightComputer.CopyFrom`, so no action changes phase. Bubble islands
+  (rev 5452) are solved inside the one `VehicleSolver` job, so the weld/IVA `Wait()` still joins all work.
+  `Vehicle.Teleport`, `ClearHeldPlayerInput`, `SetEnum`, `_manualControlInputs`, staging
+  (`ActivateNextSequence`) and docking are unchanged; `debug/refill_fuel` inherits rev 5478's
+  `OnContentsReplaced` fix. [Write findings](ksa-write-surface.md#5482-findings).
+- **Rendering:** rev 5474 rebuilt the super-mesh buckets (`MeshPassBucketSystem`, `PassId`, `ViewHandle`;
+  `MeshBucketSystem`/`ShadowBucketSystem` deleted). `thug_life`'s target became
+  `RenderMainPass(IViewport, CommandBuffer)` (`:364`) — still one overload, and the postfix binds
+  `commandBuffer` by name, so no code change. `RenderTarget.cs`, `UnlitMesh.*`, `Common/{Shared,Camera,
+  TextureSet,Global}.glsl`, `GridPass`, `GlobalShaderBindings`, `BindlessTextureLibrary`, `BarrierBatch`,
+  `GameViewport`/`ViewportBase`/`ViewportRegistry` are unchanged. The display transpiler's tail and
+  `UiPixelCulling` hold; rev 5443 present-wait pacing keeps `MaxFramesInFlight = 2`.
+  `Vehicle.UpdateRenderData` now calls `IsLargeEnoughToRender(Camera)`, which the `always_render` prefix
+  bypasses. [Render refs](#render-refs), [runtime findings](ksa-runtime-coupling.md#5482-findings).
+- **Paint:** `MeshIndirect.frag` unchanged; `MeshIndirectRaytraced.frag` changed only its BRDF lookup
+  (rev 5472, also `ModelPbr`/`Fur`/`Lighting.glsl`); both transform anchors (`inStateFlags`,
+  `vec3 sampledColor`) are present (`:30,114` / `:20,156`), and stock still uses only bits 0–10
+  (`PartTreeRenderData.StateBit`). EVA material-clone chains are unchanged. Painted specular may shift
+  slightly with the BRDF fix.
+- **Reflection:** all 11 `FxReflect` names, `_manualControlInputs` + struct fields, the `KittenEva` scale
+  and EVA paint chains and the `ViewportSeam` protected setters resolve. Four new compiler-blind bindings
+  (the two private writers + two nested `StateBitFlags` fields); the IVA `AddInstance` postfix is retired.
+  [Reflection accessors](ksa-runtime-coupling.md#reflection-accessors).
+- **Clutter/clouds/terrain:** displaced clutter (rev 5447) reuses the same pipelines and material bindless
+  handles, so the slot re-point still covers it; the cloud renderer is now built when clouds, trails **or**
+  explosions are on (rev 5446); distant spheres copy terrain height min/max at construction (rev 5457).
+
+### Inherited behavior and documentation corrections
+
+- **Content (rev 5475, `Content/Core/CoreFairingAGameData.xml`):** `NoseconeC/E/F/G/H` and the two
+  interstage bridges gained `<Tank>` (some the new `ConicalTank` template); `InterstageBridge2W1WB`/
+  `3W2WB` **lost `<Decoupler>`** (joints → `BulkFluid`, `Part.IsHollow` false). `tanks/<n>` and
+  `decouplers/<n>` ordinals shift on craft using them, `ctl/stage` no longer separates at those adapters,
+  and `debug/refill_fuel` fills the new tanks. `ExplosionAssets.xml` retunes fireball/smoke lifetimes
+  (rev 5454, `MAX_VOLUMES` 64 → 2048); ground-clutter XML adds displacement data but no texture path,
+  ecotype name or material slot moved. No body, orbit, atmosphere or electrical (`W=`/`J=`) XML changed.
+- **Physics:** revs 5455/5479 let more lone vessels go on rails; simulated loose clutter
+  (`AnyLooseClutterBodies`, rev 5447) forces full physics, which can slow warp/teleport/welds nearby;
+  rev 5471 wakes vessels resting on a recovered/destroyed one and hands the camera to the heaviest bubble
+  neighbour (an owned gatOS camera follows its own anchor and is not moved).
+- **FX:** `/sim/debug/clouds` writes with clouds off but trails/explosions on no longer latch
+  `fx.cloud_renderer` degraded; plume-trail global knobs reach explosions and airless bodies; terrain
+  `min_height`/`max_height` edits reach distant spheres only on rebuild.
+- **Stickers:** a geodetic sticker on a rock that is later displaced stays put; `Part.RayCastEgo` gained a
+  bounding-sphere early-out (`Part.cs:2541-2549`) that `spray` picking now relies on.
+
+Live render, paint, IVA-editor, refuel, decoupler and warp checks remain pending in
+[`docs/VALIDATION.md`](../docs/VALIDATION.md#ksa-5482-upgrade). This pass does not claim a live flight.
 
 ## 5402 → 5438 upgrade pass (2026-09-14) {#5438-pass}
 
@@ -692,14 +827,48 @@ breaks the draw — re-verify live):
   colour/depth), so the pipeline's single colour-blend attachment stays compatible. The rev 5058
   `SimplePipelineCreator` A2C stale-state fix is likewise out of reach — `BuildPipeline` supplies its own
   `VkPipelineMultisampleStateCreateInfo` instead of going through that creator.
-- Draw injected via a Harmony postfix on `SuperMeshRenderSystem.RenderMainPass(CommandBuffer)`
-  (`KSA/SuperMeshRenderSystem.cs:329`) — the runtime coupling, see
+- Draw injected via a Harmony postfix on `SuperMeshRenderSystem.RenderMainPass(IViewport, CommandBuffer)`
+  (`KSA/SuperMeshRenderSystem.cs:364` since 5482; `RenderMainPass(CommandBuffer)` `:329`–`:347` before) —
+  the runtime coupling, see
   [`ksa-runtime-coupling.md#thug-life-patch`](ksa-runtime-coupling.md#thug-life-patch).
 
 Full anchor list: [`ksa-read-surface.md#thug-life`](ksa-read-surface.md#thug-life) (anchor math),
 [`ksa-write-surface.md#thug-life`](ksa-write-surface.md#thug-life) (the seven actions),
 [`../docs/KSA_INTEGRATION_MATRIX.md`](../docs/KSA_INTEGRATION_MATRIX.md) (render set).
-**Re-verified (static) 2026-08-23 against `2026.8.22.5348`** (revs 5262–5348, 85 commits) — the
+**Re-verified (static) 2026-09-25 against `2026.9.22.5482`** (revs 5439–5481) — a heavy render window
+(bucket rework, part render-data cache, present-wait, volumetric compositing) with **no re-bind of the
+`thug_life` set**, but one compiler-invisible break next door in part paint:
+
+- **`SuperMeshRenderSystem` buckets rebuilt around render passes + views (rev 5474).**
+  `RenderCore.Systems.{MeshBucketSystem,ShadowBucketSystem,MeshBucketHandle,ShadowBucketHandle,
+  IMeshBucketSystem}` are **deleted**; `MeshPassBucketSystem`, `MeshPassRenderer`, `PassId`, `ViewHandle`,
+  `GlobalMeshBucketHandle` and `ArrayFreeListIndexPool` are new, and renderables now `Draw(ViewHandle)`.
+  The quad's target became **`RenderMainPass(IViewport viewport, CommandBuffer commandBuffer)`** (`:364`),
+  whose body delegates to `RenderPass(ViewHandle, PassId, …)`. Still exactly one overload (name-only
+  lookup stays unambiguous); the postfix's `commandBuffer` parameter binds **by name** to argument 1.
+  Three call sites, now passing `RenderedViewport` (`Program.cs:4496/4756/4964`). The new
+  `drawCommandCount == 0` early return is inside `RenderPass`. `UseShadows`/`UseLightPrePass` became
+  private per-view arrays; gatOS only named them in a comment.
+- **Part render data moved into a per-tree cache (rev 5456)** — `PartTreeRenderData` (new, 1 529 lines)
+  batches every part model per tree, caches matrices/state bits/wetness/dents and re-emits them per
+  viewport in `Compose`/`ComposeDynamic`/`ComposeGlass`. This is what broke part paint and retired the
+  IVA editor postfix ([`#5482-pass`](#5482-pass)); it does **not** touch the quad, which builds its own
+  buffers and reads `Part.{PositionEgo,Asmb2Ego,MatrixAsmb2Ego}` / `Vehicle.GetMatrixAsmb2Ego`
+  (signatures unchanged, lines moved). Part pose/scale setters now also raise
+  `PartTreeRenderData.InvalidateTransforms()` (`Part.cs:1243`).
+- **Unchanged:** `KSA.Rendering/RenderTarget.cs` (`ResolveAttachments(CommandBuffer,bool)` `:315`,
+  `SetupGraphicsPipeline` `:356`), `UnlitMesh.{vert,frag}`, `Common/{Shared,Camera,TextureSet,Global}.glsl`,
+  `DefaultAssets.xml`, `GameViewport`/`ViewportBase`/`IViewport`/`ViewportRegistry`, depth format
+  `D32SFloat` (`Program.cs:795`), and every Brutal Vulkan binding (no Brutal decomp diff). `Lighting.glsl`
+  changed (rev 5472 BRDF roughness) but neither `UnlitMesh` nor the sticker shaders include it.
+- **Display / stickers:** `RenderGame` tail unchanged through the final `End()` (`:4871`); sticker resolve
+  call sites moved to `:4531/:4821/:4849/:4972`. Rev 5443 added `VK_KHR_present_wait`/`present_id` frame
+  pacing (`Renderer.WaitForPreviousPresent`, default `FrameQueueLimit.OneFrame`); `MaxFramesInFlight`
+  stays 2. Rev 5458 deep-composites volumetric exhausts with clouds/trails/explosions, and rev 5446 lets
+  trails/explosions render on airless bodies and with clouds off — separate compute/composite passes that
+  the quad and decal do not share.
+
+Prior stamp — **Re-verified (static) 2026-08-23 against `2026.8.22.5348`** (revs 5262–5348, 85 commits) — the
 render set survived a heavy render-internals window with **no compile break and no re-bind**:
 
 - **`KSA.Rendering/RenderTarget.cs` is untouched.** `ResolveAttachments(CommandBuffer)` and
@@ -857,7 +1026,16 @@ When a changelog line mentions a subsystem, open these. (Decomp paths relative t
    what proves the reflection accessors and Harmony targets resolve against the **real** assemblies
    rather than the decomp's approximation of them. At 5348: 481 TypeRefs, 470 resolvable,
    **63 changed shape** — with zero compile breaks.
-6. **Record** — update the `[KsaAnchor]`s, this `scope/` folder, the matrix, the SPEC, and re-run
+6. **Runtime seam test** (added 2026-09-25, `#5482-pass`) — for a new or moved compiler-blind binding
+   (private Harmony target, nested-type parameter bound as `object`, `FieldRef`), *execute* it against
+   the shipping IL instead of only resolving it. `KSA.dll` ships IL-only (check that
+   `CorHeader.ManagedNativeHeaderDirectory.Size == 0`, i.e. no ReadyToRun) but x64-flagged; on a
+   non-x64 host, copy the DLL set to a scratch dir and rewrite only the 2-byte COFF `Machine` field to
+   the host architecture (e.g. ARM64 `0xAA64`) — the IL is untouched. Load gatOS.GameMod.dll + that copy
+   in a throwaway console app sharing Harmony 2.4.2, call gatOS's own resolve/apply/remove entry points
+   via reflection, and invoke the patched KSA method on `RuntimeHelpers.GetUninitializedObject` instances
+   when its body only reads plain fields. Scratch only — never ship or build against the patched copy.
+7. **Record** — update the `[KsaAnchor]`s, this `scope/` folder, the matrix, the SPEC, and re-run
    `docs/VALIDATION.md`.
 
 The applied 4680→4750 result: [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md).

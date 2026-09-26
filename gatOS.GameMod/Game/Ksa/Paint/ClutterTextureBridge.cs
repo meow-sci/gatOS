@@ -207,12 +207,15 @@ internal sealed class ClutterTextureBridge : IDisposable
     /// </summary>
     [KsaAnchor("Program.Instance.BindlessTextures (public field) → BindlessTextureLibrary.SetTexture; "
             + "TextureReference.ImageView",
-        SourceFile = "KSA/Program.cs:89 / RenderCore.Systems/BindlessTextureLibrary.cs:174 / "
+        SourceFile = "KSA/Program.cs:111 / RenderCore.Systems/BindlessTextureLibrary.cs:178 / "
             + "KSA/TextureReference.cs:66",
-        Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
         Notes = "All public; no reflection. Nothing in KSA calls SetTexture, so gatOS is the sole "
             + "writer of an existing slot. The decode/upload half of this path lives in "
-            + "UserTextureGpu.Upload, which carries its own anchor.")]
+            + "UserTextureGpu.Upload, which carries its own anchor. 5482: BindlessTextureLibrary is unchanged "
+            + "and still has no KSA caller of SetTexture; only line citations moved. Displaced ground clutter "
+            + "(rev 5447) is copied into a tail of the same clutter render buffers and drawn through the same "
+            + "pipelines and material bindless handles, so a re-pointed slot covers it too.")]
     private Override Apply(string targetId, TextureFile file, TextureBindMode mode)
     {
         if (Program.GetRenderer() is not { } renderer)
@@ -277,15 +280,18 @@ internal sealed class ClutterTextureBridge : IDisposable
             + "Celestial.BodyTemplate.GroundClutterReference.Ecotypes → ClutterEcotypeReference.Name / "
             + ".MaterialReferences → GroundClutterMaterialReference.{DiffuseReference,NormalReference,"
             + "PBRMap,OpacityMap,ThicknessMap,AlphaMap} → TextureReference.{LocalPath,Width,Height,BindlessHandle}",
-        SourceFile = "KSA/PlanetRenderer.cs:389 / KSA/GroundClutterRenderer.cs:268 / "
-            + "KSA/ClutterEcotypeReference.cs:14 / KSA/GroundClutterMaterialReference.cs / "
+        SourceFile = "KSA/PlanetRenderer.cs:389 / KSA/GroundClutterRenderer.cs:280 / "
+            + "KSA/ClutterEcotypeReference.cs:13,22 / KSA/GroundClutterMaterialReference.cs / "
             + "KSA/PbrMaterialReference.cs:10 / KSA/TextureReference.cs / KSA/FileReference.cs:12",
-        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.Medium,
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "Every member is public; the PlanetRenderer handle reuses the existing FxReflect.Terrain "
             + "accessor, so this adds no reflection site. Both the material and the TextureReference "
             + "may be a reference needing Get() resolution, exactly as ToGpuMaterial does. Rows are "
             + "keyed by TextureReference.LocalPath (see KeyOf) — NOT GetRealId(), which is empty for "
-            + "every clutter texture because none of them carry an Id= attribute in the asset XML.")]
+            + "every clutter texture because none of them carry an Id= attribute in the asset XML. "
+            + "5482: members unchanged; GroundClutterMaterialReference gained KeepBackfaceNormals (rev 5473, a "
+            + "shader-variant flag) and ClutterEcotypeReference gained GetAngularDamping — neither touches a "
+            + "texture slot. The ground-clutter XML diffs change no texture path, ecotype name or material slot.")]
     private void RefreshCatalog()
     {
         if (FxReflect.Terrain(out var rendererError) is not { } planet)

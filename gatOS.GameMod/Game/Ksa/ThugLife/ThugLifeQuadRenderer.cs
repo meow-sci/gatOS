@@ -107,9 +107,9 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
             + "ModLibrary.Get<ShaderReference>(\"UnlitMeshVert\"/"
             + "\"UnlitMeshFrag\"); RenderTechnique.CreateShaderStages; Presets/RenderingPresets; "
             + "Renderer.{Device,Allocator,DynamicStateInfo,ViewportState,Graphics}; VkUtils.StageAndUploadToBuffer",
-        SourceFile = "KSA/Program.cs:457 / KSA.Rendering/RenderTarget.cs:356 / KSA/ModLibrary.cs / "
+        SourceFile = "KSA/Program.cs:456 / KSA.Rendering/RenderTarget.cs:356 / KSA/ModLibrary.cs / "
             + "KSA/RenderingPresets.cs / Planet.Render.Core / Brutal.Vulkan*",
-        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
         Notes = "Builds the GPU pipeline for the thug-life quad against KSA's offscreen scene target + stock "
             + "UnlitMesh shaders. Deepest render-internals coupling in gatOS; off by default and self-disables "
             + "on fault. Rev 5154 moved offscreen rendering off VkRenderPass/framebuffers onto Vulkan dynamic "
@@ -123,7 +123,11 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
             + "Presets.cs, RenderTechnique.cs, Core/Renderer.cs and the UnlitMesh.{vert,frag} shaders "
             + "are all byte-identical, and the DefaultAssets.xml UnlitMeshVert/UnlitMeshFrag keys are "
             + "still at :53/:54. Only Program.OffscreenTarget moved (:411 -> :457); the ModLibrary.cs "
-            + "diff is the star-technique viewport loop plus log line numbers, nothing this binds.")]
+            + "diff is the star-technique viewport loop plus log line numbers, nothing this binds."
+            + " 5482: RenderTarget.cs, UnlitMesh.{vert,frag}, Common/{Shared,Camera,TextureSet,Global}.glsl and "
+            + "DefaultAssets.xml are byte-identical (no Brutal decomp diff); depth stays D32SFloat (Program.cs:795); "
+            + "Program.OffscreenTarget moved :457 -> :456. Common/Lighting.glsl changed (rev 5472 BRDF) but UnlitMesh "
+            + "does not include it.")]
     private static VkPipeline BuildPipeline(DeviceEx device, Renderer renderer, VkPipelineLayout layout)
     {
         var shaderRefs = new[]
@@ -260,8 +264,8 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
     [KsaAnchor("Program.GetRenderCamera() (RenderedViewport.GetCamera()); Camera.MVP.viewProjection; "
             + "Program.SetViewport(cmd); Vehicle.GetMatrixAsmb2Ego(Camera); Vehicle.Asmb2Ego; "
             + "Part.PositionEgo(in double4x4); Part.Asmb2Ego(doubleQuat); double3.Transform; VkIndexType.UInt16",
-        SourceFile = "KSA/Program.cs / KSA/Camera.cs / KSA/Vehicle.cs / KSA/Part.cs",
-        Verified = "2026-09-14", GameVersion = "2026.9.10.5438", Risk = ChurnRisk.High,
+        SourceFile = "KSA/Program.cs / KSA/Camera.cs / KSA/Vehicle.cs:1270 / KSA/Part.cs:1203,1208",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
         Notes = "Per-frame ego-space model matrix + draw for one thug-life quad, per rendered viewport "
             + "(main + the two ViewportType.CharacterPortrait viewports — Program.RenderViewport calls "
             + "RenderMainPass for every visible viewport, and the portrait targets share the offscreen "
@@ -275,7 +279,10 @@ internal sealed unsafe class ThugLifeQuadRenderer : IDisposable
             + "tag — profiler attribution only, no mis-draw."
             + "5438: RenderedViewport remains an IViewport and RenderMainPass(CommandBuffer) remains the "
             + "single seam across the valid offscreen viewport passes; SetViewport still sizes from the "
-            + "rendered viewport, and the 16-bit index buffer uses the current VkIndexType.UInt16 name.")]
+            + "rendered viewport, and the 16-bit index buffer uses the current VkIndexType.UInt16 name. "
+            + "5482: RenderMainPass is now (IViewport, CommandBuffer) (rev 5474) but is still the single seam "
+            + "and still called for every visible viewport (Program.cs:4496/4756/4964); Part.PositionEgo/"
+            + "Asmb2Ego and Vehicle.GetMatrixAsmb2Ego/Asmb2Ego keep their signatures (line moves only).")]
     public void RecordDraw(CommandBuffer cmd, ThugLifeEntry entry)
     {
         if (_disposed || !entry.Visible)

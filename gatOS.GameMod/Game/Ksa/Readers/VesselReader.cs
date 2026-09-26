@@ -312,7 +312,7 @@ internal static class VesselReader
             return null;
         return new OrbitSnapshot(
             // KSA apsides are radii from the body center; the /sim contract is altitudes.
-            Sanitize.RadiusToAltitude(o.Apoapsis, parent.MeanRadius),
+            Sanitize.ApoapsisToAltitude(o.Apoapsis, parent.MeanRadius, o.IsBound()),
             Sanitize.RadiusToAltitude(o.Periapsis, parent.MeanRadius),
             Sanitize.Finite(o.Eccentricity),
             Sanitize.Finite(o.Inclination * RadToDeg), // stored in radians
@@ -321,22 +321,29 @@ internal static class VesselReader
     }
 
     [KsaAnchor("Orbit.StateVectors.TrueAnomaly.Degrees; LongitudeOfAscendingNode/ArgumentOfPeriapsis (rad); "
+               + "Orbit.{Apoapsis,Periapsis,IsBound()}; "
                + "Vehicle.NextApoapsisTime/NextPeriapsisTime/NextPatchEventTime (UniverseTime)",
-        SourceFile = "KSA/Orbit.cs / KSA/Vehicle.cs / KSA/UniverseTime.cs", Verified = "2026-09-02",
-        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Low,
+        SourceFile = "KSA/Orbit.cs:1180,1819 / KSA/Vehicle.cs / KSA/UniverseTime.cs", Verified = "2026-09-25",
+        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Low,
         Notes = "SEMANTIC DRIFT at rev 5211 — KSA replaced SimTime (double seconds) with UniverseTime "
             + "(Int128 nanoseconds). The 'no such event' sentinel changed from SimTime.PositiveInfinity "
             + "to UniverseTime.EndOfTime (Int128.MaxValue ns), whose .Seconds() is a FINITE ~1.7e29 and "
             + "so passes Sanitize.Finite unchanged instead of scrubbing to 0. Every apsis/patch time is "
             + "therefore routed through UtOrZero/TimeUntil, which test IsSaturated() first to preserve "
             + "the established 0 = 'no such event' /sim contract."
-            + "5402 NEW GATING (debris only): PhysicsBubble.RunVehiclePostWorkInner skips RecalculateFlightPlan and the burn-plan refresh when vehicleState.IsDebris, so on a debris/fragment vessel next_apoapsis_ut / next_periapsis_ut / next_patch_event_ut are FROZEN at their spawn values while position/velocity keep integrating. Real vessels are unaffected; the members themselves are unchanged.")]
+            + "5402 NEW GATING (debris only): PhysicsBubble.RunVehiclePostWorkInner skips RecalculateFlightPlan and the burn-plan refresh when vehicleState.IsDebris, so on a debris/fragment vessel next_apoapsis_ut / next_periapsis_ut / next_patch_event_ut are FROZEN at their spawn values while position/velocity keep integrating. Real vessels are unaffected; the members themselves are unchanged."
+            + " 5482 (fixes a pre-existing leak surfaced by rev 5439): the state-vector orbit build stores "
+            + "apoapsis = a*(1+e) for hyperbolic orbits (Orbit.cs:1637, identical at 5438) — FINITE and large "
+            + "negative, so Sanitize.RadiusToAltitude passed it through. Both CoreOrbit and FullOrbit now gate "
+            + "it on Orbit.IsBound() (0 when unbound, matching time_to_ap), the gate KSA's Universe Manifest "
+            + "adopted at 5439. Orbit.ApoapsisAltitude/PeriapsisAltitude (new at 5439) are plain "
+            + "radius-minus-MeanRadius and are not used.")]
     private static OrbitSnapshot? FullOrbit(Vehicle vehicle, IParentBody? parent, double utSeconds)
     {
         if (vehicle.Orbit is not { } o || parent is null)
             return null;
         return new OrbitSnapshot(
-            Sanitize.RadiusToAltitude(o.Apoapsis, parent.MeanRadius),
+            Sanitize.ApoapsisToAltitude(o.Apoapsis, parent.MeanRadius, o.IsBound()),
             Sanitize.RadiusToAltitude(o.Periapsis, parent.MeanRadius),
             Sanitize.Finite(o.Eccentricity),
             Sanitize.Finite(o.Inclination * RadToDeg),
@@ -398,7 +405,14 @@ internal static class VesselReader
 
     [KsaAnchor("Vehicle.PhysicsEnvironment{AtmosphericPressure,AtmosphericDensity,OceanDensity,TerrainRadius}; "
                + "PhysicalAtmosphereReference.GetDynamicPressure(Vehicle); AccelerationBody/AngularAccelerationBody",
-        SourceFile = "KSA/PhysicsEnvironment.cs / KSA/Vehicle.cs", Verified = "2026-06-12", Risk = ChurnRisk.Low)]
+        SourceFile = "KSA/PhysicsEnvironment.cs:83,109 / KSA/TerrainRadiusCache.cs / KSA/Vehicle.cs", Verified = "2026-09-25",
+        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Low,
+        Notes = "5482: the members read are unchanged. Two inherited value drifts: rev 5451 — "
+            + "RecomputePositionalValues now takes a closest-parent-relative position (it used to add an "
+            + "origin-parent offset, which could feed gravity/atmosphere from the WRONG body in a multi-body "
+            + "bubble); rev 5460 — TerrainRadius comes from TerrainRadiusCache.ComputeRadiusCcf(..., 0.25), "
+            + "re-sampled only after ~0.25 m of lateral motion. Revs 5455/5479 let more lone vessels go on "
+            + "rails, which can change environment/acceleration and body-rate readings for those vessels.")]
     private static EnvironmentSnapshot SampleEnvironment(Vehicle vehicle)
     {
         ref readonly var env = ref vehicle.PhysicsEnvironment;
@@ -424,7 +438,11 @@ internal static class VesselReader
             + "so engines/<n>/active on a just-decoupled vehicle retains its pre-split state (was: false). "
             + "5348: the ThrusterController constructor dropped its part.ActivateInStage(null) broadcast, "
             + "so engines/<n>/active on a part that co-hosts RCS now reads an honest spawn default "
-            + "instead of a spurious true.")]
+            + "instead of a spurious true. 5482 (rev 5464): VacuumData is still a plain field, now written by "
+            + "the lazily-flushed PartTree.RecomputeRocketControls (PartTree.cs:541, flushed in PrepareFrame, "
+            + "Program.cs:2209), so after a structural change thrust_vac/isp can lag one frame. "
+            + "RocketControllerData.ComputeFromCores lost its (unused) CoM argument; ThrustMax/MassFlowRateMax "
+            + "are unchanged.")]
     [KsaAnchor("EngineControllerState{CommandThrottle,IsPropellantAvailable} via ModuleStateful.TryGetFrom",
         SourceFile = "KSA/EngineControllerState.cs", Verified = "2026-07-14", GameVersion = "2026.7.5.4892", Risk = ChurnRisk.Medium,
         Notes = "Read in the same pass as the module walk (GP3); detail-off skips the state fetch and "
@@ -478,7 +496,7 @@ internal static class VesselReader
 
     [KsaAnchor("vehicle.Parts.Modules.Get<Tank>().Moles; vehicle.Parts.Moles.GetState(mole).Mass; "
             + "Mole.FilledFraction; Mole.GetStoredMass(ContainerVolume) (capacity; 5018/rev 4992: renamed from GetLiquidMass)",
-        SourceFile = "KSA/Tank.cs / KSA/Mole.cs", Verified = "2026-08-01", GameVersion = "2026.7.10.5056", Risk = ChurnRisk.Low,
+        SourceFile = "KSA/Tank.cs / KSA/Mole.cs / Content/Core/CoreFairingAGameData.xml", Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Low,
         Notes = "A Tank holds one Mole per substance; amounts live in the SoA Moles state list. "
             + "4892: the rev-4884 combustion->Reactions refactor is additive here (Tank gains "
             + "RoleAffinity/AssignedMix; Moles/MoleState/FilledFraction untouched) - tanks now "
@@ -490,7 +508,11 @@ internal static class VesselReader
             + "propellant lives on the NEW SolidGrainSegment module (ISubstanceStore, not a Tank) "
             + "and is therefore NOT listed in tanks/ - but it IS counted in Vehicle.PropellantMass, "
             + "so on SRB vehicles mass/propellant > sum(tanks). Solid propellant is surfaced "
-            + "separately by SampleSrbs (srb/<n>/), not here.")]
+            + "separately by SampleSrbs (srb/<n>/), not here. "
+            + "5482 CONTENT DRIFT (rev 5475): seven nosecone/adapter parts (NoseconeC/E/F/G/H, "
+            + "InterstageBridge2W1WB/3W2WB) gained a <Tank> (Cylindrical or the new ConicalTank template), so "
+            + "vessels carrying them gain tanks/<n> rows and later tank ordinals shift. Cylindrical capacity math "
+            + "now delegates to the conical path with equal radii — analytically unchanged.")]
     private static List<TankSnapshot> SampleTanks(Vehicle vehicle)
     {
         var tanks = new List<TankSnapshot>();
@@ -520,8 +542,8 @@ internal static class VesselReader
         + "SolidGrainSegment.{Grain,Propellant,InitialGrainMass,UnburnableGrainMass,CasingInnerRadius,"
         + "Length,GrainVolume,ComputeGrainDepth}; RocketCoreState.{Throttle,IsPropellantAvailable,"
         + "MassFlowRate,ThrustTimeRemaining,Conditions.{Core,Exit}.{Pressure,Temperature}}",
-        SourceFile = "KSA/SolidMotor.cs / KSA/SolidGrainSegment.cs / KSA/RocketCoreState.cs",
-        Verified = "2026-07-24", GameVersion = "2026.7.9.5018", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/SolidMotor.cs / KSA/SolidGrainSegment.cs / KSA/RocketCoreState.cs / KSA/PartTree.cs:537,621",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "5018/rev 4992 added solid rocket motors. A SolidMotor is a RocketCore (so it lives in "
             + "the shared Parts.RocketCores SoA list alongside Combustor) driven by an ordinary "
             + "EngineController - which is why SRBs already appear in engines/<n>. Its propellant is "
@@ -531,7 +553,9 @@ internal static class VesselReader
             + "shut down (SolidMotor.UpdateState forces Throttle to 0 or 1), so ignition stays on the "
             + "engine surface. Filtering Parts.RocketCores.Modules by type deliberately avoids the "
             + "brand-new rev-4990 StateList.GetUsing<TSub>() segment enumerator - Modules/GetState are "
-            + "the long-stable APIs the rest of this reader uses.")]
+            + "the long-stable APIs the rest of this reader uses. 5482 (rev 5464): SolidMotor.Stack is still a "
+            + "plain field, now rebuilt by the lazily-flushed PartTree.RecomputeSolidMotorStacks, so "
+            + "srb/<n>/stack_valid can lag one frame after staging/decouple; members unchanged.")]
     private static IReadOnlyList<SrbSnapshot> SampleSrbs(Vehicle vehicle)
     {
         var cores = vehicle.Parts.RocketCores;
@@ -840,8 +864,8 @@ internal static class VesselReader
     }
 
     [KsaAnchor("vehicle.Parts.Modules.Get<Decoupler>(); .IsActive (fired, irreversible); .IsEnabled",
-        SourceFile = "KSA/Decoupler.cs:71,73", Verified = "2026-08-23",
-        GameVersion = "2026.8.22.5348", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Decoupler.cs:71,73 / Content/Core/CoreFairingAGameData.xml", Verified = "2026-09-25",
+        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "4826: Decoupler.Decouple dropped its fire-time cascade that walked the separated vehicle "
             + "deactivating every IActivate module — module active/fired state on the separated stage now "
             + "persists as-is. IsActive itself (fired, irreversible) is unchanged. 5168 (rev 5132): "
@@ -852,7 +876,10 @@ internal static class VesselReader
             + "component module (PartTemplate.Decoupler deleted; instances come from "
             + "template.Components), so the one-decoupler-per-part assumption behind these ordinals is "
             + "no longer structural — stock content still satisfies it. IsActive/IsEnabled unchanged; "
-            + "the cited line numbers moved.")]
+            + "the cited line numbers moved. 5482 CONTENT DRIFT (rev 5475): Decoupler.cs is unchanged, but "
+            + "CoreFairingA_Prefab_InterstageBridge2W1WB/3W2WB LOST their <Decoupler> (they became fuel tanks), "
+            + "so decouplers/<n> loses rows on vessels using them, later ordinals shift, and ctl/stage no longer "
+            + "separates at those adapters.")]
     private static IReadOnlyList<DecouplerSnapshot> SampleDecouplers(Vehicle vehicle)
     {
         var modules = vehicle.Parts.Modules.Get<Decoupler>();
@@ -865,15 +892,19 @@ internal static class VesselReader
     }
 
     [KsaAnchor("vehicle.Patch.Encounters; Encounter{Body.Id,GameTime,ClosestDistance}",
-        SourceFile = "KSA/PatchedConic.cs / KSA/Encounter.cs", Verified = "2026-09-02",
-        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/PatchedConic.cs:487-507 / KSA/Encounter.cs / KSA/ConjunctionAssessment.cs:41", Verified = "2026-09-25",
+        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "5348: Vehicle.Patch.Encounters and Encounter{Body,GameTime,ClosestDistance} are "
             + "unchanged. Rev 5266's target-gauge rework (FlightPlan.TryFindNextClosestApproach, "
             + "earliest-in-time on the current trajectory, replacing a global-minimum scan) writes "
             + "PatchedConic._closestApproaches — a DIFFERENT list — and Vehicle.FindFinalFlightPlan was "
             + "deleted. These are SOI encounters and are unaffected; they have never reflected planned "
             + "burns."
-            + "5402: members unchanged (PatchedConic/Encounter diff is viewport-typed UI signatures). Same debris gating as the apsis times: flight-plan recalculation is skipped for IsDebris vehicles, so encounters/ on a debris row is frozen at spawn.")]
+            + "5402: members unchanged (PatchedConic/Encounter diff is viewport-typed UI signatures). Same debris gating as the apsis times: flight-plan recalculation is skipped for IsDebris vehicles, so encounters/ on a debris row is frozen at spawn."
+            + " 5482 POPULATION DRIFT: PatchedConic/Encounter are byte-identical, but the candidate search "
+            + "(ConjunctionAssessment.CatchViaClosestApproach) now samples at the new ComputeUnimodalIntervalSeconds "
+            + "= 0.5/(1/P1+1/P2), floored at tMax/512 (was 0.5*min(P1,P2), or tMax/4 for non-finite periods), "
+            + "so rows and closest_distance/ut can differ from 5438.")]
     private static IReadOnlyList<EncounterSnapshot> SampleEncounters(Vehicle vehicle)
     {
         var patch = vehicle.Patch;

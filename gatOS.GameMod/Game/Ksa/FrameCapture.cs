@@ -113,8 +113,8 @@ internal sealed class FrameCapture : IDisposable
                + "Allocator.CreateBuffer/CreateImage, CommandBufferEx.TransitionImages2 + "
                + "ImageBarrierInfo.Presets + ImageTransition, CommandBuffer.BlitImage, "
                + "CommandBuffer.CopyImageToBuffer, BufferEx.Map, PhysicalDevice.GetFormatProperties",
-        SourceFile = "KSA/Program.cs:485,1526 / KSA/IViewport.cs / KSA/ViewportBase.cs / KSA.Rendering/ViewportRenderSurface.cs / KSA.Rendering/RenderTarget.cs:36,48",
-        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Program.cs:484,1523 / KSA/IViewport.cs / KSA/ViewportBase.cs / KSA.Rendering/ViewportRenderSurface.cs / KSA.Rendering/RenderTarget.cs:36,48",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "In-band GPU downscale capture (perf plan P1): barrier offscreen->TransferSrc + scratch "
                 + "Undefined->TransferDst, BlitImage(offscreen->B8G8R8A8 scratch, LINEAR — downscale + "
                 + "float->UNORM clamp in one op), CopyImageToBuffer(small scratch->host), restore "
@@ -128,7 +128,11 @@ internal sealed class FrameCapture : IDisposable
                 + "pre-pass depth under opaque ImGui UI, and this read happens BEFORE the UI composite, "
                 + "so a complete frame now also requires DisplayRenderPatch's UiPixelCulling prefix — "
                 + "without it the stream ships UI-shaped unshaded black holes."
-            + "5402: Program.MainViewport is an IGameViewport and OffscreenTarget is a non-nullable IViewport property backed by ViewportRenderSurface — for the main viewport it is the SHARED Program._offscreenTarget attached in BuildRenderTargets via IViewportLifecycle.AttachSharedTargets (:1526), the same object the capture always read. Reading it before BuildRenderTargets throws InvalidOperationException instead of returning null; this hook only runs inside RenderGame, after it.")]
+            + "5402: Program.MainViewport is an IGameViewport and OffscreenTarget is a non-nullable IViewport property backed by ViewportRenderSurface — for the main viewport it is the SHARED Program._offscreenTarget attached in BuildRenderTargets via IViewportLifecycle.AttachSharedTargets (:1526), the same object the capture always read. Reading it before BuildRenderTargets throws InvalidOperationException instead of returning null; this hook only runs inside RenderGame, after it."
+            + " 5482: line moves only (MainViewport :484, AttachSharedTargets :1523); RenderTarget.cs, ViewportBase and "
+            + "ViewportRenderSurface are byte-identical and Renderer.MaxFramesInFlight is still 2 (Core/Renderer.cs:28) — "
+            + "rev 5443's present-wait is a CPU wait in PrepareFrame, not a change to the frame-slot/fence reuse the "
+            + "deferred readback relies on.")]
     public void MaybeRecord(Program program, CommandBuffer cb, DisplaySurface surface)
     {
         var settings = surface.Settings;

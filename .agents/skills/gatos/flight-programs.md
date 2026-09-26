@@ -59,6 +59,10 @@ engines/<n>/vac_thrust      engines/<n>/isp                 engines/<n>/min_thro
 ```
 Aggregate active thrust as `Σ vac_thrust` over active engines and thrust-weighted Isp
 `Σ(thrust·isp)/Σthrust`. Re-read after staging (engine set changes).
+KSA holds manual `ctl/throttle` at or above the **lowest** `min_throttle` among the vessel's engines
+(a `min_throttle` write applies from the next solve), while the flight computer's burn throttle
+(whenever a burn is planned) uses the **highest** floor among the active engines — see SPEC
+`engines/<n>/min_throttle`.
 
 **Scalar parsing:** every read is a `G9` double (or `0`/`1`, or space-separated `x y z`/`x y z w`),
 one value + `\n`. Trim and parse. Vectors split on whitespace.

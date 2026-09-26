@@ -241,7 +241,10 @@ template), `plumetrail` is a **single global** renderer (plus a one-shot `clear`
 trails), `clouds` is per body → layer → cloud type, `terrain` is per body (only bodies with a live render
 slot) plus a **global** `wireframe`. All writes are Frame-phase, cheap enough to animate at 10–60 Hz —
 group simultaneous ones through `/sim/ctl/batch`. Values are stored as 32-bit floats (read-back is
-single-precision) and the surface is session-scoped (never persisted; restored at unload). Every field,
+single-precision) and the surface is session-scoped (never persisted; restored at unload). Since KSA
+2026.9.22.5482 trails and explosions draw on airless bodies and with clouds off (so `plumetrail` knobs
+reach more of the scene), cloud writes with clouds disabled apply but draw nothing, and terrain
+`min_height`/`max_height` reach the distant-planet sphere only when it is rebuilt. Every field,
 range and unit is in [SPEC §3.7](../../../SPEC_9P_FILESYSTEM.md); `cat <family>/help` in-guest.
 
 **Audio playback (`/sim/audio`, gated by `audio_enabled=true` — NOT a debug cheat):** play real

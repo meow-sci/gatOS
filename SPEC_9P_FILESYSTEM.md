@@ -225,7 +225,7 @@ vessel). Directories marked *(detail)* require `telemetry_vessel_detail=true`; *
 | `bodies/<id>/rotation_rate` | S | scalar | Sidereal rotation rate about +Z (CCF/CCI north), rad/s. |
 | `bodies/<id>/position/ecl` | S | vector | Position in the system **ECL** (ecliptic) frame, meters. |
 | `bodies/<id>/velocity/ecl` | S | vector | Velocity in **ECL**, m/s. |
-| `bodies/<id>/orbit/apoapsis` | S | scalar | Apoapsis **altitude** above the parent surface, meters. |
+| `bodies/<id>/orbit/apoapsis` | S | scalar | Apoapsis **altitude** above the parent surface, meters; `0` when the orbit is unbound (hyperbolic/parabolic — no apoapsis). |
 | `bodies/<id>/orbit/periapsis` | S | scalar | Periapsis altitude, meters. |
 | `bodies/<id>/orbit/ecc` | S | scalar | Eccentricity. |
 | `bodies/<id>/orbit/inc` | S | scalar | Inclination, **degrees**. |
@@ -286,7 +286,7 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 
 | Path | A | Format | Meaning / units |
 |---|---|---|---|
-| `orbit/apoapsis` | S | scalar | Apoapsis **altitude** above parent surface, meters. |
+| `orbit/apoapsis` | S | scalar | Apoapsis **altitude** above parent surface, meters; `0` when the orbit is unbound (hyperbolic/parabolic — no apoapsis), matching `time_to_ap`. Since KSA `2026.9.22.5482` gatOS gates this on KSA's `Orbit.IsBound()`; earlier builds leaked KSA's finite, large **negative** `a·(1+e)` radius on an escape trajectory. Detect escape with `orbit/ecc >= 1` (or `sma < 0`), never a negative apoapsis. |
 | `orbit/periapsis` | S | scalar | Periapsis altitude, meters. |
 | `orbit/ecc` | S | scalar | Eccentricity. |
 | `orbit/inc` | S | scalar | Inclination, degrees. |
@@ -349,7 +349,7 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 | `engines/<n>/isp` | S | scalar | Specific impulse, s. |
 | `engines/<n>/throttle` | S | scalar | Commanded throttle 0..1. |
 | `engines/<n>/propellant` | S | flag | Propellant available. |
-| `engines/<n>/min_throttle` | **St** | fraction | Read = deep-throttle floor; **write `0..1`** (action `engine.min_throttle`). ⚠ **Multi-engine meaning inverted in KSA `2026.8.22.5348` (rev 5317).** The write still lands on this engine's own floor, but the flight computer now folds the active engines with `Max` seeded at `0` instead of `Min` seeded at `1`, so the **effective** floor for the stack is set by the **most** restrictive engine rather than the least (and defaults to `0`, not `1`, with no active engine). On a multi-engine stack a single high `min_throttle` now raises the whole vehicle's floor. |
+| `engines/<n>/min_throttle` | **St** | fraction | Read = this engine's deep-throttle floor; **write `0..1`** (action `engine.min_throttle`). KSA applies the floors through **two different clamps**. (1) **Manual throttle:** every solve clamps the `ctl/throttle` setpoint to the **lowest** floor of **all** engines on the vessel (KSA's cached `PartTree.EngineThrottleMin`, seeded `1`). Since KSA `2026.9.22.5482` a write marks that cache dirty, so the new floor applies from the next solve; before, it lagged until the vessel's next structural change. (2) ⚠ **Flight-computer burn throttle — multi-engine meaning inverted in KSA `2026.8.22.5348` (rev 5317).** The flight computer folds the **active** engines with `Max` seeded at `0` instead of `Min` seeded at `1`, so its **effective** floor for the stack is set by the **most** restrictive engine rather than the least (and defaults to `0`, not `1`, with no active engine). On a multi-engine stack a single high `min_throttle` raises the burn floor for the whole vehicle. |
 
 #### 3.4.7 Tanks — `…/tanks/<resource>/` (resource = sanitized resource name)
 
@@ -486,6 +486,11 @@ propellant (stacking them is how total impulse is sized in the editor); `<m>` is
 | `decouplers/<n>/enabled` | S | flag | Whether the decoupler module is enabled. KSA ≥ 2026.8.5.5168 lets players **disable** a part's decoupler module (turning e.g. an adapter into a static fairing); a disabled decoupler **cannot fire**. `1` for every decoupler the player has not explicitly disabled. |
 | `decouplers/<n>/fire` | T | write `1` | Fire (action `decoupler.fire`; re-fire ⇒ `EBUSY`; **disabled ⇒ `EOPNOTSUPP`**). |
 
+> **Part content drift, KSA `2026.9.22.5482` (rev 5475):** the CoreFairingA `InterstageBridge2W1WB` and
+> `InterstageBridge3W2WB` adapters are now fuel tanks with **no** decoupler, and Nosecone C/E/F/G/H gained
+> tanks. On a craft carrying them, those rows vanish from `decouplers/<n>` (later ordinals shift — re-discover
+> before an index-addressed `decoupler.fire`), `ctl/stage` no longer separates there, and `tanks/` gains entries.
+
 #### 3.4.15 Animations *(present when fitted)* — `…/animations/<n>/`
 
 | Path | A | Format | Meaning |
@@ -496,7 +501,7 @@ propellant (stacking them is how total impulse is sized in the editor); `<m>` is
 
 #### 3.4.16 Encounters *(detail; present when any)* — `…/encounters`
 
-NDJSON, one line per predicted closest approach: `{"body":<id>,"ut":<t>,"distance":<m>}`.
+NDJSON, one line per predicted closest approach: `{"body":<id>,"ut":<t>,"distance":<m>}`. KSA `2026.9.22.5482` refined the closest-approach sampling interval, so which encounters appear (and their `ut`/`distance`) can differ from earlier builds.
 
 > **Coverage widened in KSA `2026.7.9.5018`.** Earlier builds skipped any sibling body whose sphere of
 > influence was below a flat 10 000 km cutoff; KSA now decides candidacy from orbital geometry (radius-band
@@ -643,7 +648,7 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 |---|---|---|---|---|---|
 | `debug/vessels/<id>/teleport` | **St** | `px py pz vx vy vz` | `debug.teleport` | **Solver** | Set the vessel's **CCI state vector** (position m, velocity m/s) about its **current parent body**. ⚠ **Solver phase since KSA `2026.8.22.5348`** (was Frame; revs 5331/5339 moved physics-bubble ownership onto the solver thread) — it therefore lands on the next solver step, and a `ctl/batch` may **no longer** mix it with Frame-phase actions (§3.10). See §6. |
 | `debug/vessels/<id>/impulse` | **St** | `x y z [cci\|body] [ns\|dv]` | `debug.impulse` | **Solver** | One-shot impulsive kick: a 3-vector **impulse in N·s** (default; Δv = J ÷ live vessel mass, the `Vehicle.Split` separation-impulse math) or a direct **Δv in m/s** (`dv`), in the parent-**CCI** frame (default) or the **vessel body frame** (`body`; +X = nose/thrust axis). The two keywords may follow the numbers in any order. No propellant is spent; the orbit is rebuilt at the current CCI position with the bumped velocity (the teleport pattern), so it works on-rails and in the physics bubble alike. Zero vector = no-op success. Read = `0 0 0` (no read-back). ⚠ **Solver phase since KSA `2026.8.22.5348`** (was Frame; same reason as `teleport` above — it rides the same machinery), so it lands on the next solver step and cannot share a `ctl/batch` with Frame-phase actions (§3.10). See §6. |
-| `debug/vessels/<id>/refill_fuel` | T | `1` | `debug.refill_fuel` | **Solver** | Refill all consumables. |
+| `debug/vessels/<id>/refill_fuel` | T | `1` | `debug.refill_fuel` | **Solver** | Refill all consumables. Since KSA `2026.9.22.5482` (rev 5478) the game also flags the tank contents as changed, so an engine that had run dry re-lights after a refill (before, it could stay starved). |
 | `debug/vessels/<id>/refill_battery` | T | `1` | `debug.refill_battery` | **Solver** | Refill all batteries. |
 | `debug/vessels/<id>/docking/<n>/pushoff_impulse` | **St** | number (N·s ≥0) | `debug.docking_pushoff` | Frame | Override a docking port's undock separation impulse (`DockingPort.PushoffImpulse`). |
 | `debug/time/warp` | **St** | factor | `debug.warp` | Frame | Set the time-warp factor directly (`Universe.SetSimulationSpeed`). |
@@ -741,7 +746,7 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/clouds/bodies/<id>/reset` | T | `1` | `debug.clouds_reset` | Frame | Restore that body's pristine cloud values. |
 | `debug/terrain/help` | S | — | — | — | Console-friendly readme for the terrain family. `cat` it. |
 | `debug/terrain/wireframe` | **St** | `0`/`1` | `debug.terrain_set` | Frame | **Global** (not per body): draw all planet terrain as wireframe. Addressed with an empty entity token. |
-| `debug/terrain/bodies/<id>/{min_height,max_height}` | **St** | number, meters (`-20000..0` / `0..20000`) | `debug.terrain_set` | Frame | The height range the body's height field maps to. |
+| `debug/terrain/bodies/<id>/{min_height,max_height}` | **St** | number, meters (`-20000..0` / `0..20000`) | `debug.terrain_set` | Frame | The height range the body's height field maps to. Since KSA `2026.9.22.5482` (rev 5457) the far-away planet sphere is also height-displaced from a copy of this range taken when that renderer is built, so a live edit shows on near terrain immediately but on the distant sphere only after it is rebuilt. |
 | `debug/terrain/bodies/<id>/slope_roughness_deg` | **St** | number, degrees (`0..90`) | `debug.terrain_set` | Frame | Mean micro-slope roughness used by the surface BRDF (stored internally in radians). |
 | `debug/terrain/bodies/<id>/hapke_albedo` | **St** | number (`0.0001..0.99999`) | `debug.terrain_set` | Frame | Mean single-scattering albedo of the Hapke surface model. |
 | `debug/terrain/bodies/<id>/biomes/blend_strength` | **St** | number (`1..10`) | `debug.terrain_set` | Frame | Sharpness of the blend between neighbouring biome materials. |
@@ -838,7 +843,9 @@ render editors exposed as filesystems). Shared rules for all four:
 - **Errnos:** `EINVAL` unknown field path / wrong arity / out of range / non-finite; `ENOENT` unknown or
   vanished template/body (also on a read of a leaf whose entity went away, or an out-of-range
   layer/cloud-type index); `EOPNOTSUPP` the family's game-side accessor is latched degraded (it also
-  shows in `status/accessors`); `EIO` a KSA call threw.
+  shows in `status/accessors`) — except `clouds`, whose degraded `fx.cloud_renderer`/`fx.cloud_apply`
+  still applies the data write and returns OK (only the immediate GPU re-upload is skipped); `EIO` a KSA
+  call threw.
 - The whole surface is gated by `debug_namespace` like the rest of `/sim/debug`, is mirrored leaf-by-leaf
   over HTTP `/v1/fs/debug/…` and MQTT `gatos/sim/debug/…`, and rides `GET /v1/snapshot` as `fxEditors`.
 
@@ -851,7 +858,9 @@ After each write gatOS runs the game editor's own propagation pass over every li
 frame. Startup/shutdown transient curves, the test grid and the wireframe debug view are **not** exposed.
 
 **plumetrail** — Since KSA `2026.9.10.5438`, its global raymarch render controls also affect
-explosion volumes sharing the renderer. `clear` still removes only trail geometry; trail expansion
+explosion volumes sharing the renderer. Since KSA `2026.9.22.5482` (revs 5446/5454) trails and explosions
+also draw on airless bodies and with clouds disabled, explosions have their own game setting
+(Graphics → Explosions), and far more explosions can be live at once, so these knobs visibly govern more of the scene. `clear` still removes only trail geometry; trail expansion
 settings remain trail-specific. **One global renderer**, not per vessel: the fields sit directly in the family dir. The
 renderer re-reads them every frame, so a write takes effect with no apply call. `clear` is a **one-shot**
 that deletes the trail geometry currently in the world (`reset` only restores settings, it does not clear
@@ -864,7 +873,11 @@ defines. Discovery: `ls bodies/`, then `cat bodies/<id>/json`. After each write 
 affected layer's GPU render data and repopulates the cloud-shadow atlas — exactly the sequence the
 in-game editor runs, and one that never rebuilds a Vulkan pipeline. If that render-side handle is
 unavailable the **data write still stands and the write still succeeds** (`Ok`) — the change simply
-appears on the renderer's next natural repopulate. The layer noise scale is **deliberately not exposed**
+appears on the renderer's next natural repopulate (the `fx.cloud_renderer` accessor then shows degraded in
+`status/accessors`). Since KSA `2026.9.22.5482` (rev 5446) the game builds the cloud renderer whenever clouds,
+plume trails **or** explosions are enabled: with clouds disabled but trails or explosions on, a write is
+applied to that renderer and the accessor reports healthy, yet nothing is drawn until clouds are enabled.
+The layer noise scale is **deliberately not exposed**
 (changing it would force a pipeline rebuild); shape/density splines and texture slots are deferred.
 
 **terrain** — a deliberately small first slice, in two tiers. `wireframe` is **family-global** (one
@@ -1399,7 +1412,7 @@ recommended single read for a control loop (self-consistent, no stitching). Fiel
   "mass": { "t": .., "d": .., "p": .. },          // total / dry / propellant, kg
   "att_q": [x, y, z, w],  // Body→CCI quaternion
   "orbit": {              // present only while in orbit
-    "ap": .., "pe": ..,   // apoapsis/periapsis altitude, m
+    "ap": .., "pe": ..,   // apoapsis/periapsis altitude, m (ap = 0 when unbound)
     "ecc": .., "inc": .., // eccentricity, inclination(deg)
     "sma": .., "period": ..,
     "ta": .., "t_ap": .., "t_pe": ..   // true anomaly(deg), time-to-ap/pe(s)
@@ -1871,6 +1884,9 @@ sticker actions below carry their own). Visual by-id operations do not require t
 vessel. Invalid flags/tokens/non-finite or out-of-range
 RGB fail `EINVAL`; missing live targets fail `ENOENT`; a shader-prefix conflict returns `EBUSY`;
 incompatible audited render internals return `EOPNOTSUPP` and leave stock rendering active.
+A fault after arming — a patched shader that fails to compile, or (since KSA `2026.9.22.5482`) the
+part state-bit render seam throwing — disarms paint on its own: `paint/status` reports `parts=degraded`
+with `part_error=<text>`, the master reads `0`, and stock rendering returns.
 
 HTTP mirrors every leaf at `GET|POST /v1/fs/<path>`. MQTT publishes retained
 `gatos/sim/<path>` and accepts writes at `gatos/sim/<path>/set`; canonical HTTP/MQTT command
@@ -2031,7 +2047,11 @@ works headless and lets `/sim/camera` point it for you; `aim=cursor` fires down 
 picking ray. The ray tests vehicle parts first with KSA's own mesh-precise raycast, then marches the
 terrain behind them; nothing hit within `range=` is `ENOENT` and `last` records `no hit within <r>m`.
 Ground clutter cannot be *aimed* at — it exists only on the GPU — but it is very much *painted*,
-because the projection box covers whatever falls inside it. `spray`'s `roll=` **adds to** the
+because the projection box covers whatever falls inside it. Since KSA `2026.9.22.5482` clutter can also be
+knocked loose and roll away (rev 5447); a sticker's `body` anchor stays where it was sprayed and paints
+whatever then fills its box. KSA's part raycast also gained a bounding-sphere early-out in that build (the part's
+bounds times its scale), so a sub-part moved outside its part's bounds — e.g. by IVA cabin physics —
+can be missed by the ray. `spray`'s `roll=` **adds to** the
 "reads upright from here" rotation the picker computes rather than replacing it, and an omitted `d=`
 takes the anchor kind's default once the ray has said what it hit.
 

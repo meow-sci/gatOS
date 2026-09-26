@@ -84,11 +84,12 @@ internal static class FxReflect
     ///     public instance fields the renderer re-reads every frame, so no apply call exists.
     /// </summary>
     [KsaAnchor("Program.Instance._volumetricTrailRenderer (private instance field)",
-        SourceFile = "KSA/Program.cs:184", Verified = "2026-09-02", GameVersion = "2026.9.7.5402",
+        SourceFile = "KSA/Program.cs:185", Verified = "2026-09-25", GameVersion = "2026.9.22.5482",
         Risk = ChurnRisk.High,
         Notes = "Reflection: the only handle on the one VolumetricTrailRenderer. The renderer type and "
             + "every field gatOS writes are public; only the Program field is private. Null while the "
-            + "renderer has not been constructed (pre-Program.Instance), which is a transient degrade.")]
+            + "renderer has not been constructed (pre-Program.Instance), which is a transient degrade. "
+            + "5482: line move only (:184 -> :185); same name and type.")]
     internal static VolumetricTrailRenderer? Trail(out string error)
     {
         error = "";
@@ -125,12 +126,14 @@ internal static class FxReflect
     /// </remarks>
     [KsaAnchor("VolumetricTrailRenderer._plumeTrailSegmentsManager (private) → "
             + "PlumeTrailSegmentsManager._settings (private) → PlumeTrailSettings.ExpansionTimeSeconds (public)",
-        SourceFile = "KSA/VolumetricTrailRenderer.cs:166 / KSA/PlumeTrailSegmentsManager.cs:19 / "
-            + "KSA/PlumeTrailSettings.cs:11", Verified = "2026-09-02", GameVersion = "2026.9.7.5402",
+        SourceFile = "KSA/VolumetricTrailRenderer.cs:170 / KSA/PlumeTrailSegmentsManager.cs:19 / "
+            + "KSA/PlumeTrailSettings.cs:9", Verified = "2026-09-25", GameVersion = "2026.9.22.5482",
         Risk = ChurnRisk.High,
         Notes = "Was VolumetricTrailRenderer.ExpansionTimeSeconds (a public field) up to 2026.7.10.5056; "
             + "revs 5059/5097 moved it onto the new PlumeTrailSettings. Same default (5f) and meaning. "
-            + "Mirrors PlumeTrailSegmentsManager.OnDrawProfileUi, which edits this exact field.")]
+            + "Mirrors PlumeTrailSegmentsManager.OnDrawProfileUi, which edits this exact field. "
+            + "5482: _plumeTrailSegmentsManager moved :166 -> :170 (same name/type); PlumeTrailSegmentsManager.cs and "
+            + "PlumeTrailSettings.cs are byte-identical.")]
     internal static PlumeTrailSettings? TrailSettings(VolumetricTrailRenderer trail, out string error)
     {
         error = "";
@@ -178,10 +181,16 @@ internal static class FxReflect
 
     /// <summary>The cloud renderer, or null with a reason.</summary>
     [KsaAnchor("Program.Instance._planetTransparenciesRenderer (private) .GetCloudRenderer() (public)",
-        SourceFile = "KSA/Program.cs:176 / KSA/PlanetTransparenciesRenderer.cs:75",
-        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
+        SourceFile = "KSA/Program.cs:177 / KSA/PlanetTransparenciesRenderer.cs:76,129,359",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
         Notes = "One private field hop; the renderer accessor itself is public. Needed only for the apply "
-            + "path — the cloud DATA hangs off the public AtmosphericBody.BodyTemplate.CloudsReference.")]
+            + "path — the cloud DATA hangs off the public AtmosphericBody.BodyTemplate.CloudsReference. "
+            + "5482 (rev 5446) SEMANTIC DRIFT: the CloudRenderer used to exist only with clouds on "
+            + "(ShowClouds()); it is now constructed when GameSettings.UseCloudUpscaling() — clouds OR plume "
+            + "trails OR explosions (GameSettings.cs:3204; PlanetTransparenciesRenderer.cs:129,359). Cloud "
+            + "drawing is still gated on ShowClouds(), so with clouds off but trails/explosions on, "
+            + "/sim/debug/clouds writes now apply against layers that are not drawn and fx.cloud_renderer "
+            + "stays healthy instead of latching degraded (the write result was always Ok).")]
     internal static CloudRenderer? Clouds(out string error)
     {
         error = "";
@@ -215,14 +224,16 @@ internal static class FxReflect
     ///     repopulate picks up.
     /// </summary>
     [KsaAnchor("CloudRenderer._renderer/_cloudShadowsRenderer/_worleyNoise3dTarget (private fields)",
-        SourceFile = "KSA.Atmosphere.Rendering/CloudRenderer.cs:105,161,233",
-        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
+        SourceFile = "KSA.Atmosphere.Rendering/CloudRenderer.cs:109,165,245",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
         Notes = "The three arguments CloudLayerRenderData.UpdateStaticData + CloudShadowsRenderer."
             + "PopulatePlanets need; the render-data map itself (_planetToCloudRenderData) is public. "
             + "_worleyNoise3dTarget was KSA.RenderTarget up to 2026.8.3.5117; rev 5154's dynamic-rendering "
             + "migration retyped it to KSA.Rendering.RenderImage (and PopulatePlanets' parameter with it). "
             + "The old KSA.RenderTarget/KSA.OffscreenTarget classes are gone; the NEW KSA.Rendering."
-            + "RenderTarget is an unrelated type, so do not re-bind this to the name alone.")]
+            + "RenderTarget is an unrelated type, so do not re-bind this to the name alone. "
+            + "5482: line moves only (:105/:161/:233 -> :109/:165/:245); names and types unchanged "
+            + "(Renderer, RenderImage, CloudShadowsRenderer).")]
     internal static CloudApplyHandles? CloudApply(CloudRenderer renderer, out string error)
     {
         error = "";
@@ -245,10 +256,10 @@ internal static class FxReflect
     }
 
     /// <summary>The planet (terrain) renderer, or null with a reason.</summary>
-    [KsaAnchor("Program.GetPlanetRenderer() (public static)", SourceFile = "KSA/Program.cs:563",
-        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
+    [KsaAnchor("Program.GetPlanetRenderer() (public static)", SourceFile = "KSA/Program.cs:562",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "Public accessor; null before the renderer exists. Backs the zero-reflection "
-            + "PlanetRenderer.Wireframe toggle and the per-body slot lookups.")]
+            + "PlanetRenderer.Wireframe toggle and the per-body slot lookups. 5482: line move only (:563 -> :562).")]
     internal static PlanetRenderer? Terrain(out string error)
     {
         error = "";

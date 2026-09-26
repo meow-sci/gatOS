@@ -175,7 +175,9 @@ TWR = thrust / (mass · g(r))               // dimensionless
 ```
 
 Altitudes in `/sim` orbit elements are **above the surface** (`apoapsis`/`periapsis` are altitudes,
-not radii); add `radius` to get the geocentric radius. Inclination/LAN/argpe/true-anomaly are in
+not radii); add `radius` to get the geocentric radius. An unbound (escape) orbit has no apoapsis:
+`apoapsis` and `time_to_ap` read `0`, so detect escape with `ecc >= 1` (or `sma < 0`), never a
+negative apoapsis (pre-5482 builds leaked one). Inclination/LAN/argpe/true-anomaly are in
 **degrees**; convert to radians for trig.
 
 ---

@@ -588,7 +588,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         example:
           '{"operation":"engine_minimum_throttle","vessel_id":"Hunter","ordinal":0,"value":0.15}',
         description:
-          "Set one engine's normalized minimum-throttle fraction. engine_min_throttle is an alias.",
+          "Set one engine's normalized minimum-throttle fraction. engine_min_throttle is an alias. Manual throttle is held at or above the lowest floor of all the vessel's engines (applies from the next solve); a planned burn uses the highest floor among active engines.",
       },
       {
         name: "light_brightness",
@@ -1135,7 +1135,8 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         action: "debug.refill_fuel | debug.refill_battery",
         callShape: "{ operation, vessel_id }",
         example: '{"operation":"refill_fuel","vessel_id":"Hunter"}',
-        description: "Refill one vessel's relevant resources on the solver phase.",
+        description:
+          "Refill one vessel's relevant resources on the solver phase. Since KSA 2026.9.22.5482 a refill also re-lights an engine that had run dry.",
       },
       {
         name: "control_vessel | always_render_iva",
@@ -1306,7 +1307,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         example:
           '{"family":"engine_plume","operation":"set","entity":"MethaloxVac","field":"emission/brightness","value":35}',
         description:
-          "Validate and set one declared FxCatalog field. engine_plume entity is a template id; plume_trail entity is omitted and global raymarch controls also affect explosion volumes; clouds entity is a body id; terrain uses a body id or an empty entity for wireframe.",
+          "Validate and set one declared FxCatalog field. engine_plume entity is a template id; plume_trail entity is omitted and global raymarch controls also affect explosion volumes (which, since KSA 2026.9.22.5482, also draw on airless bodies and with clouds off); clouds entity is a body id (with clouds disabled in game settings a write applies but draws nothing); terrain uses a body id or an empty entity for wireframe (min_height/max_height reach the distant-planet sphere only when it is rebuilt).",
       },
       {
         name: "reset",

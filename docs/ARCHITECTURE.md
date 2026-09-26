@@ -261,9 +261,10 @@ The cheats ported from the sibling `unscience` mod are exposed **only** on gatOS
   `Universe.ExecuteNextVehicleSolvers`. It self-gates to a no-op when no welds exist, so it adds zero
   per-frame cost when unused and needs **no** Harmony patch.
 - **`always_render_iva`** (`Game/Ksa/Render/IvaForceRender.cs`): forces interior (IVA) part meshes to
-  render outside the IVA camera. It installs **two Harmony patches on its own dynamic
-  `Harmony("gatos.iva")` instance only while enabled** (a `PartModel` ctor postfix + an editor-only
-  `AddInstance` postfix) and bulk-flips the internal-template flag over `PartModel.Instances`; disabling
+  render outside the IVA camera. It installs **one Harmony patch on its own dynamic
+  `Harmony("gatos.iva")` instance only while enabled** (a `PartModel` ctor postfix — the editor-only
+  `AddInstance` postfix was dropped at KSA 5482, whose cached `PartTreeRenderData.Compose` re-reads the
+  flag every frame) and bulk-flips the internal-template flag over `PartModel.Instances`; disabling
   restores the templates and unpatches. Default-off ⇒ zero patches.
 - **`thug_life`** (`Game/Ksa/ThugLife/`): gatOS's **first custom GPU rendering** (sticker decals are the
   second — see [Sticker decals](#sticker-decals) below; the two share nothing but the pattern) — anchors a

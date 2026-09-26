@@ -62,15 +62,19 @@ internal static class StickerAnchors
     /// </remarks>
     [KsaAnchor("Celestial.{GetDirCcfFromLatLon,GetTerrainHeightFromDirCcf,GetCcf2Cce,GetCci2Cce,"
             + "MeanRadius}; Vehicle.ComputeEnu2Cce(double3, doubleQuat); Camera.GetPositionEgo(IPosition)",
-        SourceFile = "KSA/Celestial.cs:670,792,534,522,91 / KSA/Vehicle.cs:2997 / KSA/Camera.cs:231",
-        Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Celestial.cs:665,787,530,518,87 / KSA/Vehicle.cs:3175 / KSA/Camera.cs:231",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "GetTerrainHeightFromDirCcf returns METRES above MeanRadius and 0 for a body with no "
-            + "heightmap (Celestial.cs:794-797). ComputeEnu2Cce builds its quaternion from a matrix "
-            + "whose ROWS are east/north/up (Vehicle.cs:3014), so under the row-vector convention "
+            + "heightmap (Celestial.cs:789-792). ComputeEnu2Cce builds its quaternion from a matrix "
+            + "whose ROWS are east/north/up (Vehicle.cs:3192), so under the row-vector convention "
             + "UnitX/UnitY/UnitZ transform to east/north/up respectively. It returns null on the spin "
             + "axis, where ENU is undefined. The ego position is composed exactly like KSA's own "
-            + "terrain debug overlay (Vehicle.cs:4511-4523): body ego position + the body-fixed offset "
-            + "rotated into ecliptic axes, never an absolute ecliptic point.")]
+            + "terrain debug overlay (Vehicle.cs:4880-4888): body ego position + the body-fixed offset "
+            + "rotated into ecliptic axes, never an absolute ecliptic point. "
+            + "5482: Celestial.cs and Camera.cs members unchanged; ComputeEnu2Cce is semantically identical "
+            + "(rows still east/north/up, only locals renamed); line citations refreshed. Displaced ground "
+            + "clutter (rev 5447) can now move, so a geodetic sticker sprayed onto a rock stays at its "
+            + "lat/lon/height when the rock is knocked away.")]
     private static bool TryComposeBody(StickerEntry entry, KsaCamera camera)
     {
         if (entry.Body is not { } body)
@@ -127,13 +131,16 @@ internal static class StickerAnchors
     ///     point stored in that part's local frame is only correct under the same transform.
     /// </remarks>
     [KsaAnchor("Vehicle.GetMatrixAsmb2Ego(Camera); Part.MatrixAsmb2Ego(in double4x4)",
-        SourceFile = "KSA/Vehicle.cs:1202 / KSA/Part.cs:1041",
-        Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Vehicle.cs:1270 / KSA/Part.cs:1213",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "Part.MatrixAsmb2Ego is CreateScale(Scale) * CreateFromQuaternion(Asmb2ParentAsmb) * "
             + "CreateTranslation(PositionParentAsmb) * MatrixParentAsmb2Ego — i.e. it INCLUDES the "
             + "part's own scale and walks the whole sub-part parent chain, which is what makes a "
             + "sub-part instance id a valid anchor. Row-vector convention throughout (v * M), so the "
-            + "decal matrix is composed S * R * T * partMat and read left to right.")]
+            + "decal matrix is composed S * R * T * partMat and read left to right. "
+            + "5482: both signatures unchanged (line moves). The new cached part render path (PartTreeRenderData, "
+            + "rev 5456) composes ComputeMatrixAsmb2VehicleAsmb() the same S*R*T way, so the decal still lands on "
+            + "the drawn hull.")]
     private static bool TryComposeVessel(StickerEntry entry, KsaCamera camera)
     {
         if (entry.Vehicle is not { } vehicle || entry.Part is not { } part)

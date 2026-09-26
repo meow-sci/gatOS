@@ -67,10 +67,11 @@ internal static class TrailActuator
 
     /// <summary>Drops every live trail — a one-shot, not a settings change.</summary>
     [KsaAnchor("Program.Instance.ClearPlumeTrails() → VolumetricTrailRenderer.ClearPlumeTrails()",
-        SourceFile = "KSA/Program.cs / KSA/VolumetricTrailRenderer.cs:251",
-        Verified = "2026-08-01", GameVersion = "2026.8.3.5117", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Program.cs:4998 / KSA/VolumetricTrailRenderer.cs:261",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "DISCREPANCY vs plans/FX_EDITORS_PLAN.md §3: ClearPlumeTrails is a public INSTANCE method "
-            + "on Program (not static), so it is reached through the public Program.Instance — no reflection.")]
+            + "on Program (not static), so it is reached through the public Program.Instance — no reflection. "
+            + "5482: line moves only; still clears trails, not explosion volumes.")]
     internal static CommandResult Clear(KsaHealth health)
     {
         if (Program.Instance is not { } program)
@@ -100,8 +101,8 @@ internal static class TrailActuator
             + "StepSizeDistanceScale,ErosionMaxDepth,ErosionEdgeSharpness,SelfShadowStepCount,"
             + "LightBrightness,SkyAmbientBrightness} (public fields); "
             + "PlumeTrailSettings.ExpansionTimeSeconds via FxReflect.TrailSettings",
-        SourceFile = "KSA/VolumetricTrailRenderer.cs:172-192 / KSA/PlumeTrailSettings.cs:9",
-        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/VolumetricTrailRenderer.cs:186-202 / KSA/PlumeTrailSettings.cs:9",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "Plain public instance fields, read fresh by the renderer every frame — read-back is "
             + "always the live value and a write needs no apply call. Floats, so a value round-trips at "
             + "single precision. ExpansionTimeSeconds is the exception: revs 5059/5097 moved it off the "
@@ -112,7 +113,12 @@ internal static class TrailActuator
             + "PlumeTrailTemplate asset (Color/DensityMultiplier/Lifetime, PlumeTrailAssets.xml) and "
             + "ride each SubmitEmitter call — so render/trail_color was retired from /sim rather than "
             + "re-bound (nothing global remains to bind). PlumeTrailSettings.SegmentLifetimeSeconds "
-            + "also left (never bound). The nine remaining fields are byte-identical.")]
+            + "also left (never bound). The nine remaining fields are byte-identical. "
+            + "5482: the nine fields are byte-identical (moved to :186-202). Revs 5446/5454 widen their reach: "
+            + "explosion volumes (MAX_VOLUMES 64 -> 2048, ExplosionVolumeSystem.cs:28) are now gated on the new "
+            + "GameSettings.Graphics.Explosions / ShowExplosions() instead of ShowClouds(), CanRender() dropped its "
+            + "atmosphere requirement, and trails/explosions render on airless bodies and with clouds off "
+            + "(CloudRenderer.RenderVolumetricTrailsOnly) — so these knobs visibly affect more scenes.")]
     internal static bool TryRead(VolumetricTrailRenderer r, FxFieldSpec spec, double[] dst)
     {
         switch (spec.Key)

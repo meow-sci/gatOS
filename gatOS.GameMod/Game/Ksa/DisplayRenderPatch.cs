@@ -133,15 +133,17 @@ internal static class DisplayRenderPatch
     ///     </para>
     /// </remarks>
     [KsaAnchor("GameSettings.UiPixelCulling() (Harmony prefix)",
-        SourceFile = "KSA/GameSettings.cs:3154 / KSA/UiCoverageMaskSystem.cs:466 / KSA/PrePassRenderer.cs",
-        Verified = "2026-09-02", GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
+        SourceFile = "KSA/GameSettings.cs:3293 / KSA/UiCoverageMaskSystem.cs:466 / KSA/PrePassRenderer.cs",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
         Notes = "Born at 2026.8.22.5348 (rev 5283). Setting defaults ON, so without this the screen "
                 + "stream ships UI-shaped unshaded holes. Single game-side caller "
                 + "(UiCoverageMaskSystem.RecordMaskGeneration), which re-reads it per frame and clears "
                 + "the tile masks when false. Install is best-effort: a missing target only costs "
                 + "capture fidelity, never the stream. "
                 + "5402: unchanged — UiPixelCulling() is still a single overload at GameSettings.cs:3154 "
-                + "and RecordMaskGeneration (UiCoverageMaskSystem.cs:466) is still its only caller.")]
+                + "and RecordMaskGeneration (UiCoverageMaskSystem.cs:466) is still its only caller. "
+                + "5482: line move only (:3154 -> :3293); still one overload, one caller (UiCoverageMaskSystem.cs "
+                + "unchanged).")]
     private static bool UiPixelCullingPrefix(ref bool __result)
     {
         if (!IsCapturing)
@@ -186,7 +188,7 @@ internal static class DisplayRenderPatch
     ///     unchanged (the feature simply stays dark) rather than corrupting the method.
     /// </summary>
     [KsaAnchor("Program.RenderGame (Harmony transpiler) + Brutal.VulkanApi.VkDeviceExtensions.End",
-        SourceFile = "KSA/Program.cs:4764", Verified = "2026-09-02", GameVersion = "2026.9.7.5402",
+        SourceFile = "KSA/Program.cs:4571-4872 (End :4871)", Verified = "2026-09-25", GameVersion = "2026.9.22.5482",
         Risk = ChurnRisk.Medium,
         Notes = "Injects the capture call before the frame's final commandBuffer.End() (Program.cs:4764), where the "
                 + "offscreen ColorImage is ShaderReadOnlyOptimal and recording is outside any render pass. Matches the "
@@ -200,7 +202,15 @@ internal static class DisplayRenderPatch
                 + "Profiler.End(cb, idx, Section) calls are 3-arg KSA methods, Profiler.MainThread.End() is "
                 + "0-arg KSA, and EndRendering/EndRenderPass are differently named. codes[callIdx-1] is still "
                 + "the ldloc of commandBuffer2, VkDeviceExtensions.cs has zero diff, RenderGame is still "
-                + "single-declared, and RenderEditor's own End() (:4887) is not patched.")]
+                + "single-declared, and RenderEditor's own End() (:4887) is not patched. "
+                + "5482: line moves only — RenderGame :4571, tail unchanged: ResolveAttachments(false) :4821, full "
+                + "ResolveAttachments :4849, SampledReadVfc barrier :4862, RenderFinalComposite :4866, "
+                + "OnRenderGameSwapchainGrab :4869, Profiler.Gpu.EndFrame :4870, commandBuffer2.End() :4871. The only "
+                + "other 1-arg End in the body, _clutterPrePass.End(commandBuffer2) (:4706, already present at 5438), is "
+                + "declared in KSA.Rendering.ClutterPrePass and rejected by the namespace filter; the backward scan hits "
+                + "the final End first anyway. RenderEditor's End is now :4995. Rev 5443's present-wait frame pacing "
+                + "(Renderer.WaitForPreviousPresent in PrepareFrame, FrameQueueLimit.OneFrame default) is CPU-side; "
+                + "MaxFramesInFlight is still 2, so the deferred-readback slot ring is unchanged.")]
     private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
     {
         var codes = new List<CodeInstruction>(instructions);

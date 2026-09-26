@@ -30,4 +30,17 @@ public sealed class SanitizeTests
             Assert.That(Sanitize.RadiusToAltitude(double.NaN, 6_370_000), Is.Zero);
         });
     }
+
+    [Test]
+    public void ApoapsisToAltitude_ZeroesUnboundOrbits()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(Sanitize.ApoapsisToAltitude(6_620_000, 6_370_000, isBound: true), Is.EqualTo(250_000));
+            Assert.That(Sanitize.ApoapsisToAltitude(-9.8e7, 6_370_000, isBound: false), Is.Zero,
+                "a hyperbolic a*(1+e) apoapsis is finite and negative; it must not leak as an altitude");
+            Assert.That(Sanitize.ApoapsisToAltitude(double.NaN, 6_370_000, isBound: false), Is.Zero);
+            Assert.That(Sanitize.ApoapsisToAltitude(double.PositiveInfinity, 6_370_000, isBound: true), Is.Zero);
+        });
+    }
 }

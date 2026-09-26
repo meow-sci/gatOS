@@ -44,20 +44,29 @@ internal static class EngineActuator
         return CommandResult.Ok;
     }
 
-    [KsaAnchor("EngineController.MinimumThrottle (float, settable)", SourceFile = "KSA/EngineController.cs",
-        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.Medium,
+    [KsaAnchor("EngineController.MinimumThrottle (float, settable); PartTree.MarkDerivedDirty(DerivedData.RocketControls)",
+        SourceFile = "KSA/EngineController.cs / KSA/PartTree.cs:480,993-1017 / KSA/Vehicle.cs:1264,2411",
+        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
         Notes = "Deep-throttle floor 0..1. 5348 (rev 5317 era): EngineController.MinimumThrottle itself "
             + "is unchanged and this write still lands, but FlightComputer."
             + "ComputeActiveEnginePerformance flipped its fold over the active engines — seed 1f -> 0f "
             + "and MathF.Min -> MathF.Max — so the effective ActiveEnginePerformance.MinThrottle clamp "
             + "on a multi-engine stack is now set by the MOST restrictive engine instead of the least, "
-            + "and the empty-set default flipped 1.0 -> 0.0.")]
+            + "and the empty-set default flipped 1.0 -> 0.0. "
+            + "5482 (rev 5464, lazy PartTree derived data): the manual-throttle clamp in Vehicle.PrepareWorker "
+            + "reads Vehicle.GetMinThrottle() = PartTree.EngineThrottleMin, a cached MIN over every engine's "
+            + "MinimumThrottle recomputed only by RecomputeRocketControls. The write alone left that cache stale "
+            + "(pre-existing: 5438 also only recomputed it on structural change), so the write now marks "
+            + "DerivedData.RocketControls dirty; KSA flushes it in PrepareFrame before the next solve, and the "
+            + "EngineThrottleMin getter also ensures it lazily.")]
     internal static CommandResult SetMinThrottle(Vehicle vehicle, int ordinal, double fraction)
     {
         var engines = vehicle.Parts.Modules.Get<EngineController>();
         if (ordinal < 0 || ordinal >= engines.Length)
             return new CommandResult(CommandOutcome.NotFound, $"engine {ordinal} does not exist");
         engines[ordinal].MinimumThrottle = (float)Math.Clamp(fraction, 0, 1);
+        // Refresh the tree-wide floor (PartTree.EngineThrottleMin) the manual-throttle clamp reads.
+        vehicle.Parts.MarkDerivedDirty(DerivedData.RocketControls);
         return CommandResult.Ok;
     }
 }

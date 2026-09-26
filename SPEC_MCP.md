@@ -210,6 +210,16 @@ below 100 Pa). Plume-trail global raymarch settings also affect explosion volume
 trail geometry only. These behaviors are shared with the filesystem/HTTP/MQTT surfaces; action
 schemas and command phases are unchanged.
 
+**KSA 5482 behavior notes:** the vessel and body `orbit` apoapsis altitude reads `0` on an unbound
+(hyperbolic/parabolic) orbit instead of KSA's finite negative radius; detect escape with `ecc >= 1`.
+`engine_minimum_throttle` now refreshes KSA's manual-throttle floor (the lowest floor of all the
+vessel's engines) from the next solve; a planned burn still uses the highest floor among active
+engines. `refill_fuel` re-lights an engine that had run dry. Trails and explosions draw on airless
+bodies and with clouds off; cloud writes with clouds disabled apply but draw nothing; terrain height
+range edits reach the distant-planet sphere only when it is rebuilt. A part-paint render-seam fault
+disarms paint (`degraded` plus the error text), like a shader fault. Schemas, names and phases are
+unchanged.
+
 The fields above define the outer v1 wire envelopes; the discriminator branches in §5.1 define the
 legal operation-specific payloads. There is no untyped `control` patch object or `/sim` path payload.
 The action catalog validates field arity, range, unit, gate, and phase. CCI vectors/quaternions retain
