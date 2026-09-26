@@ -1,0 +1,4 @@
+interface:
+  display_name: "C# MCP Server"
+  short_description: "Build MCP servers with the C# SDK."
+  default_prompt: "Use $mcp to build or improve an MCP server using the C# SDK."

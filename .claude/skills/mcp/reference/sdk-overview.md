@@ -1,0 +1,47 @@
+---
+type: SDK Documentation
+title: "Index"
+description: "Local copy of the C# MCP SDK documentation page Index."
+resource: "https://github.com/modelcontextprotocol/csharp-sdk/blob/main/docs/index.md"
+tags: [mcp, csharp, sdk, documentation]
+sources:
+  - id: csharp-sdk-doc
+    resource: "https://github.com/modelcontextprotocol/csharp-sdk/blob/main/docs/index.md"
+    title: "Index"
+generated: { by: "codex/gpt-5.6", at: "2026-08-14T00:00:00Z" }
+status: stable
+---
+
+This is a normalized local copy of the official C# SDK documentation page.[^csharp-sdk-doc]
+# Overview
+
+This SDK is the official C# SDK for the [Model Context Protocol](https://modelcontextprotocol.io/), enabling .NET applications, services, and libraries to implement and interact with MCP clients and servers.
+
+For more details on available functionality, see:
+
+- [Conceptual documentation](concepts.md)
+- [API documentation](https://csharp.sdk.modelcontextprotocol.io/api/ModelContextProtocol.html).
+
+## About MCP
+
+The Model Context Protocol (MCP) is an open protocol that standardizes how applications provide context to Large Language Models (LLMs). It enables secure integration between LLMs and various data sources and tools.
+
+For more information about MCP:
+
+- [Official MCP Documentation](https://modelcontextprotocol.io/)
+- [Protocol Specification](https://modelcontextprotocol.io/specification/)
+- [GitHub Organization](https://github.com/modelcontextprotocol)
+
+For how-to guides, tutorials, and additional guidance, see the [official MCP documentation](https://modelcontextprotocol.io/).
+
+## Official SDK packages
+
+The official C# SDK packages for stable and prerelease versions are published to the [NuGet Gallery](https://www.nuget.org) under the [ModelContextProtocol](https://www.nuget.org/profiles/ModelContextProtocol) profile.
+
+Continuous integration builds are published to the modelcontextprotocol organization's [GitHub NuGet package registry](https://github.com/orgs/modelcontextprotocol/packages?ecosystem=nuget).
+
+## License
+
+This project is licensed under the [MIT License](https://github.com/modelcontextprotocol/csharp-sdk/blob/main/LICENSE).
+
+[^csharp-sdk-doc]: Official C# SDK documentation source.

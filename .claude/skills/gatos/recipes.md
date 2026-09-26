@@ -1,0 +1,593 @@
+# gatOS recipes — complete worked programs
+
+Runnable end-to-end examples against the `/sim` surface. Path/format details:
+[`SPEC_9P_FILESYSTEM.md`](../../../SPEC_9P_FILESYSTEM.md). Frame math:
+[`coordinate-frames.md`](coordinate-frames.md).
+
+---
+
+## 0. Connecting from a host program (Bun/TypeScript)
+
+A host program talks to the mod over HTTP `/v1`. Base URL:
+
+- **Host:** `http://127.0.0.1:4242/v1` (default `http_preferred_port`).
+- **Guest:** the env var `$GATOS_HTTP` (≈ `http://10.0.2.2:4242/v1`), or read `/sim` directly with `fs`.
+
+A tiny self-contained client (no dependencies, Bun has `fetch` built in):
+
+```ts
+// gatos.ts — minimal host client over the HTTP /v1 API
+const BASE = process.env.GATOS_HTTP ?? "http://127.0.0.1:4242/v1";
+
+export async function getJson<T>(path: string): Promise<T> {
+  const r = await fetch(`${BASE}/${path}`);
+  if (!r.ok) throw new Error(`GET ${path} -> ${r.status} ${await r.text()}`);
+  return r.json() as Promise<T>;
+}
+
+/** Issue a command (the generic write surface). Throws with the errno on failure. */
+export async function command(cmd: {
+  vessel_id: string; action: string;
+  ordinal?: number; value?: number; values?: number[]; token?: string;
+}): Promise<void> {
+  const r = await fetch(`${BASE}/command`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(cmd),
+  });
+  if (!r.ok) {
+    const e = (await r.json().catch(() => ({}))) as { errno?: string; message?: string };
+    throw new Error(`${cmd.action} -> ${e.errno ?? r.status}: ${e.message ?? ""}`);
+  }
+}
+
+export interface Body { id: string; class: string; parent_id?: string; mass: number; mean_radius: number; mu: number; soi_meters: number; }
+export interface Telemetry { id: string; parent?: string; sit: string; pos_cci: [number,number,number]; vel_cci: [number,number,number]; mass: { t:number;d:number;p:number }; orbit?: { ap:number; pe:number; period:number }; }
+```
+
+> Prefer the repo's typed SDK (`examples/sdk-ts`) for larger programs — it wraps exactly these calls
+> behind `new GatosClient()` and auto-selects HTTP vs `/sim`. The raw client above is shown so a recipe
+> is copy-pasteable with zero setup.
+
+---
+
+## 1. ⭐ Teleport two vessels into a shared orbit
+
+**Task:** *teleport vessel `Hunter` to a circular orbit 120,000 m above Earth, and teleport `Polaris`
+to be just 50 m ahead of Hunter on that same orbit.*
+
+The plan (see [SPEC §6](../../../SPEC_9P_FILESYSTEM.md) for teleport semantics):
+
+1. `debug.teleport` sets a **CCI state vector** about the vessel's **current parent body**. So both
+   vessels must already be in **Earth's** sphere of influence (parent = `Earth`).
+2. Circular-orbit radius `r = Earth.radius + 120000`; circular speed `v = sqrt(μ/r)`.
+3. Put Hunter at CCI `pos=(r,0,0)`, `vel=(0,v,0)` → an equatorial, prograde, circular orbit
+   (X–Y is the equatorial plane; velocity ⟂ position).
+4. "50 m ahead on the same orbit" = advance the **true anomaly** by `Δθ = 50/r` (rotate position and
+   velocity together about the orbit normal +Z). Ahead = the direction of motion (prograde).
+
+```ts
+// teleport-rendezvous.ts  —  run with:  bun teleport-rendezvous.ts
+import { getJson, command, type Body, type Telemetry } from "./gatos.ts";
+
+const ALTITUDE = 120_000;   // meters above the surface
+const LEAD = 50;            // meters Polaris leads Hunter, along-track
+
+// 1. Find the parent body Hunter currently orbits (must be Earth).
+const hunter = await getJson<Telemetry>("vessels/Hunter/telemetry");
+if (hunter.parent !== "Earth") {
+  throw new Error(`Hunter's parent is '${hunter.parent}', not Earth — teleport is about the current ` +
+    `parent. Move it into Earth's SOI first (e.g. debug/control_vessel + a transfer).`);
+}
+const bodies = await getJson<Body[]>("bodies");
+const earth = bodies.find((b) => b.id === "Earth");
+if (!earth) throw new Error("Earth not in the body catalog (telemetry_bodies enabled?)");
+
+// 2. Circular orbit geometry.
+const r = earth.mean_radius + ALTITUDE;     // orbital radius from Earth's center, m
+const v = Math.sqrt(earth.mu / r);          // circular speed, m/s
+console.log(`r=${r.toFixed(1)} m  v=${v.toFixed(2)} m/s  (period ≈ ${(2*Math.PI*Math.sqrt(r**3/earth.mu)).toFixed(0)} s)`);
+
+// 3. Hunter: equatorial prograde circular state in CCI.
+await command({ vessel_id: "Hunter", action: "debug.teleport", values: [r, 0, 0, 0, v, 0] });
+
+// 4. Polaris: same orbit, 50 m ahead → advance true anomaly by Δθ = LEAD / r.
+const dth = LEAD / r;
+const px = r * Math.cos(dth), py = r * Math.sin(dth);     // position rotated +Δθ about +Z
+const vx = -v * Math.sin(dth), vy = v * Math.cos(dth);    // velocity rotated the same
+await command({ vessel_id: "Polaris", action: "debug.teleport", values: [px, py, 0, vx, vy, 0] });
+
+console.log("Hunter and Polaris placed; Polaris leads by", LEAD, "m.");
+```
+
+Notes / variations:
+
+- **Why `vessels/Hunter/...` works:** in KSA a vessel's name *is* its id, so the literal ids are
+  `Hunter` and `Polaris`. (Confirm with `getJson<string[]>("vessels")`.)
+- **`debug_namespace` must be on** (default). If a teleport returns `EACCES`, enable
+  `debug_namespace` in `gatos.toml`. `EINVAL` ⇒ a non-finite/short values array.
+- **Inclination:** the recipe builds an equatorial (inc 0) orbit. For a different plane, rotate the
+  `(pos, vel)` pair about CCI +X (ascending node) by the inclination, or about +Z by the LAN.
+- **File-write equivalent** (in-guest, no HTTP): `echo "$r 0 0 0 $v 0" > /sim/debug/vessels/Hunter/teleport`.
+- **SDK equivalent:** `await new GatosClient().vessel("Hunter").debug.teleport([r,0,0,0,v,0])`.
+- **Tight formations: batch the teleports.** Each write/command executes in its *own* frame (writes
+  block until the game thread drains them — one per tick), so the two teleports above land a frame
+  apart: Hunter drifts ~`v × frame_dt` (≈100 m at 7.8 km/s / 60 fps) before Polaris is placed. Fine
+  for a 50 m *lead* demo, wrong for exact spacing. For same-tick placement write ONE group to
+  `/sim/ctl/batch` (SPEC §3.10) — in-guest, or `POST /v1/fs/ctl/batch` with the same text:
+
+  ```sh
+  cat > /sim/ctl/batch <<EOF
+  debug/vessels/Hunter/teleport $r 0 0 0 $v 0
+  debug/vessels/Polaris/teleport $px $py 0 $vx $vy 0
+  commit
+  EOF
+  ```
+
+---
+
+## 2. Read live telemetry
+
+```ts
+import { getJson, type Telemetry } from "./gatos.ts";
+const t = await getJson<Telemetry>("vessels/active/telemetry");
+console.log(`${t.id} ${t.sit}  ap=${t.orbit?.ap?.toFixed(0)}m pe=${t.orbit?.pe?.toFixed(0)}m`);
+console.log(`pos_cci=${t.pos_cci.map(n=>n.toFixed(0))}  mass=${t.mass.t.toFixed(0)}kg`);
+```
+In-guest shell twin: `cat /sim/vessels/active/telemetry | jq .orbit`.
+
+---
+
+## 3. Throttle up and ignite (active vessel)
+
+```ts
+import { command } from "./gatos.ts";
+const id = "Hunter";
+await command({ vessel_id: id, action: "vessel.throttle", value: 0.75 }); // 75 %
+await command({ vessel_id: id, action: "vessel.ignite",   value: 1 });    // light it
+// later: await command({ vessel_id: id, action: "vessel.shutdown", value: 1 });
+```
+Shell twin: `echo 0.75 > /sim/vessels/active/ctl/throttle && echo 1 > /sim/vessels/active/ctl/engine`.
+
+---
+
+## 4. Hold an orientation, then schedule a circularization burn
+
+```ts
+import { getJson, command, type Telemetry } from "./gatos.ts";
+const id = "Hunter";
+
+// Point prograde via the onboard autopilot (no quaternion math; warp-correct).
+await command({ vessel_id: id, action: "vessel.attitude_mode", token: "Prograde" });
+
+// Circularize at apoapsis: schedule a prograde Δv at the time-to-apoapsis.
+const t = await getJson<Telemetry & { orbit?: { ap:number; period:number; ta:number; t_ap:number } }>(
+  `vessels/${id}/telemetry`);
+// (compute the Δv you need from vis-viva using the orbit elements; here we just show the call shape)
+const ut = (await getJson<{ ut:number }>("time")).ut + (t as any).orbit.t_ap;
+const dv: [number,number,number] = [/* dvx */ 0, /* dvy */ 0, /* dvz */ 0]; // CCI Δv vector
+await command({ vessel_id: id, action: "vessel.burn", values: [ut, ...dv] });
+```
+`ctl/attitude_*` and `ctl/burn` are **solver-phase** (effect on the next solver step). For hand-flown
+closed loops, run near 1× warp.
+
+---
+
+## 5. Wait for a sim time (warp-correct), then act
+
+```ts
+const { ut } = await (await fetch(`${process.env.GATOS_HTTP ?? "http://127.0.0.1:4242/v1"}/time`)).json();
+const wake = ut + 300; // 300 sim-seconds from now
+await fetch(`${process.env.GATOS_HTTP ?? "http://127.0.0.1:4242/v1"}/time/wait?until=${wake}`); // blocks
+// ...do the thing at T+300s...
+```
+In-guest twin: `echo $((ut+300)) > /sim/time/alarm` (the read blocks until reached).
+
+---
+
+## 6. Stream events
+
+```ts
+const base = process.env.GATOS_HTTP ?? "http://127.0.0.1:4242/v1";
+const res = await fetch(`${base}/events`);
+const reader = res.body!.getReader();
+const dec = new TextDecoder(); let buf = "";
+for (;;) {
+  const { value, done } = await reader.read(); if (done) break;
+  buf += dec.decode(value, { stream: true });
+  let nl: number;
+  while ((nl = buf.indexOf("\n")) >= 0) {
+    const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+    if (line.startsWith("data:")) console.log("event", JSON.parse(line.slice(5).trim()));
+  }
+}
+```
+In-guest twin: `tail -f /sim/events` (one JSON line per event).
+
+---
+
+## 7. Switch which vessel you control
+
+```ts
+import { command } from "./gatos.ts";
+// Focus + take control (cheat-tier; needs debug_namespace). After this, vessels/active/ is Polaris.
+await command({ vessel_id: "Polaris", action: "debug.control_vessel", token: "Polaris" });
+```
+
+---
+
+## 8. Watch the game in the terminal (Kitty graphics)
+
+The mod can render the KSA viewport as a live video stream over the Kitty terminal graphics
+protocol, exposed at `/sim/display` (off by default). Any Kitty-capable terminal — an in-game
+purrTTY tab or an external emulator SSH'd into the guest — renders it. Consuming it is basically
+`cat`, because the host bakes complete, in-place Kitty frames:
+
+```sh
+echo 1 > /sim/display/enabled     # turn it on (idles for free while off)
+echo 24 > /sim/display/fps         # optional: retune live (1..60, clamped)
+echo 480 > /sim/display/width      # optional: bigger image (16..1920 px)
+cat /sim/display/stream            # render; Ctrl-C to stop
+echo 0 > /sim/display/enabled      # stop the capture
+```
+
+Controls (`enabled`/`fps`/`width`/`height`/`encoding`) are plain files, so they also work over HTTP
+(`POST /v1/fs/display/enabled`) and MQTT (`gatos/sim/display/*`). The image is the scene without the
+UI (pre-tonemap). Full example with alt-screen + clean teardown: `examples/simscreen/`; design in
+`STREAM_PLAN.md`; the `/sim/display` catalog is in `SPEC_9P_FILESYSTEM.md` §3.8.
+
+---
+
+See also the in-repo Rust references: `examples/gogogo-rs` (minimal control panel) and
+`examples/land-o-matic` (full G-FOLD/UPFG autopilot).
+
+## 8. Fan out one write to many files in a single tick
+
+A `/sim` write doesn't return until the next game tick (the 9p thread enqueues the command, the game
+thread drains it), so writing one value to many files *sequentially* pays one tick **per file**. (And
+you can't redirect to a glob: `echo 1 > /sim/.../*/on` is an `ambiguous redirect` — `>` is one fd. The
+composable shape is `tee`, which takes the files as args and the value on stdin:
+`echo 1 | tee /sim/.../*/on >/dev/null` — but `tee` writes them sequentially.) Two fixes:
+
+- **Guaranteed same tick — `/sim/ctl/batch`** (SPEC §3.10): one `<path> <value>` line per write, then
+  `commit`; the group executes atomically in one drain. Shell glob fan-out is one loop:
+
+  ```sh
+  { for f in /sim/vessels/by-id/*/lights/*/on; do echo "$f 1"; done; echo commit; } > /sim/ctl/batch
+  ```
+
+- **Concurrent dispatch (probabilistic)**: issue the writes concurrently and they *usually* land in
+  the same tick's drain. `examples/kecho` is a tiny *concurrent `tee`* —
+  `echo 1 | kecho /sim/vessels/by-id/*/lights/*/on`. Still useful past the batch's 64-command cap or
+  when a stray extra frame doesn't matter.
+
+---
+
+## 9. Weld one vessel rigidly to another (the `weld_here` cheat)
+
+**Task:** *attach `Polaris` to a part of `Hunter` at their current relative pose, so Polaris rides along
+through maneuvers and time-warp.* Cheat-tier — needs `debug_namespace` + `telemetry_vessel_parts` (both
+default on). The two vessels must orbit the **same body**. (Ported from the `unscience` mod; see
+[SPEC §3.7](../../../SPEC_9P_FILESYSTEM.md).)
+
+```ts
+// weld-here.ts  —  run with:  bun weld-here.ts
+import { command } from "./gatos.ts";
+const BASE = process.env.GATOS_HTTP ?? "http://127.0.0.1:4242/v1";
+const source = "Polaris", target = "Hunter";
+
+// 1. Pick a STABLE anchor id from the target's parts (0 ⇒ the target's body/CoM frame). Subparts work
+//    too: parts/<n>/subparts/<m>/instance_id — an animated subpart anchor tracks the animation.
+//    The field-level fs endpoint returns one leaf's raw text value.
+const r = await fetch(`${BASE}/fs/vessels/${target}/parts/0/instance_id`);
+const piid = r.ok ? Number((await r.text()).trim()) : 0;
+
+// 2. Capture the CURRENT relative pose and weld. token = target id; values = [part_iid, lock(1=lock attitude)].
+await command({ vessel_id: source, action: "debug.weld_here", token: target, values: [piid, 1] });
+
+// later: suspend (keep the entry) or remove
+// await command({ vessel_id: source, action: "debug.weld_enable", value: 0 }); // suspend
+// await command({ vessel_id: source, action: "debug.weld_remove", value: 1 }); // unweld
+```
+
+Shell twins (in-guest, against the `/sim` mount):
+```sh
+piid=$(cat /sim/vessels/Hunter/parts/0/instance_id)
+# or find a part/subpart by name in ONE read — parts/json is the whole tree as a JSON doc:
+piid=$(cat /sim/vessels/Hunter/parts/json | jq -r '.[] | select(.display_name=="Command Pod") | .instance_id')
+echo "Hunter $piid" > /sim/debug/vessels/Polaris/weld_here   # weld at the current pose (lock defaults to 1)
+cat  /sim/debug/welds/count                                  # -> 1
+echo 0 > /sim/debug/welds/Polaris/enabled                    # suspend tracking (entry kept)
+echo 1 > /sim/debug/vessels/Polaris/unweld                   # remove this weld
+echo 1 > /sim/debug/welds/clear                              # remove ALL welds
+```
+
+Notes:
+- **`weld` vs `weld_here`:** `weld` takes an **explicit** pose
+  `<target> <part_iid> <x y z> <pitch yaw roll> <lock>`; `weld_here` captures the current pose for you (the
+  practical path — computing offsets by hand is hard).
+- `<part_iid>` may be a **top-level part or a subpart** `instance_id` (discover subparts under
+  `parts/<n>/subparts/<m>/`); a subpart anchor tracks its live pose, so welding to an animated subpart
+  (robotics/landing-leg segment) follows the animation.
+- **`parts/json`** is the whole part/subpart tree as one JSON document (snake_case, nested `subparts`
+  arrays) — the easy discovery path: `cat /sim/vessels/<id>/parts/json | jq` (or
+  `GET /v1/fs/vessels/<id>/parts/json`) instead of walking `parts/<n>/` leaf by leaf.
+- Errnos: `EBUSY` (source==target, or the two orbit different bodies), `ENOENT` (target/part gone),
+  `EINVAL` (bad arity/values).
+- Welds are **runtime-only** (never persisted) and cleared on mod unload. A source may anchor at most one
+  weld; many sources may anchor to one target.
+
+---
+
+## 10. Stick "thug life" sunglasses on a part (the `thug_life` cheat)
+
+**Task:** *anchor a flat, world-space sunglasses quad to a part of `Hunter` and tune it live.* Cheat-tier
+— needs `debug_namespace` + `telemetry_vessel_parts` (both default on). Tip: `cat /sim/debug/thug_life/help`
+prints a console-friendly readme (all the commands + worked examples on `Hunter`/`Polaris`/`Banjo`). This is
+gatOS's **first custom GPU rendering**: the quad is drawn into KSA's scene and tracks the part each frame (it's depth-tested, so it's
+occluded by geometry in front of it). The render hook + GPU resources install **lazily on the first
+entry** and are freed when the last one is removed. (Ported from the `unscience` mod; see
+[SPEC §3.7](../../../SPEC_9P_FILESYSTEM.md), and the **ksa skill's `quad.md`** for the render internals.)
+
+```ts
+// thug-life.ts  —  run with:  bun thug-life.ts
+import { command } from "./gatos.ts";
+const BASE = process.env.GATOS_HTTP ?? "http://127.0.0.1:4242/v1";
+const vessel = "Hunter";
+
+// 1. Discover a STABLE anchor part id from the vessel's top-level parts (0 ⇒ the vehicle body frame).
+const r = await fetch(`${BASE}/fs/vessels/${vessel}/parts/0/instance_id`);
+const piid = r.ok ? Number((await r.text()).trim()) : 0;
+
+// 2. Add the quad. token = anchor vessel; values = [part_iid] (pose/size default) or the full
+//    [part_iid, x, y, z, pitch, yaw, roll, w, h].
+await command({ vessel_id: vessel, action: "debug.thug_life_add", token: vessel, values: [piid] });
+// The new entry takes the lowest free id (reused after remove/clear); the first add is id 0.
+
+// 3. Tune it live (id travels in `ordinal`).
+await command({ vessel_id: vessel, action: "debug.thug_life_position", ordinal: 0, values: [0, 0.5, 0] });
+await command({ vessel_id: vessel, action: "debug.thug_life_rotation", ordinal: 0, values: [0, 0, 0] });
+await command({ vessel_id: vessel, action: "debug.thug_life_size",     ordinal: 0, values: [1.2, 0.4] });
+await command({ vessel_id: vessel, action: "debug.thug_life_visible",  ordinal: 0, value: 1 });
+
+// later: remove one, or clear all
+// await command({ vessel_id: vessel, action: "debug.thug_life_remove", ordinal: 0, value: 1 });
+// await command({ vessel_id: vessel, action: "debug.thug_life_clear",  value: 1 });
+```
+
+Shell twins (in-guest, against the `/sim` mount):
+```sh
+piid=$(cat /sim/vessels/Hunter/parts/0/instance_id)
+echo "Hunter $piid" > /sim/debug/thug_life/add          # anchor at the default pose/size (id 0)
+cat  /sim/debug/thug_life/count                          # -> 1
+echo "0 0.5 0"  > /sim/debug/thug_life/0/position        # nudge it up
+echo "1.2 0.4"  > /sim/debug/thug_life/0/size            # width height
+echo 0 > /sim/debug/thug_life/0/visible                  # hide; 1 to show
+cat  /sim/debug/thug_life/0/spec                          # the 10-token spec (echo back to add)
+echo 1 > /sim/debug/thug_life/0/remove                   # remove this entry
+echo 1 > /sim/debug/thug_life/clear                       # remove ALL quads (frees the GPU + unpatches)
+```
+
+Notes:
+- Anchor a **top-level part by `instance_id`** (from `parts/<n>/instance_id`) or pass `0` for the vehicle
+  **body frame**. No subparts in v1.
+- Errnos: `ENOENT` (vessel/part/id gone), `EINVAL` (bad arity/values), `EIO` (renderer unavailable).
+- Entries are **runtime-only** (never persisted); cleared on mod unload. With no entries the render hook is
+  removed entirely (zero per-frame cost).
+
+---
+
+## 11. Kick a vessel with a one-shot impulse (the `impulse` cheat)
+
+**Task:** *change a vessel's velocity instantly — no propellant, no pointing, no waiting.* Cheat-tier
+(`debug_namespace`, default on). Write `x y z [cci|body] [ns|dv]` to `debug/vessels/<id>/impulse`:
+the vector defaults to an **impulse in newton-seconds** in the **parent-CCI frame**; Δv = J ÷ the
+vessel's live total mass (the same math as KSA's own docking-separation impulse). Two optional
+keywords, any order after the numbers: `body` reads the vector in the vessel frame (+X = nose, same
+convention as `attitude/quat`); `dv` skips the mass division and applies the vector **directly as Δv
+in m/s** — `ctl/burn` semantics minus the autopilot. Full semantics:
+[SPEC §6](../../../SPEC_9P_FILESYSTEM.md).
+
+```sh
+# In-guest shell twins (against the /sim mount):
+echo "50000 0 0 body"  > /sim/debug/vessels/Hunter/impulse   # 50 kN·s shove off the nose
+echo "10 0 0 body dv"  > /sim/debug/vessels/Hunter/impulse   # exactly +10 m/s forward
+echo "0 0 -25 dv"      > /sim/debug/vessels/Hunter/impulse   # -25 m/s along CCI -Z (southward)
+
+# Prograde +100 m/s without the flight computer: kick along the velocity unit vector (CCI).
+v=$(cat /sim/vessels/Hunter/velocity/cci)                     # "vx vy vz"
+set -- $v; mag=$(echo "sqrt($1*$1+$2*$2+$3*$3)" | bc -l)
+echo "$(echo "100*$1/$mag" | bc -l) $(echo "100*$2/$mag" | bc -l) $(echo "100*$3/$mag" | bc -l) dv" \
+  > /sim/debug/vessels/Hunter/impulse
+```
+
+```ts
+// impulse.ts  —  run with:  bun impulse.ts
+import { command } from "./gatos.ts";
+// 5 kN·s pushoff along the nose (like an undock separation, aimed by attitude):
+await command({ vessel_id: "Hunter", action: "debug.impulse", values: [5000, 0, 0], token: "body" });
+// Precise +10 m/s prograde-ish forward kick (Δv mode):
+await command({ vessel_id: "Hunter", action: "debug.impulse", values: [10, 0, 0], token: "body", aux: "dv" });
+```
+
+Notes:
+- **JSON shape:** `values` = the 3-vector, `token` = frame (`cci`/`body`, omit ⇒ `cci`), `aux` = unit
+  (`ns`/`dv`, omit ⇒ `ns`).
+- The kick is **instantaneous and non-physical** — the orbit is rebuilt at the current CCI position
+  with the bumped velocity (the teleport machinery), so it works on-rails, in the physics bubble, and
+  at any magnitude. A landed vessel gets launched exactly as the math says.
+- To *predict* the Δv of an `ns` kick, read `mass/total` first: Δv = J/m. Or just use `dv`.
+- Frame phase (one command per tick): to kick a formation simultaneously, batch the writes through
+  `/sim/ctl/batch` exactly like the formation teleport (§8-batch).
+- Errnos: `EINVAL` (bad arity/keyword/non-finite), `EBUSY` (no parent body / mass unavailable),
+  `ENOENT` (vessel gone), `EACCES` (debug namespace off).
+
+---
+
+## 12. Run a sequence on a clock (`ctl/timed_batch` + `ctl/schedules`)
+
+**Task:** *fire a series of control writes at chosen times, without a program staying awake.*
+`ctl/batch` collapses N writes into one **tick**; `ctl/timed_batch` spreads them over a **timeline**.
+Same paths, same values, each line prefixed with an **absolute offset in milliseconds** (fractional
+allowed, never deltas), with optional `@id`/`@clock`/`@rate`/`@loop`/`@group` directives first and a
+terminating `commit`. The host owns the clock, so the sequence survives the guest disconnecting and
+replays identically. Gated by `[schedule] schedule_enabled` (default on). Full grammar:
+[SPEC §3.10](../../../SPEC_9P_FILESYSTEM.md), or `cat /sim/ctl/schedules/help`.
+
+```sh
+# In-guest: a launch sequence, then drive it live.
+cat > /sim/ctl/timed_batch <<'EOF'
+@id      launch-seq
+@clock   render                     # render | wall | ut   (default render)
+@rate    1.0                        # 0..100; 0 freezes
+0        vessels/active/ctl/throttle  1
+1200     vessels/active/ctl/ignite    1
+9000     vessels/active/ctl/stage     1
+9000     audio/play                   stage.mp3 vol=0.7
+commit
+EOF
+
+cat  /sim/ctl/schedules/launch-seq/state      # pending|running|paused|done|failed
+cat  /sim/ctl/schedules/launch-seq/t          # current offset, ms
+echo 1    > /sim/ctl/schedules/launch-seq/pause
+echo 3000 > /sim/ctl/schedules/launch-seq/scrub   # seek; fires nothing
+echo 0.25 > /sim/ctl/schedules/launch-seq/rate    # quarter speed
+echo 1    > /sim/ctl/schedules/launch-seq/remove  # drop it
+```
+
+```ts
+// schedule.ts  —  run with:  bun schedule.ts
+const H = process.env.GATOS_HTTP ?? "http://127.0.0.1:4242/v1";
+const script = [
+  "@id      launch-seq",
+  "@clock   render",
+  "0        vessels/active/ctl/throttle 1",
+  "1200     vessels/active/ctl/ignite   1",
+  "commit",
+].join("\n") + "\n";
+
+await fetch(`${H}/fs/ctl/timed_batch`, { method: "POST", body: script });
+const state = await (await fetch(`${H}/fs/ctl/schedules/launch-seq/state`)).text();
+console.log(state.trim());
+
+// The seven schedule.* actions are also reachable structurally — note vessel_id: "".
+await fetch(`${H}/command`, {
+  method: "POST", headers: { "content-type": "application/json" },
+  body: JSON.stringify({ vessel_id: "", action: "schedule.rate", token: "launch-seq", value: 0.5 }),
+});
+```
+
+Notes:
+- **Clock bases genuinely differ.** `render` accumulates the game's clamped per-frame delta, so it
+  lags after a hitch and *never* catches up (right for footage, wrong for syncing to a host
+  recorder); `wall` is true elapsed time and may demand a catch-up burst; `ut` is sim time and
+  diverges wildly under warp (right for mission events).
+- **Phase mixing is allowed** here (unlike `ctl/batch`), so a schedule may mix Frame-phase throttle
+  writes with Solver-phase `attitude_mode`/`burn` writes freely.
+- **Catch-up is derived from the archetype:** when many entries come due at once every *trigger*
+  fires in order, while *state* controls coalesce to the last write per path (cross-path order
+  preserved) — so generating a 20 Hz script is cheap. Discards are counted at `<id>/dropped` and
+  reported as `schedule.dropped` on `/sim/events`.
+- **Commit is non-blocking and all-or-nothing:** `ENOENT` for an unresolvable path, `EINVAL` for a
+  bad value/directive/cap, `EACCES` when control is disabled — and nothing registers on failure.
+  The id is reserved *last*, so a rejected commit never burns the name.
+- `@group` members share **one clock**, so `pause`/`scrub`/`rate`/`loop` on any member moves them all
+  — that is how several schedules become one take.
+- A finished player **stays listed** with its final `state`/`dropped`/`last_error` so a script can
+  come back and read the outcome; it is only reclaimed under `schedule_max_live` pressure (oldest
+  finished first, announced as `schedule.evicted`).
+
+---
+
+## 13. Direct a camera shot (`/sim/camera`)
+
+**Task:** *take the game camera, park it beside a vessel, aim it at a point on the hull, move it, and
+hand it back.* Gated by `[camera] camera_enabled` (default on); not a debug cheat. Full catalog:
+[SPEC §3.11](../../../SPEC_9P_FILESYSTEM.md); frames in
+[`coordinate-frames.md` §8](coordinate-frames.md).
+
+```sh
+# --- L1: take it, place it, aim it -------------------------------------------------
+echo 1 > /sim/camera/enabled                        # gatOS becomes the only writer
+echo "vessel:apollo11" > /sim/camera/pose/anchor    # measure everything about this ship
+echo "bodyfixed"       > /sim/camera/pose/frame     # +X nose, +Y right, -Z UP
+echo "-40 0 -6"        > /sim/camera/pose/position  # 40 m aft, 6 m above  (note the -6)
+echo 42                > /sim/camera/pose/fov
+echo 0.35              > /sim/camera/pose/smoothing # turns coarse steps into a glide
+
+# Aim-with-offset: the offset is measured ON THE SUBJECT and re-resolved every frame,
+# so +1.2 m on a kittenaut's own axis stays its head as it walks.
+echo "part:apollo11/77 off 0 0 -1.2 frame bodyfixed up velocity roll -6" \
+  > /sim/camera/pose/aim
+
+cat /sim/camera/status        # one "key value…" line per channel (the composed values)
+cat /sim/camera/last_error    # why the last track upload / play was rejected, or "-"
+
+# --- L2: move it on a timeline (the same leaves, through the scheduler) --------------
+cat > /sim/ctl/timed_batch <<'EOF'
+@id    push-in
+@clock render
+0      camera/pose/position -40 0 -6 bodyfixed
+0      camera/pose/fov      42
+3000   camera/pose/position -25 0 -4.4 bodyfixed
+3000   camera/pose/fov      32
+6000   camera/pose/position -12 0 -3 bodyfixed
+6000   camera/pose/fov      24
+commit
+EOF
+
+# --- L3: or hand over a JSON track and let gatOS interpolate it ----------------------
+cp /mnt/shots/push-in.json /sim/camera/track/push-in     # validated on close
+echo "push-in at 0 rate 1 loop 0" > /sim/camera/play     # appears at ctl/schedules/camera/
+cat  /sim/camera/playback                                # state t_ms dur_ms shot idx rate loop
+echo "t 4 rate 0.25" > /sim/camera/set                   # scrub + slow-mo, live
+echo 1 > /sim/camera/stop
+
+# --- hand it back --------------------------------------------------------------------
+echo 1 > /sim/camera/pose/reset   # clear YOUR overrides; an active track keeps playing
+echo 0 > /sim/camera/enabled      # eased blend back (camera_release_blend_s, default 0.6 s)
+echo 1 > /sim/camera/release      # …or a hard cut, the "give it back NOW" button
+```
+
+A minimal track (`push-in.json`) — every channel name in it is a `pose/` leaf you can also write by
+hand, which is the whole point:
+
+```jsonc
+{
+  "shots": [{
+    "name": "push-in", "t": 0, "duration": 6,        // SECONDS here (leaves are ms)
+    "anchor": "vessel:apollo11",
+    "position": { "mode": "cartesian", "curve": "catmull-rom", "frame": "bodyfixed",
+                  "keys": [ { "t": 0, "v": [-40, 0, -6], "ease": "out", "ease_power": 3 },
+                            { "t": 6, "v": [-12, 0, -3] } ] },
+    "aim":      { "target": "vessel:apollo11", "offset": [0, 0, -1.2], "up": "world" },
+    "fov":      { "keys": [ { "t": 0, "v": 42, "ease": "out" }, { "t": 6, "v": 24 } ] }
+  }]
+}
+```
+
+Notes:
+- **Three layers composite per channel: track ?? your override ?? the ownership baseline.** A shot
+  claims **only** the channels it declares, so a track animating `position` + `fov` leaves `aim`
+  free — you can pull focus by hand mid-shot and it sticks. Writing a channel a shot *is* driving is
+  accepted and superseded next frame (no error), and reappears when the shot stops declaring it.
+- **`bodyfixed` is `−Z` up.** "Above the hull" is a *negative* Z. This is the most common mistake.
+- **While you own the camera**, `mode`/`follow`/`tidal` and the player's camera keys are inert
+  (`EOPNOTSUPP`) — use `pose/anchor` + `pose/aim_target`, which do everything a follow does. Always
+  keep an escape: `echo 1 > /sim/camera/release`.
+- **A track is a schedule:** `camera/play`/`set`/`stop` additionally need `schedule_enabled`
+  (`EOPNOTSUPP` otherwise), and the player is `/sim/ctl/schedules/camera/` — the same
+  `pause`/`scrub`/`rate`/`loop`/`stop` leaves drive it, on the same clock as `camera/playback`.
+- **A malformed track fails on `close`, which cannot carry an errno** — the `cp` looks like it
+  worked. Read `/sim/camera/last_error`, or upload over HTTP where the `POST` carries the EINVAL.
+- Units are mixed on purpose: `timed_batch` offsets are **ms**; a track's `t`/`duration` and
+  `camera/play at` are **seconds**.
+- Over HTTP everything is the plain field mirror — `POST /v1/fs/camera/pose/fov` (body `24`),
+  `POST /v1/fs/camera/track/push-in` (body = the JSON, ≤ 1 MiB), `GET /v1/fs/camera/status`. There
+  is **no** `/v1/camera` binary route (unlike `/v1/audio`), and none is needed.
+- Structural writes take `vessel_id: ""` — e.g.
+  `{"vessel_id":"","action":"camera.fov","value":24}`.
+- Three things to warn a reader about: `pose/ortho_height` is the one camera change gatOS **cannot
+  undo**; the camera is floored at surface + 0.5 m; and while gatOS holds the camera an **EVA
+  kittenaut walks relative to the shot**.
+
