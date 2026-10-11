@@ -892,8 +892,8 @@ internal static class VesselReader
     }
 
     [KsaAnchor("vehicle.Patch.Encounters; Encounter{Body.Id,GameTime,ClosestDistance}",
-        SourceFile = "KSA/PatchedConic.cs:487-507 / KSA/Encounter.cs / KSA/ConjunctionAssessment.cs:41", Verified = "2026-09-25",
-        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/PatchedConic.cs / KSA/Encounter.cs / KSA/ConjunctionAssessment.cs",
+        Verified = "2026-10-11", GameVersion = "2026.10.10.5554", Risk = ChurnRisk.Medium,
         Notes = "5348: Vehicle.Patch.Encounters and Encounter{Body,GameTime,ClosestDistance} are "
             + "unchanged. Rev 5266's target-gauge rework (FlightPlan.TryFindNextClosestApproach, "
             + "earliest-in-time on the current trajectory, replacing a global-minimum scan) writes "
@@ -904,7 +904,11 @@ internal static class VesselReader
             + " 5482 POPULATION DRIFT: PatchedConic/Encounter are byte-identical, but the candidate search "
             + "(ConjunctionAssessment.CatchViaClosestApproach) now samples at the new ComputeUnimodalIntervalSeconds "
             + "= 0.5/(1/P1+1/P2), floored at tMax/512 (was 0.5*min(P1,P2), or tMax/4 for non-finite periods), "
-            + "so rows and closest_distance/ut can differ from 5438.")]
+            + "so rows and closest_distance/ut can differ from 5438."
+            + " 5554 POPULATION DRIFT: revs 5494/5510 add interstellar patch crossings and search "
+            + "for encounters on departing/arriving star trajectories. The same Encounters record "
+            + "now reports newly reachable planetary and companion-star flybys; body ids still "
+            + "resolve through Astronomical.Id.")]
     private static IReadOnlyList<EncounterSnapshot> SampleEncounters(Vehicle vehicle)
     {
         var patch = vehicle.Patch;

@@ -95,7 +95,18 @@ update's blast radius is small and discoverable. The procedure:
    (`EOPNOTSUPP`), logs once, and shows up in `/sim/status/accessors`. The guest sees a failed sensor,
    not a crashed mod. This is the safety net for the things steps 2–3 miss.
 
-> **Current upgrade: 2026.9.10.5438 → 2026.9.22.5482**, audited 2026-09-25.
+> **Current upgrade: 2026.9.22.5482 → 2026.10.10.5554**, audited 2026-10-11.
+> Both logs (5482→5541→5554) and all 440 changed decomp/Content files were inventoried. Fixed terrain
+> tangent roughness conversion, sticker viewport/frame descriptor binding, and texture image-layout
+> arguments. Closed the compiler-invisible multi-star catalog gap (all stars/barycenters, stable
+> primary star, body-only children) and corresponding camera body-target resolution; kept geodetic
+> placement planet/moon-only. Documented plume expansion/fade meaning and inherited control/warp
+> changes. Full solution builds with zero warnings/errors; 1648 tests passed / 12 VM-gated skips.
+> Binary signature checks, shader compilation and targeted adapter checks are recorded in the
+> [5554 pass](ksa-assets-and-versions.md#5554-pass). **Live validation is pending** in the
+> [5554 checklist](../docs/VALIDATION.md#ksa-5554-upgrade).
+>
+> **Prior upgrade: 2026.9.10.5438 → 2026.9.22.5482**, audited 2026-09-25.
 > The gapless 43-revision review (revs 5439–5481; 227 changed decomp/Content files) found **four
 > compile errors, all one break**: rev 5456 deleted `PartModel{,Dynamic}Module.UpdateRenderData` and moved
 > part rendering into a per-tree `PartTreeRenderData` cache whose rasterized `Compose` path no longer
@@ -495,7 +506,7 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 |---|---|---|
 | `Game/Ksa/Readers/VesselReader.cs` | 22 `[KsaAnchor]` reads (the bulk of telemetry; +`ReadControllable`, G3; +`SampleSrbs`, 5018) | per-accessor try/catch → `KsaHealth`; `BuildFull` whole-pass guard |
 | `Game/Ksa/Readers/AnimationLinks.cs` | 1 `[KsaAnchor]` read (structural animation↔module links, cached per vehicle — GP3) | rebuilt on module-count change / 10 s; consumed inside the `BuildFull`/`BuildCore` guards |
-| `Game/Ksa/Readers/BodyReader.cs` | 3 `[KsaAnchor]` reads (celestial catalog; statics cached per body — GP3) | sampler-level guard |
+| `Game/Ksa/Readers/BodyReader.cs` | 4 `[KsaAnchor]` reads (celestial catalog, including multi-star/barycenter rows since 5554; statics cached per body — GP3) | sampler-level guard |
 | `Game/Ksa/Readers/PartsReader.cs` | 1 `[KsaAnchor]` read (parts + nested subparts; welds anchor picker) | per-call try/catch; `VesselParts` sampler gate |
 | `Game/Ksa/Actuators/*.cs` (15 anchored files; `IvaActuator.cs` delegates to `Render/IvaForceRender.cs`, no anchor) | 40 `[KsaAnchor]`s (all controls + debug; incl. `ScaleActuator`'s recursive `Part.Scale` write + best-effort read, `AudioActuator`'s 3 FMOD anchors — `GameAudio.System` create/play + the per-frame channel tick — and `CameraActuator.Focus`, **rebound** at C1.4 to set follow on **both** the base and map cameras) | `KsaCatalog` try/catch per command; `AudioActuator.Tick` under the `_audioDead` session latch |
 | `Game/Ksa/Render/IvaForceRender.cs` | 1 `[KsaAnchor]` (`always_render_iva` cheat; own dynamic `gatos.iva` Harmony — since 5482 a single `PartModel` ctor postfix; the render gate lives in `PartTreeRenderData.Compose`) | per-postfix try/catch; restored + unpatched on disable/unload |
@@ -523,7 +534,8 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/BrutalModLogger.cs` | `Brutal.Logging` sink | try/catch at install |
 | `Mod.cs`, `ModAssets.cs` | StarMap.API attributes, purrTTY contract — **no KSA game types** | n/a (mod-ecosystem ABI, not KSA) |
 
-Detail and per-member break-impact: the four `ksa-*.md` pages. **The census totals 178 `[KsaAnchor]`s**
+Detail and per-member break-impact: the four `ksa-*.md` pages. **The census totals 179 `[KsaAnchor]`s**
+at 5554 (one new `BodyReader.FromBarycenter` anchor); 178
 at 5482 (176 before the pass; the one further occurrence in `Game/Ksa/KsaAnchor.cs` is the attribute's own
 doc comment, not a binding). The **5482** pass added two, both in part paint — the compiler-blind
 `PartTreeRenderData.WriteState`/`WriteDynamicState` + `StateBitFlags` seam on `PartPaintPatches.Resolve`

@@ -15,9 +15,10 @@ namespace gatOS.GameMod.Game.Ksa.Paint;
 /// </summary>
 /// <remarks>
 ///     <para><b>Mechanism.</b> A bind is one descriptor write: <c>BindlessTextureLibrary.SetTexture(
-///     stockHandle, ourImageView)</c>. Unbind writes the captured stock <c>ImageView</c> back. No
+///     stockHandle, ourImageView, ShaderReadOnlyOptimal)</c>. Unbind writes the captured stock
+///     <c>ImageView</c> back in the same sampled layout. No
 ///     Harmony patch, no shader transform, no pipeline or renderer rebuild, and <b>no new bindless
-///     slots</b> — so KSA's 1024-entry table is untouched and the only budget is VRAM. Nothing in KSA
+///     slots</b> — so KSA's bindless table is untouched and the only budget is VRAM. Nothing in KSA
 ///     ever calls <c>SetTexture</c> (only <c>AddTexture</c>/<c>FreeTexture</c>), so gatOS is the sole
 ///     writer of an existing slot and no engine code can clobber an override.</para>
 ///     <para><b>Zero cost when idle.</b> <see cref="Tick"/> compares
@@ -205,17 +206,19 @@ internal sealed class ClutterTextureBridge : IDisposable
     ///     and this captures the stock slot before the first swap — the pristine capture that makes
     ///     teardown exact — then re-points the slot and retires whatever it replaced.
     /// </summary>
-    [KsaAnchor("Program.Instance.BindlessTextures (public field) → BindlessTextureLibrary.SetTexture; "
+    [KsaAnchor("Program.Instance.BindlessTextures (public field) → BindlessTextureLibrary.SetTexture(int,VkImageView,VkImageLayout); "
             + "TextureReference.ImageView",
-        SourceFile = "KSA/Program.cs:111 / RenderCore.Systems/BindlessTextureLibrary.cs:178 / "
+        SourceFile = "KSA/Program.cs:111 / RenderCore.Systems/BindlessTextureLibrary.cs:201 / "
             + "KSA/TextureReference.cs:66",
-        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
+        Verified = "2026-10-11", GameVersion = "2026.10.10.5554", Risk = ChurnRisk.High,
         Notes = "All public; no reflection. Nothing in KSA calls SetTexture, so gatOS is the sole "
             + "writer of an existing slot. The decode/upload half of this path lives in "
             + "UserTextureGpu.Upload, which carries its own anchor. 5482: BindlessTextureLibrary is unchanged "
             + "and still has no KSA caller of SetTexture; only line citations moved. Displaced ground clutter "
             + "(rev 5447) is copied into a tail of the same clutter render buffers and drawn through the same "
-            + "pipelines and material bindless handles, so a re-pointed slot covers it too.")]
+            + "pipelines and material bindless handles, so a re-pointed slot covers it too. "
+            + "5554 adds a VkImageLayout parameter; both the uploaded RGBA image and the stock "
+            + "color texture use ShaderReadOnlyOptimal (GpuTextureSystem.SampledLayoutFor).")]
     private Override Apply(string targetId, TextureFile file, TextureBindMode mode)
     {
         if (Program.GetRenderer() is not { } renderer)
@@ -233,7 +236,7 @@ internal sealed class ClutterTextureBridge : IDisposable
         var stockView = _live.TryGetValue(targetId, out var previous) ? previous.StockView : stock.ImageView;
         var handle = _live.TryGetValue(targetId, out var prior) ? prior.Handle : stock.BindlessHandle;
 
-        bindless.SetTexture(handle, image.ImageView);
+        bindless.SetTexture(handle, image.ImageView, VkImageLayout.ShaderReadOnlyOptimal);
         _retire.Retire(previous?.Image);
 
         var live = new Override(targetId, file.Name, file.Version, handle, stockView, image,
@@ -249,7 +252,8 @@ internal sealed class ClutterTextureBridge : IDisposable
             return;
         try
         {
-            Program.Instance?.BindlessTextures?.SetTexture(live.Handle, live.StockView);
+            Program.Instance?.BindlessTextures?.SetTexture(live.Handle, live.StockView,
+                VkImageLayout.ShaderReadOnlyOptimal);
         }
         catch (Exception ex)
         {

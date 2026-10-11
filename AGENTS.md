@@ -74,7 +74,21 @@ cut.
 > solar link intact) + the pass record live in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope
 > pages; live re-check items appended to [`docs/VALIDATION.md`](docs/VALIDATION.md).
 >
-> **Current KSA upgrade → `2026.9.22.5482`** (2026-09-25, from audited 5438; 43 logged revisions
+> **Current KSA upgrade → `2026.10.10.5554`** (2026-10-11, from audited 5482 through
+> 5541; 70 logged revisions across both drops, remote `main` verified at `935a32b`). Terrain roughness
+> now binds `TanMeanSlopeRoughness` with tan/atan conversion around the unchanged degree API. Stickers
+> bind the current per-viewport ordinary global UBO set with no dynamic offset and use the named
+> clamp sampler; clutter/sticker texture calls pass the new explicit image-layout argument. The
+> body catalog now includes all fixed/orbiting stars and barycenters, uses the stable primary star for
+> `system/{name,sun}`, and excludes vessels from cached children. Camera body targets include those
+> new bodies; geo and body ENU/LVLH still require planets/moons. Plume-trail `expansion_time` now means
+> grouped-segment fade delay, documented with the inherited manual-throttle g-limit and auto-burn
+> changes. **179 anchors** (+1 barycenter). Full build 0 warnings/errors; suite 1648 passed / 12
+> skipped. Shipping-binary and offline shader checks pass; targeted seam evidence and full review:
+> [5554 pass](scope/ksa-assets-and-versions.md#5554-pass). Live flight/render checks remain pending:
+> [5554 checklist](docs/VALIDATION.md#ksa-5554-upgrade).
+>
+> **Prior KSA upgrade → `2026.9.22.5482`** (2026-09-25, from audited 5438; 43 logged revisions
 > 5439–5481, no gap). **One break, compiler-visible only in part:** rev 5456 moved part render data into
 > a cached per-tree `PartTreeRenderData`, deleting `PartModelModule`/`PartModelDynamicModule.UpdateRenderData`
 > (the 4 CS0117 errors, all in `PartPaintPatches.cs`) *and* making the rasterized static path bypass
@@ -234,7 +248,7 @@ cut.
 | `ctl/rotate` (W1, AGC_PLAN §7.4) | Code DONE; in-game pending | `Game/Ksa/Actuators/RotateActuator.cs`, `SimFs/Commands/RotateRules.cs` — manual RCS rotation signs, the translate sibling; full authority needs `attitude_mode=manual` (auto strips rotation bits) |
 | AGC (`examples/agc` — Luminary099/yaAGC in-guest, plans/AGC_PLAN.md A0–A7) | Code DONE (host+wire-verified); in-game mission cards pending | one Rust crate: `proto/` wire codec + SocketPort + embedded `agc_engine.c` FFI (`--features embedded`), virtual IMU/PIPA/LR, RCS duty→`ctl/batch` demodulation, THRUST clocking, padload generator (+KSA audit), P27 uplink, downlink recorder, ratatui `dsky`; `tools/agc` launcher; `apollo11-system/` July-1969 Earth/Moon system generator; `APOLLO_11_FLIGHT_GUIDE.md`; mission cards in `docs/VALIDATION.md` |
 | T11.1 — QEMU win-x64 | DONE | `tools/fetch-qemu.*`, `vendor/qemu/win-x64/` |
-| T11.3/T11.4 — shared distribution + releases | DONE; first shared release/live smoke pending | `.github/workflows/mod-release.yml`, `tools/release-*`, `tools/publish-release.sh`, `tools/check-dist*.py` — one archive, stable main builds + feature betas; see `docs/MILESTONES.md` for the separate KSA 5554 build blocker |
+| T11.3/T11.4 — shared distribution + releases | DONE; first shared release/live smoke pending | `.github/workflows/mod-release.yml`, `tools/release-*`, `tools/publish-release.sh`, `tools/check-dist*.py` — one archive, stable main builds + feature betas; KSA 5554 compatibility blocker resolved; see `docs/MILESTONES.md` |
 | Remaining M10+ | **Not yet implemented** | — |
 
 The full `GATOS_IT=1` integration suite ran 321/321 green (Windows/TCG, guest v3, 2026-06-13).

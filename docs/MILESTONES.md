@@ -663,10 +663,11 @@ is superseded by the shared archive/system-QEMU policy.
 
 Validation (2026-10-11): offline release/distribution checks and workflow lint pass; the solution
 builds with zero warnings/errors against audited KSA 5482, and the suite passes 1647 tests with
-12 VM-gated skips. The local current KSA checkout is 5554: it exposes six pre-existing compile
-errors in terrain roughness and sticker shader bindings. Since release CI still checks out the
-assemblies repository's `main`, that separate KSA compatibility update is required before
-publishing; this packaging change does not alter game bindings or pin CI to an older KSA build.
+12 VM-gated skips. The subsequent KSA 5554 compatibility pass resolved the terrain/sticker compile blocker and
+compiler-invisible texture/catalog/camera coupling. The solution now builds with zero warnings/errors
+against 5554, and 1648 tests pass with 12 VM-gated skips (including the new multi-star MCP regression). CI continues to use the assemblies
+repository's `main`; no older-build pin was introduced. See the [5554 pass](../scope/ksa-assets-and-versions.md#5554-pass)
+and [pending live checks](VALIDATION.md#ksa-5554-upgrade).
 
 ---
 
@@ -1019,7 +1020,7 @@ per-biome materials, procedural modifiers, ground clutter/ecotypes, BVH debug an
 
 **Plan-vs-code deviations** (the code won, and the docs record them for the next break-check):
 `ClearPlumeTrails` and `PlanetRenderer.Wireframe` are **instance**, not static; `CloudTypes` hangs off
-`layer.VolumetricCloud`; `PlanetUbo.TanMeanSlopeRoughnessRadians` stores plain radians despite the name.
+`layer.VolumetricCloud`; `PlanetUbo.TanMeanSlopeRoughness` stores the tangent of the slope angle since KSA 5554; gatOS uses tan/atan around its degree-valued leaf. The older editor treated the previous `TanMeanSlopeRoughnessRadians` field as radians.
 Catalog: `SPEC_9P_FILESYSTEM.md` §3.7 + §5.1; `docs/KSA_INTEGRATION_MATRIX.md` (FX editors);
 `scope/ksa-{write,read}-surface.md#fx-editors`, `scope/ksa-runtime-coupling.md#fx-accessors`.
 **Pending: the in-game pass** (18-item checklist in `docs/VALIDATION.md`) — the reflected handles, the

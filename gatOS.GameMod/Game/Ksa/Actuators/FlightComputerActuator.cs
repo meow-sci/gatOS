@@ -105,7 +105,8 @@ internal static class FlightComputerActuator
     }
 
     [KsaAnchor("FlightComputer.Burn = new BurnTarget{ImpulsiveInstant,DeltaVTargetCci}",
-        SourceFile = "KSA/BurnTarget.cs", Verified = "2026-08-23", GameVersion = "2026.8.22.5348",
+        SourceFile = "KSA/BurnTarget.cs / KSA/FlightComputer.cs", Verified = "2026-10-11",
+        GameVersion = "2026.10.10.5554",
         Risk = ChurnRisk.Medium,
         Notes = "ut + Δv (CCI); the autopilot executes it. ImpulsiveInstant became UniverseTime at "
             + "rev 5211. UniverseTime's ctor THROWS ArgumentException on NaN (SimTime silently stored "
@@ -117,7 +118,10 @@ internal static class FlightComputerActuator
             + "matrix (10000, 1000) -> (50, 100) with a row-vs-column multiplication fix, "
             + "MAX_TRANSIENT_BURN_FRACTION 0.3f -> 0.5f, TVC_SETTLE_TOLERANCE replaced by "
             + "TVC_SETTLE_POINTING_TOLERANCE (0.1°) — so burn duration and throttle profile differ from "
-            + "the 5261 baseline for the same commanded Δv.")]
+            + "the 5261 baseline for the same commanded Δv. 5554: fields used here retain their meaning; "
+            + "auto burns now stop on active-engine propellant exhaustion (5506), can advance to a second "
+            + "planned burn and reset warp (5540), and the TVC controller uses LQI with a variable "
+            + "steering interval (5549-5552). The simple gatOS target has no planned interstellar fields.")]
     internal static CommandResult SetBurn(Vehicle vehicle, IReadOnlyList<double> burn)
     {
         if (burn.Count != 4)

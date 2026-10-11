@@ -1,3 +1,4 @@
+using System.Text.Json;
 using gatOS.SimFs;
 using gatOS.SimFs.Commands;
 using gatOS.SimFs.Paint;
@@ -11,6 +12,40 @@ namespace gatOS.Mcp.Tests;
 [TestFixture]
 public sealed class McpPresenterTests
 {
+    [Test]
+    public void CelestialResources_PreserveMultiStarHierarchyAndPrimaryStar()
+    {
+        var root = new BodySnapshot("AlphaCentauri", "Barycenter", null, ["AlphaCentauriA"],
+            4e30, 0, 2.7e20, 0, 0, new double3Snap(4e16, 0, 0), default, null, null, null);
+        var star = root with
+        {
+            Id = "AlphaCentauriA", Class = "Star", ParentId = root.Id, ChildIds = [],
+            MeanRadius = 7e8, Orbit = new OrbitSnapshot(2e12, 1e12, 0.3, 0, 1.5e12, 2.5e9),
+        };
+        var primary = root with { Id = "Sol", Class = "Star", ChildIds = [] };
+        var store = new SnapshotStore();
+        store.Publish(SimSnapshot.Empty with
+        {
+            Sequence = 1, Bodies = [primary, root, star], System = new SystemSnapshot("Sol", null, "Sol"),
+        });
+        var presenters = new McpPresenters(store);
+
+        using var world = JsonDocument.Parse(SimJson.Serialize(presenters.GetWorld().Data));
+        var summary = world.RootElement;
+        var classes = summary.GetProperty("celestials").EnumerateArray()
+            .Select(x => x.GetProperty("class").GetString()).ToArray();
+        var listed = (McpListPage<object>)presenters.ListCelestials().Data!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(classes, Is.EqualTo(new[] { "Star", "Barycenter", "Star" }));
+            Assert.That(listed.Items, Has.Count.EqualTo(3));
+            Assert.That(summary.GetProperty("system").GetProperty("sun_id").GetString(), Is.EqualTo("Sol"));
+            Assert.That(presenters.GetCelestial(root.Id).Data, Is.EqualTo(root));
+            Assert.That(presenters.GetCelestial(star.Id).Data, Is.EqualTo(star),
+                "An orbiting star retains its parent and orbit through the existing full-body schema");
+        });
+    }
+
     [Test]
     public void Registry_AdvertisesExactSurface_AndNeverDisplay()
     {

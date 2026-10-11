@@ -292,12 +292,14 @@ untouched; re-verified 2026-07-16 against `2026.7.6.4939` — `PartModel.cs` aga
 `PartModelModule`/`PartModelDynamicModule` diff is one added fuel-flow highlight bit; re-verified
 2026-07-22 against `2026.7.8.4980` — neither `PartModel.cs` nor `PartModelModule.cs` is in the changed
 set; re-verified 2026-07-24 against `2026.7.9.5018` — `PartModel.cs`, `PartModelModule.cs`,
-`PartModelDynamicModule.cs` and `Viewport.cs` are all byte-identical again); a ctor/`AddInstance`
-signature change surfaces at install time (caught, logged). Re-verified 2026-09-25 against
+`PartModelDynamicModule.cs` and `Viewport.cs` are all byte-identical again); a constructor signature change surfaces at install time (caught, logged). Re-verified 2026-09-25 against
 `2026.9.22.5482`: `PartModel.Instances` (`:409`), the protected ctor (`:435`) and
 `PartModelModule.Template.{Internal,RayTracing}` (`:31,39`) unchanged; `RebuildAll` batches every
 `PartModelModule`, internals included; live VAB re-check queued. (Un)patching runs on the game thread
-(the command drain / unload). Torn down by `Mod.TeardownGameCheats`.
+(the command drain / unload). Torn down by `Mod.TeardownGameCheats`. At 5554,
+`PartModel.Instances`, the protected constructor, `Template.Internal` and the
+`PartTreeRenderData.Compose` gate are unchanged. The live IVA patch is still constructor-only;
+the editor `AddInstance` postfix was retired in the 5482 pass.
 
 ### Dynamic vessel force-render patches (`gatos.always_render`) {#always-render-patches}
 
@@ -305,7 +307,7 @@ The per-vessel `vessels/by-id/<id>/always_render` node (`Game/Ksa/Render/VesselF
 from `unscience` i-feel-seen) bypasses KSA's sub-pixel cull — a vehicle whose projected diameter falls
 under one pixel (`Camera.GetObjectDiameterPixelsAsDouble < 1.0`) is normally not drawn. It installs
 **two more** Harmony patches on its **own** `Harmony("gatos.always_render")` instance — prefixes on
-`Vehicle.GetWorldMatrix(Camera)` and `Vehicle.UpdateRenderData(Viewport,int)`, each reproducing the
+`Vehicle.GetWorldMatrix(Camera)` and `Vehicle.UpdateRenderData(IViewport,int)`, each reproducing the
 stock body minus the cull check — but **only while ≥ 1 vessel is marked**: the first mark installs, the
 last unmark (write `0`, despawn prune, or unload) removes, so the default-off state carries **zero**
 patches. The registry is mutated only on the game thread (Frame drain / sampler prune / unload) and the
@@ -335,6 +337,12 @@ actuator latches degraded, EOPNOTSUPP), and a prefix fault logs once and falls b
 `UpdateRenderData` is **virtual** — the patch binds `Vehicle`'s implementation, so overrides (KittenEva
 renders via its own `KittenRenderable`) are **not** force-rendered, same as the unscience original.
 Torn down by `Mod.TeardownGameCheats`.
+
+At 5554, the target signatures and reproduced render-cull bodies retain the 5482 behavior:
+`Vehicle.GetWorldMatrix` at `Vehicle.cs:3694`, `UpdateRenderData` at `:3713`, and
+`PartTree.UpdateRenderData` still take the same matrix/viewport inputs. The prefixes continue to
+bypass only the sub-pixel cull for marked vessels. This is a static/source and binary check;
+flight-scene rendering remains on the live validation card.
 
 ### Welds per-frame driver (no patch) {#welds-driver}
 
@@ -472,6 +480,12 @@ seven `debug.thug_life_*` control writes are ordinary Frame-phase commands — s
 [`ksa-write-surface.md#thug-life`](ksa-write-surface.md#thug-life). Welds, IVA, and thug_life are all
 **runtime-only** (never persisted).
 
+**5554 re-verification (2026-10-11):** `RenderMainPass(IViewport,CommandBuffer)` remains the only
+overload (`SuperMeshRenderSystem.cs:388`), called inside the active offscreen render scope from
+`Program.cs:4568`, `:4839` and `:5047`. The `UnlitMesh` vertex/fragment shaders and
+`Program.OffscreenTarget.SetupGraphicsPipeline` are unchanged. The postfix still receives the
+named `commandBuffer` argument and draws into the current viewport.
+
 ### Dynamic stickers render patch (`gatos.stickers`) — second render-thread draw injection {#stickers-patch}
 
 Projected PNG decals (`/sim/paint/stickers`, `Game/Ksa/Paint/Stickers/`) are gatOS's **second — and
@@ -491,12 +505,17 @@ unchanged and the call sites only moved: `:4531` secondary viewports, `:4821` co
 `:4849` full resolve (the pass fires here, `GridPass` follows at `:4851`), `:4972` editor (filtered). The
 new `else if (UseCloudUpscaling())` depth barrier (`:4828`) runs before the resolve and does not touch
 the post-resolve window.
+At 5554 (re-verified 2026-10-11), `ResolveAttachments(CommandBuffer,bool)` is unchanged at
+`RenderTarget.cs:315`; the calls are `Program.cs:4606` secondary, `:4904` color-only (skipped),
+`:4932` full main resolve (sticker pass), and `:5055` editor (filtered). `GridPass` follows the full
+resolve at `:4935`, so the same post-resolve depth window remains.
+
 The method *body* is MSAA-gated — it does nothing when neither attachment is multisampled — but a
 **postfix fires either way**, which is what makes this reliable at every MSAA setting. Immediately
 after it, the resolved single-sample `DepthImage` and `ColorImage` are both current and neither is
 bound as an attachment: the one window in the frame where a decal can read full scene depth. It is
 also exactly the window KSA's own `GridPass` draws the map grid in, and the pass is a near-verbatim
-port of `GridPass.Run` (`KSA/GridPass.cs:427-471`).
+port of `GridPass.Run` (`KSA/GridPass.cs:445-500` in 5554).
 
 **Five gates before anything is recorded.** The new 5438 `inResolveDepth` flag must be true. (1) the static `StickerManager.Active` volatile — false
 whenever the draw path is not live or has faulted, so the postfix is a single branch; (2)
@@ -524,8 +543,9 @@ frame's depth descriptor; a two-image `BarrierBatch` moving depth to
 with `inForceBarrier: true`); `BeginRendering` on the **resolved single-sample** `ColorImage` with
 `LoadOp.Load`/`StoreOp.Store`, `ResolveMode.None` and **no depth attachment at all**; bind
 `Program.SetViewport`, then descriptor sets **0/1/2** = KSA's global Camera/GlobalLighting/Celestial/
-Vessel UBO block *with the per-viewport dynamic offset* (`GlobalShaderBindings.{DescriptorSet,
-DynamicOffset(Program.MainViewport.Index)}`) / our scene-depth combined-image-sampler /
+Vessel UBO block via `GlobalShaderBindings.DescriptorSet(Program.MainViewport.ShaderSlot)`
+(**5554: separate set per viewport/frame, no dynamic offset**) / our scene-depth
+combined-image-sampler /
 `Program.Instance.BindlessTextures.DescriptorSet`; then one `DrawIndexed(36, …)` of the shared unit
 cube per drawable sticker, each preceded by a 112-byte `PushConstants` block
 (`VertexBit | FragmentBit`: two 3×4 matrices as six `vec4` columns, plus `texId`, `alpha`,
@@ -534,6 +554,15 @@ cube per drawable sticker, each preceded by a 112-byte `PushConstants` block
 Depth is left in `DepthSampledReadF`, exactly as `GridPass` leaves it — the engine's tracked-state
 barriers tolerate that for the rest of the frame. Scene depth is **reverse-Z**, so `0` is the far
 plane and "nothing was drawn".
+
+**5554 descriptor rebind:** KSA replaced the dynamic global UBO descriptor with a separate set
+per viewport and frame (`GlobalShaderBindings.DescriptorSet(int viewportIndex)`, selected with
+`Program.MainViewport.ShaderSlot`). The draw binds set 0 **without dynamic offsets**. Set 0 also
+contains `GlobalConstants` at binding 1; the sticker fragment shader uses
+`globalConstants.clampSamplerHandle` rather than assuming sampler slot 0. Set 1 remains the scene
+depth descriptor and set 2 the bindless sampled-image/sampler table. Both sticker shaders compile
+with the current shipped headers and validate as SPIR-V; that checks the descriptor declarations,
+while a live draw remains the render validation.
 
 **Descriptor ring.** One depth descriptor set per frame in flight, allocated up front from a private
 pool, indexed by `Program.Instance.ResourceFrameIndex % ring.Length` and **rewritten every frame**
@@ -587,6 +616,13 @@ The twelve `paint.sticker_*` control writes are ordinary Frame-phase commands �
 [`ksa-write-surface.md#stickers`](ksa-write-surface.md#stickers). Stickers are **runtime-only**
 (never persisted).
 
+**5554 bindless layout contract:** `BindlessTextureLibrary.AddTexture` and `SetTexture` now
+require the image's `VkImageLayout`. Sticker uploads, clutter-slot overrides, and stock-view restores
+pass `ShaderReadOnlyOptimal`, matching KSA's color texture loader. `FreeTexture(int)` still writes the
+empty descriptor before a deferred image destroy. The table's requested 1024 entries are now clamped
+to the device descriptor limit; a full table degrades the sticker texture binder instead of changing
+the published `/sim` controls.
+
 ### Screen-stream capture (`DisplayRenderPatch` + `FrameCapture`) — in-band GPU readback {#display-capture}
 
 The `/sim/display` screen stream (STREAM_PLAN.md; `Game/Ksa/{DisplayRenderPatch,FrameCapture}.cs`, both
@@ -632,6 +668,15 @@ degrades to no-injection; a capture-time managed fault latches the feature off f
 pacing (`Renderer.WaitForPreviousPresent` → `vkWaitForPresentKHR` in `PrepareFrame`, before `PollEvents`;
 default `FrameQueueLimit.OneFrame`); `MaxFramesInFlight` stays 2 and the fence/frame-slot logic is
 untouched, so the deferred one-slot-revisit readback still holds.
+
+**5554 display re-verification:** `Program.RenderGame` retains its sole final full resolve at
+`Program.cs:4932`, moves the offscreen color to `SampledReadVfc` at `:4945`, composites at `:4949`,
+grabs the swapchain for KSA screenshot capture at `:4952`, and ends the command buffer at `:4954`.
+The transpiler still injects before that final `End()`, after the offscreen has a sampled layout.
+`RenderTarget`, `BarrierBatch`, `ImageBarrierInfo`, `Core.Renderer` frame-slot logic, and
+`Program.ColorFormat` are unchanged. `GameSettings.UiPixelCulling()` at `:3308` still has one caller,
+`UiCoverageMaskSystem.RecordMaskGeneration` at `:466`; the stream-only prefix still suppresses the
+UI depth stamp.
 
 ### Camera director same-frame viewport driver {#camera-driver}
 
@@ -689,6 +734,14 @@ The camera's KSA members are all `[KsaAnchor]`-documented in `Game/Ksa/Camera/` 
 Low–Medium, verified `2026-08-06` / `2026.8.5.5168`); the writes are
 [`ksa-write-surface.md#camera-director`](ksa-write-surface.md#camera-director), the reads
 [`ksa-read-surface.md#camera`](ksa-read-surface.md#camera).
+
+**5554 body targets:** `CameraTargets.TryResolve` accepts any `IParentBody` returned by
+`CelestialSystem.Get(id)`, including companion stars and barycenters; `Describe` reports all of them
+as `body:<id>`. `aim_up=target` maps body-fixed +Z through `GetBodyFixed2Ecl()` for each body type.
+For body anchors, surface/geodetic placement and ENU/LVLH local frames still require a `Celestial`
+because stars and barycenters provide no terrain or geodetic latitude/longitude. Vessel ENU/LVLH
+remains available. This extends target resolution
+without changing the camera driver's Harmony seam or ownership timing.
 
 ### IVA and Map as ownership contexts — NOT implementable without a Harmony patch {#camera-mode-contexts}
 
@@ -938,6 +991,15 @@ and **retired one** (the IVA `AddInstance` postfix):
 | part-paint `PartModel{,Dynamic}Module.UpdateRenderData` prefix/finalizer pairs + the `PartModel{,Dynamic}.AddInstance` prefixes | ➖ **retired** — the targets were deleted (the 4 CS0117 errors) / bypassed |
 | every 5402 chain above (`_manualControlInputs` + struct fields, `KittenEva` scale chain, `ViewportSeam` protected setters, all 11 `FxReflect` names, `PlanetRenderer._renderUboMap`/`_meshUboMap`, EVA paint fields) | ✅ resolve with the same types; only FX line numbers moved |
 
+**5554 reflection and paint re-verification:** the private
+`PartTreeRenderData.{WriteState,WriteDynamicState}` methods, nested `StateBitFlags` arrays,
+`Compose` copy, and `InvalidateStates()` remain present with the same behavior. `PartModel` and
+`PartTreeRenderData` render gates are unchanged, so the IVA/always-render overrides retain their
+current hooks. The private `Vehicle._manualControlInputs.EngineThrottle`, protected viewport setters,
+EVA avatar/material chains, and all `FxReflect` fields still resolve; no new reflection field or
+Harmony target was added in this pass. A successful build alone cannot establish those semantics,
+so the static source and shipping binary were both checked.
+
 Unlike the earlier passes, the new paint seam was also **executed**, not just resolved: `KSA.dll` is
 IL-only (no ReadyToRun) but x64-flagged, so an IL-identical scratch copy with only the COFF `Machine`
 field set to ARM64 was loaded under .NET 10 (macOS ARM64) with Harmony 2.4.2, and gatOS's own
@@ -996,6 +1058,15 @@ of these can fail the build, they belong on the
 "re-verify live after every update" list with the throttle field — live pass pending in
 [`../docs/VALIDATION.md`](../docs/VALIDATION.md).
 
+**5554 FX UBO and trail behavior:** `PlanetUbo.TanMeanSlopeRoughness` is now the tangent of the
+published roughness angle, so `TerrainActuator` writes `tan(degrees * PI/180)` and reads
+`atan(value) * 180/PI`. Rev 5534 moved viewport-dependent mesh anchors into
+`PlanetViewportData.MeshViewportUbo`; the reflected `_renderUboMap`/`_meshUboMap`, per-body slot
+arithmetic, and field-wise frame mirror still target the correct rings. Rev 5509 changed plume
+radius growth to follow exhaust entrainment. `PlumeTrailSettings.ExpansionTimeSeconds` remains an
+accessible field but now delays grouped-trail lifetime fading, so this is documented as a value
+meaning change rather than a path or binding removal.
+
 ---
 
 ## Churn machinery (how the coupling defends itself)
@@ -1050,13 +1121,16 @@ See [`non-ksa-surface.md`](non-ksa-surface.md) for the rest of the game-free sur
 against.
 # Paint runtime coupling
 
-Part paint dynamically installs seven exact gatOS-owned Harmony methods only after the runtime
-master is enabled: the global shader-file compiler prefix; enter/finalizer scopes around static and
-dynamic PartModel modules; and static/dynamic AddInstance prefixes. Enable is preflighted and
-transactional, foreign compiler prefixes are a hard conflict, failure falls back to stock, and
-disable/unload removes only the stored gatOS methods before requesting KSA's deferred renderer
-rebuild. EVA paint uses no Harmony patch; its live game-thread tick conditionally rebinds captured
-material-index arrays to owned clones. See `plans/PAINT_ASBUILT.md` for exact seams and upgrade audit.
+Part paint installs a shader-file compiler prefix and exact postfixes on
+`PartTreeRenderData.WriteState`/`WriteDynamicState` only while the runtime master is enabled.
+Those postfixes OR the paint bits into KSA's cached per-tree state slots; arm/disarm and rule
+changes invalidate the loaded trees through `PartTreeRenderData.InvalidateStates()`.
+Enable is preflighted and transactional, foreign compiler prefixes are a hard conflict, and a
+failure falls back to stock. Disable/unload removes only the stored gatOS methods before KSA's
+deferred renderer rebuild. EVA paint uses no Harmony patch; its game-thread tick conditionally
+rebinds captured material-index arrays to owned clones. The 5554 cached writers and shader
+`MeshIndirect` state-bit/sampled-color hooks are unchanged. See `plans/PAINT_ASBUILT.md` for the
+full contract.
 
 # Clutter texture runtime coupling
 
@@ -1075,6 +1149,13 @@ takes a discrete `Renderer.Allocator.CreateStagingPool(...)` + `Submit().Wait()`
 out-of-band alongside the engine's in-flight frames corrupts the device. The reconciliation is
 reasoning, not evidence, and needs a live check. See
 [`plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md`](../plans/GATOS_CUSTOM_CLUTTER_TEXTURES_PLAN.md).
+
+**5554 clutter descriptor rebind:** `BindlessTextureLibrary.SetTexture` now accepts a third
+`VkImageLayout` parameter. Both the override and captured stock-view restore use
+`ShaderReadOnlyOptimal`, the layout `GpuTextureSystem` uses for color assets. The stock handle is
+still reused, and the deferred retire queue still keeps the custom image alive across in-flight
+frames. `GroundClutterRenderer` changed multi-viewport culling internals, while the clutter
+catalog fields and stock texture references used here remain stable.
 
 ## 5482 runtime findings {#5482-findings}
 

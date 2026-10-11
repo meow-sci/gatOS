@@ -334,8 +334,11 @@ internal sealed class TelemetrySampler
     }
 
     [KsaAnchor("Universe.GetSimulationSpeeds() (SimulationSpeed.Value per warp rung)",
-        SourceFile = "KSA/Universe.cs", Verified = "2026-06-27", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.Medium,
-        Notes = "The fixed warp ladder (time/warp_speeds); cached after the first successful read.")]
+        SourceFile = "KSA/Universe.cs", Verified = "2026-10-11", GameVersion = "2026.10.10.5554",
+        Risk = ChurnRisk.Medium,
+        Notes = "The session-fixed warp ladder (time/warp_speeds); cached after the first successful "
+            + "read. Rev 5538 adds 1/5/10/50/100 years-per-second rungs; the short-lived special "
+            + "interstellar warp of rev 5496 was removed at rev 5516.")]
     private IReadOnlyList<double> SampleWarpSpeeds()
     {
         // The warp ladder is a fixed per-session list; cache it after the first successful read so

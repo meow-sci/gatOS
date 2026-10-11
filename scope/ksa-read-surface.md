@@ -26,7 +26,7 @@ statics (+ `VersionInfo.Current`).
 | `time/ut` | `TelemetrySampler.cs:92` | `Universe.GetElapsedSeconds()` | `KSA/Universe.cs` | seconds, double | Low | ✅ |
 | `time/warp` | `:93` | `Universe.SimulationSpeed` | `KSA/Universe.cs` | factor | Low | ✅ |
 | `time/sim_dt` | `:131` | `Universe.GetLastSimStep().DeltaTime` | `KSA/Universe.cs` | seconds | Medium | ✅ |
-| `time/warp_speeds` | `:171` | `Universe.GetSimulationSpeeds()` | `KSA/Universe.cs` | factor list | Medium | ✅ |
+| `time/warp_speeds` | `TelemetrySampler.SampleWarpSpeeds` | `Universe.GetSimulationSpeeds()` | `KSA/Universe.cs` | factor list | Medium | ✅ · ⚠️ **5554:** rev 5538 added 1/5/10/50/100 years-per-second rungs; the session-fixed list is still cached correctly |
 | `time/auto_warp` | `:188,203` | `Universe.IsAutoWarpActive`, `Universe.AutoWarpTime` | `KSA/Universe.cs` | flag + UT | Medium | ✅ |
 | `status/game_version` | `:214` | `VersionInfo.Current.VersionString` | `KSA/VersionInfo.cs` | string | Low | ✅ |
 | (active vessel id) | `:94` | `Program.ControlledVehicle?.Id` | `KSA/Program.cs` | string | Low | ✅ |
@@ -116,7 +116,7 @@ are cached per vehicle in `Readers/AnimationLinks.cs` (GP3), rebuilt on module-c
 | `navball/{pitch,yaw,roll,twr,deltav,frame,speed}` | `:223` | `Vehicle.NavBallData.{AttitudeAngles(int3 deg),ThrustWeightRatio,DeltaV,Frame,Speed}` | `KSA/NavBallData.cs` | Medium | ⚠️ **5117: renamed + semantic drift** (rev 5114) — see below; ⚠️ **5348: `deltav`/`twr` values corrected** (rev 5318) — see [5348 findings](#5348-findings) |
 | `environment/{pressure,density,dynamic_pressure,ocean_density,terrain_radius,accel,angular_accel,g_force}` | `:235` | `Vehicle.PhysicsEnvironment.{AtmosphericPressure,AtmosphericDensity,OceanDensity,TerrainRadius}`; `PhysicalAtmosphereReference.GetDynamicPressure(vehicle)`; `Vehicle.AccelerationBody`/`AngularAccelerationBody` | `KSA/PhysicsEnvironment.cs`, `KSA/Vehicle.cs` | Low | ✅ · ⚠️ **5482:** positional values now use the closest-parent-relative position (rev 5451 wrong-body fix), and `TerrainRadius` comes from a `TerrainRadiusCache` that resamples after ~0.25 m of lateral motion (rev 5460) |
 | `orbit/{lan,argpe,true_anomaly,time_to_ap,time_to_pe,next_patch}` | `:199` | `Orbit.{LongitudeOfAscendingNode,ArgumentOfPeriapsis,StateVectors.TrueAnomaly.Degrees}`; `Vehicle.Next{Apoapsis,Periapsis,PatchEvent}Time` | `KSA/Orbit.cs`, `KSA/Vehicle.cs` | Low | ✅ |
-| `encounters` (NDJSON) | `:573` | `Vehicle.Patch.Encounters`; `Encounter.{Body.Id,GameTime,ClosestDistance}` | `KSA/PatchedConic.cs`, `KSA/Encounter.cs` | Medium | ✅ re-verified (static) 2026-08-23 against `2026.8.22.5348` (rev 5266 changed a *different* list) · ⚠️ **5482: population drift** — `ConjunctionAssessment` samples with the new `ComputeUnimodalIntervalSeconds` (`0.5/(1/P1+1/P2)`, floored at `tMax/512`) |
+| `encounters` (NDJSON) | `VesselReader.SampleEncounters` | `Vehicle.Patch.Encounters`; `Encounter.{Body.Id,GameTime,ClosestDistance}` | `KSA/PatchedConic.cs`, `KSA/Encounter.cs` | Medium | ✅ re-verified (static) 2026-08-23 against `2026.8.22.5348` (rev 5266 changed a *different* list) · ⚠️ **5482: population drift** — `ConjunctionAssessment` samples with the new `ComputeUnimodalIntervalSeconds` (`0.5/(1/P1+1/P2)`, floored at `tMax/512`) · ⚠️ **5554:** interstellar patches can add departing/arriving star-system flybys (revs 5494/5510) |
 
 ### Writable-setpoint read-backs (so `ctl/*` files report the real state)
 
@@ -306,9 +306,9 @@ are *only* the reader's: the rosters and the two reflective handles it needs.
 |---|---|---|---|---|---|---|
 | plume-template roster | `FxEditorReader.SamplePlumeTemplates` | `FxReflect.PlumeTemplates` → reflected `VolumetricExhaustTemplate.References` (internal static `SerializedCollection<…>`) `.GetList()`; latch `fx.plume_templates` | `KSA/VolumetricExhaustTemplate.cs:37`, `KSA/SerializedCollection.cs` | list of templates | **High** | ✅ |
 | plume-template roster (fallback) | `FxEditorReader.HarvestPlumeTemplates` | `Universe.CurrentSystem.All.UnsafeAsList()`; `Vehicle.Parts.RocketNozzles.ModulesAndAllStates`; `RocketNozzle.ReactionPlumes[].VolumetricExhaust.Id`; `VolumetricExhaustTemplate.Get(string)` | `KSA/RocketNozzle.cs:15,40`, `KSA/VolumetricExhaustReference.cs`, `KSA/VolumetricExhaustTemplate.cs:48` | ids of templates in use | Medium | ✅ |
-| trail settings | `FxEditorReader.SampleTrail` | `FxReflect.Trail` (reflected `Program.Instance._volumetricTrailRenderer`) → `TrailActuator.TryRead` public fields | `KSA/Program.cs:160`, `KSA/VolumetricTrailRenderer.cs:173-196` | floats (single precision) | **High** | ✅ |
+| trail settings | `FxEditorReader.SampleTrail` | `FxReflect.Trail` (reflected `Program.Instance._volumetricTrailRenderer`) → `TrailActuator.TryRead` public fields | `KSA/Program.cs`, `KSA/VolumetricTrailRenderer.cs` | floats (single precision) | **High** | ✅ · ⚠️ **5554:** `expansion_time` now reads a group-fade delay, as KSA repurposed the same public field |
 | cloud-body roster + fields | `FxEditorReader.SampleCloudBodies` / `ExpandClouds` | `AtmosphericBody.BodyTemplate.CloudsReference` over `Universe.CurrentSystem.All.UnsafeAsList()`; layer count and `layer.VolumetricCloud.CloudTypes.Count` define which indexed leaves exist | `KSA/AstronomicalTemplate.cs:60`, `KSA/CloudsReference.cs`, `KSA/VolumetricCloudReference.cs` | km / m / m/s / rgb / vec3 (per leaf) | Low | ✅ |
-| terrain-body roster + fields | `FxEditorReader.SampleTerrainBodies` | `Universe.CurrentSystem.All.UnsafeAsList()`; `PlanetRenderer.RenderUboSlot`/`MeshUboSlot` (only slotted bodies); values via `TerrainActuator.Read` out of the reflected `_renderUboMap`/`_meshUboMap` rings (latch `fx.terrain_ubo`) | `KSA/PlanetRenderer.cs:37-125,250-252,374,379` | m / deg / px / – | **High** | ✅ |
+| terrain-body roster + fields | `FxEditorReader.SampleTerrainBodies` | `Universe.CurrentSystem.All.UnsafeAsList()`; `PlanetRenderer.RenderUboSlot`/`MeshUboSlot` (only slotted bodies); values via `TerrainActuator.Read` out of the reflected `_renderUboMap`/`_meshUboMap` rings (latch `fx.terrain_ubo`) | `KSA/PlanetRenderer.cs` | m / deg / px / – | **High** | ✅ · **5554:** `slope_roughness_deg` now reads `atan(PlanetUbo.TanMeanSlopeRoughness)` and converts to degrees; stored field is a tangent, not radians |
 | terrain global | `FxEditorReader.SampleTerrainGlobal` | `PlanetRenderer.Wireframe` (public **instance** field) via `Program.GetPlanetRenderer()` | `KSA/PlanetRenderer.cs:216`, `KSA/Program.cs:491` | flag | Medium | ✅ |
 
 **Terrain reads come out of the UBO**, i.e. the struct the GPU actually samples (frame slot 0 at the
@@ -343,7 +343,7 @@ here is gated by `telemetry_*`, and nothing here is sampled by `TelemetrySampler
 | read | gatOS site | KSA member | Decomp file | Unit/format | Risk | 5168 |
 |---|---|---|---|---|---|---|
 | `camera/mode`, `camera/status`' `mode` | `CameraReader.Sample` → `ModeOf` | `IViewport.Mode` (a read-only interface property since 5402; a public field on `Viewport` before — **not** `Program.GetCameraMode()`, which reads the *frame* viewport); the `CameraMode` enum `{Orbit,Free,Map,IVA,Fixed}` mapped out member-by-member rather than cast | `KSA/IViewport.cs`, `KSA/CameraMode.cs` | token | Low–Medium | ➕ new 2026-08-06 |
-| `camera/target`, `camera/status`' `follow` | `CameraReader.Sample` → `CameraTargets.Describe` | `Camera.Following` → `IFollowable`; `Astronomical.Id`. A `WreckageMarker` or `VehicleEditingSpace` is not addressable ⇒ both report `none` | `KSA/Camera.cs` | `vessel:<id>` \| `body:<id>` \| `none` | Low | ➕ new 2026-08-06 |
+| `camera/target`, `camera/status`' `follow` | `CameraReader.Sample` → `CameraTargets.Describe` | `Camera.Following` → `IFollowable`; `Astronomical.Id`. A `WreckageMarker` or `VehicleEditingSpace` is not addressable ⇒ both report `none`; 5554 also maps stars and barycenters as `body:<id>` | `KSA/Camera.cs`, `KSA/IParentBody.cs` | `vessel:<id>` \| `body:<id>` \| `none` | Low | ➕ new 2026-08-06 · ✅ expanded 5554 |
 | `camera/tidal` | `CameraReader.Sample` | `Camera.TidalLocking` (get-only) | `KSA/Camera.cs` | flag | Medium | ➕ new 2026-08-06 |
 | `camera/pose/fov` | `CameraReader.Sample` | `Camera.GetFieldOfView()` — ⚠️ returns **radians** while `SetFieldOfView(float)` takes **degrees**; converted here, once, at the boundary, so nothing downstream carries a radian | `KSA/Camera.cs` | degrees | Medium | ➕ new 2026-08-06 |
 | `camera/pose/ortho` | `CameraReader.Sample` | `Camera.Orthographic` | `KSA/Camera.cs` | flag | Medium | ➕ new 2026-08-06 |
@@ -1154,18 +1154,18 @@ differ, only change the values it observes. See [`non-ksa-surface.md`](non-ksa-s
 ## Celestial bodies & system — `BodyReader` (gated by `telemetry_bodies`)
 
 `gatOS.GameMod/Game/Ksa/Readers/BodyReader.cs`. Most reads go through the `IParentBody` interface
-(implemented by both `Celestial` and `StellarBody`), so a body-type rename surfaces in one place.
+(implemented by `Celestial`, `StellarBody`, and `Barycenter`), so a body-type rename surfaces in one place.
 
 | `/sim` path | gatOS site | KSA member | Decomp file | Unit | Risk | 5018 |
 |---|---|---|---|---|---|---|
-| (catalog) | `:24` | `Universe.CurrentSystem.All.UnsafeAsList()` → `Celestial`; `Universe.WorldSun` (`StellarBody`); `CelestialSystem.HomeBody` | `KSA/CelestialSystem.cs`, `KSA/Universe.cs` | – | Low | ✅ |
-| `system/{name,home,sun}` | `:35` | `WorldSun.Id`, `HomeBody.Id` | `KSA/Universe.cs` | string | Low | ✅ |
-| `bodies/<id>/{id,class,parent,children,mass,radius,mu,soi,rotation_rate}` | `:42` | `Celestial.{Id,Class,Parent,Children,Mass,MeanRadius,SphereOfInfluence,GetAngularVelocity}`; `IParentBody.Mu` | `KSA/Celestial.cs`, `KSA/IParentBody.cs` | mixed SI | Low | ✅ |
-| `bodies/<id>/position/ecl`, `velocity/ecl` | `:71,72` | `Celestial.GetPositionEcl()` / `GetVelocityEcl()` | `KSA/Celestial.cs` | m, m/s (ECL) | Low | ✅ |
-| `bodies/<id>/orbit/{...}` | `:48` | `Celestial.Orbit` elements (radii→alt; angles rad→deg); `Orbit.IsBound()` gates `apoapsis` | `KSA/Orbit.cs` | m / deg / s | Low | ✅ · 5482: `apoapsis` shares the vessel `IsBound()` gate (`0` when unbound) for consistency |
+| (catalog) | `BodyReader.Sample` | `CelestialSystem.All.UnsafeAsList()` → `Celestial` / `StellarBody` / `Barycenter`; `CelestialSystem.{HomeBody,GetWorldSun()}` | `KSA/CelestialSystem.cs`, `KSA/StellarBody.cs`, `KSA/Barycenter.cs` | – | Medium | ✅ · **5554: all stars and barycenters included** |
+| `system/{name,home,sun}` | `BodyReader.Sample` | `CelestialSystem.GetWorldSun().Id` for both the published star-named `name` and primary `sun`; `HomeBody.Id` | `KSA/CelestialSystem.cs` | string | Low | ✅ · **5554:** no longer caches camera-nearest `Universe.WorldSun` |
+| `bodies/<id>/{id,class,parent,children,mass,radius,mu,soi,rotation_rate}` | `BodyReader.Build*Statics` | `IParentBody` members on `Celestial` / `StellarBody` / `Barycenter`; `OrbitingStar.Parent` for a companion star; children filtered to `IParentBody` (runtime vehicles excluded) | `KSA/Celestial.cs`, `KSA/StellarBody.cs`, `KSA/Barycenter.cs`, `KSA/OrbitingStar.cs`, `KSA/IParentBody.cs` | mixed SI | Medium | ✅ · **5554:** barycenter `class=Barycenter`, orbiting stars `class=Star` with parent and child links |
+| `bodies/<id>/position/ecl`, `velocity/ecl` | `BodyReader.Assemble` | `Astronomical.GetPositionEcl()` / `GetVelocityEcl()` on all three body types | `KSA/Astronomical.cs` | m, m/s (ECL) | Low | ✅ |
+| `bodies/<id>/orbit/{...}` | `BodyReader.BodyOrbit` | `Celestial.Orbit` or `OrbitingStar.Orbit` (radii→alt; angles rad→deg); `Orbit.IsBound()` gates `apoapsis` | `KSA/Celestial.cs`, `KSA/OrbitingStar.cs`, `KSA/Orbit.cs` | m / deg / s | Low | ✅ · 5482: `apoapsis` shares the vessel `IsBound()` gate · **5554:** orbiting companion stars now have the same orbit surface |
 | `bodies/<id>/atmosphere/{present,height,scale_height,sea_level_pressure,sea_level_density}` | `:98` | `IParentBody.GetAtmosphereReference().Physical.{Height,ScaleHeight,SeaLevelPressure,SeaLevelDensity}` | `KSA/AtmosphereReference.cs` | SI | Medium | ✅ |
 | `bodies/<id>/ocean/{present,density}` | `:110` | `IParentBody.GetOceanReference().Density` | `KSA/OceanReference.cs` | kg/m³ | Medium | ✅ |
-| (star) | `:81` | `StellarBody.{Id,Mass,MeanRadius,SphereOfInfluence,GetAngularVelocity}`; `IParentBody.Mu` | `KSA/StellarBody.cs` | SI | Low | ✅ |
+| (root body) | `BodyReader.FromStar` (fixed-star branch) / `FromBarycenter` | `FixedStar` or `Barycenter` root state; both are `IIndependentRoot`, with no orbit. `FromStar` separately handles `OrbitingStar` as a child body | `KSA/FixedStar.cs`, `KSA/Barycenter.cs`, `KSA/OrbitingStar.cs` | SI | Medium | ✅ · **5554:** barycenter is an independent root for Alpha Centauri |
 
 No body/celestial members appear in the 4680→4750 changelog; all compiled clean. rev 4688 ("particle
 effects parented to the celestial") is render-only and exposes nothing through `BodyReader`.
@@ -1280,6 +1280,16 @@ tessellation displacement, so the surface point can be off by decimetres near th
 projection box's depth absorbs that entirely, which is exactly why this is a projected decal and not
 a flat quad. Exact members and baseline are in
 [`plans/STICKERS_PLAN.md`](../plans/STICKERS_PLAN.md).
+
+## 5554 read findings {#5554-findings}
+
+Playbook pass 2026-10-11, `2026.9.22.5482` → `2026.10.10.5554` (gapless after including the intermediate 5483–5540 changelog). The body catalog needed a code change; the other reader bindings remain intact.
+
+- 🔴 **Multi-star catalog (revs 5493/5515) — fixed.** The old reader enumerated `Celestial` plus one `Universe.WorldSun`, omitting companion stars and the Alpha Centauri `Barycenter`. Worse, `Universe.UpdateWorldSun` now chooses the star nearest the camera (`Universe.cs:134-158`), while `SystemSnapshot` is cached per system, so `system/name` and `system/sun` could freeze an arbitrary companion. `BodyReader.Sample` now enumerates `Celestial`, `StellarBody` and `Barycenter` from `CelestialSystem.All`; `CelestialSystem.GetWorldSun()` (`:586`) supplies the stable first star for both summary fields. This preserves the published **star-named** `system/name` meaning. `OrbitingStar` now has a parent and orbit; independent roots do not. `IParentBody.Children` also contains loaded vehicles/EVA (`CelestialSystem.cs:684-708`), so cached `children` lists retain only child bodies.
+- ⚠️ **Orbital and encounter values.** Companion stars use the existing orbit units and fields; rev 5512's central-mass option can change their periods. Interstellar patched-conic transitions (revs 5494/5510) can add `encounters` rows for another star system, with the same `id`/UT/distance semantics. The expanded warp ladder (rev 5538) appears verbatim in `time/warp_speeds`; the session-fixed cache remains valid.
+- ⚠️ **Throttle readback.** Rev 5497 caps applied manual throttle at the 90%-of-`MaxGLoad` thrust target, subject to the engine minimum. `ctl/throttle` continues to read the requested manual setpoint through `Vehicle.GetManualThrottle()`; `engines/<n>/throttle` reflects the lower applied value. No reader fix or API rename is needed.
+- ⚠️ **New module and storage coverage.** Thermal cores, magnetic scoops and antimatter ram cores (revs 5488/5523/5524) contribute through KSA's existing engine/substance calculations where applicable, but their module-specific state has no dedicated `/sim` row. `Tank.cs:782-864` now filters assigned propellants by `IsMagneticTrap == Substance.RequiresMagneticContainment`; the new magnetic trap tank and antimatter remain ordinary `tanks/<n>` rows when present, but their containment capability has no leaf. These are coverage gaps, not broken existing readings.
+- ✅ **Camera and FX reads.** `camera/target` can now describe any `IParentBody` as `body:<id>`, including stars/barycenters. `slope_roughness_deg` now converts the game's actual tangent value back through `atan` before degrees; the prior direct radians interpretation was wrong. `plumetrail/render/expansion_time` binds the same field, whose game meaning changed to group-fade delay. Other sampled frame and module members stayed compatible.
 
 ## 5482 read findings {#5482-findings}
 

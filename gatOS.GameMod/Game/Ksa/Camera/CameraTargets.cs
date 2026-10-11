@@ -66,12 +66,13 @@ internal static class CameraTargets
     /// </summary>
     /// <param name="reference">The parsed reference (<see cref="TargetRef.None"/> resolves to nothing).</param>
     /// <param name="target">The resolution, or the default (<see cref="CameraTarget.Found"/> false).</param>
-    [KsaAnchor("Universe.CurrentSystem.Get(id) → Astronomical; Vehicle; Celestial",
-        SourceFile = "KSA/Universe.cs / KSA/CelestialSystem.cs", Verified = "2026-08-06",
-        GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Low,
+    [KsaAnchor("Universe.CurrentSystem.Get(id) → Astronomical; Vehicle; IParentBody (Celestial, StellarBody, Barycenter)",
+        SourceFile = "KSA/Universe.cs / KSA/CelestialSystem.cs / KSA/IParentBody.cs", Verified = "2026-10-11",
+        GameVersion = "2026.10.10.5554", Risk = ChurnRisk.Low,
         Notes = "The same id lookup camera.focus and the game's own follow/control terminal actions "
             + "use. Returns null when absent, so a reference to a despawned vessel is an ordinary "
-            + "false rather than an exception.")]
+            + "false rather than an exception. 5554: body targets include every catalogued star and "
+            + "barycenter; only Celestial supplies terrain/geodetic and local orbital frames.")]
     internal static bool TryResolve(in TargetRef reference, out CameraTarget target)
     {
         target = default;
@@ -87,9 +88,9 @@ internal static class CameraTargets
                 return true;
 
             case TargetKind.Body:
-                if (Universe.CurrentSystem?.Get(reference.Id) is not Celestial celestial)
+                if (Universe.CurrentSystem?.Get(reference.Id) is not { } body || body is not IParentBody)
                     return false;
-                target = new CameraTarget { Followable = celestial, Body = celestial };
+                target = new CameraTarget { Followable = body, Body = body as Celestial };
                 return true;
 
             case TargetKind.Part:
@@ -179,17 +180,18 @@ internal static class CameraTargets
     ///     its up axis is body <b>−Z</b> — writing <c>+Z</c> here would put every subject-locked shot
     ///     upside down.
     /// </remarks>
-    [KsaAnchor("Celestial.GetRotationAxisCce(); Vehicle.ComputeBody2Cce axis convention (+X fwd, +Y "
+    [KsaAnchor("IParentBody.GetBodyFixed2Ecl() (north +Z); Vehicle.ComputeBody2Cce axis convention (+X fwd, +Y "
             + "right, −Z up)",
-        SourceFile = "KSA/Celestial.cs / KSA/Vehicle.cs", Verified = "2026-08-06",
-        GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Celestial.cs / KSA/StellarBody.cs / KSA/Barycenter.cs / KSA/Vehicle.cs", Verified = "2026-10-11",
+        GameVersion = "2026.10.10.5554", Risk = ChurnRisk.Medium,
         Notes = "GetRotationAxisCce() is literally double3.UnitZ.Transform(GetCcf2Cce()). The vehicle "
             + "axis convention is read off ComputeBody2Cce's rotation-matrix rows — if that changes, "
-            + "subject-locked shots invert, which the build cannot catch.")]
+            + "subject-locked shots invert, which the build cannot catch. 5554: stars and barycenters "
+            + "also use body +Z, never the vessel -Z convention.")]
     internal static double3 UpEcl(in CameraTarget target)
     {
-        if (target.Body is { } celestial && target.AnchorPart is null)
-            return celestial.GetRotationAxisCce();
+        if (target.Followable is IParentBody && target.AnchorPart is null)
+            return double3.UnitZ.Transform(BodyFixed2Ecl(target));
         if (!target.Found)
             return double3.UnitZ;
         return (-double3.UnitZ).Transform(BodyFixed2Ecl(target));
@@ -206,13 +208,14 @@ internal static class CameraTargets
     ///     addressable by <see cref="TargetRef"/> at all.
     /// </remarks>
     [KsaAnchor("Camera.Following → IFollowable; Astronomical.Id", SourceFile = "KSA/Camera.cs",
-        Verified = "2026-08-06", GameVersion = "2026.8.5.5168", Risk = ChurnRisk.Low,
+        Verified = "2026-10-11", GameVersion = "2026.10.10.5554", Risk = ChurnRisk.Low,
         Notes = "Following can also be a WreckageMarker (after a vehicle is destroyed) or a "
-            + "VehicleEditingSpace — neither is addressable, so both report 'none'.")]
+            + "VehicleEditingSpace — neither is addressable, so both report 'none'. 5554: all "
+            + "IParentBody astronomicals report body:<id>, including stars and barycenters.")]
     internal static TargetRef Describe(IFollowable? following) => following switch
     {
         Vehicle vehicle when CameraRules.IsValidId(vehicle.Id) => TargetRef.Vessel(vehicle.Id),
-        Celestial celestial when CameraRules.IsValidId(celestial.Id) => TargetRef.Body(celestial.Id),
+        Astronomical body when body is IParentBody && CameraRules.IsValidId(body.Id) => TargetRef.Body(body.Id),
         _ => TargetRef.None,
     };
 

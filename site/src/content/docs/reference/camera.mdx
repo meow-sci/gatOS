@@ -28,6 +28,11 @@ offset stays stuck to a moving subject. `smoothing` filters only camera-relative
 the anchor translation and aim constraint remain exact. The camera cannot descend below terrain plus
 0.5 m. `ortho_height` is the one viewport setting gatOS cannot restore later.
 
+`body:<id>` accepts planets, moons, stars and barycenters for following, aiming and Cartesian
+`ecl`/`cce`/`bodyfixed` placement. Geodetic placement and body ENU/LVLH helpers require a planet or
+moon. `pose/geo` rejects a star/barycenter with `EOPNOTSUPP`; a track with an unavailable frame holds
+the last good pose.
+
 ## Tracks
 
 Upload a JSON document to `camera/track/<name>`, then `camera/play` with `name [at seconds] [rate n]

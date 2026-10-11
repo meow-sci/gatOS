@@ -3,6 +3,32 @@
 Manual pass results live here. Record machine, date, purrTTY/gatOS versions and the outcome of
 each item; failures get a short note plus the relevant `logs/qemu-*.log` excerpt.
 
+## KSA 5554 upgrade — live pass pending {#ksa-5554-upgrade}
+
+Static upgrade: 2026-10-11, `2026.9.22.5482` → `2026.10.10.5554` through 5541. Both logs,
+shipping metadata, shader validation and targeted adapter checks are in the
+[pass record](../scope/ksa-assets-and-versions.md#5554-pass). **No live game check below was run.**
+Record game/mod/purrTTY versions, platform, graphics settings and `/sim/status/accessors`.
+Rebuild purrTTY against the current assemblies before an in-game pass when its own render bindings
+need migration; gatOS's successful build does not validate an installed sibling mod.
+
+| Check | Result |
+|---|---|
+| Terrain roughness: read/write 0°, 30°, 45° and near 90° through `/sim` and HTTP/MCP; compare the stock editor, confirm round-trip and no every-other-frame flicker. Reset restores the original. Exercise multiple viewports to ensure body writes leave their terrain alignment intact. | ☐ |
+| Stickers: spray/place on hull, terrain and clutter; confirm depth conformity, alpha edges, upright texture and correct lighting, across MSAA/CMAA2/raytracing and renderer rebuild. Secondary/portrait viewports must not get the main-view decal pass; color-only resolve must remain skipped. | ☐ |
+| Clutter textures: upload, bind, replace and unbind; stock image returns, no descriptor validation error or stale image, no destruction before in-flight frames retire. Repeat sticker-image replacement/removal. | ☐ |
+| Part/EVA paint: global/template/vessel/instance precedence, static and animated parts, raytraced IVA, change/clear/disarm/rearm, staging/docking and unload; no stale cached bits, neighboring paint bleed or material leak. | ☐ |
+| Thug-life quad and `always_render{,_iva}`: depth, main/secondary views, tiny distant vessels, editor/IVA visibility and toggle restoration. `/sim/display` remains complete/current with opaque UI windows open and across F2. | ☐ |
+| Load SolSystemInterstellar or EarthOnlyInterstellar: verify Sol, Alpha Centauri barycenter and its orbiting stars, Barnard's Star and Tau Ceti appear once; parent/children/orbits are coherent and children contain no vessels. Move camera between stars: `system/name`/`sun` stay primary. Compare 9P/HTTP/MQTT/MCP catalog output. | ☐ |
+| Follow/aim/anchor a star and barycenter via `body:<id>`; canonical follow read-back remains a body ref and target-up is +Z. `camera.geo` returns EOPNOTSUPP without changing pose; unavailable track geo/ENU/LVLH holds the last good pose. Recheck ordinary planet/moon geo and vessel/part targets. Measure sub-metre camera jitter at interstellar origins separately. | ☐ |
+| Manual throttle: a high-thrust craft with a low game g-force limit retains requested `ctl/throttle` while applied engine throttle respects the cap. Raise/lower minimum throttle and confirm controls remain live; no spurious accessor degradation. | ☐ |
+| Auto burn: bound and post-periapsis escape cases, dry-engine termination, next-burn advance and warp return to 1×. Recheck TVC stability at ordinary/high warp, attitude/rcs_mode Solver writes and RCS/manual flags. | ☐ |
+| High warp and multi-star motion: discover the current ladder, sample `ut`, `sim_dt`, orbit and encounter rows during a long transfer and SoI handoff; no invalid ids/non-finite output. Verify solar tracking follows the local star. | ☐ |
+| Plume-trail edits: expansion_time round-trips and controls grouped-segment fading; clear/reset still work, trails/explosions with clouds off remain usable. Recheck cloud apply and face FX. | ☐ |
+| Welds/IVA physics, teleport/impulse/refills, audio and scheduler/camera tracks survive pause/warp/focus changes, with no unexpected `/sim/status/accessors` latch. | ☐ |
+
+Older uncompleted checklists remain historical outstanding validation; this pass does not mark them complete.
+
 ## KSA 5482 upgrade — live pass pending {#ksa-5482-upgrade}
 
 Static upgrade: 2026-09-25, `2026.9.10.5438` → `2026.9.22.5482` (43 revisions, 5439–5481, gapless).
@@ -492,7 +518,7 @@ pending a live flight.**
 | 8 | **clouds:** a shared field (`shared/transition_start_km`) re-uploads **every** layer; `echo 1 > …/<body>/reset` restores the body's original clouds; an out-of-range layer/type index answers `ENOENT` | ☐ | `Apply(layer:-1)` + errnos |
 | 9 | **terrain, global:** `echo 1 > /sim/debug/terrain/wireframe` puts all planet terrain in wireframe; `echo 0` restores it; the leaf reads back the live value | ☐ | public instance field, no reflection |
 | 10 | **terrain, per body:** `echo 0.35 > /sim/debug/terrain/bodies/<body>/tessellation/factor`, `echo 9000 > …/max_height`, `echo 45 > …/slope_roughness_deg` each visibly change the surface **with no flicker or strobing over several seconds** | ☐ | the frames-in-flight UBO mirror copy — flicker here means the mirror loop is wrong. **5348 (C3):** that mirror is now **field-wise**, not a whole-struct copy — revs 5319–5325 gave `MeshUbo` four per-frame split-double terrain anchors (`DirAnchorHi/Lo`, `DirAnchorUvHi/Lo`) that `GenerateMeshData` rewrites from the live camera every frame and the old copy was stamping over. **D9:** `tessellation/range_m`'s default moved **220 → 50** and the shader's displacement falloff moved to `range*0.75 … range*0.975`, so the documented example values read differently now |
-| 11 | **terrain:** `slope_roughness_deg` reads back the degrees written (not radians); `biomes/detail_fade_*_km` read back in km; a body with no render slot is absent from `bodies/` | ☐ | the `TanMeanSlopeRoughnessRadians` unit trap |
+| 11 | **terrain:** `slope_roughness_deg` reads back the degrees written (not radians); `biomes/detail_fade_*_km` read back in km; a body with no render slot is absent from `bodies/` | ☐ | the tangent/degree unit conversion (`TanMeanSlopeRoughness` since 5554) |
 | 12 | **terrain reset:** `echo 1 > /sim/debug/terrain/bodies/<body>/reset` restores every touched value | ☐ | pristine replay through the paired write |
 | 13 | **Animation rate:** a loop writing `emission/color0` + `emission/brightness` (and a cloud `color`) at ~20 Hz for a minute stays smooth — no frame-time spike, no command timeouts; a `/sim/ctl/batch` group of several FX leaves lands in one tick | ☐ | the "light show" bar (AGENTS.md §7) |
 | 14 | **In-game editor round-trip:** change a value in the game's own imgui editor ("Volumetric Exhausts" / "Clouds" / "Terrain Editor") — the matching `/sim` leaf reflects it within ~2 s | ☐ | the 2 s resample beat |

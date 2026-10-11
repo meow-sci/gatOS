@@ -174,6 +174,13 @@ internal static class CameraActuator
                         + "set pose/anchor to a body first");
                 }
 
+                var geoAnchor = body.HasTarget ? body : state.Compose(null, CameraChannelMask.None).Anchor;
+                if (!CameraTargets.TryResolve(geoAnchor, out var geoTarget))
+                    return new CommandResult(CommandOutcome.NotFound, "camera.geo body is no longer live");
+                if (geoTarget.Body is null)
+                    return new CommandResult(CommandOutcome.Unsupported,
+                        "camera.geo needs a planet or moon; stars and barycenters have no terrain frame");
+
                 state.SetGeoOverride(values[CameraCommands.GeoLat], values[CameraCommands.GeoLon],
                     values[CameraCommands.GeoAlt], body);
                 return CommandResult.Ok;

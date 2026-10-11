@@ -145,6 +145,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
     equivalent: "gatos://world",
     notes: [
       "Use full deliberately: it is complete and is never output-size-truncated.",
+      "system.name and system.sun retain the stable primary star id; camera lighting does not change them.",
       "The TTY-only /sim/display surface is not present.",
     ],
   },
@@ -156,7 +157,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
     useWhen: "Discovering raw body ids before orbit, navigation, or geodetic operations.",
     gate: "Body telemetry must be enabled.",
     fields: listFields,
-    returns: "A page of celestial summary objects plus next_cursor, snapshot_sequence, and ut.",
+    returns: "A page of celestial summaries, including all fixed/orbiting stars and barycenters, plus next_cursor, snapshot_sequence, and ut.",
     example: '{"limit":50}',
     equivalent: "gatos://celestials",
     errors: ["EINVAL for a limit outside 1–1000 or a cursor for another collection."],
@@ -473,7 +474,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         action: "vessel.throttle",
         callShape: '{ operation: "throttle", vessel_id, value: number  // 0..1 }',
         example: '{"operation":"throttle","vessel_id":"Hunter","value":0.72}',
-        description: "Set manual throttle as a normalized fraction.",
+        description: "Set the requested manual throttle fraction; KSA can cap applied engine throttle at the vessel g-force limit.",
       },
       {
         name: "translate | rotate",
@@ -680,7 +681,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         callShape:
           '{ operation, token: "vessel:<id>" | "body:<id>" | "part:<vessel>/<instance_id>" | "none" }',
         example: '{"operation":"anchor","token":"vessel:Hunter"}',
-        description: "Set a target reference. follow does not accept part targets; anchor does.",
+        description: "Set a target reference. body targets include planets, moons, stars and barycenters. follow does not accept part targets; anchor does. Geodetic and body ENU/LVLH placement require a planet or moon.",
       },
       {
         name: "tidal | ortho",
@@ -1307,7 +1308,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         example:
           '{"family":"engine_plume","operation":"set","entity":"MethaloxVac","field":"emission/brightness","value":35}',
         description:
-          "Validate and set one declared FxCatalog field. engine_plume entity is a template id; plume_trail entity is omitted and global raymarch controls also affect explosion volumes (which, since KSA 2026.9.22.5482, also draw on airless bodies and with clouds off); clouds entity is a body id (with clouds disabled in game settings a write applies but draws nothing); terrain uses a body id or an empty entity for wireframe (min_height/max_height reach the distant-planet sphere only when it is rebuilt).",
+          "Validate and set one declared FxCatalog field. engine_plume entity is a template id; plume_trail entity is omitted and global raymarch controls also affect explosion volumes (which, since KSA 2026.9.22.5482, also draw on airless bodies and with clouds off); clouds entity is a body id (with clouds disabled in game settings a write applies but draws nothing); terrain uses a body id or an empty entity for wireframe (min_height/max_height reach the distant-planet sphere only when it is rebuilt). Since KSA 5554, plume_trail render/expansion_time delays grouped-trail lifetime fading; terrain slope_roughness_deg stays in degrees.",
       },
       {
         name: "reset",
@@ -1952,7 +1953,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
     summary: "Current celestial summary collection as application/json.",
     useWhen: "Browsing current bodies through MCP resources.",
     gate: "Body telemetry must be enabled.",
-    returns: "Celestial summaries in deterministic order with snapshot_sequence and ut.",
+    returns: "Planet, moon, star and barycenter summaries in deterministic order with snapshot_sequence and ut.",
     example: "gatos://celestials",
     equivalent: "gatos.list_celestials",
     notes: [

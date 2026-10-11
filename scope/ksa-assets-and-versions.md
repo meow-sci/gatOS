@@ -23,12 +23,13 @@ repo. Each checkout's `copy-ksa.ts` copies a specific game build out of the inst
     Content/                  game data XML (part templates that seed the values gatOS reads)
 ```
 
-Two checkouts are kept side by side for diffing:
+The current checkout and archived audited drops provide the comparison trees:
 
 | Checkout dir | Build | Date | Revisions | Role |
 |---|---|---|---|---|
-| `…/ksa-game-assemblies` | **2026.9.22.5482** | 2026-09-24 (artifact date) | 5438 → 5482; 43 logged revisions, 5439–5481 (commit `a2f724f`) | Current build / statically audited baseline; upgrade pass 2026-09-25, [5482 record](#5482-pass). Live flight validation pending. |
-| `…/ksa-game-assemblies_prev` | **2026.9.10.5438** | 2026-09-15 (artifact date) | 5402 → 5438; 35 logged revisions, 5403–5437 (commit `93eb864`) | **previous audited baseline** — upgrade pass 2026-09-14 ([`#5438-pass`](#5438-pass)): eight compile errors plus the compiler-invisible paint/IVA `AddInstance` overload and sticker colour-only resolve breaks, all fixed. CURRENT's `fromRevision` is 5438, so the two trees **chained with no gap** |
+| `…/ksa-game-assemblies` | **2026.10.10.5554** | 2026-10-07 (artifact metadata) | 5482 → 5541 → 5554; 70 logged revisions across two drops (commit `935a32b`) | Current statically audited baseline; [5554 pass](#5554-pass), 2026-10-11. Remote `main` verified at the same commit. Live flight validation pending. |
+| (git archive `a2f724f`) | **2026.9.22.5482** | 2026-09-24 (artifact date) | 5438 → 5482; 43 logged revisions | Previous audited baseline for 5554; [5482 record](#5482-pass). Reconstructed with DLLs, decomp, Content and version metadata from git, since the `_prev` checkout is older. |
+| `…/ksa-game-assemblies_prev` | **2026.9.10.5438** | 2026-09-15 (artifact date) | 5402 → 5438; 35 logged revisions, 5403–5437 (commit `93eb864`) | historical audited baseline — upgrade pass 2026-09-14 ([`#5438-pass`](#5438-pass)): eight compile errors plus the compiler-invisible paint/IVA `AddInstance` overload and sticker colour-only resolve breaks, all fixed. CURRENT's `fromRevision` is 5438, so the two trees **chained with no gap** |
 | (git `57e6040`) | 2026.9.7.5402 | 2026-09-02 | 5348 → 5402 (**changelog gapped**: `version.json` logs only rev 5401, `fromRevision` 5400) | prior audited baseline — full playbook pass 2026-09-02 (see [`#5402-pass`](#5402-pass)): **three compile breaks** (the `Viewport` class rework, `DebugTrailColor` removed, `Cursor.InputRay` removed) fixed, one `/sim` node retired, two new High-risk reflection accessors, binary surface diff 907/907 member refs resolved. PREVIOUS for that diff was **`git worktree add <tmp> c465abb`** (the 5348 drop) |
 | (git `c465abb`) | 2026.8.22.5348 | 2026-08-23 | 5261 → 5348 (85 commits, revs 5262–5348) | prior baseline — full playbook pass 2026-08-23 (see [`#5348-pass`](#5348-pass)): **zero compile breaks — the first pass in the project's history with none** (5261 had ten, 5168 had four); three real breaks the compiler could not see found and fixed, plus one long-standing **pre-existing** bug diagnosed and fixed. Build source at the time was commit `c465abb`. The checkout is a **git repo whose history holds every prior drop** (`1401af7` = 5261, `13595c1` = 5056, `3106557` = 5018, `cdb7391` = 4980, `7cf5c0a` = 4892, …) — diff drops with `git diff <old>..<new>` inside it |
 | (git `1401af7`) | 2026.8.19.5261 | 2026-08-11 | 5168 → 5261 | prior side-by-side checkout — itself a **fully audited baseline** (the 5261 pass closed its own findings, [`#5261-pass`](#5261-pass)), and that pass's CURRENT `fromRevision` was 5261, so the two trees **chained with no gap** and the 5348 pass diffed them directly (no git-history fallback needed) |
@@ -37,6 +38,121 @@ gatOS was originally built against the 4680-era sources (most `[KsaAnchor]` `Ver
 2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27; the touched
 anchors carry `GameVersion="2026.6.9.4750"` (see
 [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)).
+
+## 5482 → 5554 upgrade pass (2026-10-11) {#5554-pass}
+
+CURRENT is `2026.10.10.5554`, assemblies commit `935a32b` (also remote `main`/HEAD,
+verified with `git ls-remote`). PREVIOUS is audited `2026.9.22.5482`, commit `a2f724f`,
+extracted with `git archive` into a temporary complete comparison tree. The sibling `_prev`
+checkout contains 5438 and was **not** used as the baseline. Both comparison trees have
+`version.json`, DLLs, decompiled sources and Content. The CURRENT artifact reports a date of
+2026-10-07 despite its 2026.10.10 build identifier; this report preserves both as supplied.
+
+The intermediate `47703f3` drop (`2026.10.7.5541`, `fromRevision=5482`) and current drop
+(`fromRevision=5541`) chain without a missing drop: **70 logged revisions**, 5483–5540 and
+5542–5553. Revisions 5541/5554 are build endpoints, not omitted gameplay entries. Discovery used
+both logs and the complete `git diff a2f724f 935a32b -- current/decomp current/Content`:
+**440 changed files: 282 decomp and 158 Content**. No game-free subsystem was widened into a
+KSA dependency. New celestial rows use the existing snapshot schema and all transport projections.
+
+### Confirmed changes and resolutions
+
+| Finding | Evidence / effect | Resolution |
+|---|---|---|
+| Terrain roughness field and representation | `PlanetRenderer.PlanetUbo.TanMeanSlopeRoughnessRadians` was removed. Current `TanMeanSlopeRoughness` stores tan(angle); the stock editor now reads `atan` and writes `tan` (`PlanetRenderer.cs:2272–2275`). The old editor treated the initialized tangent as radians. | `TerrainActuator` binds the new field, uses tan/atan around the published degree value, and mirrors that field across frames. All four old field references are gone; a rename alone would have kept incorrect units. |
+| Sticker global descriptors (rev 5530) | `GlobalShaderBindings.DescriptorSet`/`DynamicOffset(int)` disappeared. The new `DescriptorSet(int)` selects an ordinary UBO set for viewport **and current resource frame**; constants moved into binding 1. | Bind `DescriptorSet(MainViewport.ShaderSlot)` with **zero dynamic offsets**, matching current `GridPass`. Shader sampler comes from `globalConstants.clampSamplerHandle`, not assumed slot 0. Set order remains global=0, depth=1, bindless=2. |
+| Bindless texture binary signatures | `AddTexture(VkImageView)` and `SetTexture(int,VkImageView)` gained an optional `VkImageLayout`. Old already-built mod MemberRefs no longer bind even though a source rebuild can fill the default. | Clutter override/restore and sticker uploads now explicitly pass `ShaderReadOnlyOptimal`, as KSA does for color textures. Rebuild is required; no new upload surface or bindless slot ownership change. |
+| Multiple stars / barycenters (revs 5493/5515) | `CelestialSystem.All` now includes `FixedStar`, `OrbitingStar` and `Barycenter`. The old reader retained only `Celestial` plus one `Universe.WorldSun`, losing the other stars and the Alpha Centauri root. `Universe.WorldSun` now selects the nearest camera star. | `BodyReader` enumerates every body type, retains orbit/parent links for orbiting stars, adds barycenter snapshots, filters runtime vessels out of cached children, and caches stable `CelestialSystem.GetWorldSun()` for the existing primary-star-named system summary. New anchor: `FromBarycenter`. |
+| Camera body resolution | `CameraTargets` accepted only `Celestial`, so stars/barycenters in the catalog could not be follow/aim/Cartesian targets; the fallback up axis was the vessel's −Z. | Accept `IParentBody` astronomicals and report `body:<id>` on read-back; body north is +Z. Keep Celestial-only geo/ENU/LVLH helpers; `camera.geo` explicitly returns EOPNOTSUPP for stars/barycenters before changing the pose. |
+| Plume-trail meaning (rev 5509) | `ExpansionTimeSeconds` and the stock `expansionTime` control survive, but `PlumeTimingProfile` now derives radius from exhaust entrainment; that setting delays lifetime fading for group-owned segments. | Preserve path/range and binding, correct `FxCatalog` help, anchor, SPEC and public reference. |
+
+### Inherited behavior, no adapter change required
+
+- **Manual throttle (5497):** requested `ctl/throttle` remains the manual input; the FC caps the
+  applied engine command using `SolveGLoadThrottleCap` (90% of `MaxGLoad`). Read engine throttle
+  for application, not proof from command acceptance. Auto burns already had this cap.
+- **Burns and control (5484, 5506, 5532, 5536, 5540, 5548–5552):** corrected post-periapsis timing,
+  persistence and warp-to-ignition margins; active-engine fuel exhaustion ends an auto burn;
+  completion/exhaustion returns warp to 1× and advances the plan. TVC becomes LQI with adaptive
+  intervals. The impulsive UT + CCI Δv input and Solver phase remain valid.
+- **Star systems (5493–5515, 5531):** lighting/solar tracking follow the nearest star, encounters and
+  flight plans can cross stellar systems, companion orbits use authored central/two-body masses,
+  and on-rails SoI transfer was fixed. Existing ECL/CCI/CCE conventions remain unchanged.
+- **High warp (5538/5539):** the final ladder includes 1/5/10/50/100 years per second and long-step
+  DOP853 integration. The intermediate special interstellar warp/RCS toggle was removed at 5516;
+  do not document that transient behavior as current. The sampler discovers the final ladder.
+- **New modules/content (5488, 5523/5524, 5537, 5542/5544):** ThermalCore, AntimatterRamCore and
+  MagneticScoop arrive with interstellar parts; existing EngineController/Tank telemetry still
+  reports ordinary engine/tank state. Scoop-specific collection telemetry and magnetic-trap capability are not exposed. Ordinary
+  tanks now reject substances requiring magnetic containment (`Tank.CanHold`); the trap tank accepts
+  them. Staging's resource fold widened from Combustor to PlumbedCore for thermal cores. New
+  collider models and the propellant-usage thruster-cache fix are inherited. No unit rename in
+  the existing module rows was found.
+- **Terrain multiview (5534):** camera-dependent anchors moved out of `MeshUbo` to
+  `PlanetViewportData.MeshViewportUbo`. The two reflected per-body mapped rings and public strides
+  still index correctly; field-wise mirroring remains valid and leaves view-local state alone.
+- **Trail rendering (5505/5509/5521/5553):** cache/entrainment/lighting changes affect appearance;
+  the exposed renderer fields remain valid. `GameAudio.cs` is unchanged. Brutal concurrency gained
+  profiling; the decompiled `Brutal.Numerics` tree is unchanged (the DLL was rebuilt), so no
+  implementation drift in the existing vector/quaternion conventions was found.
+
+### Compiler-blind and render verification
+
+The metadata survey compares exact field types and method return/parameter types against the
+shipping DLLs, rather than trusting decomp names. A saved baseline mod exposes five incompatible
+MemberRefs in 5554 (the terrain field, two global-descriptor members, two bindless methods). The
+rebuilt mod resolves **479/479 external game TypeRefs and 1102/1102 MemberRefs** (1047 direct
+TypeRef owners plus 55 generic TypeSpec owners), across 18 referenced game assemblies including
+Bepu and ImGui. Thirty-seven referenced type shapes changed; both Bepu DLLs are byte-identical.
+The explicit reflection/Harmony checklist resolves **37/37** signatures in both builds, including
+the manual input struct, light-template access, FX handles, camera protected setters, EVA scale,
+paint batch fields and permanent/dynamic patch targets. This is metadata verification, not proof
+that live objects exist or Harmony installation ran.
+
+- `PartTreeRenderData` and its cached paint writers, `PartModel`/dynamic module types, material data,
+  EVA/avatar chain, `RenderTarget`, `BarrierBatch` and `ImageBarrierInfo` are unchanged. Paint shader
+  transform markers still exist in both raster and raytraced sources.
+- `RenderMainPass(IViewport,CommandBuffer)` is still unique (`SuperMeshRenderSystem.cs:388`) and
+  called inside the game's render scope. UnlitMesh shader sources/keys and reverse-Z setup hold.
+- Stickers still hook full main resolve (`Program.cs:4932`); color-only resolve (`:4904`) is skipped.
+  `/sim/display` still sees `ColorImage` in `SampledReadVfc` (`:4945`) before the final command-buffer
+  `End()` (`:4954`). UI-mask suppression still reaches its one consumer.
+- `Vehicle.GetWorldMatrix`/`UpdateRenderData` override semantics and the IVA render gate remain
+  unchanged. Solver drain and `VehicleSolver.Wait()` still bracket the required mutable state.
+- The **actual embedded sticker GLSL** was extracted, compiled by `glslc` against 5554's shipped
+  headers and validated with `spirv-val`, both stages passing. Disassembly confirms global UBO
+  set 0/binding 0, constants set 0/binding 1, depth set 1/binding 0, textures/samplers set 2.
+
+### Validation and remaining work
+
+Full solution build: **0 warnings / 0 errors**. Full suite: **1648 passed / 12 VM-gated skips /
+0 failures**. Test execution requires localhost socket access outside the filesystem sandbox.
+The terrain seam harness passed **22/22 assertions** by invoking the real internal
+`TerrainActuator.Write`/`Read` with allocated mapped-memory rings and uninitialized engine objects:
+0°, 30°, 45°, 89°, 90° tangent storage/read-back, frame-1 mirroring and untouched unrelated field
+sentinels. This arm64 host cannot load the original x64-marked KSA assembly directly, so the harness
+used a **temporary copy with only the COFF Machine field changed to ARM64** (the same method as the
+5482 pass); IL and dependencies were unchanged, and no shipping DLL was edited. This exercises the
+adapter and memory layout, not a live renderer or game initialization. Shader compilation and metadata
+checks are GPU-free, not an in-game rendering pass. `pnpm --dir site build` passed (123 pages).
+
+A second isolated real-IL harness exercised `BodyReader.Sample` and
+`CameraTargets.TryResolve`/`Describe` with fixed Sol, an independent Alpha Centauri barycenter and
+an orbiting companion, while `Universe.WorldSun` named the companion and the barycenter's children
+included a vehicle. It verified complete body output, parent/orbit links, vessel filtering, stable
+primary-star summary, and canonical star/barycenter camera refs. It also called the real
+`CameraActuator.Execute(camera.geo)` for fixed star, orbiting star and barycenter: all returned
+Unsupported without mutating pose overrides. **10 scenario checks passed.** The committed MCP presenter test
+also verifies the existing summary/detail schemas carry this hierarchy without filtering new classes.
+Temporary audit artifacts are under `/private/tmp/gatos-upgrade-5554/` (`binary-audit`,
+`terrain-seam`, `body-harness`); they are test fixtures, not shipped game payloads.
+
+Use [the 5554 live checklist](../docs/VALIDATION.md#ksa-5554-upgrade) before declaring flight/render
+validation complete. [Follow-ups](../plans/KSA_5554_FOLLOWUPS.md) distinguish those live checks from
+optional new-module telemetry and interstellar camera precision work. No game or sibling mod was
+launched, no release was published, and the developer build deployed only into a temporary folder.
+
+---
 
 ## 5438 → 5482 upgrade pass (2026-09-25) {#5482-pass}
 

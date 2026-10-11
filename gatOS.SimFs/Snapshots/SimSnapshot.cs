@@ -829,7 +829,7 @@ public sealed record EnvironmentSnapshot(
 /// <summary>One celestial body's catalog entry (<c>/sim/bodies/&lt;id&gt;</c>).</summary>
 /// <param name="Id">The body id.</param>
 /// <param name="Class">"Planet", "Moon", "Star", ….</param>
-/// <param name="ParentId">The parent body id, or null for the root star.</param>
+/// <param name="ParentId">The parent body id, or null for an independent root star or barycenter.</param>
 /// <param name="ChildIds">Ids of orbiting bodies.</param>
 /// <param name="Mass">Mass, kg.</param>
 /// <param name="MeanRadius">Mean radius, meters.</param>
@@ -838,7 +838,7 @@ public sealed record EnvironmentSnapshot(
 /// <param name="RotationRateRadS">Sidereal rotation rate, rad/s.</param>
 /// <param name="PositionEcl">Position in the system ecliptic frame, meters.</param>
 /// <param name="VelocityEcl">Velocity in the system ecliptic frame, m/s.</param>
-/// <param name="Orbit">Orbit elements about the parent, or null for the root star.</param>
+/// <param name="Orbit">Orbit elements about the parent, or null for an independent root.</param>
 /// <param name="Atmosphere">Atmosphere reference, or null when airless.</param>
 /// <param name="Ocean">Ocean reference, or null when dry.</param>
 public sealed record BodySnapshot(
@@ -870,7 +870,7 @@ public sealed record AtmosphereSnapshot(
 public sealed record OceanSnapshot(double DensityKgM3);
 
 /// <summary>The current star-system summary.</summary>
-/// <param name="Name">The system name.</param>
+/// <param name="Name">The primary star name, retained for the published system/name path.</param>
 /// <param name="HomeBodyId">The home body id, or null.</param>
 /// <param name="SunId">The primary star id, or null.</param>
 public sealed record SystemSnapshot(string Name, string? HomeBodyId, string? SunId);

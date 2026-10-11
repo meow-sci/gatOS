@@ -130,6 +130,18 @@ The generic write is `POST /v1/command` with `{vessel_id, action, ordinal?, valu
 — see the action-key catalog in [SPEC §5](../../../SPEC_9P_FILESYSTEM.md). Its file twin is
 `POST /v1/fs/<path>` with the raw value; both mirror the `/sim` files leaf-for-leaf.
 
+## KSA 5554 compatibility notes
+
+The body catalog includes all stars (fixed and orbiting) and barycenters; `class=Barycenter` has
+zero radius and no parent/orbit/surface. Follow parent links instead of assuming one root star.
+`system/name` and `system/sun` stay the primary star id even when the camera lights from another star.
+Camera `body:` follow/aim/Cartesian targets accept these bodies, but geo and body ENU/LVLH require a
+planet/moon; `camera.geo` returns `EOPNOTSUPP` for stars/barycenters.
+`ctl/throttle` is the requested setpoint; KSA may cap actual `engines/<n>/throttle` at the g-force
+limit. Auto burns stop on dry engines and reset warp at completion. Discover `time/warp_speeds`
+instead of hard-coding it (now up to 100 years/s). Plume-trail `render/expansion_time` delays grouped
+segment fading; expansion itself follows exhaust entrainment. Terrain roughness remains degrees.
+
 ## Where things live (quick index of `/sim`)
 
 ```

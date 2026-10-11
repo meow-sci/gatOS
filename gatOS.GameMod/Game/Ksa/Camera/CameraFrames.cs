@@ -150,7 +150,7 @@ internal static class CameraFrames
         {
             if (anchor.Body is not { } body)
             {
-                error = "pose/geo needs pose/anchor to name a body (body:<id>)";
+                error = "pose/geo needs a planet or moon anchor (body:<id>), not a star or barycenter";
                 return false;
             }
 
@@ -301,7 +301,7 @@ internal static class CameraFrames
 
         if (anchor.Body is not { } body)
         {
-            error = "frame 'enu' needs a vessel, part or body anchor";
+            error = "frame 'enu' needs a vessel, part, planet or moon anchor";
             return false;
         }
 

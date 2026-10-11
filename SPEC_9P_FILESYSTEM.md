@@ -206,17 +206,23 @@ vessel). Directories marked *(detail)* require `telemetry_vessel_detail=true`; *
 
 | Path | A | Format | Meaning |
 |---|---|---|---|
-| `system/name` | S | string | System name (named after its star). |
+| `system/name` | S | string | System name (the stable primary star id, retained for compatibility). |
 | `system/home` | S | string | Home body id. |
-| `system/sun` | S | string | Primary star id. |
+| `system/sun` | S | string | Stable primary star id; does not change when the camera moves near another star. |
 
 ### 3.3 `/bodies/<id>` *(bodies)* — celestial catalog
+
+Includes every planet, moon, fixed or orbiting star, and barycenter in the loaded system. A
+barycenter has class `Barycenter`, zero surface radius, and no atmosphere/ocean; its mass and μ
+describe the combined system. Fixed stars and barycenters are independent roots with no parent or
+orbit. Orbiting stars carry their own parent/orbit. Children list bodies only, never runtime vessels.
+Unbounded sphere-of-influence radii use the normal finite-number sentinel `0`.
 
 | Path | A | Format | Meaning / units |
 |---|---|---|---|
 | `bodies/<id>/id` | S | string | Body id. |
-| `bodies/<id>/class` | S | string | `Planet`, `Moon`, `Star`, … |
-| `bodies/<id>/parent` | S | string | Parent body id (empty for the root star). |
+| `bodies/<id>/class` | S | string | `Planet`, `Moon`, `Star`, `Barycenter`, … |
+| `bodies/<id>/parent` | S | string | Parent body id (empty for an independent root). |
 | `bodies/<id>/children` | S | list | Ids of orbiting bodies (newline-separated). |
 | `bodies/<id>/mass` | S | scalar | Mass, kg. |
 | `bodies/<id>/radius` | S | scalar | Mean radius, meters. |
@@ -542,7 +548,7 @@ its live pose).
 | `ctl/shutdown` | T | `1` | `vessel.shutdown` | Frame | Shut down the active engines. |
 | `ctl/engine` | **St** | `0`/`1` | `vessel.engine` | Frame | Ignition master: read = live `EngineOn`, write `1`=ignite/`0`=shutdown. |
 | `ctl/stage` | T | `1` | `vessel.stage` | Frame | Activate the next stage. ⚠ **Per-module since KSA `2026.8.22.5348` (rev 5329) — it no longer activates RCS thrusters.** See the staging note below. Since KSA `2026.9.7.5402` a stage also **arms parachutes** (the new `ParachuteDeploy` module: stowed → armed, bay doors open; deployment then follows the chute's own altitude/speed logic) and **fires cut modules** (`ParachuteCut`) in that sequence, exactly like the stage key. |
-| `ctl/throttle` | **St** | `0..1` | `vessel.throttle` | Frame | Manual throttle fraction; read = current setpoint. |
+| `ctl/throttle` | **St** | `0..1` | `vessel.throttle` | Frame | Manual throttle fraction; read = requested setpoint. Since KSA 5554 the flight computer caps applied throttle at the vehicle's g-force limit (90% of `MaxGLoad`); `engines/<n>/throttle` reports the applied command. |
 | `ctl/lights` | **St** | `0`/`1` | `vessel.lights` | Frame | Master lights. |
 | `ctl/rcs` | **St** | `0`/`1` | `vessel.rcs` | Frame | Master RCS (the per-thruster `ThrusterController` active flags). ⚠ This is **not** the flight computer's RCS toggle (keybind **R**) — that is a separate switch, exposed as **`ctl/rcs_mode`** below, and it overrides this one. |
 | `ctl/translate` | **St** | `x y z` | `vessel.translate` | Frame | **Manual RCS translation** — the file twin of the player's translate keys. The **signs** command bang-bang thrust along the **body axes** (+x = forward/nose, −x = backward; +y = right, −y = left; +z = down, −z = up; `0` = that axis off — KSA's body frame is X-nose/Y-right/Z-down). Fires every RCS thruster whose `ControlMap` matches, at full thrust, each solver step (`ManualThrustMode.Direct`); magnitudes are ignored. **Latches like a held key** until overwritten — write `0 0 0` to stop. Composes with an active flight-computer attitude hold (auto-attitude strips only the rotation bits). Read = the latched command as signs. Needs translation-mapped RCS thrusters (e.g. the EVA kitten backpack); vessels without them accept the write but nothing fires. |
@@ -551,7 +557,7 @@ its live pose).
 | `ctl/attitude_frame` | **St** | token | `vessel.attitude_frame` | **Solver** | Reference frame for the named modes (see §3.4.19). |
 | `ctl/rcs_mode` | **St** | token | `vessel.rcs_mode` | **Solver** | **The flight computer's RCS master switch** — `Enabled` or `Disabled` (case-insensitive), the file twin of the in-game **R** keybind. Distinct from `ctl/rcs`, which toggles the per-thruster `ThrusterController` active flags. ⚠ **Since KSA 2026.8.5.5168 this is a hard cut-off for *manual* RCS too:** while `Disabled`, the game zeroes the manual thruster command flags outright, so **`ctl/translate` and `ctl/rotate` do nothing at all**, and auto attitude holds lose RCS torque authority (only engine-gimbal TVC survives, and only while burning). Read this first when an RCS command appears to be ignored — the `ctl/translate`/`ctl/rotate` read-backs report the *commanded* signs and cannot reveal the condition. |
 | `ctl/attitude_target` | **St** | `x y z w` | `vessel.attitude_target` | **Solver** | Custom **Body→CCI** quaternion; the autopilot points body **+X** along it. ⚠ KSA ≥ 2026.7.8.4980: the flight computer's roll mode defaults to **decoupled** ("ANY"), so on a fresh vessel the quaternion's **roll component is not held** — pointing converges, roll floats free unless the player sets a roll mode in-game (loaded saves keep their saved mode). |
-| `ctl/burn` | **St** | `ut dvx dvy dvz` | `vessel.burn` | **Solver** | Schedule an impulsive burn at `ut` with a CCI Δv vector. ⚠ **Same interface, different execution since KSA `2026.8.22.5348` (rev 5317):** burn **duration**, the **throttle profile** and the point at which the flight computer **abandons** an auto burn all moved. The TVC row/column multiplication bug was fixed and the gains retuned, the auto-burn throttle is now latched on the burn target instead of re-solved, and a two-consecutive-denials latch replaced the propellant check. For the same commanded Δv, expect a different burn time than on `2026.8.19.5261` — re-tune any hard-coded expectation. |
+| `ctl/burn` | **St** | `ut dvx dvy dvz` | `vessel.burn` | **Solver** | Schedule an impulsive burn at `ut` with a CCI Δv vector. ⚠ **Same interface, different execution since KSA `2026.8.22.5348` (rev 5317):** burn **duration**, the **throttle profile** and the point at which the flight computer **abandons** an auto burn all moved. The TVC row/column multiplication bug was fixed and the gains retuned, the auto-burn throttle is now latched on the burn target instead of re-solved, and a two-consecutive-denials latch replaced the propellant check. For the same commanded Δv, expect a different burn time than on `2026.8.19.5261` — re-tune any hard-coded expectation. **5554:** an auto burn stops on active-engine propellant exhaustion; completion/exhaustion resets warp to 1× and advances the burn plan. TVC now uses an integral controller with adaptive update intervals. |
 | `ctl/focus` | T | `1` | `camera.focus` | Frame | Move the camera to this vessel (view-only; no control change). |
 
 > **Solver phase matters.** `attitude_mode`/`attitude_frame`/`attitude_target`/`burn`/`rcs_mode` write
@@ -723,7 +729,7 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/engineplume/templates/<id>/reset` | T | `1` | `debug.engineplume_reset` | Frame | Restore this template's pristine (pre-gatOS) values. |
 | `debug/plumetrail/help` | S | — | — | — | Console-friendly readme for the trail family. `cat` it. |
 | `debug/plumetrail/render/{max_distance,voxel_first_slice,min_step_size}` | **St** | number, meters (`0.01..1e7`, `0.001..1e5`, `0.001..1e5`) | `debug.plumetrail_set` | Frame | Maximum render distance, first voxel-slice depth, minimum raymarch step. |
-| `debug/plumetrail/render/{step_size_distance_scale,expansion_time,erosion_max_depth,erosion_edge_sharpness}` | **St** | number (`0..10`, `0.001..10000` s, `0..1`, `0..0.999`) | `debug.plumetrail_set` | Frame | Step growth with camera distance, segment expansion time, noise-erosion depth and edge sharpness. |
+| `debug/plumetrail/render/{step_size_distance_scale,expansion_time,erosion_max_depth,erosion_edge_sharpness}` | **St** | number (`0..10`, `0.001..10000` s, `0..1`, `0..0.999`) | `debug.plumetrail_set` | Frame | Step growth with camera distance, grouped-segment lifetime-fade delay, noise-erosion depth and edge sharpness. Since KSA 5554, `expansion_time` delays fading of grouped segments; radius growth instead follows exhaust entrainment. |
 | `debug/plumetrail/render/self_shadow_steps` | **St** | number (`0..64`) | `debug.plumetrail_set` | Frame | Self-shadow raymarch step count, **rounded to an integer** (`0` = off). |
 | `debug/plumetrail/render/{light_brightness,sky_ambient_brightness}` | **St** | number (`0..1000`) | `debug.plumetrail_set` | Frame | Direct-light and sky-ambient brightness on the trail. ⚠ **`render/trail_color` was retired in KSA `2026.9.7.5402`**: the renderer's global debug tint (`DebugTrailColor`) no longer exists — trail colour, density and lifetime are now per-`PlumeTrailTemplate` asset values carried on each emitter, so there is nothing global left to bind. Reading or writing the old leaf answers `ENOENT`. |
 | `debug/plumetrail/json` | S | JSON object | — | — | Every trail field in one line (same shape as the plume `json`). |
@@ -747,7 +753,7 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/terrain/help` | S | — | — | — | Console-friendly readme for the terrain family. `cat` it. |
 | `debug/terrain/wireframe` | **St** | `0`/`1` | `debug.terrain_set` | Frame | **Global** (not per body): draw all planet terrain as wireframe. Addressed with an empty entity token. |
 | `debug/terrain/bodies/<id>/{min_height,max_height}` | **St** | number, meters (`-20000..0` / `0..20000`) | `debug.terrain_set` | Frame | The height range the body's height field maps to. Since KSA `2026.9.22.5482` (rev 5457) the far-away planet sphere is also height-displaced from a copy of this range taken when that renderer is built, so a live edit shows on near terrain immediately but on the distant sphere only after it is rebuilt. |
-| `debug/terrain/bodies/<id>/slope_roughness_deg` | **St** | number, degrees (`0..90`) | `debug.terrain_set` | Frame | Mean micro-slope roughness used by the surface BRDF (stored internally in radians). |
+| `debug/terrain/bodies/<id>/slope_roughness_deg` | **St** | number, degrees (`0..90`) | `debug.terrain_set` | Frame | Mean micro-slope roughness used by the surface BRDF. KSA stores the tangent of the angle; gatOS converts to/from degrees. |
 | `debug/terrain/bodies/<id>/hapke_albedo` | **St** | number (`0.0001..0.99999`) | `debug.terrain_set` | Frame | Mean single-scattering albedo of the Hapke surface model. |
 | `debug/terrain/bodies/<id>/biomes/blend_strength` | **St** | number (`1..10`) | `debug.terrain_set` | Frame | Sharpness of the blend between neighbouring biome materials. |
 | `debug/terrain/bodies/<id>/biomes/{detail_fade_start_km,detail_fade_end_km}` | **St** | number, km (`≥0`) | `debug.terrain_set` | Frame | Altitudes where biome detail textures start / finish fading in. |
@@ -1174,6 +1180,11 @@ echo "flyby at 2 rate 0.5" > /sim/camera/play       # play it; it appears at ctl
 echo 0 > /sim/camera/enabled                        # eased hand-back (camera_release_blend_s)
 ```
 
+`body:<id>` targets include planets, moons, stars and barycenters. Following, aiming and
+Cartesian `ecl`/`cce`/`bodyfixed` placement work for all of them. Geodetic placement and the
+body ENU/LVLH frame helpers require a planet/moon (`Celestial`); `camera.geo` returns
+`EOPNOTSUPP` for stars/barycenters. A track requesting an unavailable frame holds the last good pose.
+
 | Path | A | Format / Write | Meaning |
 |---|---|---|---|
 | `camera/status` | S | multi-line `key value…` | The whole camera state in one read: `owned mode follow tidal map_scope anchor frame position geo rotation applied_position_ecl applied_rotation aim fov ortho smoothing orbit time_scale`. `position`/`rotation` are the composed writable pose channels; `applied_position_ecl`/`applied_rotation` are KSA's final render-time transform after placement, smoothing and its camera clamp. `geo`'s fourth field is `1` when the geodetic spelling is live; `ortho` is `<enabled> <half-height m>`; `orbit` is `radius azimuth elevation`. |
@@ -1195,7 +1206,7 @@ echo 0 > /sim/camera/enabled                        # eased hand-back (camera_re
 | `camera/pose/position` | **St** | `<x> <y> <z> [<frame>]` → `camera.position` | Cartesian placement in the pose frame, metres. The optional tail also sets `pose/frame`; omitting it means "keep the current frame". Read = `x y z <frame>`. `EINVAL` on non-finite components or an unknown frame token. |
 | `camera/pose/frame` | **St** | frame token → `camera.frame` | Which way the placement axes point: `ecl`\|`cce`\|`bodyfixed`\|`enu`\|`lvlh`\|`chase`. `EINVAL` otherwise. |
 | `camera/pose/anchor` | **St** | target ref → `camera.anchor` | What the placement is measured **about**: `vessel:<id>` \| `body:<id>` \| `part:<vessel-id>/<instance-id>` \| `none`. `EINVAL` unparseable, `ENOENT` not live. |
-| `camera/pose/geo` | **St** | `<lat> <lon> <alt> [body:<id>]` → `camera.geo` | Geodetic placement: degrees and **metres above terrain** (degrading to above the mean sphere on a body with no heightmap). Longitude accepts both conventions (`-80.649` and `279.351`) and normalizes to `[-180, 180)`. The optional tail also sets the anchor; without it the current anchor must **already** be a body (`EOPNOTSUPP` otherwise). `EINVAL` out of range, `ENOENT` no such body. |
+| `camera/pose/geo` | **St** | `<lat> <lon> <alt> [body:<id>]` → `camera.geo` | Geodetic placement: degrees and **metres above terrain** (degrading to above the mean sphere on a body with no heightmap). Longitude accepts both conventions (`-80.649` and `279.351`) and normalizes to `[-180, 180)`. The optional tail also sets the anchor; without it the current anchor must **already** be a planet/moon (`EOPNOTSUPP` otherwise, including a star/barycenter). `EINVAL` out of range, `ENOENT` no such body. |
 | `camera/pose/orbit/radius` | **St** | metres ≥ 0 → `camera.orbit_radius` | Hang the camera on a sphere about the anchor. **Non-zero wins over `position`/`geo`**; write `0` to hand placement back. `EINVAL` non-finite or `< 0`. |
 | `camera/pose/orbit/azimuth` | **St** | degrees → `camera.orbit_azimuth` | Sweep in the frame's XY plane, from +X toward +Y. Any finite value (a track animating `0 → 360` closes exactly). `EINVAL` non-finite. |
 | `camera/pose/orbit/elevation` | **St** | degrees `[-90, 90]` → `camera.orbit_elevation` | Rise above that plane toward +Z. `EINVAL` outside the range. |
@@ -1525,7 +1536,7 @@ Every write — over any transport — becomes one immutable `SimCommand` routed
 | `camera.position` | — | values `[x,y,z]`; token = frame token or `""` (keep the current frame) | Frame | `camera/pose/position` | vessel-agnostic |
 | `camera.frame` | — | token = frame token | Frame | `camera/pose/frame` | vessel-agnostic |
 | `camera.anchor` | — | token = target ref (incl. `part:<vessel>/<iid>`) | Frame | `camera/pose/anchor` | vessel-agnostic; `ENOENT` if not live |
-| `camera.geo` | — | values `[lat,lon,alt]` (lon normalized to `[-180,180)`); token = `body:<id>` or `""` | Frame | `camera/pose/geo` | vessel-agnostic; `EOPNOTSUPP` when the token is empty and the current anchor is not a body |
+| `camera.geo` | — | values `[lat,lon,alt]` (lon normalized to `[-180,180)`); token = `body:<id>` or `""` | Frame | `camera/pose/geo` | vessel-agnostic; `EOPNOTSUPP` unless the explicit or current anchor is a planet/moon (stars/barycenters have no terrain frame) |
 | `camera.orbit_radius` | — | value = metres ≥ 0 finite | Frame | `camera/pose/orbit/radius` | vessel-agnostic; non-zero wins over `position`/`geo` |
 | `camera.orbit_azimuth` | — | value = degrees (any finite) | Frame | `camera/pose/orbit/azimuth` | vessel-agnostic |
 | `camera.orbit_elevation` | — | value = degrees `[-90,90]` | Frame | `camera/pose/orbit/elevation` | vessel-agnostic |

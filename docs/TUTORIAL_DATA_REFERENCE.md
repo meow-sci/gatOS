@@ -145,7 +145,7 @@ any time-warp. Your program is mission control; the flight computer flies. Every
 
 | File | Write | Meaning |
 |---|---|---|
-| `ctl/throttle` | `0..1` | Manual throttle fraction (read = current setpoint). |
+| `ctl/throttle` | `0..1` | Requested manual throttle fraction (read = current setpoint; KSA 5554 may cap applied engine throttle at the vessel g-force limit). |
 | `ctl/ignite` | `1` | Light the active engines (one-shot). |
 | `ctl/shutdown` | `1` | Cut the active engines (one-shot). |
 | `ctl/engine` | `0`/`1` | Ignition **master** you can read back: read = live `EngineOn`, write `1`=ignite/`0`=shutdown. Prefer this for a UI toggle so it mirrors true game state. |
@@ -264,7 +264,10 @@ Engine constants (`engines/<n>/vac_thrust`, `isp`, `min_throttle`) are read the 
 after staging, since the active engine set changes. Aggregate active thrust as `Σ vac_thrust` over
 active engines and thrust-weighted Isp as `Σ(thrust·isp)/Σthrust`.
 
-Body catalog + constants require `telemetry_bodies=true` (default on). See [SPEC §3.3](../SPEC_9P_FILESYSTEM.md).
+Body catalog + constants require `telemetry_bodies=true` (default on). KSA 5554 catalogs all fixed
+and orbiting stars plus barycenters (`class=Barycenter`, zero radius, no surface). Follow parent links;
+there may be several independent roots. `system/name` and `system/sun` remain the primary star id,
+independent of the camera's nearest lighting star. See [SPEC §3.3](../SPEC_9P_FILESYSTEM.md).
 
 ---
 
@@ -433,7 +436,7 @@ editors** (the game's built-in render editors as files, one writable leaf per kn
 bonus material, animatable at 10–60 Hz, every entity has a `reset`):
 
 - `debug/engineplume/templates/<id>/…` — engine plume look; **per template, shared** by every nozzle using it.
-- `debug/plumetrail/render/…` — the exhaust trail renderer; **global** (plus a one-shot `clear`). Since KSA 5438, global raymarch settings also affect explosion volumes; `clear` only removes trails. Since KSA 2026.9.22.5482 trails and explosions also draw on airless bodies and with clouds off.
+- `debug/plumetrail/render/…` — the exhaust trail renderer; **global** (plus a one-shot `clear`). Since KSA 5438, global raymarch settings also affect explosion volumes; `clear` only removes trails. Since KSA 2026.9.22.5482 trails and explosions also draw on airless bodies and with clouds off. At 5554, `render/expansion_time` delays grouped-segment lifetime fading; exhaust entrainment drives radius growth.
 - `debug/clouds/bodies/<body>/layers/<n>/…` — a body's cloud layers and cloud types (with clouds turned off in the game's settings, writes apply but draw nothing).
 - `debug/terrain/wireframe` + `debug/terrain/bodies/<body>/…` — terrain height range, tessellation, biome fades (a live height-range edit reaches the distant-planet sphere only when that renderer is rebuilt, KSA 2026.9.22.5482+).
 

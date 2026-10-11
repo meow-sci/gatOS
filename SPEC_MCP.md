@@ -220,6 +220,17 @@ range edits reach the distant-planet sphere only when it is rebuilt. A part-pain
 disarms paint (`degraded` plus the error text), like a shader fault. Schemas, names and phases are
 unchanged.
 
+**KSA 5554 behavior notes:** celestial lists include all fixed/orbiting stars and barycenters;
+`class` remains a string and now includes `Barycenter`. Parent/children/orbit records describe
+multiple star systems; children exclude vessels. `system.name` and `system.sun` keep the stable
+primary star id, independent of camera lighting. Camera `body:` references accept these same bodies
+for follow/aim/Cartesian placement; geodetic placement requires a planet/moon and rejects stars or
+barycenters with `EOPNOTSUPP`. Manual throttle remains a requested setpoint; the game may cap applied
+engine throttle at its g-force limit. Auto burns now stop on propellant exhaustion and reset warp
+on completion. FX `render/expansion_time` delays grouped-trail lifetime fading, while radius growth
+uses exhaust entrainment; terrain `slope_roughness_deg` remains degrees with tan/atan conversion.
+No tool names, argument shapes, ranges or command phases changed.
+
 The fields above define the outer v1 wire envelopes; the discriminator branches in §5.1 define the
 legal operation-specific payloads. There is no untyped `control` patch object or `/sim` path payload.
 The action catalog validates field arity, range, unit, gate, and phase. CCI vectors/quaternions retain

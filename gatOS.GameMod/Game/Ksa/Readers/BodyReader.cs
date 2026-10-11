@@ -10,10 +10,10 @@ namespace gatOS.GameMod.Game.Ksa.Readers;
 /// <summary>
 ///     The celestial-catalog reader (KSA_GAME_INTEGRATION_PLAN §4.3): turns the current
 ///     <see cref="CelestialSystem"/> into immutable <see cref="BodySnapshot"/>s plus a
-///     <see cref="SystemSnapshot"/> summary. Planets/moons are <see cref="Celestial"/>s; the star
-///     is a separate <see cref="StellarBody"/> (not a <c>Celestial</c>) so it is added explicitly.
-///     Most members are read through the <see cref="IParentBody"/> interface, which both body
-///     types implement — so a body type rename surfaces here, not across the tree. Game-thread only.
+///     <see cref="SystemSnapshot"/> summary. Planets/moons are <see cref="Celestial"/>s;
+///     stars and barycenters are separate body types in multi-star systems.
+///     Most members are read through the <see cref="IParentBody"/> interface, which all three
+///     body types implement — so a body type rename surfaces here, not across the tree. Game-thread only.
 /// </summary>
 /// <remarks>
 ///     <b>Static split (GREENFIELD_PERFORMANCE_IMPROVEMENT_PLANS.md GP3).</b> Everything about a
@@ -31,6 +31,7 @@ internal static class BodyReader
 
     private static readonly ConditionalWeakTable<Celestial, BodyStatics> CelestialCache = new();
     private static readonly ConditionalWeakTable<StellarBody, BodyStatics> StarCache = new();
+    private static readonly ConditionalWeakTable<Barycenter, BodyStatics> BarycenterCache = new();
     private static readonly ConditionalWeakTable<CelestialSystem, SystemSnapshot> SystemCache = new();
 
     /// <summary>The session-constant half of one body's snapshot, shared by reference every tick.</summary>
@@ -50,40 +51,51 @@ internal static class BodyReader
         public OceanSnapshot? Ocean { get; init; }
     }
 
-    [KsaAnchor("Universe.CurrentSystem.All.OfType<Celestial>(); Universe.WorldSun; CelestialSystem.HomeBody",
-        SourceFile = "KSA/CelestialSystem.cs / KSA/Universe.cs", Verified = "2026-06-12", Risk = ChurnRisk.Low,
-        Notes = "CelestialSystem has no Name; the system is named after its star. The SystemSnapshot is "
-            + "cached per system instance (GP3) — consumers can reference-compare it for 'unchanged'.")]
+    [KsaAnchor("CelestialSystem.{All,HomeBody,GetWorldSun()}; Celestial/"
+            + "StellarBody/Barycenter type dispatch",
+        SourceFile = "KSA/CelestialSystem.cs / KSA/Universe.cs / KSA/Barycenter.cs / KSA/OrbitingStar.cs",
+        Verified = "2026-10-11", GameVersion = "2026.10.10.5554", Risk = ChurnRisk.Medium,
+        Notes = "5493/5515: enumerate all celestial body types, including multiple stars and the "
+            + "Alpha Centauri barycenter. GetWorldSun() is the stable primary star and preserves "
+            + "the existing star-named system/name contract. Universe.WorldSun changes with the "
+            + "camera's nearest star and must not be cached in the system summary.")]
     internal static (IReadOnlyList<BodySnapshot> Bodies, SystemSnapshot? System) Sample(CelestialSystem system)
     {
         var all = system.All.UnsafeAsList();
         var bodies = new List<BodySnapshot>(all.Count);
-        var sun = Universe.WorldSun;
-        var sunListed = false;
         foreach (var astronomical in all)
-            if (astronomical is Celestial celestial)
+            switch (astronomical)
             {
-                bodies.Add(FromCelestial(celestial));
-                if (sun is not null && celestial.Id == sun.Id)
-                    sunListed = true;
+                case Celestial celestial:
+                    bodies.Add(FromCelestial(celestial));
+                    break;
+                case StellarBody star:
+                    bodies.Add(FromStar(star));
+                    break;
+                case Barycenter barycenter:
+                    bodies.Add(FromBarycenter(barycenter));
+                    break;
             }
 
-        if (sun is not null && !sunListed)
-            bodies.Add(FromStar(sun, bodies));
-
-        var summary = SystemCache.GetValue(system,
-            s => new SystemSnapshot(Universe.WorldSun?.Id ?? "", s.HomeBody?.Id, Universe.WorldSun?.Id));
+        var summary = SystemCache.GetValue(system, s =>
+        {
+            var primaryStar = s.GetWorldSun()?.Id;
+            return new SystemSnapshot(primaryStar ?? "", s.HomeBody?.Id, primaryStar);
+        });
         return (bodies, summary);
     }
 
     [KsaAnchor("Celestial.{Id,Class,Parent,Children,Mass,MeanRadius,SphereOfInfluence,GetAngularVelocity,Orbit}; "
                + "IParentBody.{Mu,GetAtmosphereReference,GetOceanReference}; Orbit.IsBound()",
-        SourceFile = "KSA/Celestial.cs / KSA/Orbit.cs:1819", Verified = "2026-09-25",
-        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Low,
+        SourceFile = "KSA/Celestial.cs / KSA/Orbit.cs", Verified = "2026-10-11",
+        GameVersion = "2026.10.10.5554", Risk = ChurnRisk.Low,
         Notes = "The session-constant catalog members (everything but GetPositionEcl/GetVelocityEcl) are "
             + "read once per body instance and cached (GP3); bodies are on rails, so the orbit elements "
             + "are constants too. 5482: apoapsis is gated on Orbit.IsBound() (0 when unbound), the gate "
-            + "KSA's own Universe Manifest adopted at rev 5439; Celestial.cs is unchanged.")]
+            + "KSA's own Universe Manifest adopted at rev 5439. 5554: children are filtered to "
+            + "IParentBody before caching so runtime vehicles do not enter the static body catalog; "
+            + "rev 5512's TwoBody/CentralMass orbital options change period for some companion "
+            + "bodies, but the Orbit members and units used here are unchanged.")]
     private static BodySnapshot FromCelestial(Celestial c)
     {
         var statics = CelestialCache.GetValue(c, BuildCelestialStatics);
@@ -92,74 +104,99 @@ internal static class BodyReader
 
     private static BodyStatics BuildCelestialStatics(Celestial c)
     {
-        OrbitSnapshot? orbit = null;
-        if (c.Orbit is { } o && c.Parent is { } parent)
-        {
-            var parentRadius = parent.MeanRadius;
-            orbit = new OrbitSnapshot(
-                Sanitize.ApoapsisToAltitude(o.Apoapsis, parentRadius, o.IsBound()),
-                Sanitize.RadiusToAltitude(o.Periapsis, parentRadius),
-                Sanitize.Finite(o.Eccentricity),
-                Sanitize.Finite(o.Inclination * RadToDeg),
-                Sanitize.Finite(o.SemiMajorAxis),
-                Sanitize.Finite(o.Period))
-            {
-                LanDeg = Sanitize.Finite(o.LongitudeOfAscendingNode * RadToDeg),
-                ArgPeDeg = Sanitize.Finite(o.ArgumentOfPeriapsis * RadToDeg),
-            };
-        }
-
-        var children = c.Children;
-        string[] childIds = children.Count == 0 ? [] : new string[children.Count];
-        for (var i = 0; i < childIds.Length; i++)
-            childIds[i] = children[i].Id;
-
         return new BodyStatics
         {
             Id = c.Id,
             Class = c.Class,
             ParentId = c.Parent?.Id,
-            ChildIds = childIds,
+            ChildIds = BodyChildIds(c),
             Mass = Sanitize.Finite(c.Mass),
             MeanRadius = Sanitize.Finite(c.MeanRadius),
             Mu = Sanitize.Finite(((IParentBody)c).Mu),
             SoiMeters = Sanitize.Finite(c.SphereOfInfluence),
             RotationRateRadS = Sanitize.Finite(c.GetAngularVelocity()),
-            Orbit = orbit,
+            Orbit = BodyOrbit(c.Orbit, c.Parent),
             Atmosphere = Atmosphere(c.GetAtmosphereReference()),
             Ocean = Ocean(c.GetOceanReference()),
         };
     }
 
-    [KsaAnchor("StellarBody.{Id,Mass,MeanRadius,SphereOfInfluence,GetAngularVelocity}; IParentBody.Mu",
-        SourceFile = "KSA/StellarBody.cs", Verified = "2026-06-12", Risk = ChurnRisk.Low,
-        Notes = "The root star: no parent/orbit; children are the bodies whose parent is the star "
-            + "(computed once from the first built catalog and cached — the roster is session-constant).")]
-    private static BodySnapshot FromStar(StellarBody s, List<BodySnapshot> celestials)
+    [KsaAnchor("StellarBody.{Id,Mass,MeanRadius,SphereOfInfluence,Children}; "
+            + "OrbitingStar.{Parent,Orbit}; IParentBody.Mu",
+        SourceFile = "KSA/StellarBody.cs / KSA/FixedStar.cs / KSA/OrbitingStar.cs",
+        Verified = "2026-10-11", GameVersion = "2026.10.10.5554", Risk = ChurnRisk.Medium,
+        Notes = "5493/5515: fixed root stars and orbiting companion stars are both StellarBody. "
+            + "Only OrbitingStar has a parent/orbit. Children exclude runtime vehicles.")]
+    private static BodySnapshot FromStar(StellarBody s)
+        => Assemble(StarCache.GetValue(s, BuildStarStatics), s.GetPositionEcl(), s.GetVelocityEcl());
+
+    private static BodyStatics BuildStarStatics(StellarBody s)
     {
-        if (!StarCache.TryGetValue(s, out var statics))
+        var orbiting = s as OrbitingStar;
+        return new BodyStatics
         {
-            var childIds = new List<string>();
-            foreach (var b in celestials)
-                if (b.ParentId == s.Id)
-                    childIds.Add(b.Id);
+            Id = s.Id,
+            Class = "Star",
+            ParentId = orbiting?.Parent.Id,
+            ChildIds = BodyChildIds(s),
+            Mass = Sanitize.Finite(s.Mass),
+            MeanRadius = Sanitize.Finite(s.MeanRadius),
+            Mu = Sanitize.Finite(((IParentBody)s).Mu),
+            SoiMeters = Sanitize.Finite(s.SphereOfInfluence),
+            RotationRateRadS = Sanitize.Finite(s.GetAngularVelocity()),
+            Orbit = orbiting is null ? null : BodyOrbit(orbiting.Orbit, orbiting.Parent),
+        };
+    }
 
-            statics = new BodyStatics
-            {
-                Id = s.Id,
-                Class = "Star",
-                ParentId = null,
-                ChildIds = childIds,
-                Mass = Sanitize.Finite(s.Mass),
-                MeanRadius = Sanitize.Finite(s.MeanRadius),
-                Mu = Sanitize.Finite(((IParentBody)s).Mu),
-                SoiMeters = Sanitize.Finite(s.SphereOfInfluence),
-                RotationRateRadS = Sanitize.Finite(s.GetAngularVelocity()),
-            };
-            StarCache.AddOrUpdate(s, statics);
-        }
+    [KsaAnchor("Barycenter.{Id,Children,Mass,MeanRadius,SphereOfInfluence,GetPositionEcl,"
+            + "GetVelocityEcl}; IParentBody.Mu",
+        SourceFile = "KSA/Barycenter.cs", Verified = "2026-10-11",
+        GameVersion = "2026.10.10.5554", Risk = ChurnRisk.Medium,
+        Notes = "5515: Alpha Centauri's independent root is a barycenter. It has no orbit or "
+            + "surface radius; its children are orbiting stars. Its infinite SoI is sanitized to 0 "
+            + "under the published finite-number convention.")]
+    private static BodySnapshot FromBarycenter(Barycenter b)
+        => Assemble(BarycenterCache.GetValue(b, BuildBarycenterStatics), b.GetPositionEcl(), b.GetVelocityEcl());
 
-        return Assemble(statics, s.GetPositionEcl(), s.GetVelocityEcl());
+    private static BodyStatics BuildBarycenterStatics(Barycenter b)
+        => new()
+        {
+            Id = b.Id,
+            Class = b.Class,
+            ChildIds = BodyChildIds(b),
+            Mass = Sanitize.Finite(b.Mass),
+            MeanRadius = Sanitize.Finite(b.MeanRadius),
+            Mu = Sanitize.Finite(((IParentBody)b).Mu),
+            SoiMeters = Sanitize.Finite(b.SphereOfInfluence),
+            RotationRateRadS = Sanitize.Finite(b.GetAngularVelocity()),
+        };
+
+    private static string[] BodyChildIds(IParentBody parent)
+    {
+        // KSA adds vessels to Children at runtime. The cached catalog contains celestial children only.
+        var children = parent.Children;
+        var ids = new List<string>(children.Count);
+        foreach (var child in children)
+            if (child is IParentBody)
+                ids.Add(child.Id);
+        return ids.ToArray();
+    }
+
+    private static OrbitSnapshot? BodyOrbit(Orbit? orbit, IParentBody? parent)
+    {
+        if (orbit is not { } o || parent is null)
+            return null;
+        return new OrbitSnapshot(
+            Sanitize.ApoapsisToAltitude(o.Apoapsis, parent.MeanRadius, o.IsBound()),
+            Sanitize.RadiusToAltitude(o.Periapsis, parent.MeanRadius),
+            Sanitize.Finite(o.Eccentricity),
+            Sanitize.Finite(o.Inclination * RadToDeg),
+            Sanitize.Finite(o.SemiMajorAxis),
+            Sanitize.Finite(o.Period))
+        {
+            LanDeg = Sanitize.Finite(o.LongitudeOfAscendingNode * RadToDeg),
+            ArgPeDeg = Sanitize.Finite(o.ArgumentOfPeriapsis * RadToDeg),
+        };
     }
 
     private static BodySnapshot Assemble(BodyStatics statics, double3 positionEcl, double3 velocityEcl)

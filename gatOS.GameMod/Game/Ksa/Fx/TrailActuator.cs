@@ -101,8 +101,8 @@ internal static class TrailActuator
             + "StepSizeDistanceScale,ErosionMaxDepth,ErosionEdgeSharpness,SelfShadowStepCount,"
             + "LightBrightness,SkyAmbientBrightness} (public fields); "
             + "PlumeTrailSettings.ExpansionTimeSeconds via FxReflect.TrailSettings",
-        SourceFile = "KSA/VolumetricTrailRenderer.cs:186-202 / KSA/PlumeTrailSettings.cs:9",
-        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/VolumetricTrailRenderer.cs:189-206 / KSA/PlumeTrailSettings.cs:13 / KSA/PlumeTimingProfile.cs:44-50",
+        Verified = "2026-10-11", GameVersion = "2026.10.10.5554", Risk = ChurnRisk.Medium,
         Notes = "Plain public instance fields, read fresh by the renderer every frame — read-back is "
             + "always the live value and a write needs no apply call. Floats, so a value round-trips at "
             + "single precision. ExpansionTimeSeconds is the exception: revs 5059/5097 moved it off the "
@@ -118,7 +118,10 @@ internal static class TrailActuator
             + "explosion volumes (MAX_VOLUMES 64 -> 2048, ExplosionVolumeSystem.cs:28) are now gated on the new "
             + "GameSettings.Graphics.Explosions / ShowExplosions() instead of ShowClouds(), CanRender() dropped its "
             + "atmosphere requirement, and trails/explosions render on airless bodies and with clouds off "
-            + "(CloudRenderer.RenderVolumetricTrailsOnly) — so these knobs visibly affect more scenes.")]
+            + "(CloudRenderer.RenderVolumetricTrailsOnly) — so these knobs visibly affect more scenes. "
+            + "5554 (rev 5509): radius expansion follows exhaust entrainment; ExpansionTimeSeconds "
+            + "now delays lifetime fading of group-owned segments, not time-to-full-radius. The "
+            + "stock editor still exposes expansionTime; preserve the path/range and correct its help.")]
     internal static bool TryRead(VolumetricTrailRenderer r, FxFieldSpec spec, double[] dst)
     {
         switch (spec.Key)

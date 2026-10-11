@@ -171,7 +171,7 @@ public static class FxCatalog
         new("render/step_size_distance_scale", FxKind.Number, 0, 10, "",
             "How fast the step size grows with camera distance."),
         new("render/expansion_time", FxKind.Number, 0.001, 10000, "s",
-            "Time a trail segment takes to expand to full size."),
+            "Delay before grouped trail segments begin lifetime fading; expansion is driven by exhaust entrainment."),
         new("render/erosion_max_depth", FxKind.Number, 0, 1, "",
             "Maximum depth the noise erosion cuts into a segment."),
         new("render/erosion_edge_sharpness", FxKind.Number, 0, 0.999, "",

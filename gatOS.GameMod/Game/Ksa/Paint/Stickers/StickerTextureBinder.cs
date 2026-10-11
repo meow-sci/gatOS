@@ -1,3 +1,4 @@
+using Brutal.VulkanApi;
 using gatOS.Logging;
 using gatOS.SimFs.Paint;
 using gatOS.SimFs.Paint.Stickers;
@@ -185,19 +186,21 @@ internal sealed class StickerTextureBinder
     ///     Decodes one committed upload into a gatOS-owned image and claims a bindless slot for it.
     /// </summary>
     [KsaAnchor("Program.GetRenderer(); Program.Instance.BindlessTextures (public field) → "
-            + "BindlessTextureLibrary.AddTexture(VkImageView)",
-        SourceFile = "KSA/Program.cs:111,557 / RenderCore.Systems/BindlessTextureLibrary.cs:155",
-        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
+            + "BindlessTextureLibrary.AddTexture(VkImageView,VkImageLayout)",
+        SourceFile = "KSA/Program.cs:111,830 / RenderCore.Systems/BindlessTextureLibrary.cs:186",
+        Verified = "2026-10-11", GameVersion = "2026.10.10.5554", Risk = ChurnRisk.High,
         Notes = "All public; no reflection. AddTexture takes a slot from the library's free list and "
             + "writes the descriptor immediately: the table's layout is UpdateAfterBind|PartiallyBound "
-            + "(BindlessTextureLibrary.cs:95-99), so writing a slot while command buffers referencing "
+            + "(BindlessTextureLibrary.cs:105-114), so writing a slot while command buffers referencing "
             + "OTHER slots are in flight is legal — that is the whole point of the flags. The table has "
-            + "1024 slots (Program.cs:828) shared with the game; stickers are capped by "
-            + "paint_texture_max_files (32 by default). Sampler slot 0 is linear-clamped with "
-            + "MaxLod = 1000 (BindlessTextureLibrary.cs:127-130), exactly the sampler a mip-mapped "
-            + "clamp-to-edge decal wants, which is why the shader passes samplerId 0. The decode/upload "
-            + "half lives in UserTextureGpu.Upload, which carries its own anchor. 5482: BindlessTextureLibrary.cs "
-            + "is unchanged; Program.cs line citations refreshed.")]
+            + "at most 1024 slots (Program.cs:830; 5554 clamps this to the device's descriptor "
+            + "indexing limit) shared with the game; stickers are capped by "
+            + "paint_texture_max_files (32 by default). The decal shader now uses the named "
+            + "linear-clamped handle in GlobalShaderBindings.Constants instead of relying on sampler "
+            + "slot 0, which the bindless table reserves for its internal fallback. The decode/upload "
+            + "half lives in UserTextureGpu.Upload, which carries its own anchor. 5554: the table's "
+            + "AddTexture now takes a layout explicitly; uploaded sticker images are sampled in "
+            + "ShaderReadOnlyOptimal. FreeTexture behavior and texture handle semantics are unchanged.")]
     private Bound Bind(TextureFile file)
     {
         if (Program.GetRenderer() is not { } renderer)
@@ -210,7 +213,7 @@ internal sealed class StickerTextureBinder
         var handle = -1;
         try
         {
-            handle = bindless.AddTexture(image.ImageView);
+            handle = bindless.AddTexture(image.ImageView, VkImageLayout.ShaderReadOnlyOptimal);
             return new Bound(file.Name, file.Version, image, handle, image.Width, image.Height,
                 UserTextureGpu.VramBytes(image));
         }

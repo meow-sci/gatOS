@@ -22,7 +22,15 @@ HTTP offers the same wait as `GET /v1/time/wait?until=<ut>`.
 ## System and bodies
 
 `system/{name,home,sun}` and `bodies/<id>/` exist when `telemetry_bodies=true`. Body catalogs update
-at `telemetry_bodies_rate_hz`, or every sample when it is zero.
+at `telemetry_bodies_rate_hz`, or every sample when it is zero. The catalog includes every planet,
+moon, fixed or orbiting star, and barycenter in multi-star systems. `class` can be `Barycenter`;
+those roots have zero surface radius and no parent/orbit/atmosphere/ocean. Orbiting stars have
+parent/orbit records. `children` lists only bodies, never vessels. An infinite sphere of influence
+is reported as `0`.
+
+`system/name` and `system/sun` both identify the stable primary star; moving the camera near another
+star does not change them. Read `time/warp_speeds` rather than hard-coding the ladder: KSA 5554 adds
+speeds up to 100 years per second.
 
 | Group      | Leaves                                                                         | Units / caveat                              |
 | ---------- | ------------------------------------------------------------------------------ | ------------------------------------------- |

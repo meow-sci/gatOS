@@ -130,14 +130,14 @@ internal static class TerrainActuator
     ///     UBO — the struct the GPU actually samples — so read-back is the live truth and a written
     ///     value round-trips exactly.
     /// </summary>
-    [KsaAnchor("PlanetRenderer.PlanetUbo.{TanMeanSlopeRoughnessRadians,HapkeMeanAlbedo,BiomeBlendStrength,"
+    [KsaAnchor("PlanetRenderer.PlanetUbo.{TanMeanSlopeRoughness,HapkeMeanAlbedo,BiomeBlendStrength,"
             + "DetailFadeStartMeters,DetailFadeEndMeters,TessellationEdgeLengthPixels,TessellationFactor,"
             + "TessellationRangeMeters}; PlanetRenderer.MeshUbo.{MinHeight,MaxHeight} (public struct fields)",
-        SourceFile = "KSA/PlanetRenderer.cs:37-125", Verified = "2026-08-01",
-        GameVersion = "2026.7.10.5056", Risk = ChurnRisk.High,
+        SourceFile = "KSA/PlanetRenderer.cs:29-116,2272-2275", Verified = "2026-10-11",
+        GameVersion = "2026.10.10.5554", Risk = ChurnRisk.High,
         Notes = "Read through the reflected MappedMemory rings at the body's slot, frame 0. "
-            + "TanMeanSlopeRoughnessRadians stores RADIANS despite the 'Tan' prefix (the editor writes "
-            + "deg * PI/180 into it), so the leaf converts to/from degrees.")]
+            + "5554: TanMeanSlopeRoughness stores TAN(angle), matching the corrected stock editor. "
+            + "The degree-based leaf uses atan on read and tan on write; a field rename alone changes its meaning.")]
     internal static bool Read(PlanetRenderer renderer, FxReflect.TerrainUboMaps maps, Celestial body,
         FxFieldSpec spec, double[] dst)
     {
@@ -147,7 +147,7 @@ internal static class TerrainActuator
         {
             case "min_height": dst[0] = mesh.MinHeight; return true;
             case "max_height": dst[0] = mesh.MaxHeight; return true;
-            case "slope_roughness_deg": dst[0] = planet.TanMeanSlopeRoughnessRadians * (180.0 / Math.PI); return true;
+            case "slope_roughness_deg": dst[0] = Math.Atan(planet.TanMeanSlopeRoughness) * (180.0 / Math.PI); return true;
             case "hapke_albedo": dst[0] = planet.HapkeMeanAlbedo; return true;
             case "biomes/blend_strength": dst[0] = planet.BiomeBlendStrength; return true;
             case "biomes/detail_fade_start_km": dst[0] = planet.DetailFadeStartMeters / 1000.0; return true;
@@ -167,9 +167,9 @@ internal static class TerrainActuator
             + "BodyTemplate.TerrainReference.BiomeMaterials.{BlendStrength.Value,DetailFadeInStart,"
             + "DetailFadeInEnd}; PlanetUbo/MeshUbo writes at (NumCelestials*frame + slot)*Stride "
             + "over the reflected _renderUboMap/_meshUboMap",
-        SourceFile = "KSA/PlanetRenderer.cs:2107-2398 (the in-game Terrain Editor's write + mirror loop) / "
+        SourceFile = "KSA/PlanetRenderer.cs:2155-2530 (the in-game Terrain Editor's write + mirror loop) / "
             + "KSA/AstronomicalTemplate.cs:27,51 / KSA/BiomeMaterialsReference.cs / KSA/DistantSphereRenderer.cs:99-105",
-        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
+        Verified = "2026-10-11", GameVersion = "2026.10.10.5554", Risk = ChurnRisk.High,
         Notes = "INVESTIGATION (plan §5 directive): PlanetRenderer has NO public repopulate/invalidate that "
             + "would re-derive a body's UBO from its reference objects — the two population loops the plan "
             + "pointed at (:684-720 for PlanetUbo, :1086-1114 for MeshUbo) are inline CONSTRUCTOR code, not "
@@ -184,7 +184,9 @@ internal static class TerrainActuator
             + "displacement and copies HeightReference.Minimum/Maximum into its OWN material once, at "
             + "construction (DistantSphereRenderer.cs:99-105, DistantSphereMaterialData). Live min_height/"
             + "max_height writes therefore reach near terrain immediately but not the distant-sphere view "
-            + "until KSA rebuilds that renderer.")]
+            + "until KSA rebuilds that renderer. 5554: roughness is tan(degrees * PI/180). Rev 5534 "
+            + "moved viewport-dependent mesh anchors into PlanetViewportData.MeshViewportUbo; the two "
+            + "reflected per-body rings, slot arithmetic and field-wise mirror remain valid.")]
     private static bool Write(PlanetRenderer renderer, FxReflect.TerrainUboMaps maps, Celestial body,
         FxFieldSpec spec, IReadOnlyList<double> v)
     {
@@ -208,7 +210,7 @@ internal static class TerrainActuator
                 mesh.MaxHeight = (float)v[0];
                 break;
             case "slope_roughness_deg":
-                planet.TanMeanSlopeRoughnessRadians = (float)(v[0] * (Math.PI / 180.0));
+                planet.TanMeanSlopeRoughness = (float)Math.Tan(v[0] * (Math.PI / 180.0));
                 break;
             case "hapke_albedo":
                 planet.HapkeMeanAlbedo = (float)v[0];
@@ -272,7 +274,7 @@ internal static class TerrainActuator
             var meshOffset = (renderer.NumCelestials * frame + meshSlot) * renderer.MeshUboStride;
 
             ref var planetDst = ref maps.RenderUbo.Offset(planetOffset).As<PlanetRenderer.PlanetUbo>();
-            planetDst.TanMeanSlopeRoughnessRadians = planetSrc.TanMeanSlopeRoughnessRadians;
+            planetDst.TanMeanSlopeRoughness = planetSrc.TanMeanSlopeRoughness;
             planetDst.HapkeMeanAlbedo = planetSrc.HapkeMeanAlbedo;
             planetDst.BiomeBlendStrength = planetSrc.BiomeBlendStrength;
             planetDst.DetailFadeStartMeters = planetSrc.DetailFadeStartMeters;

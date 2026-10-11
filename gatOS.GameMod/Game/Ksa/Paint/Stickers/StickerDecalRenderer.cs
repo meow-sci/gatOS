@@ -163,17 +163,19 @@ internal sealed unsafe class StickerDecalRenderer : IDisposable
     /// </summary>
     [KsaAnchor("GlobalShaderBindings.DescriptorSetLayout; Program.Instance.BindlessTextures."
             + "DescriptorSetLayout",
-        SourceFile = "KSA/GlobalShaderBindings.cs:55 / RenderCore.Systems/BindlessTextureLibrary.cs:38",
-        Verified = "2026-08-23", GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
-        Notes = "Set 0 is the game-wide Camera/GlobalLighting/Celestial/Vessel UBO block with a DYNAMIC "
-            + "offset per viewport (Content/Core/Shaders/Common/Global.glsl:144). Set 1 is ours. Set 2 "
+        SourceFile = "KSA/GlobalShaderBindings.cs:47,87-132 / RenderCore.Systems/BindlessTextureLibrary.cs:26 / "
+            + "Content/Core/Shaders/Common/Global.glsl:142-168",
+        Verified = "2026-10-11", GameVersion = "2026.10.10.5554", Risk = ChurnRisk.High,
+        Notes = "Set 0 is the game-wide Camera/GlobalLighting/Celestial/Vessel UBO plus startup "
+            + "constants. Since the 5530/5534 descriptor rework it is a per-viewport, per-frame "
+            + "ordinary UBO set, selected by GlobalShaderBindings.DescriptorSet(viewport.ShaderSlot); "
+            + "there is no dynamic offset. Set 1 is ours. Set 2 "
             + "is the bindless table, declared UpdateAfterBind|PartiallyBound, which is why our shader "
             + "may index a slot the game never touches. Set indices are baked into the GLSL "
             + "(SET_GLOBAL defaults to 0, SET_TEXTURE is #defined to 2), so this order is load-bearing. "
-            + "5348: both layouts are unchanged. Rev 5301 reshaped UboLightingData (4 portrait-light "
-            + "arrays -> 16-entry forward-light arrays), which grew the set-0 UBO stride, but the GLSL "
-            + "is compiled at runtime against the shipped headers and the offset comes from "
-            + "GlobalShaderBindings.DynamicOffset, so nothing here is hard-coded to the old stride.")]
+            + "5348: both layouts were unchanged. Rev 5301 reshaped UboLightingData (4 portrait-light "
+            + "arrays -> 16-entry forward-light arrays); the GLSL is compiled at runtime against "
+            + "the shipped headers, so no UBO stride is hard-coded here.")]
     private static VkPipelineLayout BuildPipelineLayout(DeviceEx device, DescriptorSetLayoutEx depthSetLayout)
     {
         if (Program.Instance?.BindlessTextures is not { } bindless)
@@ -420,19 +422,21 @@ internal sealed unsafe class StickerDecalRenderer : IDisposable
     [KsaAnchor("Program.{OffscreenTarget,SetViewport,Instance.ResourceFrameIndex,PointClampedSampler,"
             + "MainViewport}; RenderTarget.{DepthImage,ColorImage,Extent}; BarrierBatch; "
             + "ImageBarrierInfo.Presets.{DepthSampledReadF,ColorAttachmentReadWrite}; "
-            + "GlobalShaderBindings.{DescriptorSet,DynamicOffset}; IViewport.ShaderSlot; "
+            + "GlobalShaderBindings.DescriptorSet(int); IViewport.ShaderSlot; "
             + "Program.Instance.BindlessTextures.DescriptorSet; VkIndexType.UInt16",
-        SourceFile = "KSA/Program.cs:456,468,484,219,4395 / KSA.Rendering/RenderTarget.cs:36,38,48 / "
+        SourceFile = "KSA/Program.cs:456,468,484,219,4448 / KSA.Rendering/RenderTarget.cs:36,38,48 / "
             + "KSA.Rendering/BarrierBatch.cs / KSA.Rendering/ImageBarrierInfo.cs:18,41 / "
-            + "KSA/GlobalShaderBindings.cs:57,64 / KSA/GridPass.cs:445-500",
-        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
+            + "KSA/GlobalShaderBindings.cs:47,51 / KSA/GridPass.cs:445-500",
+        Verified = "2026-10-11", GameVersion = "2026.10.10.5554", Risk = ChurnRisk.High,
         Notes = "Near-verbatim post-resolve overlay using the current dynamic-rendering target members. "
             + "Depth remains reverse-Z and is sampled after the full resolve; the unit-cube index buffer "
             + "continues to use VkIndexType.UInt16. The existing barrier, descriptor-slot, main-target, "
             + "and bindless assumptions remain valid in 5438. 5482: RenderTarget, BarrierBatch, ImageBarrierInfo, "
             + "GlobalShaderBindings and GridPass are byte-identical; only Program.cs line citations moved. "
             + "Displaced ground clutter (rev 5447) is drawn through the same clutter pipeline and still writes "
-            + "scene depth, so per-fragment occlusion/conformance hold on it.")]
+            + "scene depth, so per-fragment occlusion/conformance hold on it. 5554: bind the "
+            + "current frame's per-viewport ordinary UBO set with no dynamic offset, matching "
+            + "GridPass.DrawGrid; the shader's SET_TEXTURE=2 still matches our three-set layout.")]
     internal void RecordPass(CommandBuffer commandBuffer, ReadOnlySpan<StickerEntry> entries, bool debug)
     {
         if (_disposed || entries.Length == 0)
@@ -479,11 +483,10 @@ internal sealed unsafe class StickerDecalRenderer : IDisposable
             commandBuffer.BindPipeline(VkPipelineBindPoint.Graphics, _pipeline);
             Program.SetViewport(commandBuffer);
 
-            var globalOffset = (ByteSize32)GlobalShaderBindings.DynamicOffset(Program.MainViewport.ShaderSlot);
-            var globalSet = GlobalShaderBindings.DescriptorSet;
+            var globalSet = GlobalShaderBindings.DescriptorSet(Program.MainViewport.ShaderSlot);
             commandBuffer.BindDescriptorSets(VkPipelineBindPoint.Graphics, _pipelineLayout, 0,
                 new ReadOnlySpan<VkDescriptorSet>(ref globalSet),
-                new Span<ByteSize32>(ref globalOffset));
+                default(Span<ByteSize32>));
             commandBuffer.BindDescriptorSets(VkPipelineBindPoint.Graphics, _pipelineLayout, 1,
                 new ReadOnlySpan<VkDescriptorSet>(ref depthSet), default(Span<ByteSize32>));
             if (Program.Instance?.BindlessTextures is { } bindless)
@@ -717,15 +720,18 @@ internal sealed unsafe class StickerDecalRenderer : IDisposable
                   return;
               }
 
-              // Sampler 0 is the table's linear-clamped, full-mip sampler. PNG row 0 is the TOP, so v
-              // is flipped to keep decal +y pointing at the top of the image.
-              vec4 texel = SAMPLE_TEXTURE(st.texId, 0, pDec.xy * vec2(1.0, -1.0) + 0.5);
+              // Use KSA's named linear-clamped sampler handle. Slot 0 is an internal fallback in
+              // 5554, and sampler assignments can move as the bindless table evolves. PNG row 0 is
+              // the TOP, so v is flipped to keep decal +y pointing at the top of the image.
+              vec4 texel = SAMPLE_TEXTURE(st.texId, globalConstants.clampSamplerHandle,
+                  pDec.xy * vec2(1.0, -1.0) + 0.5);
               if (texel.a < 0.004) discard;
 
-              // sunPosition is the sun's EGO position (Program.UpdateShaderData, KSA/Program.cs:2594-2603),
-              // and sunColor is the star's light colour (Universe.SunlightColor). planetColor is the
-              // nearby atmospheric body's lit colour and is ZERO for an airless body or a camera in
-              // shadow, so the small constant is what keeps a night-side sticker from going black.
+              // sunPosition is the camera-nearest star's EGO position (Program.UpdateShaderData,
+              // KSA/Program.cs:2890-2902), and sunColor is that star's light colour
+              // (Universe.SunlightColor). planetColor is the nearby atmospheric body's lit colour
+              // and is ZERO for an airless body or a camera in shadow, so the small constant
+              // keeps a night-side sticker from going black.
               vec3 L = normalize(global.lighting.sunPosition.xyz - pEgo);
               vec3 ambient = 0.12 * global.lighting.planetColor.rgb + vec3(0.02);
               vec3 lit = StickerGammaToLinear(texel.rgb)

@@ -32,6 +32,11 @@ pitch-up, `+z` yaw-right. Both require RCS mode `Enabled`; KSA clears their latc
 camera-mode switches, ImGui keyboard focus, vessel switch, and warp above 30×. Full manual rotation also
 needs manual attitude mode because automatic attitude strips those bits.
 
+`ctl/throttle` reads the requested setpoint. Since KSA 5554, the flight computer can reduce actual
+engine throttle to respect the vessel's g-force limit; inspect `engines/<n>/throttle` for the applied
+command. Auto burns stop when active engines exhaust propellant; completion/exhaustion resets warp
+to 1× and advances the planned burn. The burn command still takes UT plus a CCI delta-v vector.
+
 ## Command families
 
 `POST /v1/command` and MQTT `gatos/command` use logical action keys. The key families are:
