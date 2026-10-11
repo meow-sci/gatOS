@@ -248,7 +248,7 @@ cut.
 | `ctl/rotate` (W1, AGC_PLAN §7.4) | Code DONE; in-game pending | `Game/Ksa/Actuators/RotateActuator.cs`, `SimFs/Commands/RotateRules.cs` — manual RCS rotation signs, the translate sibling; full authority needs `attitude_mode=manual` (auto strips rotation bits) |
 | AGC (`examples/agc` — Luminary099/yaAGC in-guest, plans/AGC_PLAN.md A0–A7) | Code DONE (host+wire-verified); in-game mission cards pending | one Rust crate: `proto/` wire codec + SocketPort + embedded `agc_engine.c` FFI (`--features embedded`), virtual IMU/PIPA/LR, RCS duty→`ctl/batch` demodulation, THRUST clocking, padload generator (+KSA audit), P27 uplink, downlink recorder, ratatui `dsky`; `tools/agc` launcher; `apollo11-system/` July-1969 Earth/Moon system generator; `APOLLO_11_FLIGHT_GUIDE.md`; mission cards in `docs/VALIDATION.md` |
 | T11.1 — QEMU win-x64 | DONE | `tools/fetch-qemu.*`, `vendor/qemu/win-x64/` |
-| T11.3/T11.4 — shared distribution + releases | DONE; first shared release/live smoke pending | `.github/workflows/mod-release.yml`, `tools/release-*`, `tools/publish-release.sh`, `tools/check-dist*.py` — one archive, stable main builds + feature betas; KSA 5554 compatibility blocker resolved; see `docs/MILESTONES.md` |
+| T11.3/T11.4 — shared distribution + releases | DONE; shared beta archive verified; stable/live smoke pending | `.github/workflows/mod-release.yml`, `tools/release-*`, `tools/publish-release.sh`, `tools/check-dist*.py` — one archive, stable main builds + feature betas; guests publish separately to `meow-sci/gatOS-guest`; KSA 5554 compatibility blocker resolved; see `docs/MILESTONES.md` |
 | Remaining M10+ | **Not yet implemented** | — |
 
 The full `GATOS_IT=1` integration suite ran 321/321 green (Windows/TCG, guest v3, 2026-06-13).
@@ -351,11 +351,21 @@ vendor/qemu/                    NOT in git — pinned win-x64 QEMU (tools/fetch-
                                 included in every release; Linux/macOS use system QEMU
 guest/                          guest image pipeline (M2, built): build-image.sh,
                                 fetch-guest.{sh,ps1}, GUEST_VERSION pin, rootfs-overlay/,
+                                GUEST_REPOSITORY = meow-sci/gatOS-guest (public artifacts only),
                                 README.md; guest/out/ NOT in git (fetch or build it)
 tools/                          fetch-qemu.{sh,ps1} + qemu-win64-files.txt (pin + bundle list)
                                 + Get-QemuImportClosure.ps1 (T11.1, built)
 .github/workflows/build.yml     CI: build + full test suite (GATOS_IT=1, KVM, fetched guest)
-.github/workflows/guest-image.yml  CI: build + publish guest-v<N> release (guest/** pushes)
+.github/workflows/guest-image.yml  CI: build here, publish guest-v<N> to GUEST_REPOSITORY via
+                                tools/publish-guest.sh and GATOS_GUEST_RELEASE_TOKEN (Contents
+                                read/write on the guest repo only). Built-in token is read-only.
+                                Existing tags replace assets and refresh provenance; old guest
+                                releases in gatOS stay available, never publish new guests there.
+                                Publish new guest pins manually before merging to main so parallel
+                                mod/test jobs can fetch them. Public fetches need no credentials;
+                                GATOS_GUEST_REPO overrides downloads only. Offline publisher/Bash/
+                                PowerShell tests: python3 tools/check-guest-release.py (pwsh needed
+                                for the PowerShell cases). Details: guest/README.md.
 .github/workflows/mod-release.yml  CI: one shared gatOS-<version>.zip (payload + guest +
                                 Windows QEMU), built on Ubuntu; main → stable 1.<run>.0,
                                 feature/** → 1.<run>.0-beta. Other refs/PRs build only.

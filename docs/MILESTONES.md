@@ -55,9 +55,14 @@ rebuilds; loopback-only access makes the committed keys safe), `sha256sums.txt`.
 Build needs root on Linux (macOS dev: Docker; both documented in `guest/README.md`); a built-in
 smoke test (also `--smoke-only`) boots the artifacts, checks `ssh 'echo ok'`, **verifies the
 host-key pin**, and powers off — measured cold boot→sshd **5 s under TCG** on the dev Mac.
-`.github/workflows/guest-image.yml` builds and publishes GitHub release `guest-v<N>` (N =
-`guest/GUEST_VERSION`); consumers obtain artifacts via `guest/fetch-guest.{sh,ps1}`
-(checksum-verified, no-op when current).
+`.github/workflows/guest-image.yml` builds in gatOS and publishes GitHub release `guest-v<N>` (N =
+`guest/GUEST_VERSION`) to `meow-sci/gatOS-guest`, selected by `guest/GUEST_REPOSITORY`;
+consumers obtain artifacts via `guest/fetch-guest.{sh,ps1}` (public downloads, checksum-verified,
+no-op when current; `GATOS_GUEST_REPO` overrides downloads only). `tools/publish-guest.sh`
+requires the destination-scoped `GATOS_GUEST_RELEASE_TOKEN`, preserves asset replacement on rerun,
+records source-commit/run provenance, and refuses to publish to the source repository.
+The source workflow's built-in token is read-only. Publish new guest pins before merging them to
+main, since mod/test jobs fetch independently. Credential setup is in `guest/README.md`.
 
 ---
 
@@ -653,12 +658,33 @@ the pinned Alpine guest, and Windows QEMU. Linux ignores the Windows bundle and 
 Reruns preserve existing releases. Paginated cleanup retains 10 stable builds and 5 betas,
 protecting guest releases, old tips, and audited historical named tags.
 
+Future guest releases live separately in `meow-sci/gatOS-guest` so the content-index watcher sees
+only new mod releases here; historical guest URLs remain intact. No runtime or archive-layout
+change accompanies the split. `tools/check-guest-release.py` exercises the actual publisher and
+both fetch scripts offline (PowerShell cases require `pwsh`) and runs in all three build workflows.
+Maintainer listing instructions and the guest release ordering are in `guest/README.md`.
+
+Guest-host migration (2026-10-11): initialized the public destination and copied `guest-v17`
+byte-for-byte, preserving the original release. All eight destination assets match the source's
+GitHub SHA-256 digests and sizes. The source repository's `GATOS_GUEST_RELEASE_TOKEN` secret is
+configured; its destination permissions are exercised by the first run of the updated workflow.
+Listing submission remains with the maintainer.
+
+Migration validation: 14 guest publication/fetch tests pass (including PowerShell), all 15 existing
+release-policy/distribution tests pass, and workflow lint is clean. Fresh anonymous Bash and
+PowerShell downloads from the destination pass checksum verification. Build: zero warnings/errors;
+full suite: 1648 passed / 12 VM-gated skips. Upstream content-index-releases `b07bbf2` accepts the
+published `v1.96.0-beta` archive (root `gatOS`, status `testing`); offline watcher probes cover first
+indexing, a subsequent stable release, and stable backfill when a newer beta exists. No listing was
+submitted and no new mod release was published as part of this migration.
+
 `tools/release-metadata.sh`, `publish-release.sh`, and `release-retention.py` implement the policy;
 `check-release-policy.py` tests it without GitHub writes. `check-dist.py` checks the single-mod
 layout, dependencies, required guest/QEMU files, versions, and exclusion of game assemblies and
 player data; `check-dist-tests.py` covers failures. Both workflows run the offline checks, while
-`build.yml` retains the full VM integration suite. The first published shared release and live
-Windows/Linux smoke passes remain to be verified (T11.5). The Linux QEMU bundle proposal T11.6
+`build.yml` retains the full VM integration suite. The published shared beta is archive-verified;
+the first stable shared release and live Windows/Linux smoke passes remain pending (T11.5).
+The Linux QEMU bundle proposal T11.6
 is superseded by the shared archive/system-QEMU policy.
 
 Validation (2026-10-11): offline release/distribution checks and workflow lint pass; the solution

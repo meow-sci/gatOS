@@ -63,6 +63,7 @@ jobs:
         run: |
           python3 tools/check-release-policy.py
           python3 tools/check-dist-tests.py
+          python3 tools/check-guest-release.py
 
       # Branch-derived values are validated here and consumed by later steps
       # via env:, never interpolated raw into run scripts (a ref name can

@@ -5,8 +5,12 @@ $ErrorActionPreference = 'Stop'
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $out       = Join-Path $scriptDir 'out'
-$repo      = if ($env:GATOS_GUEST_REPO) { $env:GATOS_GUEST_REPO } else { 'meow-sci/gatOS' }
+$repo      = if ($env:GATOS_GUEST_REPO) { $env:GATOS_GUEST_REPO } else {
+    (Get-Content (Join-Path $scriptDir 'GUEST_REPOSITORY') -Raw).Trim()
+}
 $version   = (Get-Content (Join-Path $scriptDir 'GUEST_VERSION') -Raw).Trim()
+if ($repo -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'Invalid guest repository' }
+if ($version -cnotmatch '^[1-9][0-9]*$') { throw 'Invalid guest version' }
 $tag       = "guest-v$version"
 $assets    = @('base.qcow2', 'vmlinuz-virt', 'initramfs-virt', 'manifest.toml',
                'id_ed25519', 'id_ed25519.pub', 'host_key_fingerprint.txt', 'sha256sums.txt')

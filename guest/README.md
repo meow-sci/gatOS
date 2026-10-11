@@ -76,8 +76,16 @@ guest/fetch-guest.sh        # Linux/macOS
 guest/fetch-guest.ps1       # Windows
 ```
 
-Downloads the GitHub release `guest-v<N>` (N = `guest/GUEST_VERSION`) of `meow-sci/gatOS` into
-`guest/out/`, verifies `sha256sums.txt`, and no-ops if `out/manifest.toml` already matches the pin.
+Downloads the GitHub release `guest-v<N>` (N = `guest/GUEST_VERSION`) from the public repository
+named in `guest/GUEST_REPOSITORY` (`meow-sci/gatOS-guest`) into `guest/out/`, verifies
+`sha256sums.txt`, and no-ops if `out/manifest.toml` already matches the pin. Downloads require no
+GitHub login or publishing token. `GATOS_GUEST_REPO=owner/repo` overrides the download host for
+public mirrors; it does not change the publisher's destination. Changing the repository alone
+does not invalidate the version cache; remove `guest/out/` for a clean download when needed.
+
+All source, tests, and workflows stay in `meow-sci/gatOS`. The guest repository only hosts release
+assets so Borea's content-index watcher sees mod releases in gatOS. Historical `guest-v17` URLs
+in the source repository remain available for older checkouts.
 
 ## Building from scratch
 
@@ -133,9 +141,44 @@ for shell work. (The M1 spike's hand-built image — openrc-free but with a stoc
 
 ## Releasing a new guest version
 
-1. Change whatever needs changing under `guest/`; pushes to `main` touching `guest/**` rebuild and
-   **replace the assets of the currently pinned release** (`guest-v<N>` stays a moving target until
-   it ships in a mod release).
-2. To cut a new immutable version: bump `guest/GUEST_VERSION`, commit; CI publishes `guest-v<N+1>`.
-   Old releases stay up — existing overlays keep backing onto the base image they were created from
-   (M10 handles migration).
+1. Change the guest source and bump `guest/GUEST_VERSION` on a trusted branch. Push it, then manually
+   run the **Guest image** workflow on that branch. It builds and smoke-tests in gatOS and publishes
+   `guest-v<N>` to `meow-sci/gatOS-guest` through `tools/publish-guest.sh`.
+2. Wait for publication and verify a clean fetch before merging the pin into `main`. The mod/test
+   workflows fetch the pin independently; publishing first avoids a race with their downloads.
+3. Pushes to `main` touching the guest or publisher rebuild and **replace the destination release's
+   assets** if its tag exists, preserving the existing rebuild policy. The publisher refreshes the
+   source-commit/run links in its release notes. Old version tags stay available. Rebuilding a pin
+   does not invalidate installed/cached guest images, so use a new version for changes players need.
+
+The publisher reads `GUEST_REPOSITORY` directly, refuses the source repository as its destination,
+and stops on lookup failures rather than treating them as a missing release. Destination tags refer
+to that repository's default branch, not to gatOS source; source provenance is in the release notes.
+
+### Publishing credential (one-time setup)
+
+The built-in `GITHUB_TOKEN` only reads the source repository. Create a fine-grained PAT with:
+
+- **Resource owner:** `meow-sci`.
+- **Repository access:** Only select repositories → `gatOS-guest`.
+- **Repository permissions:** Contents → **Read and write**; Metadata → Read-only (automatic).
+
+Store it under **meow-sci/gatOS → Settings → Secrets and variables → Actions → New repository
+secret**, named `GATOS_GUEST_RELEASE_TOKEN`. The workflow exposes it only to the publish step.
+No Actions, Workflows, Administration, or source-repository write permission is needed. Renew the
+secret before the token expires. Initialize the destination's default branch before publishing.
+
+Run `python3 tools/check-guest-release.py` for offline publisher and fetch tests. PowerShell cases
+run when `pwsh` is installed (including the Ubuntu CI runners); the others require Bash and Python.
+
+### Borea listing handoff
+
+List `gatOS` with `releases.github = "meow-sci/gatOS"`, after publishing a stable shared mod ZIP.
+Set `releases.since` to that stable version if it must remain eligible when a newer beta exists at
+the first watcher tick. Do not request a full historical backfill: old platform-split mod releases
+and guest tags are not stampable. `since` adds backfill; it is not a tag exclusion filter.
+
+Keep publishing future guests only to `meow-sci/gatOS-guest`. Neither guest tag prefixes,
+prerelease flags, nor GitHub's Latest designation suppress watcher errors. Existing mod release
+retention remains unchanged; deleting indexed archives eventually makes those versions unavailable
+for new installs and pack pins. Listing submission is handled separately by the maintainer.

@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Fetch the pinned guest image release into guest/out/ (OS_PLAN.md T2.5) so
 # consumers (dev builds, dist CI, integration tests) never have to build it.
-# Pin = guest/GUEST_VERSION -> GitHub release tag guest-v<N> on meow-sci/gatOS.
+# Pin = guest/GUEST_VERSION -> guest-v<N> in guest/GUEST_REPOSITORY.
 # No-op when out/manifest.toml already matches the pin.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="$SCRIPT_DIR/out"
-REPO="${GATOS_GUEST_REPO:-meow-sci/gatOS}"
+REPO="${GATOS_GUEST_REPO:-$(tr -d '[:space:]' < "$SCRIPT_DIR/GUEST_REPOSITORY")}"
 VERSION="$(tr -d '[:space:]' < "$SCRIPT_DIR/GUEST_VERSION")"
 TAG="guest-v$VERSION"
+[[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo 'Invalid guest repository' >&2; exit 1; }
+[[ "$VERSION" =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid guest version' >&2; exit 1; }
 ASSETS=(base.qcow2 vmlinuz-virt initramfs-virt manifest.toml
         id_ed25519 id_ed25519.pub host_key_fingerprint.txt sha256sums.txt)
 
@@ -22,13 +24,11 @@ TMP="$(mktemp -d "$SCRIPT_DIR/.fetch-tmp.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 echo "==> fetching $TAG from $REPO"
-if command -v gh >/dev/null; then
-    gh release download "$TAG" --repo "$REPO" --dir "$TMP"
-else
-    for a in "${ASSETS[@]}"; do
-        curl -fsSL -o "$TMP/$a" "https://github.com/$REPO/releases/download/$TAG/$a"
-    done
-fi
+# These are public assets: no GitHub login or publishing credential is needed,
+# even when gh is installed but unauthenticated on the developer's machine.
+for a in "${ASSETS[@]}"; do
+    curl -fsSL -o "$TMP/$a" "https://github.com/$REPO/releases/download/$TAG/$a"
+done
 
 echo "==> verifying checksums"
 if command -v sha256sum >/dev/null; then

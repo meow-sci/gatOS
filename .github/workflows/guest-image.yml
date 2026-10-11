@@ -1,7 +1,7 @@
 name: Guest image
 
 # Builds the gatOS guest image (guest/build-image.sh) and publishes the
-# artifacts as the GitHub release `guest-v<N>` (N = guest/GUEST_VERSION).
+# artifacts as `guest-v<N>` in guest/GUEST_REPOSITORY (N = guest/GUEST_VERSION).
 # Consumers obtain them with guest/fetch-guest.{sh,ps1} (OS_PLAN.md T2.5/T2.6, D9).
 #
 # Re-running against an existing tag REPLACES that release's assets — pushes to
@@ -20,9 +20,11 @@ on:
     paths:
       - 'guest/**'
       - '.github/workflows/guest-image.yml'
+      - 'tools/publish-guest.sh'
+      - 'tools/check-guest-release.py'
 
 permissions:
-  contents: write    # create/update the guest-v<N> release
+  contents: read     # destination writes use the dedicated guest release token
 
 concurrency:
   group: guest-image
@@ -34,6 +36,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Verify guest release policy
+        run: python3 tools/check-guest-release.py
 
       - name: Install build dependencies
         run: |
@@ -47,17 +54,5 @@ jobs:
       - name: Publish guest-v<N> release
         if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="guest-v$(cat guest/GUEST_VERSION)"
-          ALPINE="$(sed -n 's/^alpine_version = "\(.*\)"$/\1/p' guest/out/manifest.toml)"
-          ASSETS=(guest/out/base.qcow2 guest/out/vmlinuz-virt guest/out/initramfs-virt
-                  guest/out/manifest.toml guest/out/id_ed25519 guest/out/id_ed25519.pub
-                  guest/out/host_key_fingerprint.txt guest/out/sha256sums.txt)
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" "${ASSETS[@]}" --repo "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create "$TAG" "${ASSETS[@]}" --repo "$GITHUB_REPOSITORY" \
-              --title "gatOS guest image v$(cat guest/GUEST_VERSION)" \
-              --notes "Alpine $ALPINE guest image for gatOS (built by guest-image.yml from guest/ at $GITHUB_SHA). Fetch with guest/fetch-guest.sh — do not download by hand."
-          fi
+          GH_TOKEN: ${{ secrets.GATOS_GUEST_RELEASE_TOKEN }}
+        run: bash tools/publish-guest.sh

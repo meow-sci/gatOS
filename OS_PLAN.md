@@ -90,7 +90,7 @@ These are decided; do not re-litigate:
 | D6 | Inter-mod contract | gatOS takes a **compile-time reference to vendored copies** of `purrTTY.CustomShellContract.dll` + `purrTTY.Logging.dll` (pinned, in `vendor/purrTTY/`), and at **runtime** shares purrTTY's loaded copies via StarMap ALC `ImportedAssemblies` (§ T6.1). `Optional = true`: without purrTTY installed, gatOS loads its own copies and idles headless (VM/9p still functional, no terminal UI). |
 | D7 | SSH library | **SSH.NET (Renci.SshNet) ≥ 2025.1.0** (has `ShellStream.ChangeWindowSize`). Fallbacks if it disappoints: Tmds.Ssh, or `ssh.exe` under purrTTY's ConPTY. |
 | D8 | Guest auth | Image-build-time **baked ed25519 keypair** (private key ships in the mod dist, `hostfwd` bound to 127.0.0.1 only). Pre-generated ed25519 host key, fingerprint pinned in the manifest. Per-install key rotation is M12. *(Guest SSH server: the original dropbear was swapped for OpenSSH `sshd` at guest v12 — see `OPENSSH_PLAN.md`; the pin format/value is unchanged since it hashes the raw ed25519 blob.)* |
-| D9 | Guest artifacts in git | **Not committed.** Built by `guest/build-image.sh` (Linux/CI), published as `guest-v<N>` GitHub releases of the gatos repo; dev machines and the dist build fetch the pinned version (T2.6/T11.2). |
+| D9 | Guest artifacts in git | **Not committed.** Source/builds stay in gatOS; `guest/build-image.sh` (Linux/CI) artifacts publish as `guest-v<N>` in **`meow-sci/gatOS-guest`**, selected by `guest/GUEST_REPOSITORY`. The workflow uses `GATOS_GUEST_RELEASE_TOKEN` for destination Contents write access; dev/CI fetches are public and version-pinned (T2.6/T11.2). Historical guest URLs in gatOS remain available; future releases are isolated for Borea. |
 | D10 | Multiple computers | MVP: one VM, many sessions (purrTTY tabs). The multi-computer *fiction* (per-vessel chroot/unshare) is M12. |
 | D11 | Mod identity | Mod id/folder **`gatOS`**, entry assembly **`gatOS.GameMod`**, shell id **`"gatos"`**, shell display name **"gatOS"**, guest hostname **`gatos`**. New repo named **`gatos`**, sibling to `purrtty`. |
 | D12 | Instant resume | `savevm`/`loadvm` is a M12 experiment only. Cold boot is the plan of record. |
@@ -615,8 +615,11 @@ rootfs before extracting**), confirm no DHCP wait, no openrc. Record final numbe
 
 `.github/workflows/guest-image.yml`: `workflow_dispatch` + on push to `main` touching
 `guest/**`. ubuntu-latest: run `build-image.sh` (sudo ok), then create/update release
-`guest-v<N>` with the `out/` artifacts + `sha256sums.txt`. Bumping `GUEST_VERSION` is a manual
-commit. Smoke test runs under KVM if `/dev/kvm` exists on the runner, else TCG.
+`guest-v<N>` in `guest/GUEST_REPOSITORY` (`meow-sci/gatOS-guest`) with the `out/` artifacts +
+`sha256sums.txt`, using the destination-scoped `GATOS_GUEST_RELEASE_TOKEN`. Source and workflows
+stay here. Bumping `GUEST_VERSION` is a manual commit; publish the new guest on the trusted branch
+before merging the pin to main so consumers can fetch it. Smoke test runs under KVM if `/dev/kvm`
+exists on the runner, else TCG. Full as-built release policy: `guest/README.md`.
 
 **Accept:** `guest-v1` release exists with all eight artifacts (base.qcow2, vmlinuz-virt,
 initramfs-virt, manifest.toml, id_ed25519, id_ed25519.pub, host_key_fingerprint.txt,
