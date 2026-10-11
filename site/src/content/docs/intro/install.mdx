@@ -9,31 +9,42 @@ gatOS and [purrTTY](https://github.com/meow-sci/purrtty) are companion KSA mods.
 the terminal window. gatOS supplies the small Linux computer behind its `gatOS` shell entry. Install
 both through your usual KSA mod workflow, using matching current releases.
 
-## Choose the right archive
+## Download the shared archive
 
-- **Windows:** install `gatOS-windows-*.zip`. It includes the Alpine guest and a trimmed Windows
-  QEMU bundle. No separate Linux install is needed.
-- **Linux:** install `gatOS-linux-*.zip`. It includes the guest but deliberately uses your system
-  `qemu-system-x86_64`.
+Install **`gatOS-<version>.zip`** from the [releases page](https://github.com/meow-sci/gatOS/releases)
+on either Windows or Linux. Every archive contains the Alpine guest and Windows QEMU.
+
+- **Windows:** uses the bundled QEMU. No separate Linux or QEMU install is needed.
+- **Linux:** leaves the Windows files unused and uses system `qemu-system-x86_64` and `qemu-img`.
 - **macOS:** useful for development, not a supported player release target.
+
+Stable builds from `main` use `1.<run number>.0`; feature builds use `1.<run number>.0-beta`
+and are marked as prereleases. The tag is `v<version>` and the mod manifest carries the same version.
 
 On Linux, install QEMU before launching KSA:
 
 ```sh
 # Debian / Ubuntu
-sudo apt install qemu-system-x86
+sudo apt install qemu-system-x86 qemu-utils
 
 # Fedora
-sudo dnf install qemu-system-x86
+sudo dnf install qemu-system-x86 qemu-img
 
 # Arch
-sudo pacman -S qemu-system-x86_64
+sudo pacman -S qemu-system-x86_64 qemu-img
 ```
 
 KVM is used automatically when your account can access `/dev/kvm`; otherwise gatOS falls back to
 software emulation. On Windows, the Windows Hypervisor Platform makes boot much quicker, but the
 software fallback works too. The [project README](https://github.com/meow-sci/gatOS#performance--hardware-acceleration)
 has the full WHPX setup and troubleshooting notes.
+
+## Updating
+
+Close KSA and back up your gatOS data folder, especially `gatos.toml` and `disks/`. On Windows,
+the data folder can also be the installed mod folder. Replace the old mod files while preserving
+your data; deleting the whole folder without a backup can lose the guest disk. Extracting over
+old files alone can leave obsolete DLLs behind.
 
 ## First launch
 
@@ -46,7 +57,8 @@ The VM remains running after you close a terminal tab and stops when the game ex
 ModMenu, gatOS also offers a status window for VM state, accelerator, bound ports, and the data folder.
 
 :::note[Configuration]
-On first launch, gatOS copies its shipped `gatos.default.toml` to `gatos.toml` in the mod folder.
+On first launch, gatOS copies its shipped `gatos.default.toml` to `gatos.toml` in its data folder.
+The data folder is shown in the gatOS status window and can also be the install folder on Windows.
 That live file survives mod updates. Delete it to reseed the defaults. Settings are flat TOML keys,
 not nested `[sections]`.
 :::

@@ -63,14 +63,19 @@ _📺 Demo video coming soon — this space is reserved for the embed._
 
 ## Installation
 
-Grab the right download for your OS — the releases ship a **`gatOS-windows-*.zip`** and a
-**`gatOS-linux-*.zip`**. Both bundle the Linux guest image; the **Windows** zip *also* bundles a
-trimmed copy of QEMU, so on Windows it's truly everything-in-the-box (no separate downloads, no
-"install Linux first," no Docker). On **Linux** you install QEMU once from your package manager — see
-[Linux support](#linux-support) below.
+Download **`gatOS-<version>.zip`** from the [releases page](https://github.com/meow-sci/gatOS/releases).
+The same archive works on Windows and Linux: it includes the Alpine guest image and a trimmed
+Windows QEMU bundle. Windows uses the bundled QEMU. Linux ignores those Windows files and uses
+system QEMU — see [Linux support](#linux-support) below.
+
+Stable releases from `main` use `1.<workflow run number>.0`; feature-branch prereleases use
+`1.<workflow run number>.0-beta`. The release tag is `v<version>` and the in-game mod version
+matches. The newest 10 stable builds and 5 betas are retained; historical and guest-image
+releases are preserved. `release/*`, `fix/*`, `chore/*`, and pull requests build without
+publishing. There are no separate platform downloads.
 
 1. **Install [purrTTY](../purrtty)** (the terminal emulator mod) using your usual KSA mod method.
-2. **Install gatOS** the same way (use the zip for your OS).
+2. **Install gatOS** the same way (use the shared zip).
 3. _(Optional but nice)_ Install the **ModMenu** mod — it gives gatOS a handy diagnostics menu and
    status window. Everything works without it; you just lose the dashboard.
 4. Launch KSA. That's it.
@@ -81,30 +86,35 @@ trimmed copy of QEMU, so on Windows it's truly everything-in-the-box (no separat
 > Without it gatOS still works fine; the VM just boots in ~7 seconds instead of ~1 and feels a touch
 > slower.
 >
-> 🐧 **Linux players:** install `qemu-system-x86_64` from your package manager first — the Linux mod
-> uses your system QEMU rather than a bundled one. One-time, two minutes — see
+> 🐧 **Linux players:** install `qemu-system-x86_64` and `qemu-img` from your package manager
+> before launching. See
 > [Linux support](#linux-support) below.
+
+**Updating an existing install:** close KSA and back up the gatOS data folder, especially
+`gatos.toml` and `disks/`. On Windows it can be the same folder as the installed mod. Replace
+old mod files while preserving your data; do not delete the entire folder without a backup.
+Extracting over old files alone can leave obsolete DLLs behind.
 
 ---
 
 ## Linux support
 
-gatOS runs great on Linux — with one difference from the Windows build: the **Linux mod does not
-bundle QEMU**. Instead it uses the `qemu-system-x86_64` already on your system (gatOS finds it on your
-`PATH`). So before launching, install QEMU once from your distro's package manager:
+On Linux, gatOS finds `qemu-system-x86_64` and `qemu-img` on your `PATH`. The shared archive
+contains Windows QEMU, which Linux leaves unused. Install native QEMU from your distro's
+package manager before launching:
 
 ```sh
 # Debian / Ubuntu / Pop!_OS / Mint
-sudo apt install qemu-system-x86
+sudo apt install qemu-system-x86 qemu-utils
 
 # Fedora / RHEL
-sudo dnf install qemu-system-x86
+sudo dnf install qemu-system-x86 qemu-img
 
 # Arch / Manjaro
-sudo pacman -S qemu-system-x86_64
+sudo pacman -S qemu-system-x86_64 qemu-img
 
 # openSUSE
-sudo zypper install qemu-x86
+sudo zypper install qemu-x86 qemu-tools
 ```
 
 That's the only extra step — the guest image itself is bundled in the mod, same as on Windows.
@@ -118,10 +128,8 @@ in).
 **Check it worked:** open a gatOS terminal (or, with ModMenu, the status window) — the **accelerator**
 line should read `kvm` (accelerated) or `tcg` (software). Either is fine; `kvm` is just faster.
 
-> **Why isn't QEMU bundled on Linux too?** A portable, self-contained Linux QEMU bundle is on the
-> roadmap but not built yet. Until it ships, the Linux mod relies on your system QEMU. A standard
-> distro package is all it needs — gatOS doesn't care which version, as long as
-> `qemu-system-x86_64` is on the `PATH`.
+The distribution policy is to bundle Windows QEMU and use distro-provided QEMU on Linux.
+Confirm both binaries are available with `command -v qemu-system-x86_64 qemu-img`.
 
 ---
 
@@ -640,8 +648,8 @@ The installed mod folder is self-contained — here's the tour, in case you ever
     host-key fingerprint gatOS verifies on every connection.
   - `id_ed25519` (+ `.pub`) — the SSH keypair used for the loopback-only connection. It's committed
     on purpose and only ever used over `127.0.0.1`, so it's safe.
-- **`qemu/win-x64/`** _(Windows)_ — a trimmed, portable QEMU build. On Linux/macOS gatOS uses a
-  system QEMU (or a bundled portable build where shipped).
+- **`qemu/win-x64/`** — a trimmed, portable Windows QEMU build included in every release archive.
+  Linux/macOS leave it unused and use system QEMU.
 
 ## What's in your data folder
 

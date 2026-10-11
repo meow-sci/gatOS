@@ -640,6 +640,34 @@ The full `GATOS_IT=1` suite was verified green on the Windows 11 game machine ag
 (278/278, 0 skipped, 2026-06-13 — TCG fallback: WHPX needs the off-by-default
 `HypervisorPlatform` Windows feature; guest boot ≈ 7 s under TCG).
 
+## T11.3/T11.4 — Shared distribution and release policy: implemented
+
+The release workflow follows the sibling unscience pipeline for Borea compatibility: one Ubuntu
+build produces `gatOS-<version>.zip` with one `gatOS/` folder, including managed dependencies,
+the pinned Alpine guest, and Windows QEMU. Linux ignores the Windows bundle and resolves
+`qemu-system-x86_64` and `qemu-img` on PATH; no runtime code changes are needed.
+
+`main` produces stable `1.<workflow run number>.0` releases; `feature/*` produces
+`1.<workflow run number>.0-beta` prereleases. Tags use `v<version>` and mod.toml matches.
+`release/*`, `fix/*`, `chore/*`, and PRs only build/validate; manual runs follow the same policy.
+Reruns preserve existing releases. Paginated cleanup retains 10 stable builds and 5 betas,
+protecting guest releases, old tips, and audited historical named tags.
+
+`tools/release-metadata.sh`, `publish-release.sh`, and `release-retention.py` implement the policy;
+`check-release-policy.py` tests it without GitHub writes. `check-dist.py` checks the single-mod
+layout, dependencies, required guest/QEMU files, versions, and exclusion of game assemblies and
+player data; `check-dist-tests.py` covers failures. Both workflows run the offline checks, while
+`build.yml` retains the full VM integration suite. The first published shared release and live
+Windows/Linux smoke passes remain to be verified (T11.5). The Linux QEMU bundle proposal T11.6
+is superseded by the shared archive/system-QEMU policy.
+
+Validation (2026-10-11): offline release/distribution checks and workflow lint pass; the solution
+builds with zero warnings/errors against audited KSA 5482, and the suite passes 1647 tests with
+12 VM-gated skips. The local current KSA checkout is 5554: it exposes six pre-existing compile
+errors in terrain roughness and sticker shader bindings. Since release CI still checks out the
+assemblies repository's `main`, that separate KSA compatibility update is required before
+publishing; this packaging change does not alter game bindings or pin CI to an older KSA build.
+
 ---
 
 ## Welds + `always_render_iva` + parts listing + `thug_life` (ex-`unscience`): Code DONE; in-game pass pending
@@ -1178,8 +1206,8 @@ IVA-cabin-physics, FX-editor, **timed-scheduler** and **programmable-camera** ch
 `docs/VALIDATION.md` are runnable now that the purrTTY tip release is cut, but need a live KSA flight to
 complete.
 
-**Next**: M10 (persistence & savegame shape). Everything past M9 is not yet implemented, with
-the single exception of T11.1 (QEMU win-x64 bundle) which was pulled forward and is done.
+**Next**: M10 (persistence & savegame shape). Packaging T11.1 and T11.3/T11.4 were pulled
+forward; T11.5 live release validation remains pending.
 # Paint vertical slice (post-G7, code complete; live validation pending)
 
 Vehicle and EVA paint is implemented as an isolated `gatOS.Paint` domain plus

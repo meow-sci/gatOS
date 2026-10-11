@@ -103,8 +103,9 @@
         <Message Importance="High" Condition="'@(GuestArtifact)' == ''"
                  Text="gatOS dist: guest/out/ is empty — the deployed mod folder has NO guest image. Run guest/fetch-guest.sh (or build-image.sh) and rebuild before testing in-game."/>
 
-        <!-- Bundled win-x64 QEMU (tools/fetch-qemu, T11.1) — only present once M11 lands or a
-             dev fetched it; unix hosts use the system QEMU (QemuLocator). -->
+        <!-- Windows QEMU is included in every release archive, regardless of build host.
+             Developer builds may omit it; release check-dist.py requires the full bundle.
+             Unix hosts ignore this directory and use system QEMU (QemuLocator). -->
         <ItemGroup>
             <QemuWinArtifact Include="$(MSBuildThisFileDirectory)..\vendor\qemu\win-x64\**\*"/>
         </ItemGroup>

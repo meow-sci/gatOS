@@ -3,8 +3,8 @@ name: Build and test
 # One Linux job builds the whole solution and runs the test suite on every push.
 # This is the TEST GATE (build + full GATOS_IT suite). The complete all-in-one mod
 # dist (guest image + win-x64 QEMU bundled, zipped, published as a GitHub release) is
-# built separately by mod-release.yml, which fires only for the tip of main and
-# release/<v> refs — not every commit.
+# built separately by mod-release.yml: main publishes stable releases, feature/**
+# publishes betas; other refs build and validate without publishing.
 #
 # The KSA reference assemblies are licensed game files in the private repo
 # meow-sci/ksa-game-assemblies (DLLs under current/dll/). Only gatOS.GameMod
@@ -25,6 +25,8 @@ on:
       - main
       - 'release/**'
       - 'feature/**'
+      - 'fix/**'
+      - 'chore/**'
     paths-ignore:
       - 'site/**'
   pull_request:
@@ -63,6 +65,11 @@ jobs:
           token: ${{ env.KSA_PAT }}
           persist-credentials: false
           ref: main
+
+      - name: Verify release policy and distribution validator
+        run: |
+          python3 tools/check-release-policy.py
+          python3 tools/check-dist-tests.py
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5

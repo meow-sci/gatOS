@@ -234,7 +234,8 @@ cut.
 | `ctl/rotate` (W1, AGC_PLAN §7.4) | Code DONE; in-game pending | `Game/Ksa/Actuators/RotateActuator.cs`, `SimFs/Commands/RotateRules.cs` — manual RCS rotation signs, the translate sibling; full authority needs `attitude_mode=manual` (auto strips rotation bits) |
 | AGC (`examples/agc` — Luminary099/yaAGC in-guest, plans/AGC_PLAN.md A0–A7) | Code DONE (host+wire-verified); in-game mission cards pending | one Rust crate: `proto/` wire codec + SocketPort + embedded `agc_engine.c` FFI (`--features embedded`), virtual IMU/PIPA/LR, RCS duty→`ctl/batch` demodulation, THRUST clocking, padload generator (+KSA audit), P27 uplink, downlink recorder, ratatui `dsky`; `tools/agc` launcher; `apollo11-system/` July-1969 Earth/Moon system generator; `APOLLO_11_FLIGHT_GUIDE.md`; mission cards in `docs/VALIDATION.md` |
 | T11.1 — QEMU win-x64 | DONE | `tools/fetch-qemu.*`, `vendor/qemu/win-x64/` |
-| M10+ | **Not yet implemented** | — |
+| T11.3/T11.4 — shared distribution + releases | DONE; first shared release/live smoke pending | `.github/workflows/mod-release.yml`, `tools/release-*`, `tools/publish-release.sh`, `tools/check-dist*.py` — one archive, stable main builds + feature betas; see `docs/MILESTONES.md` for the separate KSA 5554 build blocker |
+| Remaining M10+ | **Not yet implemented** | — |
 
 The full `GATOS_IT=1` integration suite ran 321/321 green (Windows/TCG, guest v3, 2026-06-13).
 Since then guest v10 added the `coreutils` package, whose GNU `tail` shadowed busybox `tail` in
@@ -268,6 +269,8 @@ mod.toml + deps.json, **the pre-generated default config (`Configuration/gatos.d
 the wipe step excludes `gatos.toml` so a rebuild never deletes the player's config)**,
 licenses, `guest/out/**` → `<dist>/gatOS/guest/` (High-importance message when missing — fetch
 or build the guest first for an in-game-usable dist), and `vendor/qemu/win-x64/**` when present.
+Release packaging requires both fetched bundles and validates them with
+`python3 tools/check-dist.py <dist>`; ordinary developer builds do not.
 Destination: `GATOS_DIST_DIR` (CI) else the per-OS KSA mods dir (`SelectedDistModDir` in
 `Directory.Build.props`). The managed payload is wipe-cleaned each deploy; `guest/`+`qemu/` copy
 incrementally (`SkipUnchangedFiles`).
@@ -330,8 +333,8 @@ site/                           Astro/Starlight docs site — the progressive `g
 LICENSE                         MIT (the mod's own code)
 THIRD-PARTY-NOTICES.md          QEMU GPLv2, Alpine, SSH.NET, Tomlyn, …
 vendor/purrTTY/                 pinned contract DLLs (committed) — see its README for the pin
-vendor/qemu/                    NOT in git — fetched QEMU bundles: win-x64 (T11.1, built;
-                                tools/fetch-qemu.*) + linux-x64 planned (T11.6, D5 revision)
+vendor/qemu/                    NOT in git — pinned win-x64 QEMU (tools/fetch-qemu.*),
+                                included in every release; Linux/macOS use system QEMU
 guest/                          guest image pipeline (M2, built): build-image.sh,
                                 fetch-guest.{sh,ps1}, GUEST_VERSION pin, rootfs-overlay/,
                                 README.md; guest/out/ NOT in git (fetch or build it)
@@ -339,12 +342,13 @@ tools/                          fetch-qemu.{sh,ps1} + qemu-win64-files.txt (pin 
                                 + Get-QemuImportClosure.ps1 (T11.1, built)
 .github/workflows/build.yml     CI: build + full test suite (GATOS_IT=1, KVM, fetched guest)
 .github/workflows/guest-image.yml  CI: build + publish guest-v<N> release (guest/** pushes)
-.github/workflows/mod-release.yml  CI: build + publish the mod dist as ONE release with two
-                                zips — gatOS-windows-<v> (payload + guest + bundled win-x64
-                                QEMU) and gatOS-linux-<v> (payload + guest, system QEMU on PATH;
-                                linux-x64 bundle = unbuilt T11.6). Both built on Linux runners
-                                (meta→build matrix→publish); main → tip prerelease,
-                                release/<v> → release v<v> (T11.4)
+.github/workflows/mod-release.yml  CI: one shared gatOS-<version>.zip (payload + guest +
+                                Windows QEMU), built on Ubuntu; main → stable 1.<run>.0,
+                                feature/** → 1.<run>.0-beta. Other refs/PRs build only.
+                                tools/release-* + publish-release.sh + check-dist*.py +
+                                check-release-policy.py implement/test policy and payload checks.
+                                Keep 10 stable/5 beta releases; protect historical/guest releases;
+                                reruns preserve published releases (unscience/Borea convention).
 .github/workflows/site-deploy.yml  CI: build the site/ Astro/Starlight docs (pnpm) and publish to
                                 GitHub Pages (artifact flow) — served at
                                 https://meow.science.fail/gatOS/ (base '/gatOS/'). Runs on main
