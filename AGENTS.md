@@ -74,7 +74,26 @@ cut.
 > solar link intact) + the pass record live in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope
 > pages; live re-check items appended to [`docs/VALIDATION.md`](docs/VALIDATION.md).
 >
-> **Current KSA upgrade → `2026.10.10.5554`** (2026-10-11, from audited 5482 through
+> **Current KSA upgrade → `2026.10.19.5638`** (2026-10-23, from audited 5554; changelog covers only
+> 5603–5637, so 5555–5602 were reviewed from the full decomp diff; remote `main` verified at `edda844`).
+> **One compile break:** rev 5618 renamed the Brutal assemblies (`Brutal.Core.Common` → `Brutal.Core`,
+> `Brutal.Core.{Logging,Numerics,Strings,Memory}` → `Brutal.{…}`, namespaces unchanged) — csproj
+> `HintPath`s, `tools/check-dist-tests.py` and `thirdparty/index.ts` follow. **Two compiler-invisible
+> breaks, fixed:** KSA now ships **JIT-optimised** (rev 5630, `DebuggableAttribute` 0x107 → 0x002), so the
+> lazily installed Harmony patches (`always_render`, `always_render_iva`, `thug_life`, stickers, paint)
+> could be bypassed by callers that had already inlined their targets — the new permanent
+> `Game/Ksa/InlineGuard.cs` pins every lazy target non-inlinable at load; and the trail
+> `self_shadow_steps` count became a pipeline specialization constant, so a zero crossing now rebuilds the
+> trail pipelines (`FxReflect.RebuildTrail`). Inherited drift documented (no API change): the flight
+> computer steers the **net-thrust axis** while thrusting, an auto-burn waits for staging when a stage runs
+> dry, a sim-step growth cap makes `time/warp` (requested) and `time/sim_dt` (achieved) diverge on big
+> jumps, saved vessels with missing parts are skipped on load. **181 anchors** (+2). Full build 0
+> warnings/errors; suite 1648 passed / 12 skipped; 480/480 TypeRefs and 1102/1102 MemberRefs resolve.
+> purrTTY (and the vendored contract DLLs, which reference `Brutal.Core.Logging`) must be rebuilt for
+> 5638 separately. [5638 pass](scope/ksa-assets-and-versions.md#5638-pass); live checks:
+> [5638 checklist](docs/VALIDATION.md#ksa-5638-upgrade).
+>
+> **Prior KSA upgrade → `2026.10.10.5554`** (2026-10-11, from audited 5482 through
 > 5541; 70 logged revisions across both drops, remote `main` verified at `935a32b`). Terrain roughness
 > now binds `TanMeanSlopeRoughness` with tan/atan conversion around the unchanged degree API. Stickers
 > bind the current per-viewport ordinary global UBO set with no dynamic offset and use the named
@@ -88,7 +107,7 @@ cut.
 > [5554 pass](scope/ksa-assets-and-versions.md#5554-pass). Live flight/render checks remain pending:
 > [5554 checklist](docs/VALIDATION.md#ksa-5554-upgrade).
 >
-> **Prior KSA upgrade → `2026.9.22.5482`** (2026-09-25, from audited 5438; 43 logged revisions
+> **Earlier KSA upgrade → `2026.9.22.5482`** (2026-09-25, from audited 5438; 43 logged revisions
 > 5439–5481, no gap). **One break, compiler-visible only in part:** rev 5456 moved part render data into
 > a cached per-tree `PartTreeRenderData`, deleting `PartModelModule`/`PartModelDynamicModule.UpdateRenderData`
 > (the 4 CS0117 errors, all in `PartPaintPatches.cs`) *and* making the rasterized static path bypass
@@ -448,7 +467,7 @@ gatOS.Vm       → Logging, Tomlyn                      QEMU lifecycle, disks, p
 gatOS.Ssh      → Vm, Logging, vendor/purrTTY, SSH.NET SshShellSession : ICustomShell (M4, built)
 gatOS.GameMod  → Ssh, SimFs, Http, Mqtt, Mcp, Bus, Vm, Logging, vendor/purrTTY,
                   KSA DLLs, StarMap.API, Lib.Harmony, ModMenu.Attributes, Tomlyn   the KSA mod (M6, built)
-                  (+ the Brutal.Vulkan(.Abstractions/.Vma) + Planet.Render.Core + Brutal.Core.Memory game
+                  (+ the Brutal.Vulkan(.Abstractions/.Vma) + Planet.Render.Core + Brutal.Memory game
                    DLLs and AllowUnsafeBlocks, for the Game/Ksa/ThugLife GPU quad renderer, the
                    Game/Ksa/Paint/Stickers decal renderer (pipeline + GLSL + the ResolveAttachments
                    postfix) and the Game/Ksa/FrameCapture screen-stream readback; + Brutal.Fmod for the
@@ -616,6 +635,17 @@ host.
    Teardown clears `Active` first, unpatches, then `GraphicsAndCompute.WaitIdle()` before destroying
    anything. Paint teardown (all three) rides `PaintManager.Dispose`. All cheats are torn down by
    `Mod.TeardownGameCheats` at `Unload`.
+
+   **The inline guard (since KSA 5638).** KSA now ships JIT-optimised, and Harmony cannot reach
+   callers that already inlined a target before it was patched. So every **lazily** patched target
+   above (`Vehicle.GetWorldMatrix`/`UpdateRenderData`, the `PartModel` ctor, `RenderMainPass`,
+   `ResolveAttachments`, `PartTreeRenderData.WriteState`/`WriteDynamicState`,
+   `ShaderModuleUtils.FromFile`) carries a permanent empty prefix from `Harmony("gatos.inline_guard")`
+   (`Game/Ksa/InlineGuard.cs`), installed first in `OnFullyLoaded` — before the display transpiler
+   recompiles `RenderGame` — and removed at `Unload`. Features still install/remove their own patches
+   lazily; **never** unpatch with a bare `UnpatchAll()`, add any new lazy target to
+   `InlineGuard.Targets()`, and make any "foreign patch present" check ignore `InlineGuard.HarmonyId`
+   (as paint's `FromFile` conflict check does).
 
    **The F2 / `DrawUI` fix (C0.1) — why a third StarMap hook exists.** StarMap implements
    `[StarMapBeforeGui]`/`[StarMapAfterGui]` as patches on `Program.OnDrawUiFrame`/`OnDrawUiViewports`,

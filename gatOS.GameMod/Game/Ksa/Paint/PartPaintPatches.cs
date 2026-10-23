@@ -30,15 +30,16 @@ internal static class PartPaintPatches
 
     [KsaAnchor("PartTreeRenderData.WriteState(Batch,int,Part) / WriteDynamicState(DynamicBatch,int,PartModelDynamicModule) "
             + "(private instance, postfixed); nested Batch/DynamicBatch.StateBitFlags (int[], reflected)",
-        SourceFile = "KSA/PartTreeRenderData.cs:23-127,1088-1136,1210-1256", Verified = "2026-09-25",
-        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
+        SourceFile = "KSA/PartTreeRenderData.cs:1094,1216", Verified = "2026-10-23",
+        GameVersion = "2026.10.19.5638", Risk = ChurnRisk.High,
         Notes = "Compiler-blind: both targets are private and resolved by name + exact parameter types, and "
             + "the slot arrays by field name. Any miss resolves to null and paint refuses to arm (EOPNOTSUPP, "
             + "status degraded) instead of arming a no-op. These two methods are the ONLY writers of the cached "
             + "static/dynamic state bits (RebuildAll/RebuildDynamic, RewriteStates/RewriteDynamicStates, "
             + "RewriteDirtyPart*); RefreshSimDrivenDynamicSlots touches only matrices/temperature. Both bodies "
-            + "(IL 255/304 bytes, no AggressiveInlining) are far above the JIT inline budget, so the postfix "
-            + "cannot be bypassed by a pre-inlined caller.")]
+            + "(IL 255/304 bytes at 5482, no AggressiveInlining) were never inlined while KSA shipped "
+            + "unoptimised."
+            + " 5638: KSA is now JIT-optimised (rev 5630) and this patch installs mid-session, so the target is pinned non-inlinable at load by InlineGuard; without it an already-tiered caller could keep an inlined copy and skip the patch. WriteState/WriteDynamicState bodies and Batch/DynamicBatch.StateBitFlags unchanged (IL 215/249 B).")]
     internal static IReadOnlyList<(MethodBase? Target, MethodInfo Patch, bool Postfix, string Label)> Resolve()
     {
         var batch = typeof(PartTreeRenderData).GetNestedType("Batch", BindingFlags.NonPublic);

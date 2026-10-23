@@ -11,8 +11,9 @@ namespace gatOS.GameMod.Game.Ksa.Render;
 ///     outside the IVA camera by flipping <c>PartModelModule.Template.Internal</c> to <c>false</c> on
 ///     every internal template (KSA's render gate skips internal meshes unless the camera is in IVA
 ///     mode — since 5482 re-evaluated per batch, per frame in <c>PartTreeRenderData.Compose</c>
-///     <c>(!Template.Internal || viewport.Mode == CameraMode.IVA)</c>; the raytraced-IVA branch still
-///     routes through <c>PartModel.AddInstance</c>'s identical gate).
+///     <c>(!Template.Internal || viewport.RendersInterior())</c>; the raytraced-IVA branch still
+///     routes through <c>PartModel.AddInstance</c>'s identical gate. Since 5638 <c>RendersInterior()</c>
+///     is IVA mode <i>or</i> a viewport flagged <c>InsideVehicle</c>, e.g. a crew portrait).
 /// </summary>
 /// <remarks>
 ///     <para>Ported from the sibling <c>unscience</c> mod, with one change: the Harmony patch is
@@ -41,18 +42,23 @@ internal static class IvaForceRender
     public static bool Enabled => _enabled;
 
     [KsaAnchor("PartModel.Instances; PartModel..ctor(PartModelModule.Template) (protected); "
-            + "PartModelModule.Template.Internal; the render gate (!Template.Internal || viewport.Mode == CameraMode.IVA) "
+            + "PartModelModule.Template.Internal; the render gate (!Template.Internal || viewport.RendersInterior()) "
             + "in PartTreeRenderData.Compose and PartModel.AddInstance",
-        SourceFile = "KSA/PartTreeRenderData.cs:708-753,1258-1322 / KSA/PartModel.cs:409,435,470-490 / "
-            + "KSA/PartModelModule.cs:31", Verified = "2026-09-25",
-        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
+        SourceFile = "KSA/PartTreeRenderData.cs:918,1170,1271 / KSA/PartModel.cs:430,486 / "
+            + "KSA/ViewportEx.cs:88-95 / KSA/PartModelModule.cs:31", Verified = "2026-10-23",
+        GameVersion = "2026.10.19.5638", Risk = ChurnRisk.High,
         Notes = "The always_render_iva cheat. The ctor patch is dynamic — installed only while enabled. "
             + "5482 (rev 5456): part rendering moved into the cached PartTreeRenderData. RebuildAll batches "
             + "EVERY PartModelModule (internals included) and Compose re-reads model.Template.Internal per batch "
             + "every frame, so the flip takes effect with no cache invalidation. Compose writes the rasterized "
             + "instances straight into ViewportData.InstanceList (AddInstance is reached only on the "
             + "raytraced-IVA branch, where the gate passes anyway), so the former editor-only AddInstance re-add "
-            + "postfix could never fire and was removed; editor trees use the same Compose path.")]
+            + "postfix could never fire and was removed; editor trees use the same Compose path. "
+            + " 5638: the gate's second operand is now viewport.RendersInterior() (IVA mode, or "
+            + "ViewportStateFlags.InsideVehicle — set by CrewPortraitPanel), at all three PartTreeRenderData "
+            + "sites and PartModel.AddInstance. Flipping Template.Internal still clears the first operand, so the "
+            + "cheat is unchanged. The ctor (77 B IL) is pinned non-inlinable by InlineGuard because KSA is now "
+            + "JIT-optimised and this patch installs mid-session.")]
     public static void SetEnabled(bool value)
     {
         if (_enabled == value)

@@ -18,8 +18,8 @@ internal static class ThugLifeRenderPatches
     private static bool _loggedFault;
 
     [KsaAnchor("SuperMeshRenderSystem.RenderMainPass(IViewport, CommandBuffer) — Harmony postfix",
-        SourceFile = "KSA/SuperMeshRenderSystem.cs:364 / KSA/Program.cs:4496,4756,4964", Verified = "2026-09-25",
-        GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
+        SourceFile = "KSA/SuperMeshRenderSystem.cs:375 / KSA/Program.cs:4744,5030,5242", Verified = "2026-10-23",
+        GameVersion = "2026.10.19.5638", Risk = ChurnRisk.High,
         Notes = "The only injection point for a world-space draw into KSA's offscreen scene pass. "
             + "Dynamic — installed only while a thug-life entry exists. 5348: re-verified — still "
             + "exactly ONE RenderMainPass overload in the whole tree, so both AccessTools lookups "
@@ -34,7 +34,8 @@ internal static class ThugLifeRenderPatches
             + "(MeshBucketSystem/ShadowBucketSystem deleted). Still exactly one overload, so the name-only lookup stays "
             + "unambiguous, and the postfix binds commandBuffer BY NAME, so it resolves to argument 1 unchanged. "
             + "RenderPass's new drawCommandCount==0 early return is inside the callee, so this postfix still runs. "
-            + "Three call sites unchanged in role (RenderViewport/RenderGame/RenderEditor), now passing RenderedViewport.")]
+            + "Three call sites unchanged in role (RenderViewport/RenderGame/RenderEditor), now passing RenderedViewport."
+            + " 5638: KSA is now JIT-optimised (rev 5630) and this patch installs mid-session, so the target is pinned non-inlinable at load by InlineGuard; without it an already-tiered caller could keep an inlined copy and skip the patch. RenderMainPass (112 B, one try/finally) still has exactly one overload and three call sites; two of them sit in Program.RenderGame, which the display transpiler recompiles at load, so the guard must precede InstallDisplayHook.")]
     public static void Apply(Harmony harmony)
     {
         var original = AccessTools.Method(

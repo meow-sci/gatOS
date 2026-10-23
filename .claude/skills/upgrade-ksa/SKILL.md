@@ -127,6 +127,14 @@ work list.** Each error lands at a `[KsaAnchor]` site under `Game/Ksa/**` (or a 
 unaffected (they must be, by the dependency rule — if one breaks, something leaked a KSA type across
 the seam and that is itself a finding).
 
+> **Check the DLL *set*, not just the members.** Diff `ls <PREVIOUS>/current/dll` against
+> `ls <CURRENT>/current/dll` before reading compile errors. A Brutal package bump can **rename whole
+> assemblies** with unchanged namespaces (5638, rev 5618: `Brutal.Core.Common` → `Brutal.Core`,
+> `Brutal.Core.{Logging,Numerics,Strings,Memory}` → `Brutal.{…}`) — the build then fails with hundreds
+> of "namespace does not exist" errors whose real fix is only the `HintPath`s in
+> `gatOS.GameMod.csproj` (plus `tools/check-dist-tests.py` and `thirdparty/index.ts`). Sibling mods
+> (purrTTY and its vendored contract DLLs) take the same break independently.
+
 > A **green build does NOT mean gatOS is safe.** It only clears the non-reflective, compile-visible
 > bindings. Steps 3–5 exist precisely for what the compiler cannot see.
 
@@ -150,7 +158,8 @@ and by the subsystem map in
 - **Changed method signatures / added parameters** on actuator entry points.
 - **New gating** — a new precondition (e.g. a control-module requirement for controllability) that
   changes when a read/write is valid.
-- **Frame/numeric convention changes** in `Brutal.Core.Numerics` (double3/doubleQuat) or the coordinate
+- **Frame/numeric convention changes** in `Brutal.Numerics` (double3/doubleQuat; the assembly was
+  `Brutal.Core.Numerics` before 5638) or the coordinate
   frames — these silently corrupt every derived value. See
   [`scope/ksa-runtime-coupling.md`](../../../scope/ksa-runtime-coupling.md#frames-and-numerics) and
   [`docs/KSA_CELESTIAL_COORDINATE_FRAMES.md`](../../../docs/KSA_CELESTIAL_COORDINATE_FRAMES.md).
@@ -175,6 +184,20 @@ the type it reflects into, and note that the **runtime** safety net is the per-a
 *degraded* (`EOPNOTSUPP`) and surfaces at **`/sim/status/accessors`** rather than crashing the mod.
 Part of the review is confirming those latches still cover the reflected members, and flagging any for
 in-game re-check via `/sim/status/accessors`.
+
+### Step 4b — JIT optimisation state (inlining can bypass Harmony patches)
+
+Read each game assembly's `DebuggableAttribute` (assembly custom attribute blob) in both trees. Since
+5638 (rev 5630) KSA ships **optimised** (`0x002`; it was `0x107` = DisableOptimizations), so the JIT
+inlines small KSA methods. Harmony marks a target non-inlinable when it patches it, but cannot reach
+callers already compiled with an inlined copy — so a patch installed **after** its callers tier up can
+silently miss call sites. gatOS's answer is `Game/Ksa/InlineGuard.cs`: an empty prefix on every
+**lazily** patched target, installed first in `OnFullyLoaded`. On every pass: (a) every lazily
+installed Harmony target must be in `InlineGuard.Targets()` with the same signature its feature
+resolves; (b) any new always-on patch must install in `OnFullyLoaded`, never later; (c) a transpiler
+must be re-checked against the **shipped IL** (`dotnet ilspycmd -il` from the assemblies checkout),
+because optimised IL drops `nop`s and reshapes locals while the decomp looks the same. Also check that
+the assemblies are not ReadyToRun (precompiled code would bake inlining in before load).
 
 ### Step 5 — Render internals (`thug_life`) — deepest, highest-churn coupling
 
@@ -235,7 +258,7 @@ pages; the anchors themselves are in the `Game/Ksa/**` files.
 | [`Game/Ksa/KsaCatalog.cs`](../../../gatOS.GameMod/Game/Ksa/KsaCatalog.cs) | vehicle/astronomical resolution + the try/catch degrade latches | [`ksa-runtime-coupling.md`](../../../scope/ksa-runtime-coupling.md) |
 | [`Game/Mod.Game.cs`](../../../gatOS.GameMod/Game/Mod.Game.cs) | **Harmony hook targets** (un-anchored): `Universe.ExecuteNextVehicleSolvers` (solver-drain prefix), `Program.DrawProgramMenusHook` (menu postfix); `Program.MainViewport`, `ModLibrary.Find` | [`ksa-runtime-coupling.md`](../../../scope/ksa-runtime-coupling.md) |
 | [`Game/BrutalModLogger.cs`](../../../gatOS.GameMod/Game/BrutalModLogger.cs) | `Brutal.Logging` sink | [`ksa-runtime-coupling.md`](../../../scope/ksa-runtime-coupling.md) |
-| Frames & numerics (used throughout) | `Brutal.Core.Numerics` (double3/doubleQuat), CCI/CCE/CCF/ECL conventions | [`ksa-runtime-coupling.md`](../../../scope/ksa-runtime-coupling.md#frames-and-numerics) |
+| Frames & numerics (used throughout) | `Brutal.Numerics` (double3/doubleQuat), CCI/CCE/CCF/ECL conventions | [`ksa-runtime-coupling.md`](../../../scope/ksa-runtime-coupling.md#frames-and-numerics) |
 
 The two Harmony hook targets in `Game/Mod.Game.cs` are the **only un-anchored KSA touch-points** —
 they can't carry a `[KsaAnchor]` on a patched external method, so **check them by hand every time**: a

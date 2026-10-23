@@ -29,6 +29,9 @@ internal static class FxReflect
     /// <summary>Health-latch key: the trail renderer's private plume-trail settings object.</summary>
     internal const string TrailSettingsAccessor = "fx.trail_settings";
 
+    /// <summary>Health-latch key: the trail renderer's private pipeline rebuild (self-shadow on/off).</summary>
+    internal const string TrailRebuildAccessor = "fx.trail_rebuild";
+
     /// <summary>Health-latch key: the volumetric-exhaust template registry (enumeration only).</summary>
     internal const string PlumeTemplatesAccessor = "fx.plume_templates";
 
@@ -60,8 +63,10 @@ internal static class FxReflect
     private static FieldInfo? _worleyField;
     private static FieldInfo? _renderUboMapField;
     private static FieldInfo? _meshUboMapField;
+    private static MethodInfo? _trailRebuildMethod;
     private static bool _trailResolved;
     private static bool _trailSettingsResolved;
+    private static bool _trailRebuildResolved;
     private static bool _transparenciesResolved;
     private static bool _templateReferencesResolved;
     private static bool _cloudApplyResolved;
@@ -152,6 +157,55 @@ internal static class FxReflect
         error = "VolumetricTrailRenderer._plumeTrailSegmentsManager/PlumeTrailSegmentsManager._settings "
                 + "are missing in this build";
         return null;
+    }
+
+    /// <summary>
+    ///     Rebuilds the trail renderer's pipelines and frame targets, exactly as the stock Plume Trails
+    ///     editor does when its <c>selfShadowStepCount</c> slider crosses zero. False with a reason
+    ///     when the private method is gone or the rebuild threw.
+    /// </summary>
+    /// <remarks>
+    ///     Needed since 2026.10.19.5638: whether self-shadowing runs at all is baked into the raymarch
+    ///     pipeline as a specialization constant at creation, so flipping the count between 0 and
+    ///     &gt; 0 has no effect until the pipelines are rebuilt. The method waits for the device to go
+    ///     idle first, so this is a one-frame hitch, paid only on a zero crossing. Game thread only.
+    /// </remarks>
+    [KsaAnchor("VolumetricTrailRenderer.RebuildFrameResources() (private instance method)",
+        SourceFile = "KSA/VolumetricTrailRenderer.cs:558 / :874 / :1260-1262 / "
+            + "Content/Core/Shaders/VolumetricTrail/RaymarchVolumetricTrail.comp:68",
+        Verified = "2026-10-23", GameVersion = "2026.10.19.5638", Risk = ChurnRisk.High,
+        Notes = "Born at 5638: CreateFrameResources writes specialization constant 6 = "
+            + "(SelfShadowStepCount > 0 ? 1 : 0) and the shader zeroes lightStepCount when it is 0. The stock "
+            + "editor (OnDrawUi) sets flag |= crossed-zero and then calls RebuildFrameResources() "
+            + "(Device.WaitIdle, DestroyPipelinesAndTargets, RefreshExplosionShapeBuffer, "
+            + "CreateFrameResources) from the same game-thread UI phase gatOS drains in. Reflection, so "
+            + "compiler-blind: a miss latches fx.trail_rebuild degraded; the field write itself still lands.")]
+    internal static bool RebuildTrail(VolumetricTrailRenderer trail, out string error)
+    {
+        error = "";
+        if (!_trailRebuildResolved)
+        {
+            _trailRebuildResolved = true;
+            _trailRebuildMethod = typeof(VolumetricTrailRenderer).GetMethod("RebuildFrameResources",
+                AnyInstance, Type.EmptyTypes);
+        }
+
+        if (_trailRebuildMethod is null)
+        {
+            error = "VolumetricTrailRenderer.RebuildFrameResources() is missing in this build";
+            return false;
+        }
+
+        try
+        {
+            _trailRebuildMethod.Invoke(trail, null);
+            return true;
+        }
+        catch (TargetInvocationException ex)
+        {
+            error = $"VolumetricTrailRenderer.RebuildFrameResources() failed: {ex.InnerException?.Message ?? ex.Message}";
+            return false;
+        }
     }
 
     /// <summary>

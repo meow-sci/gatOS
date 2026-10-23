@@ -170,7 +170,7 @@ harmony.Patch(original, prefix: new HarmonyMethod(myPrefix) { priority = Priorit
 - Standalone csproj: `<OutputType>Library</OutputType>`, `<AssemblyName>MeowSci.<Name></AssemblyName>`, `<DistDir>$(SelectedDistModDir)<mod-name>\</DistDir>`.
 - PackageReferences (both `PrivateAssets="all"`): `StarMap.API`, `Lib.Harmony`.
 - ProjectReferences: `..\<name>.lib\...` and `..\ksa-abstractions.lib\...` (the latter pulls in `HotkeyGuard`, `GameThread`, `KsaPaths`, providers).
-- KSA game DLLs are `<Reference HintPath="$(KSAFolder)...">` with `<Private>false</Private>` (not copied). Common: `KSA`, `Brutal.Core.Common`, `Brutal.Core.Numerics`, `Brutal.Core.Strings`, `Brutal.ImGui`, `Brutal.ImGui.Abstractions`. Render mods add `Brutal.Vulkan*`, `Brutal.Core.Memory`, `Planet.Render.Core`.
+- KSA game DLLs are `<Reference HintPath="$(KSAFolder)...">` with `<Private>false</Private>` (not copied). Common: `KSA`, `Brutal.Core`, `Brutal.Numerics`, `Brutal.Strings`, `Brutal.Logging`, `Brutal.ImGui`, `Brutal.ImGui.Abstractions`. Render mods add `Brutal.Vulkan*`, `Brutal.Memory`, `Planet.Render.Core`. (Before KSA 2026.10.19.5638 these were `Brutal.Core.Common`/`Brutal.Core.Numerics`/`Brutal.Core.Strings`/`Brutal.Core.Logging`/`Brutal.Core.Memory`; namespaces did not change.)
 - The `CopyCustomContent` target (`AfterTargets="AfterBuild"`) copies `mod.toml`, the entry DLL/pdb/deps.json, **all** `MeowSci.*.dll/pdb` (the lib + abstractions), `LICENSE`, and `third-party-licenses/` into `$(DistDir)`.
 - Build the whole solution with `dotnet build` and ensure it compiles before a task is complete.
 

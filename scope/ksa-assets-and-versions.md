@@ -27,9 +27,10 @@ The current checkout and archived audited drops provide the comparison trees:
 
 | Checkout dir | Build | Date | Revisions | Role |
 |---|---|---|---|---|
-| `…/ksa-game-assemblies` | **2026.10.10.5554** | 2026-10-07 (artifact metadata) | 5482 → 5541 → 5554; 70 logged revisions across two drops (commit `935a32b`) | Current statically audited baseline; [5554 pass](#5554-pass), 2026-10-11. Remote `main` verified at the same commit. Live flight validation pending. |
+| `…/ksa-game-assemblies` | **2026.10.19.5638** | 2026-10-20 (artifact metadata) | 5554 → 5638; changelog covers only 5603–5637 (`fromRevision` 5602), **5555–5602 unlogged** (commit `edda844`) | Current statically audited baseline; [5638 pass](#5638-pass), 2026-10-23. Remote `main` verified at the same commit. Live flight validation pending. |
+| `…/ksa-game-assemblies_prev` (git `935a32b`) | **2026.10.10.5554** | 2026-10-07 (artifact metadata) | 5482 → 5541 → 5554; 70 logged revisions across two drops | Previous audited baseline for 5638; [5554 record](#5554-pass). |
 | (git archive `a2f724f`) | **2026.9.22.5482** | 2026-09-24 (artifact date) | 5438 → 5482; 43 logged revisions | Previous audited baseline for 5554; [5482 record](#5482-pass). Reconstructed with DLLs, decomp, Content and version metadata from git, since the `_prev` checkout is older. |
-| `…/ksa-game-assemblies_prev` | **2026.9.10.5438** | 2026-09-15 (artifact date) | 5402 → 5438; 35 logged revisions, 5403–5437 (commit `93eb864`) | historical audited baseline — upgrade pass 2026-09-14 ([`#5438-pass`](#5438-pass)): eight compile errors plus the compiler-invisible paint/IVA `AddInstance` overload and sticker colour-only resolve breaks, all fixed. CURRENT's `fromRevision` is 5438, so the two trees **chained with no gap** |
+| (git `93eb864`) | **2026.9.10.5438** | 2026-09-15 (artifact date) | 5402 → 5438; 35 logged revisions, 5403–5437 (commit `93eb864`) | historical audited baseline — upgrade pass 2026-09-14 ([`#5438-pass`](#5438-pass)): eight compile errors plus the compiler-invisible paint/IVA `AddInstance` overload and sticker colour-only resolve breaks, all fixed. CURRENT's `fromRevision` is 5438, so the two trees **chained with no gap** |
 | (git `57e6040`) | 2026.9.7.5402 | 2026-09-02 | 5348 → 5402 (**changelog gapped**: `version.json` logs only rev 5401, `fromRevision` 5400) | prior audited baseline — full playbook pass 2026-09-02 (see [`#5402-pass`](#5402-pass)): **three compile breaks** (the `Viewport` class rework, `DebugTrailColor` removed, `Cursor.InputRay` removed) fixed, one `/sim` node retired, two new High-risk reflection accessors, binary surface diff 907/907 member refs resolved. PREVIOUS for that diff was **`git worktree add <tmp> c465abb`** (the 5348 drop) |
 | (git `c465abb`) | 2026.8.22.5348 | 2026-08-23 | 5261 → 5348 (85 commits, revs 5262–5348) | prior baseline — full playbook pass 2026-08-23 (see [`#5348-pass`](#5348-pass)): **zero compile breaks — the first pass in the project's history with none** (5261 had ten, 5168 had four); three real breaks the compiler could not see found and fixed, plus one long-standing **pre-existing** bug diagnosed and fixed. Build source at the time was commit `c465abb`. The checkout is a **git repo whose history holds every prior drop** (`1401af7` = 5261, `13595c1` = 5056, `3106557` = 5018, `cdb7391` = 4980, `7cf5c0a` = 4892, …) — diff drops with `git diff <old>..<new>` inside it |
 | (git `1401af7`) | 2026.8.19.5261 | 2026-08-11 | 5168 → 5261 | prior side-by-side checkout — itself a **fully audited baseline** (the 5261 pass closed its own findings, [`#5261-pass`](#5261-pass)), and that pass's CURRENT `fromRevision` was 5261, so the two trees **chained with no gap** and the 5348 pass diffed them directly (no git-history fallback needed) |
@@ -38,6 +39,101 @@ gatOS was originally built against the 4680-era sources (most `[KsaAnchor]` `Ver
 2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27; the touched
 anchors carry `GameVersion="2026.6.9.4750"` (see
 [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)).
+
+## 5554 → 5638 upgrade pass (2026-10-23) {#5638-pass}
+
+CURRENT is `2026.10.19.5638`, assemblies commit `edda844` (also remote `main`; `git fetch` showed no
+newer or intermediate drop). PREVIOUS is audited `2026.10.10.5554`, commit `935a32b`, which is also
+the sibling `_prev` checkout. CURRENT's `version.json` logs only **revs 5603–5637**
+(`fromRevision` 5602): the 48 revisions **5555–5602 have no changelog anywhere**, so for that window
+the complete `git diff 935a32b edda844 -- current/decomp current/Content` was the only evidence
+(1249 decomp files changed; 292 added, 8 deleted, 13 renamed).
+
+### Confirmed changes and resolutions
+
+| Finding | Evidence / effect | Resolution |
+|---|---|---|
+| **Brutal assembly rename (rev 5618, "Update to latest Brutal packages")** — the only compile break | `Brutal.Core.Common.dll` → `Brutal.Core.dll`; `Brutal.Core.{Collections,Logging,Maths,Memory,Numerics,Strings}.dll` → `Brutal.{…}.dll`; `Brutal.Core.Package.dll` folded in. Namespaces are unchanged and the decompiled `Brutal.Numerics` tree has **zero diff**, so double3/doubleQuat/float4x4 conventions are untouched. Without the rename every `Brutal.Numerics`/`Brutal.Logging` type is unresolved. | `gatOS.GameMod.csproj` references renamed (`Brutal.Core`, `Brutal.Logging`, `Brutal.Numerics`, `Brutal.Strings`, `Brutal.Memory`); `tools/check-dist-tests.py` fixture and `thirdparty/index.ts` DLL list follow. `check-dist.py` derives its forbidden set from the csproj, so it tracks automatically. |
+| **KSA now ships JIT-optimised (rev 5630)** — compiler-invisible | `KSA.dll` and `Planet.Render.Core.dll` `DebuggableAttribute` went `0x107` (DisableOptimizations\|EnableEditAndContinue\|…) → `0x002`. Neither is ReadyToRun. The JIT now **inlines** KSA methods. Harmony 2.4's MonoMod marks a target non-inlinable when it patches it, but cannot reach callers already compiled with an inlined copy, so a patch installed after its hot callers tier up can silently miss them. The load-time hooks (solver, menu, camera, display, `UiPixelCulling`) install in `OnFullyLoaded` before callers warm up. The **lazy** ones (`always_render` 116/110 B, `always_render_iva` ctor 77 B, `thug_life` 112 B, stickers 336 B, paint 215/249/440 B) install mid-session, and `RenderMainPass`/`ResolveAttachments` are also called from the display transpiler's `RenderGame` replacement, compiled at load. | New `Game/Ksa/InlineGuard.cs`: one empty prefix per lazily patched target under `Harmony("gatos.inline_guard")`, installed first in `OnFullyLoaded` (before `InstallDisplayHook`) and removed at unload. Every feature keeps its own lazy install/remove; every unpatch in gatOS is already id- or patch-scoped, so the guard survives them. |
+| **Trail self-shadow specialization (5555–5602 window)** | `CreateFrameResources` now writes specialization constant 6 = `SelfShadowStepCount > 0` (`VolumetricTrailRenderer.cs:874`) and `RaymarchVolumetricTrail.comp:68` zeroes `lightStepCount` when it is 0; the stock editor rebuilds on a zero crossing (`:1260-1262`, `RebuildFrameResources()` at `:558`). Without a rebuild, a write of N > 0 after the pipeline was built at 0 — including `reset` — reads back N but draws no self-shadowing. | `TrailActuator` calls the new reflection handle `FxReflect.RebuildTrail` (private `RebuildFrameResources()`, latch `fx.trail_rebuild`) only when the value crosses zero, on both the write and the pristine-restore paths. It does `Device.WaitIdle()`, so it costs a one-frame hitch. A missing method latches degraded; the field write still lands. |
+
+### Inherited behavior, no adapter change required
+
+- **TNM control frame (flight computer):** while thrusting (`Tvcs.ThrustCurrent > 0`, or an auto burn
+  / ±Δv track with thrust available) `Ctrl2Asmb` is now `Tnm2Asmb` — the helm frame rotated so +X lies
+  along the trimmed net thrust (`FlightComputer.cs:528-530,1433-1516`). Attitude tracks,
+  `attitude_target`, `ctl/rotate` axes and burns aim the net-thrust axis; coasting is unchanged;
+  navball/attitude readback stays in the helm frame. Per-gimbal TVC moved to `TvcAllocation.Solve`.
+- **Auto-burn and a dry stage:** when the active stage runs dry and a later stage exists, the burn is
+  left pending (`AutoBurnStageRanDry`, BurnMode → Manual, warp → 1×) instead of `EndAutoBurn()`;
+  the exhaustion stop is skipped on the first control step after load (`:615-619,676-682`).
+  `IgnitionTime` honours the new `BurnTarget.PlannedIgnition`, which gatOS leaves null.
+- **Sim-step growth cap:** `ApplyVehicleSolvers` sets `_maxStepSimSeconds` (2× the last step,
+  solver-cost limited) and `GetJobSimStep` clamps to it (`Universe.cs:1914-1944,2612-2628`). After a
+  large warp jump `time/warp` (requested) and `time/sim_dt` (achieved) diverge for ~15–20 frames;
+  the camera `time` channel lags on steep ramps. The weld driver's second `GetJobSimStep` call is
+  idempotent.
+- **Save loading (5632/5633):** vehicles with removed/changed parts are skipped (absent from
+  `vessels/`), their crew returned; `Camera.DeserializeSave` then follows the first vehicle or the
+  home body and may change `Program.ControlledVehicle`.
+- **Staging (5604):** inserted sequences are pre-activated, so `navball/deltav` is the active stage's
+  Δv after a load (it pointed at the next sequence before). **Tanks (5631):** auto-assigned tanks of
+  a launched saved vessel start full.
+- **Solar tracking (5611):** `SolarTrackingExtension.CurrentAngle` is wrapped to one turn, so
+  keyframe tracking panels finish retracting through `animations/<n>`. The separate `SolarTracker`
+  module behind `solar/<n>/tracker_angle` is not wrapped and still accumulates.
+- **Interior render gate:** `viewport.Mode == CameraMode.IVA` became `viewport.RendersInterior()`
+  (IVA or `ViewportStateFlags.InsideVehicle`, `ViewportEx.cs:88-95`). `always_render_iva` still works.
+- **Bodies (5621):** Neptune now loads from the shared body library with identical parameters; ids,
+  order and parents in both Sol systems are unchanged. The non-default dense system gained
+  interstellar stars/barycenters. Default-Sol anchor count is still 179.
+- **Ground clutter multi-viewport (5629):** instance data compacted and per-viewport, block renamed
+  `GroundClutterMaterialBuffer`; materials still bake `TextureReference.BindlessHandle` and shaders
+  still sample `globalTextures[...]`, so the clutter-texture bridge is unaffected; clutter still
+  writes the scene depth stickers test against. A new `RadiationBeltPass` runs after `GridPass`
+  (after the sticker postfix).
+- **Misc:** kitten boarding goes through `Universe.DestroyVehicle(…, Boarded)` (5607); a departing
+  vehicle's particle emitters are handed to the parent body (`Vehicle.HandOffEmitters`), so a FaceFx
+  burst can outlive its kitten; `ExplosionVolumeSystem.cs` deleted (now `ExplosionVolumeManager`,
+  no gatOS field touches it).
+- **New, not exposed (coverage gaps):** radiation (5623 — `Radiation.ComputeDoseRate`, magnetospheres
+  on six planets, star `SpaceWeather`, `CelestialSystem.CosmicRays`; display-only, no stored dose),
+  the active control frame (`ActiveControlFrame`/`Tnm2Asmb`), finite-burn planner state,
+  `VolumetricTrailRenderer.TrailEmissionIntensity`.
+
+### Compiler-blind and render verification
+
+- **Metadata survey** (System.Reflection.Metadata, exact signature comparison incl. base-type walk)
+  of the rebuilt mod against the shipped 5638 DLLs: **480/480 external game TypeRefs and 1102/1102
+  MemberRefs** resolve across 18 game assemblies.
+- **Reflection/Harmony checklist** via `MetadataLoadContext`: all 31 lookups (manual input fields,
+  FX handles, cloud/terrain private fields, EVA `_renderable → _characterAvatar → Core.Scale`,
+  `GpuMaterialSystem.AssetMap`, camera protected setters, paint batch fields, every patch target)
+  resolve with **identical** types/signatures in 5554 and 5638.
+- **Display transpiler** re-verified on the shipped (optimised) IL, not the decomp: the tail is still
+  `ldloc.1; call VkDeviceExtensions::End<CommandBuffer>(!!0); ret`, preceded by
+  `GpuProfiler::EndFrame` and `OnRenderGameSwapchainGrab`; `RenderGame` is 4104 B with 11 EH regions.
+- **Paint transform** run (real `PaintShaderTransform.TryInject`) on 5554 and 5638
+  `MeshIndirect.frag`/`MeshIndirectRaytraced.frag` in all three blend modes; all 16 outputs compile
+  with `glslc --target-env=vulkan1.3` against each tree's headers. 5638 adds only `SpecularAA.glsl`
+  and a roughness line after the `sampledColor` anchor; `inStateFlags` still location 4.
+- **Sticker GLSL** extracted from `StickerDecalRenderer.cs` compiles against 5638 headers (the
+  `Global.glsl` struct growth is absorbed by runtime compilation). `SceneDepthTest.glsl` is
+  GridPass's old `HiddenByScene` moved to a shared include, same semantics.
+- `thug_life`: `UnlitMesh.{vert,frag}` and shared includes have no diff; `SuperMeshRenderSystem`
+  edits are fluent vertex-input rewrites. Terrain UBO rings, cloud specialization constants (15),
+  `MaxFramesInFlight` (2) and `ColorFormat` (R16G16B16A16SFloat) unchanged.
+- **Ecosystem note (not fixed here):** the vendored `vendor/purrTTY/*.dll` and every `../purrtty`
+  project still reference `Brutal.Core.Logging`; purrTTY must be rebuilt for 5638 on its own.
+
+### Validation and remaining work
+
+Full solution build: **0 warnings / 0 errors**. Full suite: **1648 passed / 12 VM-gated skips /
+0 failures**; `python3 tools/check-dist-tests.py` passes. The audit scripts (metadata survey,
+reflection checklist, IL dumps, paint/sticker shader runs) lived in the session scratchpad and are not
+shipped. Use [the 5638 live checklist](../docs/VALIDATION.md#ksa-5638-upgrade) before declaring
+flight/render behavior validated.
+
 
 ## 5482 → 5554 upgrade pass (2026-10-11) {#5554-pass}
 
@@ -908,7 +1004,7 @@ worth re-verifying on any game update. It pulled in **new reference DLLs** and a
 |---|---|---|
 | `Brutal.Vulkan`, `Brutal.Vulkan.Abstractions`, `Brutal.Vulkan.Vma` | the Vulkan pipeline/descriptor/buffer/staging surface (`SimpleVkTexture`, `VkUtils.{UploadBufferToImage,StageAndUploadToBuffer}`, `DeviceEx.CreateSampler`, allocator/VMA staging pools) | `<Private>false</Private>`, condition-guarded on `$(KSAFolder)` like the other KSA refs |
 | `Planet.Render.Core` | `Renderer` (Device/Allocator/DynamicStateInfo/ViewportState/Graphics), `RenderTechnique.CreateShaderStages`, `Presets`/`RenderingPresets`, `Program.{GetRenderer,OffscreenTarget,SetViewport}` (was `OffScreenPass` before 5168/rev 5154) | `<Private>false</Private>`, guarded |
-| `Brutal.Core.Memory` | unmanaged buffer/staging helpers for the GPU upload path | `<Private>false</Private>`, guarded |
+| `Brutal.Memory` (was `Brutal.Core.Memory` before 5638/rev 5618) | unmanaged buffer/staging helpers for the GPU upload path | `<Private>false</Private>`, guarded |
 | `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` | `ThugLifeQuadRenderer` is `unsafe` (raw pointer work for the Vulkan buffer uploads / descriptor writes) | first use of `unsafe` in gatOS |
 
 **Pipeline assumptions baked into `ThugLifeQuadRenderer.BuildPipeline`** (any of these moving silently
@@ -1112,7 +1208,7 @@ When a changelog line mentions a subsystem, open these. (Decomp paths relative t
 | **Render internals (`thug_life` quad)** | `KSA/SuperMeshRenderSystem.cs`, `KSA/Program.cs` (`GetRenderer`/`OffScreenPass`/`SetViewport`), `KSA/Camera.cs`, `KSA/Part.cs` (ego transforms); **Planet.Render.Core**, **Brutal.Vulkan(.Abstractions/.Vma)**, **Brutal.Core.Memory** | `Core/Shaders/Mesh/UnlitMesh.{vert,frag}` | reads (anchor math), writes (actions), runtime (render postfix) — **deepest / highest-churn coupling**; see [render refs](#render-refs) |
 | **Render internals (sticker decals — `/sim/paint/stickers`)** | `KSA.Rendering/RenderTarget.cs` (`ResolveAttachments`, `DepthImage`, `ColorImage`, `Extent`), `KSA/GridPass.cs` (the pass this is a port of), `KSA/Program.cs` (`OffscreenTarget`/`RenderedViewport`/`MainViewport`/`SetViewport`/`ResourceFrameIndex`/`PointClampedSampler`/`ColorFormat`/`GetRenderer`), `KSA/GlobalShaderBindings.cs`, `KSA.Rendering/{BarrierBatch,ImageBarrierInfo}.cs`, `RenderCore.Systems/BindlessTextureLibrary.cs`, `RenderCore/{ShaderModuleUtils,VkUtils}.cs`, `KSA/{Celestial,Vehicle,Part,Camera,Cursor,Ray}.cs` (anchors + picking) | `Core/DefaultAssets.xml` (`GridFrag`, for the include directory only), `Core/Shaders/Common/{Camera,Global,TextureSet}.glsl` | reads ([`ksa-read-surface.md`](ksa-read-surface.md)), writes ([`ksa-write-surface.md#stickers`](ksa-write-surface.md#stickers)), runtime ([`ksa-runtime-coupling.md#stickers-patch`](ksa-runtime-coupling.md#stickers-patch)) — gatOS's **second** render-thread draw injection; see [sticker assets](#sticker-assets) |
 | **IVA cabin physics (`/sim/debug/iva`)** | `KSA/Part.cs` (SubPart transforms + `MatrixAsmb2VehicleAsmb`), `KSA/PartModelModule.cs` + `KSA/PartModel.cs` (the `Internal` interior classifier), `KSA/MeshReference.cs` (`PositionCompare` triangle soup), `KSA/Vehicle.cs` (accelerometer/rates/CoM), `KSA/IVASeat.cs`, `KSA/Viewport.cs`; **BepuPhysics + BepuUtilities** (gatOS's own `Simulation`, never `ConstraintSim`). Context for *why* not the game's solver: `KSA/ConstraintSim.cs`, `KSA/NarrowPhaseCallbacks.cs`, `KSA/VehicleUpdateTask.cs` | `Core/CoreIVASpaceAGameData.xml`, `Core/CoreIVAPropAAssets.xml`, `Core/CoreCommandAGameData.xml` (the collider blob that rules out the game's sim), `Core/defaultvehicles/Gemini7/vehicle.xml` (the shipped prop set) | reads ([`ksa-read-surface.md#iva-physics`](ksa-read-surface.md#iva-physics)), writes ([`ksa-write-surface.md#iva-physics`](ksa-write-surface.md#iva-physics)), runtime ([`ksa-runtime-coupling.md#iva-cabin-sim`](ksa-runtime-coupling.md#iva-cabin-sim)) — **no Harmony patch, no game-solver mutation** |
-| Numerics | `Brutal.Core.Numerics/` (decomp), `Brutal.Core.Numerics.dll` | — | runtime |
+| Numerics | `Brutal.Numerics/` (decomp), `Brutal.Numerics.dll` (was `Brutal.Core.Numerics.dll` before 5638) | — | runtime |
 
 ---
 
@@ -1309,7 +1405,7 @@ Vulkan minimum. Modules gatOS compiles are **gatOS's** to destroy (unlike `ModLi
 happens as soon as the pipeline holds the code.
 
 **No new reference DLL and no csproj change at all.** Stickers reuse the
-`Brutal.Vulkan(.Abstractions/.Vma)`, `Planet.Render.Core`, `Brutal.Core.Memory` and
+`Brutal.Vulkan(.Abstractions/.Vma)`, `Planet.Render.Core`, `Brutal.Memory` (ex-`Brutal.Core.Memory`) and
 `<AllowUnsafeBlocks>` set the `thug_life` quad already pulled in ([render refs](#render-refs)), the
 `Brutal.ShaderC` reference vehicle paint already needed (namespace `Brutal.ShaderCApi`, for
 `ShaderException`), and the `Brutal.Texture`/`Brutal.Ktx` decode set the clutter overrides added.

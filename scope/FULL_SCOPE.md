@@ -95,7 +95,19 @@ update's blast radius is small and discoverable. The procedure:
    (`EOPNOTSUPP`), logs once, and shows up in `/sim/status/accessors`. The guest sees a failed sensor,
    not a crashed mod. This is the safety net for the things steps 2–3 miss.
 
-> **Current upgrade: 2026.9.22.5482 → 2026.10.10.5554**, audited 2026-10-11.
+> **Current upgrade: 2026.10.10.5554 → 2026.10.19.5638**, audited 2026-10-23.
+> The changelog logs only 5603–5637; 5555–5602 were reviewed from the full decomp diff. One compile
+> break: rev 5618 renamed the `Brutal.Core.*` assemblies to `Brutal.*` (csproj `HintPath`s only).
+> Two compiler-invisible breaks, both fixed: KSA now ships **JIT-optimised** (rev 5630), so lazily
+> installed Harmony patches could be bypassed by inlined copies — new permanent
+> [`InlineGuard`](ksa-runtime-coupling.md#inline-guard); and the trail `self_shadow_steps` zero crossing
+> now needs a pipeline rebuild (`FxReflect.RebuildTrail`). Inherited drift documented: the flight
+> computer steers the net-thrust axis while thrusting, auto-burns wait for staging after a dry stage,
+> a sim-step growth cap, save-load vessel skipping. Build 0 warnings/errors; 1648 passed / 12 skipped;
+> 480/480 TypeRefs and 1102/1102 MemberRefs resolve. [5638 pass](ksa-assets-and-versions.md#5638-pass);
+> live checks in the [5638 checklist](../docs/VALIDATION.md#ksa-5638-upgrade).
+>
+> **Prior upgrade: 2026.9.22.5482 → 2026.10.10.5554**, audited 2026-10-11.
 > Both logs (5482→5541→5554) and all 440 changed decomp/Content files were inventoried. Fixed terrain
 > tangent roughness conversion, sticker viewport/frame descriptor binding, and texture image-layout
 > arguments. Closed the compiler-invisible multi-star catalog gap (all stars/barycenters, stable
@@ -524,18 +536,20 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/Ksa/Paint/Stickers/StickerAnchors.cs` | 2 `[KsaAnchor]` (per-frame geodetic→ego and part-local→ego decal composition) | returns false → that sticker is dormant for the frame rather than drawing garbage |
 | `Game/Ksa/Paint/Stickers/StickerPicker.cs` | 3 `[KsaAnchor]` (the aim ray, KSA's own watertight part raycast sweep, the terrain march+bisect) | no hit → `ENOENT`, nothing placed |
 | `Game/Ksa/Paint/Stickers/StickerManager.cs` | 3 `[KsaAnchor]` (per-frame anchor re-resolution, lazy `Program.GetRenderer()` init, the teardown `WaitIdle`) | a despawned target yields null → dormant, never pruned; `paint.sticker_renderer` health latch |
-| `Game/Ksa/Fx/*.cs` (`FxReflect`×8, `PlumeActuator`×4, `TrailActuator`×2, `CloudActuator`×4, `TerrainActuator`×3, `FxEditorReader`×4, **`FaceFxManager`×1**; `FxPristine` has none — no KSA types) | 26 `[KsaAnchor]` (the four FX editors: the reflective handles in `FxReflect` incl. the terrain UBO rings, the per-family read/write/apply pairs, the plume propagation loop, the sampler's rosters) — **plus `FaceFxManager`**, the `/sim/debug/fx` face-burst emitter (`Program.Instance.ParticleSystem.{EmitterPool.Get,InitializeEmitter}`, `ParticleEmitterReference`, `ParticleEmitter.{LocalOffset,Context,Origin,CreateHandle,ForceSpawningComplete}`, `Vehicle.{AddEmitter,BubbleOrigin}`, `GameSettings.Current.Graphics.Particles`), which also **mirrors** `CrewPortraitPanel.FACE_HEIGHT_OFFSET_EVA` — retuned 0.85 → 0.70 at 5348 (rev 5270) | per-command try/catch in `KsaCatalog`; per-capability `KsaHealth` latches (`fx.*` keys) → `EOPNOTSUPP`; sampler-level try/catch (logged once); pristine restore at unload |
+| `Game/Ksa/Fx/*.cs` (`FxReflect`×8 incl. the 5638 `RebuildTrail` method handle, `PlumeActuator`×4, `TrailActuator`×2, `CloudActuator`×4, `TerrainActuator`×3, `FxEditorReader`×4, **`FaceFxManager`×1**; `FxPristine` has none — no KSA types) | 27 `[KsaAnchor]` (the four FX editors: the reflective handles in `FxReflect` incl. the terrain UBO rings, the per-family read/write/apply pairs, the plume propagation loop, the sampler's rosters) — **plus `FaceFxManager`**, the `/sim/debug/fx` face-burst emitter (`Program.Instance.ParticleSystem.{EmitterPool.Get,InitializeEmitter}`, `ParticleEmitterReference`, `ParticleEmitter.{LocalOffset,Context,Origin,CreateHandle,ForceSpawningComplete}`, `Vehicle.{AddEmitter,BubbleOrigin}`, `GameSettings.Current.Graphics.Particles`), which also **mirrors** `CrewPortraitPanel.FACE_HEIGHT_OFFSET_EVA` — retuned 0.85 → 0.70 at 5348 (rev 5270) | per-command try/catch in `KsaCatalog`; per-capability `KsaHealth` latches (`fx.*` keys) → `EOPNOTSUPP`; sampler-level try/catch (logged once); pristine restore at unload |
 | `Game/Ksa/Camera/*.cs` (`CameraDirector`×9, `CameraTargets`×7, `CameraFrames`×3, `CameraReader`×2, `ViewportSeam`×2 **(new at 5402 — reflection on the protected `GameViewport.FixedController` / `ViewportBase.Mode` setters)**, `CameraFollowable`×1, `CameraPoseController`×1, `CameraViewportPatch`×1) | **26** `[KsaAnchor]` — programmable-camera anchors plus `CameraViewportPatch`'s `GameViewport.OnFrame(double)` prefix/postfix, and the mod-side `IFollowable` + `FixedController` subclass the pose controller drives through (offsets only — never an absolute camera transform). Main viewport is selected by identity; the controller's public `Camera`/viewport camera is used, never unscience's obsolete `___Transform` injector | idle director is one branch; hook faults latch once; driver fault restores camera; unresolvable frames hold last good pose |
 | `Game/Ksa/{DisplayRenderPatch,FrameCapture}.cs` | 3 `[KsaAnchor]` (the `/sim/display` capture: the `Program.RenderGame` transpiler + the in-band Vulkan blit/readback, **plus the 5348-new `GameSettings.UiPixelCulling()` prefix** that suppresses rev 5283's UI coverage mask while the stream is live) | transpiler degrades to **no injection**; the culling prefix is best-effort (a missing target costs capture fidelity, never the stream); a capture-time fault latches the feature off for the session (`_faulted`) |
 | `Game/Ksa/KsaCatalog.cs` | 2 `[KsaAnchor]` (vehicle/astronomical resolution) | self |
+| `Game/Ksa/InlineGuard.cs` | 1 `[KsaAnchor]` (**new at 5638**): permanent `gatos.inline_guard` empty prefixes on every lazily patched target (`Vehicle.GetWorldMatrix`/`UpdateRenderData`, `PartModel` ctor, `RenderMainPass`, `ResolveAttachments`, `PartTreeRenderData.WriteState`/`WriteDynamicState`, `ShaderModuleUtils.FromFile`), installed first in `OnFullyLoaded` so the optimised JIT never inlines them | per-target try/catch → logged and skipped; the feature's own install still reports a miss |
 | `Game/Ksa/{KsaAnchor,KsaHealth}.cs` | churn machinery (no KSA types in KsaHealth) | — |
 | `Game/TelemetrySampler.cs` | 5 `[KsaAnchor]` reads (G4: `Universe.*` time/warp/system + `VersionInfo.Current`) | per-vehicle + per-call try/catch |
 | `Game/Mod.Game.cs` | Harmony targets `Universe.ExecuteNextVehicleSolvers`, `Program.DrawProgramMenusHook`; `Program.MainViewport`, `ModLibrary.Find` | `AccessTools` null-check + try/catch → feature disabled, not crash |
 | `Game/BrutalModLogger.cs` | `Brutal.Logging` sink | try/catch at install |
 | `Mod.cs`, `ModAssets.cs` | StarMap.API attributes, purrTTY contract — **no KSA game types** | n/a (mod-ecosystem ABI, not KSA) |
 
-Detail and per-member break-impact: the four `ksa-*.md` pages. **The census totals 179 `[KsaAnchor]`s**
-at 5554 (one new `BodyReader.FromBarycenter` anchor); 178
+Detail and per-member break-impact: the four `ksa-*.md` pages. **The census totals 181 `[KsaAnchor]`s**
+at 5638 (new: `InlineGuard.Install` and `FxReflect.RebuildTrail`); 179 at 5554 (one new
+`BodyReader.FromBarycenter` anchor); 178
 at 5482 (176 before the pass; the one further occurrence in `Game/Ksa/KsaAnchor.cs` is the attribute's own
 doc comment, not a binding). The **5482** pass added two, both in part paint — the compiler-blind
 `PartTreeRenderData.WriteState`/`WriteDynamicState` + `StateBitFlags` seam on `PartPaintPatches.Resolve`
@@ -571,7 +585,8 @@ So the only remaining un-anchored KSA touch-points are the two `Mod.Game.cs` Har
 the two part-paint plumbing files (`Paint/PartPaintPatches.cs` resolves the seven paint patch targets,
 `Paint/PaintRuntime.cs` holds the `Part`-keyed callback owner — both are anchored *at*
 `PaintManager`, where the lifecycle lives). The
-`gatos.iva`/`gatos.thug_life`/`gatos.always_render`/`gatos.stickers` patch targets and the weld/IVA
+`gatos.iva`/`gatos.thug_life`/`gatos.always_render`/`gatos.stickers` patch targets (each also pinned
+by `gatos.inline_guard` since 5638) and the weld/IVA
 drivers' `VehicleSolver.Wait()` are themselves anchored; the camera and schedule drivers install **no**
 patch and their KSA members are anchored inside `Game/Ksa/Camera/`.
 

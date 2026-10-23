@@ -228,7 +228,8 @@ internal sealed class PaintManager : IDisposable
             if (_cleanupPatches) RemovePatches();
             _store.PublishRuntime(s => s with { PartsStatus = PartPaintStatus.Arming, PartError = "" });
             var fromFile = PartPaintPatches.FromFileMethod ?? throw new MissingMethodException("ShaderModuleUtils.FromFile");
-            var foreign = Harmony.GetPatchInfo(fromFile)?.Prefixes.FirstOrDefault(p => p.owner != HarmonyId);
+            var foreign = Harmony.GetPatchInfo(fromFile)?.Prefixes
+                .FirstOrDefault(p => p.owner != HarmonyId && p.owner != InlineGuard.HarmonyId);
             if (foreign is not null)
             {
                 var message = $"shader compiler prefix conflict with '{foreign.owner}'";

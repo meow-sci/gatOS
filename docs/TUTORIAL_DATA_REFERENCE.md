@@ -172,7 +172,9 @@ The single most important choice in a flight tutorial:
    ```sh
    echo "0 0 0 1" > /sim/vessels/active/ctl/attitude_target   # x y z w
    ```
-   The autopilot points body **+X** (the nose/thrust axis) along `transform(+X, q)` in CCI. Building
+   The autopilot points body **+X** (the nose/thrust axis) along `transform(+X, q)` in CCI. (Since KSA
+   5638, while thrusting it points the **net-thrust axis** instead — identical on a symmetric stack,
+   offset on canted/asymmetric engines.) Building
    `q` correctly is the crux of the intermediate tutorials — see §5 and the verbatim helper in the
    [`tutorials` skill's `snippets.md`](../.agents/skills/tutorials/snippets.md).
 
@@ -180,7 +182,7 @@ The single most important choice in a flight tutorial:
 
 | File | Write | Meaning |
 |---|---|---|
-| `ctl/burn` | `ut dvx dvy dvz` | Schedule an impulsive maneuver at sim time `ut` with a **CCI** Δv vector; the autopilot orients and executes it. Great for transfer/circularization without hand-flying. |
+| `ctl/burn` | `ut dvx dvy dvz` | Schedule an impulsive maneuver at sim time `ut` with a **CCI** Δv vector; the autopilot orients and executes it. Great for transfer/circularization without hand-flying. Since KSA 5638 a burn whose stage runs dry (with a later stage left) waits for `ctl/stage` instead of ending. |
 
 ### 4.4 The phase gotcha every attitude/burn tutorial must state
 

@@ -3,6 +3,30 @@
 Manual pass results live here. Record machine, date, purrTTY/gatOS versions and the outcome of
 each item; failures get a short note plus the relevant `logs/qemu-*.log` excerpt.
 
+## KSA 5638 upgrade — live pass pending {#ksa-5638-upgrade}
+
+Static upgrade: 2026-10-23, `2026.10.10.5554` → `2026.10.19.5638` (changelog 5603–5637 only;
+5555–5602 from the decomp diff). Build, metadata survey, IL and shader checks are in the
+[pass record](../scope/ksa-assets-and-versions.md#5638-pass). **No live game check below was run.**
+Record game/mod/purrTTY versions, platform and `/sim/status/accessors`. **purrTTY must be rebuilt
+against 5638 first** — it (and gatOS's vendored contract copies) still reference the removed
+`Brutal.Core.Logging.dll`; an unrebuilt purrTTY fails to load and is not a gatOS fault.
+
+| Check | Result |
+|---|---|
+| Startup log shows `gatOS inline guard installed on 8 lazily patched KSA method(s)` (no "not found" warnings), before the display/camera/solver hook lines. | ☐ |
+| **Lazy patches after warm-up (the 5630 inlining risk):** fly for several minutes first, *then* enable each: mark a vessel `always_render` and back off until it would sub-pixel cull (it must keep drawing, including an EVA kitten); `always_render_iva` on → interiors visible outside IVA; place a `thug_life` entry; place/spray a sticker; arm part paint and change a rule. Each must take effect immediately at every call site, and disabling must restore stock behaviour. Repeat once after a scene/vessel switch. | ☐ |
+| `debug/plumetrail/render/self_shadow_steps`: 4 → 0 removes trail self-shadowing; 0 → 8 and `reset` (back to 4) restore it (one-frame hitch on each zero crossing only); also toggle MSAA/AA while at 0, then write 4 — self-shadow must return. No `fx.trail_rebuild` latch in `/sim/status/accessors`. | ☐ |
+| Flight computer under thrust: on an asymmetric / canted-engine vessel, hold `prograde` and an `attitude_target` while burning — the **net thrust** axis points at the target and the navball shows the offset; coasting holds body +X as before. `ctl/rotate` during a burn behaves sensibly. | ☐ |
+| `ctl/burn` on a two-stage vessel that runs the first stage dry mid-burn: warp drops to 1×, the burn stays pending, `ctl/stage` resumes it to completion. A single-stage dry burn still ends. | ☐ |
+| Warp ramp: jump `ctl/warp` from 1× to a high rung; `time/warp` reports the requested factor immediately while `time/sim_dt` ramps up over ~15–20 frames. Camera tracks with a steep `time` channel play without stalls; welds stay attached through the ramp. | ☐ |
+| Load a save containing a vessel with a removed part: it is absent from `vessels/` on every transport, its crew is back in the roster, and `active` follows the camera fallback without accessor faults. `navball/deltav` right after any load matches the active stage. | ☐ |
+| Retract a sun-tracking keyframe panel through `animations/<n>`: it finishes retracting and the vessel can go on rails. | ☐ |
+| `/sim/display` stream: complete frames with opaque UI open and across F2 (transpiler on the optimised `RenderGame`); clutter textures bind/unbind; stickers occlude correctly against multi-viewport ground clutter and draw under the new radiation belt overlay (Map View → Magnetospheres). | ☐ |
+| Camera placed inside a hull (`/sim/camera` take + local offset): note whether interiors now render without `always_render_iva` (new `RendersInterior` gate); crew portraits are unaffected by stickers/thug_life. | ☐ |
+
+The [5554 checklist](#ksa-5554-upgrade) is still outstanding and should be run on 5638.
+
 ## KSA 5554 upgrade — live pass pending {#ksa-5554-upgrade}
 
 Static upgrade: 2026-10-11, `2026.9.22.5482` → `2026.10.10.5554` through 5541. Both logs,

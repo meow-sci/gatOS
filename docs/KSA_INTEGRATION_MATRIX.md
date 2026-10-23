@@ -15,7 +15,29 @@ new events) and **G4** (full control surface: throttle/staging/attitude/burn, RC
 built; they add **no** KSA coupling — every transport speaks the same `SnapshotStore` (reads) and
 `ICommandSink`/`SimCommand` (writes), so this matrix (the KSA-touching surface) is unaffected by them.
 
-**Current upgrade: 2026-10-11 against `2026.10.10.5554`, from audited `2026.9.22.5482`.**
+**Current upgrade: 2026-10-23 against `2026.10.19.5638`, from audited `2026.10.10.5554`.**
+Changelog only covers 5603–5637; 5555–5602 were reviewed from the decomp diff. One compile break:
+rev 5618 renamed the Brutal assemblies (`Brutal.Core.Common` → `Brutal.Core`,
+`Brutal.Core.{Logging,Numerics,Strings,Memory}` → `Brutal.{…}`; namespaces unchanged — csproj
+`HintPath`s only). Two compiler-invisible breaks, fixed: KSA ships **JIT-optimised** since rev 5630, so
+lazily patched targets are now pinned non-inlinable at load by `InlineGuard`; and
+`render/self_shadow_steps` crossing zero needs a trail pipeline rebuild (`FxReflect.RebuildTrail`).
+Binary survey: 480/480 types and 1102/1102 members resolve; all 31 reflection/Harmony lookups
+identical to 5554. 0 warnings/errors; 1648 passed / 12 skipped. Changed anchors carry
+`Verified = "2026-10-23"` / `GameVersion = "2026.10.19.5638"`.
+[5638 pass](../scope/ksa-assets-and-versions.md#5638-pass); live checks:
+[checklist](VALIDATION.md#ksa-5638-upgrade).
+
+| Changed anchor / site | 5638 binding and behavior | Risk |
+|---|---|---|
+| `InlineGuard.Install` (**new**) | Permanent `gatos.inline_guard` empty prefixes on `Vehicle.GetWorldMatrix`/`UpdateRenderData`, `PartModel..ctor(Template)`, `SuperMeshRenderSystem.RenderMainPass`, `RenderTarget.ResolveAttachments`, `PartTreeRenderData.WriteState`/`WriteDynamicState`, `ShaderModuleUtils.FromFile`; installed first in `OnFullyLoaded` | H |
+| `FxReflect.RebuildTrail` (**new**), `TrailActuator.{TryRead,Clear}` | Private `VolumetricTrailRenderer.RebuildFrameResources()` invoked on a `SelfShadowStepCount` zero crossing (specialization constant 6); latch `fx.trail_rebuild` | H |
+| `FlightComputerActuator` (attitude mode/target, burn) | Same fields; under thrust the FC controls the TNM (net-thrust) frame; a dry stage with a later stage leaves the burn pending | M |
+| `WeldEngine.UpdateWeld` | `GetJobSimStep` now clamps the step (growth cap) and writes `_achievedSpeedFraction`; second call idempotent | H |
+| `IvaForceRender.SetEnabled` | Render gate is `viewport.RendersInterior()` (IVA or `InsideVehicle`) | H |
+| `VesselForceRender`, `ThugLifeRenderPatches`, `StickerRenderPatches`, `PartPaintPatches`, `DisplayRenderPatch` | Targets/bodies unchanged; lazy ones guarded; transpiler re-verified on optimised IL | H/M |
+
+**Prior upgrade: 2026-10-11 against `2026.10.10.5554`, from audited `2026.9.22.5482`.**
 The 5554 review found two direct bindless API breaks, one global UBO descriptor break, and
 semantic drift in the terrain roughness UBO and celestial catalog. The bindless calls now pass
 `VkImageLayout.ShaderReadOnlyOptimal`; stickers select the per-viewport
@@ -680,7 +702,7 @@ re-reads each frame, so there is **no apply call**:
 
 | Path | A | Write | KSA anchor | Risk | Phase |
 |---|---|---|---|---|---|
-| `debug/plumetrail/render/*` | St | per-field (see SPEC §3.7) | `TrailActuator.TryRead`/`TryWrite`: `VolumetricTrailRenderer.{MaxDistance,VoxelDepthFirstSliceThickness,MinStepSize,StepSizeDistanceScale,ErosionMaxDepth,ErosionEdgeSharpness,SelfShadowStepCount,LightBrightness,SkyAmbientBrightness}` (public fields, `float`/`int`). ⚠️ **`render/trail_color` retired at 5402** — `DebugTrailColor` was removed from the renderer (colour is per-`PlumeTrailTemplate` asset now). **5482 (revs 5446/5454):** these global knobs also govern explosion volumes, which now have their own `GameSettings.Graphics.Explosions` / `ShowExplosions()` gate, dropped the atmosphere requirement (`ExplosionVolumeSystem.CanRender()`) and render on airless bodies / with clouds off via `CloudRenderer.RenderVolumetricTrailsOnly`; `MAX_VOLUMES` 64→2048 — the knobs visibly affect more of the scene; no field changed. **5554/rev 5509:** trail radius expansion now follows exhaust entrainment; `ExpansionTimeSeconds` is a grouped-trail lifetime-fade delay, not time-to-full-radius. | M | Frame |
+| `debug/plumetrail/render/*` | St | per-field (see SPEC §3.7) | `TrailActuator.TryRead`/`TryWrite`: `VolumetricTrailRenderer.{MaxDistance,VoxelDepthFirstSliceThickness,MinStepSize,StepSizeDistanceScale,ErosionMaxDepth,ErosionEdgeSharpness,SelfShadowStepCount,LightBrightness,SkyAmbientBrightness}` (public fields, `float`/`int`). ⚠️ **`render/trail_color` retired at 5402** — `DebugTrailColor` was removed from the renderer (colour is per-`PlumeTrailTemplate` asset now). **5482 (revs 5446/5454):** these global knobs also govern explosion volumes, which now have their own `GameSettings.Graphics.Explosions` / `ShowExplosions()` gate, dropped the atmosphere requirement (`ExplosionVolumeSystem.CanRender()`) and render on airless bodies / with clouds off via `CloudRenderer.RenderVolumetricTrailsOnly`; `MAX_VOLUMES` 64→2048 — the knobs visibly affect more of the scene; no field changed. **5554/rev 5509:** trail radius expansion now follows exhaust entrainment; `ExpansionTimeSeconds` is a grouped-trail lifetime-fade delay, not time-to-full-radius. **5638:** `SelfShadowStepCount > 0` is also a pipeline specialization constant; a zero crossing calls `FxReflect.RebuildTrail` (`RebuildFrameResources()`, latch `fx.trail_rebuild`, one-frame hitch). Explosion volumes moved from the deleted `ExplosionVolumeSystem` to `ExplosionVolumeManager`. | M | Frame |
 | `debug/plumetrail/render/expansion_time` | St | number, `0.001..10000` s | `TrailActuator` → `FxReflect.TrailSettings` → `PlumeTrailSettings.ExpansionTimeSeconds`; two private hops (`VolumetricTrailRenderer._plumeTrailSegmentsManager` → `PlumeTrailSegmentsManager._settings`), moved off the renderer at revs 5059/5097. Latch `fx.trail_settings`. 5554: this delays group-owned segment fading; expansion radius now follows entrainment | **H** | Frame |
 | (renderer handle) | — | — | `FxReflect.Trail`: `Program.Instance._volumetricTrailRenderer` (private field — the only handle) | **H** | — |
 | `debug/plumetrail/clear` | T | `1` | `TrailActuator.Clear`: `Program.Instance.ClearPlumeTrails()` — **public instance** method (no reflection) | M | Frame |

@@ -34,3 +34,8 @@ exists. A target that cannot resolve will not become a useful magic vector, so p
 accepts `EclBody`, `EnuBody`, `Lvlh`, `VlfBody`, `BurnBody`, or `Dock`. Automatic holds need
 available control authority. With `ctl/rcs_mode=Disabled`, an RCS-only vessel cannot supply auto-hold
 torque; gimballed thrust can still help while burning.
+
+Since KSA 5638, while the vessel is thrusting (or an auto burn / ±Δv track has thrust available) the
+flight computer steers its net-thrust frame: holds and `ctl/attitude_target` point the trimmed net
+thrust axis, not body +X. On an asymmetric or canted-engine vessel, `attitude/quat` differs from the
+target by that offset during a burn; coasting holds are unchanged.

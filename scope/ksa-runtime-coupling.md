@@ -71,7 +71,9 @@ for the IVA cheat, `gatos.thug_life` for the world-space quad cheat, `gatos.alwa
 per-vessel render-distance override, and `gatos.stickers` for the projected-decal pass — are each
 installed only while their feature is active; see below. `gatos.thug_life` and `gatos.stickers` are
 gatOS's **two** render-thread draw injections and are deliberately separate Harmony instances on
-separate methods, so an unpatch of one cannot disturb the other):
+separate methods, so an unpatch of one cannot disturb the other). Since 5638 a further **permanent**
+instance, `gatos.inline_guard`, pins every lazily patched target non-inlinable at load — see
+[the inline guard](#inline-guard):
 
 | Patch | KSA target | Decomp file | Purpose | If target moves |
 |---|---|---|---|---|
@@ -267,6 +269,41 @@ changed shape); every permanent target is still a single overload:
   pre-existing `_clutterPrePass.End(commandBuffer2)` (`:4706`). `UiPixelCulling()` (`:3293`) still one
   overload, one caller. Rev 5443's present-wait pacing is CPU-side in `PrepareFrame` and leaves
   `MaxFramesInFlight = 2` — see [the capture section](#display-capture).
+
+### Inline guard (`gatos.inline_guard`) — permanent no-op prefixes {#inline-guard}
+
+**Why it exists.** From `2026.10.19.5638` (rev 5630) KSA ships compiled with optimisations:
+`KSA.dll`/`Planet.Render.Core.dll` `DebuggableAttribute` went `0x107` (DisableOptimizations) →
+`0x002`, and neither is ReadyToRun. The JIT now inlines small KSA methods into their callers.
+Harmony 2.4 (MonoMod.Core `TryDisableInlining`) marks a target non-inlinable **when it patches it**,
+which protects callers compiled afterwards but not callers that already tiered up with an inlined
+copy. Every patch installed at load is safe; every **lazy** patch installed mid-session is not.
+
+**What it does.** `Game/Ksa/InlineGuard.cs` installs one empty prefix on each lazily patched target,
+first thing in `Mod.OnFullyLoaded` (right after the menu fallback, **before** `InstallDisplayHook`, whose
+transpiler recompiles `Program.RenderGame` — the caller of `RenderMainPass` and `ResolveAttachments` —
+at load). Removed at `Unload` after `TeardownGameCheats`. Each feature still installs/removes its own
+patch exactly as before (every gatOS unpatch is id- or patch-scoped, so none removes the guard). A
+target that fails to resolve is logged and skipped. Cost: one empty call per invocation. Paint's
+shader-compiler conflict check (`PaintManager`, which refuses to arm when a foreign prefix sits on
+`ShaderModuleUtils.FromFile`) ignores `InlineGuard.HarmonyId`, since the guard's prefix is void and
+never skips or alters the original; any future "foreign patch" check must do the same.
+
+| Guarded target (IL at 5638) | Lazy feature | Hot caller |
+|---|---|---|
+| `Vehicle.GetWorldMatrix(Camera)` (116 B) | `always_render` | `Vehicle`/`KittenEva.UpdateRenderData` |
+| `Vehicle.UpdateRenderData(IViewport,int)` (110 B, virtual) | `always_render` | `Program` per-vehicle loops (guarded-devirtualization candidate) |
+| `PartModel..ctor(PartModelModule.Template)` (77 B) | `always_render_iva` | `PartModel` factory (`PartModel.cs:430`) |
+| `SuperMeshRenderSystem.RenderMainPass(IViewport,CommandBuffer)` (112 B) | `thug_life` | `Program.RenderGame` (transpiled at load), `RenderViewport`, `RenderEditor` |
+| `RenderTarget.ResolveAttachments(CommandBuffer,bool)` (336 B) | stickers | `Program.RenderGame` and viewport renders |
+| `PartTreeRenderData.WriteState` / `WriteDynamicState` (215 / 249 B) | paint | `PartTreeRenderData` rebuild/rewrite loops |
+| `ShaderModuleUtils.FromFile(Device,string,ref VkShaderStageFlags,CompileOptions?)` (440 B) | paint | shader/pipeline builds |
+
+**Rule:** any new lazily installed Harmony target must be added to `InlineGuard.Targets()` with the
+same signature its feature resolves, and any new always-on patch must install in `OnFullyLoaded`.
+**Live-only:** whether StarMap's `[StarMapAllModsLoaded]` fires before KSA's frame loop has warmed up
+cannot be proven statically — [VALIDATION](../docs/VALIDATION.md#ksa-5638-upgrade) checks each lazy
+feature after an extended session.
 
 ### Dynamic IVA patches (`gatos.iva`) {#iva-patches}
 
@@ -887,9 +924,12 @@ Frame conversion members touched: `IParentBody.GetCci2Ccf`/`GetLlaFromCcf`, `Veh
 treatment: [`docs/KSA_CELESTIAL_COORDINATE_FRAMES.md`](../docs/KSA_CELESTIAL_COORDINATE_FRAMES.md).
 
 **Numerics (Brutal).** All vector/quat math uses `Brutal.Numerics` (`double3`, `doubleQuat`, `float3`,
-`int3`) from the `Brutal.Core.Numerics.dll` family — a **separate assembly set** from `KSA.dll`. rev 4729
+`int3`) from `Brutal.Numerics.dll` — a **separate assembly set** from `KSA.dll`. rev 4729
 ("Update KSA to use the latest Brutal packages") bumped these; gatOS compiled clean against the new
-Brutal, so no numerics API moved. **Risk: Medium** — a Brutal change would break broadly across
+Brutal, so no numerics API moved. Rev 5618 (5638) renamed the whole `Brutal.Core.*` family
+(`Brutal.Core.Common` → `Brutal.Core`, `Brutal.Core.{Logging,Numerics,Strings,Memory,Collections,Maths}`
+→ `Brutal.{…}`) with **unchanged namespaces and a zero-diff `Brutal.Numerics` decomp** — only the
+csproj `HintPath`s had to move. **Risk: Medium** — a Brutal change would break broadly across
 `Game/Ksa/**` (numerics are everywhere), so it is worth scanning the Brutal changelog too, not just KSA.
 Known gotcha preserved in code: `VesselReader` uses the *static* `double3.Transform(...)` to dodge the
 extension-method overload that would drag `BepuUtilities` into resolution (CS0012).
@@ -1025,6 +1065,7 @@ through those handles is public API. The write/read rows are on
 | Latch key | gatOS site | Reflected member | 5056 status |
 |---|---|---|---|
 | `fx.trail_renderer` | `FxReflect.Trail` | `Program.Instance._volumetricTrailRenderer` (private instance field) — the only handle on the one `VolumetricTrailRenderer` | ✅ present (`Program.cs:160`) |
+| `fx.trail_rebuild` | `FxReflect.RebuildTrail` | `VolumetricTrailRenderer.RebuildFrameResources()` (private instance **method**, invoked only when `render/self_shadow_steps` crosses zero) | ✅ born at 5638 (`VolumetricTrailRenderer.cs:558`); `Device.WaitIdle()` inside → one-frame hitch |
 | `fx.plume_templates` | `FxReflect.PlumeTemplates` | `VolumetricExhaustTemplate.References` (internal static `SerializedCollection<…>`) → public `GetList()` | ✅ present (`VolumetricExhaustTemplate.cs:37`); degrade falls back to harvesting ids off live nozzles |
 | `fx.cloud_renderer` | `FxReflect.Clouds` | `Program.Instance._planetTransparenciesRenderer` (private) → `GetCloudRenderer()` (public) | ✅ present (`Program.cs:152`, `PlanetTransparenciesRenderer.cs:87`) |
 | `fx.cloud_apply` | `FxReflect.CloudApply` | `CloudRenderer._renderer` / `_cloudShadowsRenderer` / `_worleyNoise3dTarget` (private) — the three arguments the layer re-upload needs (`_planetToCloudRenderData` itself is public) | ✅ present (`CloudRenderer.cs:95,151,235`) |
@@ -1066,6 +1107,13 @@ arithmetic, and field-wise frame mirror still target the correct rings. Rev 5509
 radius growth to follow exhaust entrainment. `PlumeTrailSettings.ExpansionTimeSeconds` remains an
 accessible field but now delays grouped-trail lifetime fading, so this is documented as a value
 meaning change rather than a path or binding removal.
+
+**5638 trail self-shadow specialization:** `SelfShadowStepCount > 0` is now also baked into the
+trail raymarch pipeline (specialization constant 6, `VolumetricTrailRenderer.cs:874`;
+`RaymarchVolumetricTrail.comp:68`), and the stock editor rebuilds frame resources when the slider
+crosses zero. `TrailActuator` does the same through `fx.trail_rebuild` on both the write and the
+pristine-restore paths, so `0 = off` and every `N > 0` keep working; without it a write of N after a
+rebuild at 0 would read back N and draw no self-shadowing.
 
 ---
 
@@ -1156,6 +1204,24 @@ reasoning, not evidence, and needs a live check. See
 still reused, and the deferred retire queue still keeps the custom image alive across in-flight
 frames. `GroundClutterRenderer` changed multi-viewport culling internals, while the clutter
 catalog fields and stock texture references used here remain stable.
+
+## 5638 runtime findings {#5638-findings}
+
+- **Optimised KSA build (rev 5630)** — see [the inline guard](#inline-guard). The display transpiler
+  was re-verified on the shipped IL (`ldloc.1; call End<CommandBuffer>; ret` tail intact); every
+  permanent patch target and reflection accessor resolves with identical signatures/types.
+- **Brutal assembly rename (rev 5618)** — `Brutal.Core.*` → `Brutal.*` file names, unchanged
+  namespaces; csproj `HintPath`s only. See [frames & numerics](#frames-and-numerics).
+- **Sim-step growth cap** — `Universe.ApplyVehicleSolvers` sets `_maxStepSimSeconds` (2× the last
+  step, solver-cost limited) and `GetJobSimStep` clamps to it and writes `_achievedSpeedFraction`
+  (`Universe.cs:1914-1944,2612-2628`). The frame order (`ApplyVehicleSolvers → GetJobSimStep →
+  ExecuteNextVehicleSolvers → OnFrameViewports → if (DrawUI) {OnDrawUiFrame; OnDrawUiViewports} →
+  render`) is unchanged, so the solver-drain prefix and the weld driver's second `GetJobSimStep` call
+  (idempotent with no intervening `ApplyVehicleSolvers`) still see the queued step. The camera
+  director's `SetSimulationSpeed` ramps are now rate-limited by the cap.
+- **Hook call sites unchanged** — `DrawProgramMenusHook` (inside `_isMenuBarVisible && DrawUI`),
+  `GameViewport.OnFrame(double)`, `Program.GetPlayerDeltaTime`, `UiPixelCulling()` (`GameSettings.cs:3472`,
+  one caller). Linux now starts on X11 by default (5622); detached windows are off on native Wayland.
 
 ## 5482 runtime findings {#5482-findings}
 

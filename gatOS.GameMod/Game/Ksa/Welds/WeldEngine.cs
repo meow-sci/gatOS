@@ -21,8 +21,8 @@ internal static class WeldEngine
             + "Orbit.CreateFromStateCci(IParentBody,UniverseTime,double3,double3,byte4); "
             + "Universe.GetJobSimStep(double).NextTime; Program.GetPlayerDeltaTime; "
             + "Part.{PositionVehicleAsmb,Asmb2VehicleAsmb}",
-        SourceFile = "KSA/Vehicle.cs / KSA/Orbit.cs / KSA/Universe.cs / KSA/Part.cs", Verified = "2026-08-23",
-        GameVersion = "2026.8.22.5348", Risk = ChurnRisk.High,
+        SourceFile = "KSA/Vehicle.cs / KSA/Orbit.cs / KSA/Universe.cs:1914-1944,2612-2628 / KSA/Part.cs", Verified = "2026-10-23",
+        GameVersion = "2026.10.19.5638", Risk = ChurnRisk.High,
         Notes = "The welds per-tick teleport. Stamps the orbit with the NEXT sim-step time (not "
             + "GetElapsedTime) so the source body time aligns with the queued solver tick. 5261: the time "
             + "argument became UniverseTime (rev 5211); GetJobSimStep's body is otherwise unchanged, so "
@@ -35,7 +35,8 @@ internal static class WeldEngine
             + "trim/intake/merge/split itself (revs 5331/5339, 2.0x split hysteresis plus a cached "
             + "pair-clearance dictionary) and Teleport detaches via the private RemoveFromCurrentBubble(). "
             + "WeldManager.Update already calls JobSystems.VehicleSolver.Wait() first, so the per-tick "
-            + "teleport still runs outside that job.")]
+            + "teleport still runs outside that job."
+            + " 5638: GetJobSimStep is no longer pure: it caps the step at max(_maxStepSimSeconds, dtPlayer) (_maxStepSimSeconds = 2x the last step, solver-cost limited, set in ApplyVehicleSolvers) and writes _achievedSpeedFraction. gatOS calls it after KSA's own PrepareFrame call with no intervening ApplyVehicleSolvers, so the clamp is idempotent and NextTime still equals the queued step.")]
     public static bool UpdateWeld(WeldEntry entry)
     {
         var source = entry.Source;

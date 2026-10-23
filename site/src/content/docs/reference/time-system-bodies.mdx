@@ -10,7 +10,7 @@ sidebar:
 | Path               | Format               | Meaning                                            |
 | ------------------ | -------------------- | -------------------------------------------------- |
 | `time/ut`          | seconds              | universal simulation time                          |
-| `time/warp`        | scalar               | current warp factor; `1` is realtime               |
+| `time/warp`        | scalar               | requested warp factor; `1` is realtime (5638+: the achieved rate ramps up — compare `time/sim_dt`) |
 | `time/sim_dt`      | seconds              | last simulation advance; `0` is effectively paused |
 | `time/warp_speeds` | `f f …`              | discrete game warp factors                         |
 | `time/auto_warp`   | `0` or `1 target-ut` | automatic warp state and target                    |

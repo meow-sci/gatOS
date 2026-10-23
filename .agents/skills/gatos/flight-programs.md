@@ -163,7 +163,10 @@ embodied there:
 2. **The attitude-output path** — each tick the solver yields a thrust **direction** in CCI; the
    program turns it into the Body→CCI quaternion (body +X = thrust) using KSA's exact quaternion
    arithmetic and writes `ctl/attitude_target`, plus `ctl/throttle = |u|·mass/thrust_max`, plus
-   `ctl/ignite`.
+   `ctl/ignite`. Since KSA 5638 the flight computer aims the **net-thrust axis** at that target while
+   engines are thrusting, which is exactly what a thrust-direction solver wants — but on a canted or
+   asymmetric stack `attitude/quat` will then read back offset from the target during the burn.
+   An auto `ctl/burn` whose stage runs dry (with a later stage left) now pauses until `ctl/stage`.
 3. **Re-solve every tick (MPC)** — apply only the first command of each fresh solve; re-plan on new
    state. Handle **infeasibility** (hold retrograde, throttle 0) rather than writing garbage.
 4. **A real state machine** — Idle → Burn (G-FOLD) → Terminal (UPFG handoff, latched) → Touchdown,

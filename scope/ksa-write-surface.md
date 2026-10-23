@@ -1697,6 +1697,19 @@ part bounds (see [5482 findings](#5482-findings)).
 Pipeline, shader and GLSL-layout assumptions:
 [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md).
 
+## 5638 write findings {#5638-findings}
+
+Playbook pass 2026-10-23, `2026.10.10.5554` → `2026.10.19.5638`.
+
+- 🔴 **`debug/plumetrail/render/self_shadow_steps` zero crossing — fixed.** The count is now also a pipeline specialization constant (`VolumetricTrailRenderer.cs:874`, `RaymarchVolumetricTrail.comp:68`); the stock editor rebuilds on a zero crossing (`:1260-1262`). `TrailActuator` now invokes the private `RebuildFrameResources()` (`FxReflect.RebuildTrail`, latch `fx.trail_rebuild`) when a write or reset crosses zero — a one-frame `WaitIdle` hitch; otherwise N > 0 after a rebuild at 0 would silently draw no self-shadow.
+- 🔴 **Lazy patches vs the optimised build — fixed.** KSA now ships JIT-optimised (rev 5630); `always_render`, `always_render_iva`, `thug_life`, stickers and paint install their patches mid-session, after hot callers may have inlined the target. `Game/Ksa/InlineGuard.cs` pins all of them at load ([runtime coupling](ksa-runtime-coupling.md#inline-guard)).
+- ⚠️ **Flight computer steers the net-thrust axis while thrusting.** `Ctrl2Asmb` is `Tnm2Asmb` whenever thrust is current, or an auto burn / ±Δv track has thrust available (`FlightComputer.cs:528-530,1433-1516`). `ctl/attitude_mode` tracks, `ctl/attitude_target`, `ctl/rotate` axes and `ctl/burn` aim the trimmed net-thrust direction, not body +X; coasting is unchanged; readback stays in the helm frame, so an asymmetric stack shows an offset during a burn. TVC moved to `TvcAllocation.Solve`.
+- ⚠️ **`ctl/burn` and a dry stage.** With a later stage available, propellant exhaustion no longer ends the burn: `AutoBurnStageRanDry` is set, warp drops to 1×, BurnMode goes Manual and the `BurnTarget` stays pending until the player stages (`:615-619,676-682`). The exhaustion stop is skipped on the first control step after load. `IgnitionTime` honours the new `PlannedIgnition`, which gatOS leaves null (centred ignition as before).
+- ⚠️ **Interior render gate.** `viewport.Mode == CameraMode.IVA` → `viewport.RendersInterior()` (IVA **or** `ViewportStateFlags.InsideVehicle`, `ViewportEx.cs:88-95`). `always_render_iva` still works by clearing `Template.Internal`; crew portraits now render interiors natively.
+- ⚠️ **Camera time channel.** `Universe.SetSimulationSpeed` targets are now reached through the sim-step growth cap, so steep `time` ramps lag.
+- ✅ **Welds.** `GetJobSimStep` now clamps and writes `_achievedSpeedFraction`, but gatOS's second call in a frame is idempotent and `NextTime` still matches the queued step.
+- ✅ **Paint, clutter textures, stickers, thug_life, terrain/cloud/plume FX.** All markers, descriptor layouts, bindless handles, depth semantics, UBO rings and fields hold; see the [pass record](ksa-assets-and-versions.md#5638-pass). Inherited: a departing vehicle's emitters are handed to its parent body, so a FaceFx burst can outlive its kitten; boarding uses `Universe.DestroyVehicle(…, Boarded)`.
+
 ## 5554 write findings {#5554-findings}
 
 Playbook pass 2026-10-11, `2026.9.22.5482` → `2026.10.10.5554` (gapless with the intermediate 5483–5540 changelog). The existing action keys, phase assignments and authority model remain valid.

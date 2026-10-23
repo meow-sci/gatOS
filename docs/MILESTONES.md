@@ -695,6 +695,13 @@ against 5554, and 1648 tests pass with 12 VM-gated skips (including the new mult
 repository's `main`; no older-build pin was introduced. See the [5554 pass](../scope/ksa-assets-and-versions.md#5554-pass)
 and [pending live checks](VALIDATION.md#ksa-5554-upgrade).
 
+KSA 5638 pass (2026-10-23): the assemblies `main` moved to `2026.10.19.5638`, whose Brutal assembly
+rename (rev 5618) broke the `gatOS.GameMod` build until the csproj `HintPath`s were updated. The pass
+also added `Game/Ksa/InlineGuard.cs` (KSA now ships JIT-optimised, rev 5630) and the trail
+self-shadow pipeline rebuild. 0 warnings/errors; 1648 passed / 12 skipped. See the
+[5638 pass](../scope/ksa-assets-and-versions.md#5638-pass) and
+[pending live checks](VALIDATION.md#ksa-5638-upgrade).
+
 ---
 
 ## Welds + `always_render_iva` + parts listing + `thug_life` (ex-`unscience`): Code DONE; in-game pass pending
@@ -776,7 +783,7 @@ anchor vehicle via `ResolveVehicle` from the command `Token`, the entry id trave
 `OnAfterUi` and thug_life via `UpdateThugLife()` from `OnBeforeUi`, tears all cheats down via
 `TeardownGameCheats`, and adds a "Vessel parts" telemetry menu toggle; `TelemetrySampler` projects
 `ThugLife = _thugLife.Snapshot()`. `gatOS.GameMod.csproj` gained `Brutal.Concurrency` (for
-`JobSystems.VehicleSolver.Wait()`) and the `thug_life` render refs `Brutal.Core.Memory`/`Brutal.Vulkan`/
+`JobSystems.VehicleSolver.Wait()`) and the `thug_life` render refs `Brutal.Core.Memory` (now `Brutal.Memory`)/`Brutal.Vulkan`/
 `Brutal.Vulkan.Abstractions`/`Brutal.Vulkan.Vma`/`Planet.Render.Core` (all `<Private>false</Private>`,
 KSA-guarded), and set `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>`.
 

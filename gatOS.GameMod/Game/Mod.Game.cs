@@ -589,6 +589,12 @@ public sealed partial class Mod
             camera.PublishAppliedStatus();
     }
 
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void InstallInlineGuard() => InlineGuard.Install();
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    partial void RemoveInlineGuard() => InlineGuard.Remove();
+
     partial void InstallCameraHook()
     {
         if (_cameraStore is null)

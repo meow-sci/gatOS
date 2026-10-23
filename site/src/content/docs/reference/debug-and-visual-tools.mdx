@@ -74,6 +74,9 @@ Since KSA 5554, `plumetrail/render/expansion_time` is the lifetime-fade delay fo
 segments; radius expansion follows exhaust entrainment. Terrain `slope_roughness_deg` stays in degrees
 (`0..90`), with conversion to KSA's tangent storage.
 
+Since KSA 5638, `plumetrail/render/self_shadow_steps` switching between `0` and a positive count
+rebuilds the trail pipelines (as the stock editor does), so that one write causes a brief hitch.
+
 Vehicle and EVA coloring is a separate, non-debug opt-in surface. See
 [Vehicle and EVA paint](/gatOS/reference/paint/) for its shader lifecycle, scopes, precedence, and
 material-clone behavior.

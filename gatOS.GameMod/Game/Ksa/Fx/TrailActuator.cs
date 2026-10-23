@@ -9,7 +9,9 @@ namespace gatOS.GameMod.Game.Ksa.Fx;
 ///     The <c>/sim/debug/plumetrail</c> actuator (plans/FX_EDITORS_PLAN.md §3): the game's "Plume
 ///     Trails" editor as files. Scope is <b>global</b> — there is one
 ///     <see cref="VolumetricTrailRenderer"/> for the whole game — and every exposed setting is a
-///     public instance field the renderer re-reads each frame, so a write needs no apply call.
+///     public instance field the renderer re-reads each frame, so a write needs no apply call. The
+///     one exception is <c>render/self_shadow_steps</c> crossing zero, which rebuilds the trail
+///     pipelines the way the stock editor does (<see cref="FxReflect.RebuildTrail"/>).
 ///     Game-thread only (the Frame command drain).
 /// </summary>
 internal static class TrailActuator
@@ -23,6 +25,9 @@ internal static class TrailActuator
     ///     the game's own Plume Trails debug window edits in its "Profile" section.
     /// </summary>
     private const string ExpansionTimeKey = "render/expansion_time";
+
+    /// <summary>The one field whose zero crossing needs a pipeline rebuild (since 2026.10.19.5638).</summary>
+    private const string SelfShadowStepsKey = "render/self_shadow_steps";
 
     /// <summary>
     ///     Sets one trail field, capturing its pristine value on the first write.
@@ -47,10 +52,14 @@ internal static class TrailActuator
         var pristine = new double[spec.Arity];
         if (TryRead(trail, spec, pristine))
             FxPristine.Capture(FxFamily.PlumeTrail, Entity, field, pristine);
-        if (!TryWrite(trail, spec, values))
+        if (!TryWrite(trail, spec, values, out var rebuildError))
             return new CommandResult(CommandOutcome.Invalid, $"'{field}' is not bound in this game build");
 
         FxEditorReader.Invalidate();
+        if (rebuildError is not null)
+            return FxReflect.Degrade(health, FxReflect.TrailRebuildAccessor, rebuildError);
+        if (spec.Key == SelfShadowStepsKey)
+            FxReflect.Healthy(health, FxReflect.TrailRebuildAccessor);
         return CommandResult.Ok;
     }
 
@@ -67,11 +76,13 @@ internal static class TrailActuator
 
     /// <summary>Drops every live trail — a one-shot, not a settings change.</summary>
     [KsaAnchor("Program.Instance.ClearPlumeTrails() → VolumetricTrailRenderer.ClearPlumeTrails()",
-        SourceFile = "KSA/Program.cs:4998 / KSA/VolumetricTrailRenderer.cs:261",
-        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/Program.cs:5276 / KSA/VolumetricTrailRenderer.cs:309",
+        Verified = "2026-10-23", GameVersion = "2026.10.19.5638", Risk = ChurnRisk.Medium,
         Notes = "DISCREPANCY vs plans/FX_EDITORS_PLAN.md §3: ClearPlumeTrails is a public INSTANCE method "
             + "on Program (not static), so it is reached through the public Program.Instance — no reflection. "
-            + "5482: line moves only; still clears trails, not explosion volumes.")]
+            + "5482: line moves only; still clears trails, not explosion volumes. "
+            + " 5638: still trails only; explosion volumes moved to ExplosionVolumeManager and gained their own "
+            + "Program.ClearExplosionVolumes() (:5281), which gatOS does not bind.")]
     internal static CommandResult Clear(KsaHealth health)
     {
         if (Program.Instance is not { } program)
@@ -87,7 +98,7 @@ internal static class TrailActuator
         if (FxReflect.Trail(out _) is not { } trail
             || FxCatalog.Match(FxCatalog.PlumeTrail, field) is not { } match)
             return false;
-        var applied = TryWrite(trail, match.Spec, values);
+        var applied = TryWrite(trail, match.Spec, values, out _);
         if (applied)
             FxEditorReader.Invalidate();
         return applied;
@@ -101,8 +112,8 @@ internal static class TrailActuator
             + "StepSizeDistanceScale,ErosionMaxDepth,ErosionEdgeSharpness,SelfShadowStepCount,"
             + "LightBrightness,SkyAmbientBrightness} (public fields); "
             + "PlumeTrailSettings.ExpansionTimeSeconds via FxReflect.TrailSettings",
-        SourceFile = "KSA/VolumetricTrailRenderer.cs:189-206 / KSA/PlumeTrailSettings.cs:13 / KSA/PlumeTimingProfile.cs:44-50",
-        Verified = "2026-10-11", GameVersion = "2026.10.10.5554", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/VolumetricTrailRenderer.cs:226-240 / KSA/PlumeTrailSettings.cs:13 / KSA/PlumeTimingProfile.cs:44-50",
+        Verified = "2026-10-23", GameVersion = "2026.10.19.5638", Risk = ChurnRisk.Medium,
         Notes = "Plain public instance fields, read fresh by the renderer every frame — read-back is "
             + "always the live value and a write needs no apply call. Floats, so a value round-trips at "
             + "single precision. ExpansionTimeSeconds is the exception: revs 5059/5097 moved it off the "
@@ -121,7 +132,13 @@ internal static class TrailActuator
             + "(CloudRenderer.RenderVolumetricTrailsOnly) — so these knobs visibly affect more scenes. "
             + "5554 (rev 5509): radius expansion follows exhaust entrainment; ExpansionTimeSeconds "
             + "now delays lifetime fading of group-owned segments, not time-to-full-radius. The "
-            + "stock editor still exposes expansionTime; preserve the path/range and correct its help.")]
+            + "stock editor still exposes expansionTime; preserve the path/range and correct its help. "
+            + " 5638: the nine fields keep names, types, defaults and per-frame consumers (UpdateBuffers). "
+            + "SelfShadowStepCount is now ALSO baked into the raymarch pipeline as specialization constant 6 "
+            + "(> 0 ? 1 : 0), so a zero crossing rebuilds the pipelines (FxReflect.RebuildTrail), like the "
+            + "stock editor. ExplosionVolumeSystem.cs (cited above for 5482) is deleted; explosion volumes now "
+            + "live in ExplosionVolumeManager, and none of these fields touches them. The new public "
+            + "TrailEmissionIntensity (:242) is not bound.")]
     internal static bool TryRead(VolumetricTrailRenderer r, FxFieldSpec spec, double[] dst)
     {
         switch (spec.Key)
@@ -137,16 +154,22 @@ internal static class TrailActuator
                 return true;
             case "render/erosion_max_depth": dst[0] = r.ErosionMaxDepth; return true;
             case "render/erosion_edge_sharpness": dst[0] = r.ErosionEdgeSharpness; return true;
-            case "render/self_shadow_steps": dst[0] = r.SelfShadowStepCount; return true;
+            case SelfShadowStepsKey: dst[0] = r.SelfShadowStepCount; return true;
             case "render/light_brightness": dst[0] = r.LightBrightness; return true;
             case "render/sky_ambient_brightness": dst[0] = r.SkyAmbientBrightness; return true;
             default: return false;
         }
     }
 
-    /// <summary>Applies one validated payload. False ⇒ the field is not bound in this build.</summary>
-    private static bool TryWrite(VolumetricTrailRenderer r, FxFieldSpec spec, IReadOnlyList<double> v)
+    /// <summary>
+    ///     Applies one validated payload. False ⇒ the field is not bound in this build.
+    ///     <paramref name="rebuildError"/> is non-null when the value landed but the self-shadow
+    ///     pipeline rebuild it needed could not run.
+    /// </summary>
+    private static bool TryWrite(VolumetricTrailRenderer r, FxFieldSpec spec, IReadOnlyList<double> v,
+        out string? rebuildError)
     {
+        rebuildError = null;
         switch (spec.Key)
         {
             case "render/max_distance": r.MaxDistance = (float)v[0]; return true;
@@ -160,7 +183,12 @@ internal static class TrailActuator
                 return true;
             case "render/erosion_max_depth": r.ErosionMaxDepth = (float)v[0]; return true;
             case "render/erosion_edge_sharpness": r.ErosionEdgeSharpness = (float)v[0]; return true;
-            case "render/self_shadow_steps": r.SelfShadowStepCount = (int)Math.Round(v[0]); return true;
+            case SelfShadowStepsKey:
+                var wasOn = r.SelfShadowStepCount > 0;
+                r.SelfShadowStepCount = (int)Math.Round(v[0]);
+                if (r.SelfShadowStepCount > 0 != wasOn && !FxReflect.RebuildTrail(r, out var error))
+                    rebuildError = error;
+                return true;
             case "render/light_brightness": r.LightBrightness = (float)v[0]; return true;
             case "render/sky_ambient_brightness": r.SkyAmbientBrightness = (float)v[0]; return true;
             default: return false;

@@ -25,15 +25,16 @@ internal static class StickerRenderPatches
 
     /// <summary>Installs the postfix. Throws <see cref="MissingMethodException"/> if the seam moved.</summary>
     [KsaAnchor("KSA.Rendering.RenderTarget.ResolveAttachments(CommandBuffer,bool) — Harmony postfix",
-        SourceFile = "KSA.Rendering/RenderTarget.cs:315-321 / KSA/Program.cs:4531,4821,4849,4972",
-        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
+        SourceFile = "KSA.Rendering/RenderTarget.cs:320 / KSA/Program.cs:4782,5095,5123,5250",
+        Verified = "2026-10-23", GameVersion = "2026.10.19.5638", Risk = ChurnRisk.High,
         Notes = "The inResolveDepth=false call at Program.cs:4821 resolves colour only before the "
             + "final full resolve at :4849; the postfix skips that early call so stickers sample only "
             + "fully resolved depth. Main-target identity and the editor exclusion retain the existing "
             + "main-flight-only scope. 5482: RenderTarget.cs is byte-identical and the four call sites only "
             + "moved (secondary viewports :4531, colour-only :4821, full :4849 with GridPass right after at :4852, "
             + "editor :4972). The new UseCloudUpscaling depth barrier (:4828) runs BEFORE the full resolve and "
-            + "does not touch the post-resolve window.")]
+            + "does not touch the post-resolve window."
+            + " 5638: KSA is now JIT-optimised (rev 5630) and this patch installs mid-session, so the target is pinned non-inlinable at load by InlineGuard; without it an already-tiered caller could keep an inlined copy and skip the patch. Call sites only moved (secondary viewports :4782, colour-only :5095, full :5123 with GridPass at :5126, editor :5250). New RadiationBeltPass.Run follows GridPass, i.e. after this postfix, so belts composite over stickers.")]
     public static void Apply(Harmony harmony)
     {
         var original = AccessTools.Method(typeof(RenderTarget), nameof(RenderTarget.ResolveAttachments),

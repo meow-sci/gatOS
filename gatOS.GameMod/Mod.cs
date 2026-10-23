@@ -223,6 +223,11 @@ public sealed partial class Mod
             // out without the KSA assemblies).
             InstallMenuFallback();
 
+            // KSA 5638+ ships JIT-optimised: pin every lazily patched KSA method as patched now, before
+            // its hot callers tier up (and before the display transpiler compiles RenderGame), so a
+            // cheat switched on mid-session is not bypassed by an inlined copy (Game/Ksa/InlineGuard).
+            InstallInlineGuard();
+
             if (ResolveModDir() is not { } modDir)
                 return; // already logged; _assets carries the reason for the status window
 
@@ -489,6 +494,7 @@ public sealed partial class Mod
             _instance = null;
             IsInitialized = false;
             TeardownGameCheats(); // partial: clears welds + restores IVA (unpatches the IVA hooks)
+            RemoveInlineGuard();  // partial: after the cheats' own patches are gone
             RemoveCameraHook();   // partial: no viewport callbacks after camera state is torn down
             RemoveSolverHook();   // partial: drops out without the KSA assemblies
             RemoveMenuFallback(); // partial: drops out without the KSA assemblies
@@ -1058,4 +1064,6 @@ public sealed partial class Mod
     partial void RemoveSolverHook();
     partial void InstallMenuFallback();
     partial void RemoveMenuFallback();
+    partial void InstallInlineGuard();
+    partial void RemoveInlineGuard();
 }

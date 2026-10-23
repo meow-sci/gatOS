@@ -157,20 +157,20 @@
     <!-- KSA DLL references (condition-guarded so game-free CI without the assemblies still builds
          the rest of the solution; this project compiles only when KSAFolder resolves). -->
     <ItemGroup>
-        <Reference Include="Brutal.Core.Common" Condition="Exists('$(KSAFolder)/Brutal.Core.Common.dll')">
-            <HintPath>$(KSAFolder)/Brutal.Core.Common.dll</HintPath>
+        <Reference Include="Brutal.Core" Condition="Exists('$(KSAFolder)/Brutal.Core.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Core.dll</HintPath>
             <Private>false</Private>
         </Reference>
-        <Reference Include="Brutal.Core.Logging" Condition="Exists('$(KSAFolder)/Brutal.Core.Logging.dll')">
-            <HintPath>$(KSAFolder)/Brutal.Core.Logging.dll</HintPath>
+        <Reference Include="Brutal.Logging" Condition="Exists('$(KSAFolder)/Brutal.Logging.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Logging.dll</HintPath>
             <Private>false</Private>
         </Reference>
-        <Reference Include="Brutal.Core.Numerics" Condition="Exists('$(KSAFolder)/Brutal.Core.Numerics.dll')">
-            <HintPath>$(KSAFolder)/Brutal.Core.Numerics.dll</HintPath>
+        <Reference Include="Brutal.Numerics" Condition="Exists('$(KSAFolder)/Brutal.Numerics.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Numerics.dll</HintPath>
             <Private>false</Private>
         </Reference>
-        <Reference Include="Brutal.Core.Strings" Condition="Exists('$(KSAFolder)/Brutal.Core.Strings.dll')">
-            <HintPath>$(KSAFolder)/Brutal.Core.Strings.dll</HintPath>
+        <Reference Include="Brutal.Strings" Condition="Exists('$(KSAFolder)/Brutal.Strings.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Strings.dll</HintPath>
             <Private>false</Private>
         </Reference>
         <!-- JobScheduler (Universe.JobSystems.VehicleSolvers.Wait) — the welds driver drains it. -->
@@ -208,10 +208,10 @@
         <!-- Vulkan + Planet render core, shared by the screen-stream capture (Game/Ksa/FrameCapture:
              CommandBuffer, BufferEx/ImageEx readback) and the GPU quad renderer (Game/Ksa/ThugLife:
              Renderer/RenderPassState/SimpleVkTexture/RenderTechnique/VkUtils in Planet.Render.Core;
-             ByteSize/pointer extensions in Brutal.Core.Memory). Game-provided (Private=false) and
+             ByteSize/pointer extensions in Brutal.Memory). Game-provided (Private=false) and
              condition-guarded like the rest. -->
-        <Reference Include="Brutal.Core.Memory" Condition="Exists('$(KSAFolder)/Brutal.Core.Memory.dll')">
-            <HintPath>$(KSAFolder)/Brutal.Core.Memory.dll</HintPath>
+        <Reference Include="Brutal.Memory" Condition="Exists('$(KSAFolder)/Brutal.Memory.dll')">
+            <HintPath>$(KSAFolder)/Brutal.Memory.dll</HintPath>
             <Private>false</Private>
         </Reference>
         <Reference Include="Brutal.Vulkan" Condition="Exists('$(KSAFolder)/Brutal.Vulkan.dll')">

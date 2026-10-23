@@ -65,7 +65,7 @@ class DistributionTests(unittest.TestCase):
             dist.validate(self.root)
 
     def test_game_and_loader_assemblies_rejected(self):
-        for name in ('KSA.dll', 'Brutal.Core.Common.dll', 'BepuPhysics.dll',
+        for name in ('KSA.dll', 'Brutal.Core.dll', 'BepuPhysics.dll',
                      '0Harmony.dll', 'StarMap.API.dll'):
             with self.subTest(name=name):
                 self.write(name, 'fixture')

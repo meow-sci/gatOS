@@ -36,6 +36,9 @@ needs manual attitude mode because automatic attitude strips those bits.
 engine throttle to respect the vessel's g-force limit; inspect `engines/<n>/throttle` for the applied
 command. Auto burns stop when active engines exhaust propellant; completion/exhaustion resets warp
 to 1× and advances the planned burn. The burn command still takes UT plus a CCI delta-v vector.
+Since KSA 5638, if the active stage runs dry and a later stage exists, the burn is not ended: warp
+returns to 1× and the burn waits until you stage (`ctl/stage`). Burns, like attitude holds, steer the
+net-thrust axis while thrusting.
 
 ## Command families
 

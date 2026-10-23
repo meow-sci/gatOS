@@ -258,7 +258,7 @@ frame-math is the classic *silent* drift, so re-verify the quad's pose in a live
 |---|---|---|---|---|---|
 | camera view-projection | `ThugLifeQuadRenderer.TryComputeModelEgo` | `Program.GetMainCamera()`; `Camera.MVP.viewProjection`; `Program.SetViewport` | `KSA/Program.cs`, `KSA/Camera.cs` | **High** | ✅ |
 | vehicle ego transform | same | `Vehicle.GetMatrixAsmb2Ego(Camera)`; `Vehicle.Asmb2Ego` | `KSA/Vehicle.cs` | **High** | ✅ |
-| part ego pose (anchor) | same | `Part.PositionEgo(in double4x4)`; `Part.Asmb2Ego(doubleQuat)`; `double3.Transform` | `KSA/Part.cs`, `Brutal.Core.Numerics/` | **High** | ✅ |
+| part ego pose (anchor) | same | `Part.PositionEgo(in double4x4)`; `Part.Asmb2Ego(doubleQuat)`; `double3.Transform` | `KSA/Part.cs`, `Brutal.Numerics/` | **High** | ✅ |
 | live-entry validation | `ThugLifeManager.{Update,IsLive}` | `Universe.CurrentSystem.All.UnsafeAsList()`; `Vehicle.Parts.Parts`; `Part.InstanceId` | `KSA/Universe.cs`, `KSA/Vehicle.cs`, `KSA/Part.cs` | Low | ✅ |
 
 The `debug/thug_life/count`, `…/<id>/{vessel,part,spec}` reads under `/sim` are **not** KSA reads — they
@@ -1280,6 +1280,21 @@ tessellation displacement, so the surface point can be off by decimetres near th
 projection box's depth absorbs that entirely, which is exactly why this is a projected decal and not
 a flat quad. Exact members and baseline are in
 [`plans/STICKERS_PLAN.md`](../plans/STICKERS_PLAN.md).
+
+## 5638 read findings {#5638-findings}
+
+Playbook pass 2026-10-23, `2026.10.10.5554` → `2026.10.19.5638`. The changelog logs only 5603–5637;
+5555–5602 were reviewed from the decomp diff alone. **No reader code change** — every bound member
+resolves with an identical signature; the drifts below are inherited value/population changes.
+
+- ⚠️ **Vessel population after a load (5632/5633).** `CelestialSystem.DeserializeSave` now skips a saved vehicle whose parts were removed or changed (`CelestialSystem.cs:694-720`), returns its crew to the roster, and `Camera.DeserializeSave` falls back to the first vehicle or the home body (`Camera.cs:813-850`), possibly changing `Program.ControlledVehicle`. So `vessels/` can lack ids the save file contains, and the active vessel can differ after load.
+- ⚠️ **`navball/deltav` after a load (5604).** Sequences inserted while restoring a save are pre-marked activated (`SequenceList.cs:367,389`), so `FindActiveSequenceDeltaV()` reports the active stage instead of the next one — a fix of a previously wrong value.
+- ⚠️ **`time/warp` vs `time/sim_dt`.** The new sim-step growth cap (`Universe.cs:1914-1944,2612-2628`) ramps the achieved rate at most ~2× per frame and limits it by solver cost. `time/warp` (`Universe.SimulationSpeed`) is the **requested** factor; `time/sim_dt` is the achieved step. After a large warp jump they disagree for ~15–20 frames.
+- ⚠️ **Solar tracking (5611).** Keyframe tracking panels (`SolarTrackingExtension`) now wrap their angle to one turn and finish retracting, so `animations/<n>` reaches the retracted state. `solar/<n>/tracker_angle` reads the separate `SolarTracker` module, which still accumulates unbounded (`SolarTracker.cs:79`).
+- ⚠️ **Tanks at launch (5631).** Auto-assigned tanks of a launched saved vessel start full (`PartTree.ApplyTankAssignments`).
+- ✅ **Bodies (5621).** Neptune is now `<LoadFromLibrary Id="Neptune" Parent="Sol"/>` with identical parameters; ids, order and parents in both Sol systems are unchanged (179 anchors). The non-default dense system gained interstellar stars and barycenters, which the 5554 multi-star reader already handles.
+- ✅ **Frames/numerics.** `Brutal.Numerics` decomp has zero diff (only the assembly was renamed from `Brutal.Core.Numerics`). `Vehicle`/`FlightComputerNavigation` renamed `Ctrl2Body` → `Helm2Body` (not bound); navball `AttitudeAngles` math is identical.
+- 🟡 **Coverage gaps.** Radiation (5623 — `Radiation.ComputeDoseRate`, `MagnetosphereReference`, star `SpaceWeather`, `CelestialSystem.CosmicRays`; display-only gauges, no stored dose), the active control frame (`FlightComputer.ActiveControlFrame`/`Tnm2Asmb`, `NavBallMarkerData.ThrustDirHelm`), finite-burn planner state, and the keyframe tracker angle have no `/sim` leaf.
 
 ## 5554 read findings {#5554-findings}
 
