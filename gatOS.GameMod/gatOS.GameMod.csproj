@@ -23,6 +23,10 @@
         <KsaAssembliesPresent Condition="Exists('$(KSAFolder)/KSA.dll')">true</KsaAssembliesPresent>
     </PropertyGroup>
 
+    <ItemGroup>
+        <Compile Include="../Shared/RuntimeBootstrap.cs" Link="RuntimeBootstrap.cs" />
+    </ItemGroup>
+
     <ItemGroup Condition="'$(KsaAssembliesPresent)' != 'true'">
         <Compile Remove="Game\**\*.cs"/>
     </ItemGroup>

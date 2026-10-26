@@ -1,5 +1,9 @@
 # Runtime Architecture & Telemetry Tuning
 
+## Runtime framework ownership
+
+The [source-shared bootstrap](../Shared/README.md) runs in the entry module before mod methods. Startup checks the real TypeRefs in GameMod, Vm, NineP, Http, Mqtt and Mcp before any server or broker is created. Mismatches stop initialization while preserving the menu and diagnostic reason. The network preload does not move game or private dependency assemblies and cannot repair previously bound references. The existing VM/transport protocols and ports are unchanged.
+
 High-level architecture decisions and tradeoffs are in `OS_ANALYSIS.md`. This file covers the
 runtime shape of the running system and how to tune the telemetry pipeline.
 

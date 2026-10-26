@@ -1,5 +1,7 @@
 # gatOS
 
+Startup preloads shared .NET networking and checks actual gatOS consumer bindings before services or VM setup. An incompatible installation leaves the diagnostic menu available and stops initialization with a restart explanation. See [runtime policy and regression checks](Shared/README.md).
+
 **A real Linux computer for your spacecraft in [Kitten Space Agency](https://ahwoo.com/app/100000/kitten-space-agency).**
 
 **Player documentation:** [meow.science.fail/gatOS](https://meow.science.fail/gatOS/) — installation,

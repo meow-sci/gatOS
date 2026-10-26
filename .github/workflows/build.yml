@@ -102,6 +102,9 @@ jobs:
       - name: Build
         run: dotnet build gatos.slnx -c Release --nologo -v quiet
 
+      - name: Runtime bootstrap regressions
+        run: python3 tools/check_runtime_bootstrap.py --entry-assembly gatOS.GameMod/bin/Release/net10.0/gatOS.GameMod.dll
+
       - name: Test
         id: test
         env:

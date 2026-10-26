@@ -1,5 +1,9 @@
 # Milestone & Feature Build Status
 
+## Runtime networking compatibility
+
+Implemented early source-linked preload, once-per-entry assembly/path/context reports, retained-consumer-binding validation and a startup gate before servers/VM broker setup. Nineteen isolated managed scenarios cover all three-mod orders, concurrent initialization and both exact missing-member negative controls. Native Windows KSA/QEMU acceptance remains pending. See [policy](../Shared/README.md).
+
 Full per-milestone implementation notes, class names, and as-built deviations from the plan.
 Summaries and current status table live in [AGENTS.md](../AGENTS.md); this file has the detail.
 

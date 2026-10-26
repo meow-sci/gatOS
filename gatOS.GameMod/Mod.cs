@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using MeowSci.ModRuntime;
 using gatOS.Bus;
 using gatOS.GameMod.Configuration;
 using gatOS.Logging;
@@ -222,6 +223,15 @@ public sealed partial class Mod
             // [ModMenuEntry] path keeps the menu alive to surface the failure (partial seam: drops
             // out without the KSA assemblies).
             InstallMenuFallback();
+
+            // Diagnose the consuming modules before any server or VM work. A split already
+            // bound before our module initializer requires a restart, not five failing servers.
+            if (!RuntimeBootstrap.Report("gatOS", "gatOS.Vm", "gatOS.NineP", "gatOS.Http", "gatOS.Mqtt", "gatOS.Mcp"))
+            {
+                _lastActionNote = RuntimeBootstrap.Failure;
+                ModLog.Log.Error("gatOS initialization stopped; see runtime networking diagnostics above.");
+                return;
+            }
 
             // KSA 5638+ ships JIT-optimised: pin every lazily patched KSA method as patched now, before
             // its hot callers tier up (and before the display transpiler compiles RenderGame), so a
@@ -554,7 +564,7 @@ public sealed partial class Mod
     {
         if (_broker is not { } broker)
         {
-            Note("gatOS is not initialized.");
+            Note(RuntimeBootstrap.Failure ?? "gatOS is not initialized.");
             return;
         }
 
@@ -584,7 +594,7 @@ public sealed partial class Mod
     {
         if (_broker is not { } broker)
         {
-            Note("gatOS is not initialized.");
+            Note(RuntimeBootstrap.Failure ?? "gatOS is not initialized.");
             return;
         }
 
@@ -612,7 +622,7 @@ public sealed partial class Mod
     {
         if (_broker is not { } broker || _disks is not { } disks)
         {
-            Note("gatOS is not initialized.");
+            Note(RuntimeBootstrap.Failure ?? "gatOS is not initialized.");
             return;
         }
 

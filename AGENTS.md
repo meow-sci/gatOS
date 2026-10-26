@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## Shared runtime bootstrap
+
+`Shared/RuntimeBootstrap.cs` is source-linked only into `gatOS.GameMod`, synchronized with purr2d2/unscience. Keep its early module initializer and string-only preload intact. The narrow CA2255 annotation identifies application entry-module startup code, not a general warning exemption. `OnFullyLoaded` reports actual networking consumer bindings before services/broker setup; incompatible startup retains the menu and reason. Run `python3 tools/check_runtime_bootstrap.py --entry-assembly gatOS.GameMod/bin/Release/net10.0/gatOS.GameMod.dll` alongside the full solution tests. See `Shared/README.md`; no published /sim or MCP schema changes.
+
 This file guides Claude Code (claude.ai/code) when working in this repository. It documents what
 **exists today**; the forward plan lives in `OS_PLAN.md`. When this file and the plan disagree
 about how the code *currently works*, this file wins and the plan is stale — fix it.

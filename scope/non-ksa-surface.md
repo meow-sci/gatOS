@@ -1,5 +1,9 @@
 # Scope — Game-Free Surface (KSA coupling: none)
 
+## Shared .NET networking startup
+
+`Shared/RuntimeBootstrap.cs` is linked into the GameMod entry module and has no KSA dependencies. The module initializer preloads default networking; the guarded startup report validates actual consumer TypeRefs and the TCP constructor/endpoint contract. It runs before the existing server/broker startup and may stop initialization with a menu-visible reason. This depends on StarMap/.NET load contexts, so game packaging can affect it even though no game member or KsaAnchor is added. No /sim/MCP schema, guest or save changes. See [policy](../Shared/README.md).
+
 > The other ~90% of gatOS: everything that builds and tests **without** the KSA game assemblies. Included
 > so this catalog is *complete* — but every entry here is, by the dependency rule, **immune to KSA
 > updates**. A game update can never break these; they only ever change what *values* flow through (which

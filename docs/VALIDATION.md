@@ -1,5 +1,11 @@
 # In-game validation record (OS_PLAN.md T6.6 / T6.7 / T9.3)
 
+## Shared runtime networking
+
+- [ ] With purr2d2/unscience/purrTTY enabled on Windows, check each runtime networking report is ready and contains only default networking copies; gatOS servers and VM boot successfully.
+- [ ] Repeat different mod orders and gatOS standalone.
+- [ ] For an incompatible installation, verify one startup report explains the paths/contexts and restart requirement, the menu stays available, and no server/broker startup is attempted.
+
 Manual pass results live here. Record machine, date, purrTTY/gatOS versions and the outcome of
 each item; failures get a short note plus the relevant `logs/qemu-*.log` excerpt.
 

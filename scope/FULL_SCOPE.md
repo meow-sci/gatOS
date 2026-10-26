@@ -1,5 +1,7 @@
 # gatOS — Full Scope & Game-Integration Map
 
+Runtime networking startup now includes a source-linked module initializer, actual-consumer binding diagnostics and a gate before server/VM initialization. No game members or anchors are added. See [game-free runtime surface](non-ksa-surface.md#shared-net-networking-startup) and [policy](../Shared/README.md).
+
 > **What this folder is.** `scope/` is the durable, structured catalog of **every gatOS feature and
 > exactly how it touches the Kitten Space Agency (KSA) game** — the document you read *first* when a
 > KSA update lands to answer one question: **"will this game update break gatOS, and where?"**
