@@ -15,7 +15,27 @@ new events) and **G4** (full control surface: throttle/staging/attitude/burn, RC
 built; they add **no** KSA coupling — every transport speaks the same `SnapshotStore` (reads) and
 `ICommandSink`/`SimCommand` (writes), so this matrix (the KSA-touching surface) is unaffected by them.
 
-**Current upgrade: 2026-10-23 against `2026.10.19.5638`, from audited `2026.10.10.5554`.**
+**Current upgrade: 2026-10-29 against `2026.10.25.5707`, from audited `2026.10.19.5638`.**
+Gapless; the changelog logs 5639–5703 and the unlogged 5704–5707 tail was reviewed from the decomp diff.
+One compile break: rev 5652 renamed `SimpleVkTexture.Image/ImageView` → `VkImage/VkImageView` (3 sites).
+One compiler-invisible break, fixed: compute tessellation (the new default) reads the renderer-wide
+`PlanetRenderer._tessellationRange`, so `tessellation/range_m` now also writes that field by reflection.
+`Part.SubtreeModules` became a property (binary-only). Binary survey: 480/480 types and 1104/1104 members
+resolve; all 39 reflection/Harmony lookups identical to 5638. 0 warnings/errors; 1648 passed / 12 skipped.
+182 anchors. Changed anchors carry `Verified = "2026-10-29"` / `GameVersion = "2026.10.25.5707"`.
+[5707 pass](../scope/ksa-assets-and-versions.md#5707-pass); live checks:
+[checklist](VALIDATION.md#ksa-5707-upgrade).
+
+| Changed anchor / site | 5707 binding and behavior | Risk |
+|---|---|---|
+| `FxReflect.SetTessellationRange` (**new**), `TerrainActuator.{Set,Read,Write,Reset,Restore}` | Private `PlanetRenderer._tessellationRange` written alongside `PlanetUbo.TessellationRangeMeters`; read back through the public `TessellationRange` while `ComputeTessellationEnabled`; separate pristine capture of the shared range; latch `fx.terrain_tess_range` | H |
+| `ClutterTextureBridge.Apply`, `StickerTextureBinder.Bind`, `ThugLifeTextureFactory.ImageView`, `UserTextureGpu.Upload` | `SimpleVkTexture.VkImageView` (renamed from `ImageView`); bindless `AddTexture`/`SetTexture` unchanged | H |
+| `AnimationLinks.Get` | `Part.SubtreeModules` is a get-only property (`_subtreeModules ?? Modules`), same contents | M |
+| `CloudActuator.Apply`, `FxReflect.CloudApply` | Per-viewport cloud resources (rev 5663); same three private fields; static layer data still shared; editor block byte-identical | H |
+| `DisplayRenderPatch` | `RenderGame` tail unchanged on the shipped IL; HDR composite inserted before the final composite | M |
+| `VesselReader.SampleTanks` | Gas moles (rev 5701): capacity is mass at rated pressure; value math unchanged | L |
+
+**Prior upgrade: 2026-10-23 against `2026.10.19.5638`, from audited `2026.10.10.5554`.**
 Changelog only covers 5603–5637; 5555–5602 were reviewed from the decomp diff. One compile break:
 rev 5618 renamed the Brutal assemblies (`Brutal.Core.Common` → `Brutal.Core`,
 `Brutal.Core.{Logging,Numerics,Strings,Memory}` → `Brutal.{…}`; namespaces unchanged — csproj
@@ -727,12 +747,13 @@ re-reads each frame, so there is **no apply call**:
 | (slot resolution) | — | — | `TerrainActuator.Resolve`/`HasSlot`: `PlanetRenderer.RenderUboSlot(Celestial)`/`MeshUboSlot(Celestial)` (public; `-1` ⇒ unslotted ⇒ absent from the tree) | M | — |
 | (UBO handles) | — | — | `FxReflect.TerrainUbo`: `PlanetRenderer._renderUboMap`/`_meshUboMap` (private `MappedMemory`, host-visible + coherent); strides/counts from the public `PlanetUboStride`/`MeshUboStride`/`NumCelestials`; frame count from `Program.GetRenderer().MaxFramesInFlight` | **H** | — |
 | (read-back) | S | — | `TerrainActuator.Read`: `PlanetUbo.{TanMeanSlopeRoughness,HapkeMeanAlbedo,BiomeBlendStrength,DetailFadeStartMeters,DetailFadeEndMeters,Tessellation*}`, `MeshUbo.{MinHeight,MaxHeight}` — read out of the UBO, i.e. what the GPU samples. **5554:** roughness read-back is `atan(PlanetUbo.TanMeanSlopeRoughness)` in degrees. | **H** | — |
-| `debug/terrain/bodies/<id>/reset` | T | `1` | `TerrainActuator.Reset` → `FxPristine.Restore` (replays through the same paired write) | **H** | Frame |
+| (tessellation range, **5707**) | St | m | `FxReflect.SetTessellationRange`: private `PlanetRenderer._tessellationRange`, written with every `tessellation/range_m` write; read back via the public `TessellationRange` while `ComputeTessellationEnabled` (else the UBO field). Renderer-wide under compute tessellation — a write to any body applies to all | **H** | Frame |
+| `debug/terrain/bodies/<id>/reset` | T | `1` | `TerrainActuator.Reset` → `FxPristine.Restore` (replays the body's UBO captures through the same paired write; a body whose `range_m` changed also replays the shared range's separate global capture) | **H** | Frame |
 
 **Health latches and degraded behavior.** Each reflective handle carries its own `KsaHealth` key, so a
 decomp drift degrades one capability rather than the feature: **`fx.trail_renderer`**,
 **`fx.plume_templates`**, **`fx.cloud_renderer`**, **`fx.cloud_apply`**, **`fx.terrain_renderer`**,
-**`fx.terrain_ubo`** (all visible in `/sim/status/accessors`). Degrade behaviors are deliberately
+**`fx.terrain_ubo`**, **`fx.terrain_tess_range`** (all visible in `/sim/status/accessors`). Degrade behaviors are deliberately
 different per family:
 - `fx.plume_templates` → the roster falls back to templates harvested off live nozzles (narrower, but the
   family keeps working; `VolumetricExhaustTemplate.Get(id)` is public and unaffected).
@@ -742,6 +763,8 @@ different per family:
   renderer's next natural repopulate. The latch still records the degrade.
 - `fx.terrain_ubo` → the **per-body roster empties** (`debug/terrain/bodies/` lists nothing, since values
   are read out of the UBO) while the global `wireframe` leaf stays fully live.
+- `fx.terrain_tess_range` → a `tessellation/range_m` write still lands in the per-body UBO (effective only
+  under hardware tessellation) and answers `EOPNOTSUPP`.
 
 Reads are sampled by `FxEditorReader` on the game thread inside `TelemetrySampler`, gated on
 `[control] debug_namespace` (off ⇒ the families are never read and `SimSnapshot.FxEditors` stays null),

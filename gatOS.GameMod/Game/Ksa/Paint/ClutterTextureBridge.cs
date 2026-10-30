@@ -207,10 +207,10 @@ internal sealed class ClutterTextureBridge : IDisposable
     ///     teardown exact — then re-points the slot and retires whatever it replaced.
     /// </summary>
     [KsaAnchor("Program.Instance.BindlessTextures (public field) → BindlessTextureLibrary.SetTexture(int,VkImageView,VkImageLayout); "
-            + "TextureReference.ImageView",
-        SourceFile = "KSA/Program.cs:111 / RenderCore.Systems/BindlessTextureLibrary.cs:201 / "
-            + "KSA/TextureReference.cs:66",
-        Verified = "2026-10-11", GameVersion = "2026.10.10.5554", Risk = ChurnRisk.High,
+            + "TextureReference.ImageView; SimpleVkTexture.VkImageView",
+        SourceFile = "KSA/Program.cs:113 / RenderCore.Systems/BindlessTextureLibrary.cs:197 / "
+            + "KSA/TextureReference.cs:67 / RenderCore/SimpleVkTexture.cs:77",
+        Verified = "2026-10-29", GameVersion = "2026.10.25.5707", Risk = ChurnRisk.High,
         Notes = "All public; no reflection. Nothing in KSA calls SetTexture, so gatOS is the sole "
             + "writer of an existing slot. The decode/upload half of this path lives in "
             + "UserTextureGpu.Upload, which carries its own anchor. 5482: BindlessTextureLibrary is unchanged "
@@ -218,7 +218,12 @@ internal sealed class ClutterTextureBridge : IDisposable
             + "(rev 5447) is copied into a tail of the same clutter render buffers and drawn through the same "
             + "pipelines and material bindless handles, so a re-pointed slot covers it too. "
             + "5554 adds a VkImageLayout parameter; both the uploaded RGBA image and the stock "
-            + "color texture use ShaderReadOnlyOptimal (GpuTextureSystem.SampledLayoutFor).")]
+            + "color texture use ShaderReadOnlyOptimal (GpuTextureSystem.SampledLayoutFor). "
+            + "5707 (rev 5652): our image's view is SimpleVkTexture.VkImageView (renamed from ImageView, "
+            + "same value); TextureReference.ImageView keeps its name. Revs 5676-5678 also draw ground "
+            + "clutter into the main viewport's depth-normal pre-pass (GroundClutterRenderer."
+            + "RenderGroundClutterDepthNormal), which samples the same material bindless handles for its "
+            + "alpha test, so a re-pointed slot now also shapes clutter depth and ambient occlusion.")]
     private Override Apply(string targetId, TextureFile file, TextureBindMode mode)
     {
         if (Program.GetRenderer() is not { } renderer)
@@ -236,7 +241,7 @@ internal sealed class ClutterTextureBridge : IDisposable
         var stockView = _live.TryGetValue(targetId, out var previous) ? previous.StockView : stock.ImageView;
         var handle = _live.TryGetValue(targetId, out var prior) ? prior.Handle : stock.BindlessHandle;
 
-        bindless.SetTexture(handle, image.ImageView, VkImageLayout.ShaderReadOnlyOptimal);
+        bindless.SetTexture(handle, image.VkImageView, VkImageLayout.ShaderReadOnlyOptimal);
         _retire.Retire(previous?.Image);
 
         var live = new Override(targetId, file.Name, file.Version, handle, stockView, image,

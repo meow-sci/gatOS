@@ -262,7 +262,8 @@ public static class FxCatalog
         new("tessellation/factor", FxKind.Number, 0, 1, "",
             "Global scale on the computed tessellation factor."),
         new("tessellation/range_m", FxKind.Number, 1, 20000, "m",
-            "Camera distance over which tessellation falls off."),
+            "Camera distance over which tessellation falls off. Under compute tessellation (the default) one "
+            + "range applies to every body: a write to any body sets it for all."),
     ];
 
     /// <summary>

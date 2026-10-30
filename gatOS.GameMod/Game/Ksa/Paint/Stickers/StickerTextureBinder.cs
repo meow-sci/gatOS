@@ -186,9 +186,10 @@ internal sealed class StickerTextureBinder
     ///     Decodes one committed upload into a gatOS-owned image and claims a bindless slot for it.
     /// </summary>
     [KsaAnchor("Program.GetRenderer(); Program.Instance.BindlessTextures (public field) → "
-            + "BindlessTextureLibrary.AddTexture(VkImageView,VkImageLayout)",
-        SourceFile = "KSA/Program.cs:111,830 / RenderCore.Systems/BindlessTextureLibrary.cs:186",
-        Verified = "2026-10-11", GameVersion = "2026.10.10.5554", Risk = ChurnRisk.High,
+            + "BindlessTextureLibrary.AddTexture(VkImageView,VkImageLayout); SimpleVkTexture.VkImageView",
+        SourceFile = "KSA/Program.cs:113,921 / RenderCore.Systems/BindlessTextureLibrary.cs:182 / "
+            + "RenderCore/SimpleVkTexture.cs:77",
+        Verified = "2026-10-29", GameVersion = "2026.10.25.5707", Risk = ChurnRisk.High,
         Notes = "All public; no reflection. AddTexture takes a slot from the library's free list and "
             + "writes the descriptor immediately: the table's layout is UpdateAfterBind|PartiallyBound "
             + "(BindlessTextureLibrary.cs:105-114), so writing a slot while command buffers referencing "
@@ -200,7 +201,10 @@ internal sealed class StickerTextureBinder
             + "slot 0, which the bindless table reserves for its internal fallback. The decode/upload "
             + "half lives in UserTextureGpu.Upload, which carries its own anchor. 5554: the table's "
             + "AddTexture now takes a layout explicitly; uploaded sticker images are sampled in "
-            + "ShaderReadOnlyOptimal. FreeTexture behavior and texture handle semantics are unchanged.")]
+            + "ShaderReadOnlyOptimal. FreeTexture behavior and texture handle semantics are unchanged. "
+            + "5707 (rev 5652): the uploaded image's view is SimpleVkTexture.VkImageView (renamed from "
+            + "ImageView, same value); the library itself only moved its wrapper interfaces into "
+            + "Brutal.VulkanApi.Abstractions.")]
     private Bound Bind(TextureFile file)
     {
         if (Program.GetRenderer() is not { } renderer)
@@ -213,7 +217,7 @@ internal sealed class StickerTextureBinder
         var handle = -1;
         try
         {
-            handle = bindless.AddTexture(image.ImageView, VkImageLayout.ShaderReadOnlyOptimal);
+            handle = bindless.AddTexture(image.VkImageView, VkImageLayout.ShaderReadOnlyOptimal);
             return new Bound(file.Name, file.Version, image, handle, image.Width, image.Height,
                 UserTextureGpu.VramBytes(image));
         }

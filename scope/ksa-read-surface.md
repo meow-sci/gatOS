@@ -63,7 +63,7 @@ statics (+ `VersionInfo.Current`).
 | `ctl/engine` (readback) | `:125` | `Vehicle.IsSet(VehicleEngine.MainIgnite, false)` | `KSA/Vehicle.cs` | 0/1 | Medium | ✅ ᵈ |
 | `controllable` | `:133` | `Vehicle.IsControllable` (`_overrideIsControllable \|\| Parts.Controls.NumModules > 0`) | `KSA/Vehicle.cs` | 0/1 | Medium | ✅ (G3, new) |
 | `engines/<n>/{active,vac_thrust,isp}` | `:256` | `Vehicle.Parts.Modules.Get<EngineController>()`; `.IsActive`, `.VacuumData.{ThrustMax,MassFlowRateMax}` | `KSA/EngineController.cs` | bool / N / s | Medium | ✅ ᵈ · ⚠️ **5348: `active` moved** (staging is per-module now; RCS no longer self-activates at construction) — see [5348 findings](#5348-findings) |
-| `tanks/<r>/{amount,capacity,fraction}` | `:312` | `Tank.Moles`; `Parts.Moles.GetState(mole).Mass`; `mole.GetStoredMass(ContainerVolume)`; `mole.FilledFraction` | `KSA/Tank.cs`, `KSA/Mole.cs` | kg / kg / 0..1 | Low | ⚠️ **fixed** ˢ |
+| `tanks/<r>/{amount,capacity,fraction}` | `:312` | `Tank.Moles`; `Parts.Moles.GetState(mole).Mass`; `mole.GetStoredMass(ContainerVolume)`; `mole.FilledFraction` | `KSA/Tank.cs`, `KSA/Mole.cs` | kg / kg / 0..1 | Low | ⚠️ **fixed** ˢ · ⚠️ 5707: a gas mole's capacity is its mass at the tank's rated pressure ([5707](#5707-findings)) |
 | `animations/<n>/{current,state,goal}` | `:596` | `KeyframeAnimationModule.{TimeGoal,Shared.Duration}`; `State.{TimeCurrent,DeploymentState}` via `ModuleStateful` | `KSA/KeyframeAnimationModule.cs` | 0..1 / enum | Medium | ✅ |
 
 **⚠️ `situation`** — `Vehicle.Situation` became a `[Flags]` bitfield (KSA rev 4645, *already* in the
@@ -1280,6 +1280,25 @@ tessellation displacement, so the surface point can be off by decimetres near th
 projection box's depth absorbs that entirely, which is exactly why this is a projected decal and not
 a flat quad. Exact members and baseline are in
 [`plans/STICKERS_PLAN.md`](../plans/STICKERS_PLAN.md).
+
+## 5707 read findings {#5707-findings}
+
+Playbook pass 2026-10-29, `2026.10.19.5638` → `2026.10.25.5707` (gapless; changelog 5639–5703, the
+unlogged 5704–5707 tail covered by the decomp diff). **No reader code change** for values — every bound
+member resolves with an identical signature. One binary-only break: `Part.SubtreeModules` (read by
+`AnimationLinks`) is now a property returning `_subtreeModules ?? Modules`, with the same contents, so a
+5638-built mod must be rebuilt.
+
+- ⚠️ **Gas tanks (5701, 5703).** `Tank.CanHold` admits a gas when `RatedPressure > 0` and it is the mix's only reactant; the gas `Mole` gets `ContainerPressure = RatedPressure` and `GetStoredMass`/`GetStoredVolume` branch on `IsGas` (`Mole.IsStorable` removed; `Tank.cs:788-812,896-898`). `tanks/<n>/capacity` is then the mass at rated pressure and `fraction` = mass/capacity — both correct. Stock reactions are liquid/solid only. Pressure is not exposed.
+- ⚠️ **Tank population (5651).** `PartTree.GetCandidateMixes` also offers fuel-line donors, so a tank with no engine of its own now fills with the propellant its fuel line brings: new `tanks/<n>` rows, shifted ordinals.
+- ⚠️ **Capsule mass (5666).** `CoreCommandA_Prefab_MediumCapsuleVariantA` gains a 500 kg polyethylene `RadiationShield` (`IInertMass`): `mass/dry`, `mass/total`, `navball/{twr,deltav}`, CoM and MoI shift.
+- ⚠️ **Bodies (5644/5647/5648).** Io, Ganymede, Triton and Pluto load from the shared library as `AtmosphericBody` (`Astronomicals.xml:4303,4364,4708,4755`): `bodies/<id>/class` changes (Triton was `MinorBody`, the others `PlanetaryBody`) and each gains `atmosphere/`. Io and Ganymede are thinner than the flight cutoff, so their computed height clamps to 0 (`PhysicalAtmosphereReference.cs:51`) and flight treats them as vacuum — `atmosphere/present=1` with `height=0`. Triton (≈170 km) and Pluto (≈517 km) give non-zero `environment/{pressure,density,dynamic_pressure}`. Ids, order and parents in both Sol systems are unchanged.
+- ⚠️ **Pluto rotation (5649).** `CelestialSystem.LockToMoon` → `Celestial.LockRotationTo(Charon)` runs while the system builds, before gatOS caches body statics: `bodies/pluto/rotation_rate` goes 0 → ≈1.14e-5 rad/s with a 112.8° tilt, and Charon's elements are now relative to Pluto's equator, so its ecliptic `position`/`velocity` change.
+- ⚠️ **Time (5669/5688/5697).** The game can now set `time/warp` to 1 and `time/auto_warp_active` to 0 by itself (radiation sickness `Vehicle.cs:3166`; space-weather alerts `SpaceWeatherAlerts.cs:190`). `Universe.LimitNextStep` (`:2648`) clips a step at a crew dose threshold — a third reason `time/sim_dt` < warp × dt.
+- ⚠️ **Vessel population (5669).** `Vehicle.KillLethallyDosedCrew` destroys an EVA kitten that reaches 4 Sv (`Universe.DestroyVehicle(…, Kill)`), so `vessels/<id>/` vanishes; the existing despawn prunes cover it.
+- ⚠️ **Solar (5674).** `SolarPanel`/`SolarTracker`/`SolarTrackingExtension` use `Universe.BrightestStar` and `StellarBody.ComputeSunlight` (L/d²_AU) instead of the nearest star at 1/d². Unchanged in the default Sol system (one star, luminosity 1); in multi-star systems `solar/<n>/{produced,sun_aoa,efficiency,occluded,tracker_angle}` and `power/produced` follow the brightest star.
+- ✅ **Modules, decouplers, docking, engines, RCS, power, navball, orbits.** `ModuleList`'s template-id index is built lazily with the same first-wins semantics; `Decoupler`/`DockingPort` only changed `Connectors` to an array; `SolidMotor`, `SolidGrainSegment`, `Battery`, `Generator`, `EngineController`, `ThrusterController`, `PhysicsEnvironment`, `NavBallData`, `FlightComputer`, `Orbit` are byte-identical.
+- 🟡 **Coverage gaps.** Per-kitten radiation dose, sickness and retirement (`KittenRosterEntryData.{AcuteDose,LifetimeDose,DoseRate,Retired}`; thresholds `Radiation.cs:63-69`), environment and orbit dose rates (`Radiation.ComputeDoseRates`, `TryComputeOrbitDoseRates`), part shielding (`RadiationShield.GetTransmission`), star space weather and alerts (`SpaceWeather`, `SpaceWeatherAlerts`, `ParticleEvents`), gas tank pressure (`Mole.ContainerPressure`, `Tank.RatedPressure`).
 
 ## 5638 read findings {#5638-findings}
 

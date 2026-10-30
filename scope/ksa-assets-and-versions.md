@@ -27,8 +27,9 @@ The current checkout and archived audited drops provide the comparison trees:
 
 | Checkout dir | Build | Date | Revisions | Role |
 |---|---|---|---|---|
-| `…/ksa-game-assemblies` | **2026.10.19.5638** | 2026-10-20 (artifact metadata) | 5554 → 5638; changelog covers only 5603–5637 (`fromRevision` 5602), **5555–5602 unlogged** (commit `edda844`) | Current statically audited baseline; [5638 pass](#5638-pass), 2026-10-23. Remote `main` verified at the same commit. Live flight validation pending. |
-| `…/ksa-game-assemblies_prev` (git `935a32b`) | **2026.10.10.5554** | 2026-10-07 (artifact metadata) | 5482 → 5541 → 5554; 70 logged revisions across two drops | Previous audited baseline for 5638; [5554 record](#5554-pass). |
+| `…/ksa-game-assemblies` | **2026.10.25.5707** | 2026-10-29 (artifact metadata) | 5638 → 5707; changelog covers 5639–5703 (65 entries, `fromRevision` 5638), **5704–5707 unlogged** (commit `4b3e9e2`) | Current statically audited baseline; [5707 pass](#5707-pass), 2026-10-29. Remote `main` verified at the same commit. Live flight validation pending. |
+| `…/ksa-game-assemblies_prev` (git `edda844`) | **2026.10.19.5638** | 2026-10-20 (artifact metadata) | 5554 → 5638; changelog covers only 5603–5637 (`fromRevision` 5602), **5555–5602 unlogged** | Previous audited baseline for 5707; [5638 record](#5638-pass), 2026-10-23. |
+| (git `935a32b`) | **2026.10.10.5554** | 2026-10-07 (artifact metadata) | 5482 → 5541 → 5554; 70 logged revisions across two drops | Audited baseline for 5638; [5554 record](#5554-pass). |
 | (git archive `a2f724f`) | **2026.9.22.5482** | 2026-09-24 (artifact date) | 5438 → 5482; 43 logged revisions | Previous audited baseline for 5554; [5482 record](#5482-pass). Reconstructed with DLLs, decomp, Content and version metadata from git, since the `_prev` checkout is older. |
 | (git `93eb864`) | **2026.9.10.5438** | 2026-09-15 (artifact date) | 5402 → 5438; 35 logged revisions, 5403–5437 (commit `93eb864`) | historical audited baseline — upgrade pass 2026-09-14 ([`#5438-pass`](#5438-pass)): eight compile errors plus the compiler-invisible paint/IVA `AddInstance` overload and sticker colour-only resolve breaks, all fixed. CURRENT's `fromRevision` is 5438, so the two trees **chained with no gap** |
 | (git `57e6040`) | 2026.9.7.5402 | 2026-09-02 | 5348 → 5402 (**changelog gapped**: `version.json` logs only rev 5401, `fromRevision` 5400) | prior audited baseline — full playbook pass 2026-09-02 (see [`#5402-pass`](#5402-pass)): **three compile breaks** (the `Viewport` class rework, `DebugTrailColor` removed, `Cursor.InputRay` removed) fixed, one `/sim` node retired, two new High-risk reflection accessors, binary surface diff 907/907 member refs resolved. PREVIOUS for that diff was **`git worktree add <tmp> c465abb`** (the 5348 drop) |
@@ -39,6 +40,113 @@ gatOS was originally built against the 4680-era sources (most `[KsaAnchor]` `Ver
 2026-06-12…2026-06-23). The **4680 → 4750** diff was run through the playbook on 2026-06-27; the touched
 anchors carry `GameVersion="2026.6.9.4750"` (see
 [`../plans/FIX_CURRENT_GAPS_PLAN.md`](../plans/FIX_CURRENT_GAPS_PLAN.md)).
+
+## 5638 → 5707 upgrade pass (2026-10-29) {#5707-pass}
+
+CURRENT is `2026.10.25.5707`, assemblies commit `4b3e9e2` (also remote `main`; `git fetch` showed no
+newer or intermediate drop). PREVIOUS is audited `2026.10.19.5638`, commit `edda844`, which is also the
+sibling `_prev` checkout. CURRENT's `fromRevision` is 5638, so the drops chain with no gap. Its
+`version.json` logs **revs 5639–5703** (65 entries); **5704–5707 have no changelog**, so the complete
+`git diff edda844 4b3e9e2 -- current/decomp current/Content` was the evidence for that tail (318 decomp
+files changed: 62 added, 2 deleted, 2 renamed; 59 Content files). The DLL *set* is unchanged (35 files
+rebuilt, none renamed), so `tools/check-dist-tests.py` and `thirdparty/index.ts` need nothing.
+
+### Confirmed changes and resolutions
+
+| Finding | Evidence / effect | Resolution |
+|---|---|---|
+| **`SimpleVkTexture.Image/ImageView` → `VkImage/VkImageView` (rev 5652, "Update to latest Brutal packages")** — the only compile break (3 errors) | `RenderCore/SimpleVkTexture.cs:75-77`: same values, renamed so the type implements `IImageSubresourceRange.VkImage`/`IImageView.VkImageView`, which moved from `RenderCore` into `Brutal.VulkanApi.Abstractions` along with `IDescriptorSetWrapper`/`IDescriptorSetLayoutWrapper` (the latter lost `DescriptorDynamicOffset` for a `DynamicOffsets` span; gatOS uses neither). | `ClutterTextureBridge.Apply`, `StickerTextureBinder.Bind` and `ThugLifeTextureFactory.ImageView` bind `VkImageView`. `KSA.Rendering.RenderImage.ImageView` and `TextureReference.ImageView` keep their names. |
+| **Compute tessellation range (revs 5654–5656, 5680)** — compiler-invisible | New `KSA.Rendering.Planet.PlanetTessellation` with `UseCompute = true` (`:61`) is the default path whenever the tessellation setting is on (default on). `PerformTessellation` (`:289`) and `PlanetFrustumCulling` (`:233`) take the range from the renderer-wide `PlanetRenderer.TessellationRange` → private `_tessellationRange` (`:326`, default 50 m), **not** the per-body `PlanetUbo.TessellationRangeMeters`. The stock editor now edits `_tessellationRange` and mirrors it into the nearby body's UBO (`:2644-2646`); at 5638 it edited the UBO field (`:2431`). Only the hardware `.tese` shaders still read the UBO field. Effect: `debug/terrain/bodies/<id>/tessellation/range_m` read back the written value but changed nothing on screen. | `TerrainActuator` writes the UBO **and** `_tessellationRange` through the new reflection handle `FxReflect.SetTessellationRange` (latch `fx.terrain_tess_range`; a miss still lands the UBO write and returns EOPNOTSUPP). Reads return `TessellationRange` while `ComputeTessellationEnabled` (both public getters), else the UBO. The shared range has its own pristine capture under the global entity; resetting a body that changed it restores it. **Under compute tessellation the range is renderer-wide: a write to any body applies to all.** New anchor (182 total). |
+| **`Part.SubtreeModules` field → property (rev 5643)** — binary-only | `Part.cs:1187` `SubtreeModules => _subtreeModules ?? Modules` (lazy, `:672`); `Connections` is now a property over a shared empty list and `Connectors` an array. Same contents as before. Source still compiles; a **5638-built** gatOS throws `MissingFieldException` in `AnimationLinks` (and `MissingMethodException` on `SimpleVkTexture.get_ImageView`) on 5707 — rebuild required. | Anchor notes only. Subparts are still created eagerly in the constructor (`CreateTemplateSubPart`, `:1537`) with `InstanceId`s, so welds, IVA, paint, stickers and `parts/` are unaffected. |
+
+### Inherited behavior, no adapter change required
+
+- **Gas tanks (5701, 5703):** `Tank.CanHold` admits a gas only when `RatedPressure > 0` (wall material
+  strength × thickness) and the gas is the mix's only reactant; the gas `Mole` gets
+  `ContainerPressure = RatedPressure` and `GetStoredMass`/`GetStoredVolume` branch on `IsGas`
+  (`Mole.IsStorable` removed). `tanks/<n>/capacity` becomes the mass at rated pressure, `fraction` stays
+  mass/capacity. Stock reactions are all liquid or solid. `debug/refill_fuel` fills a gas to rated
+  pressure through the unchanged `Mole.Refill`.
+- **Fuel-line tanks (5651):** a tank fed only by a fuel line now auto-fills with the donor's propellant —
+  new `tanks/<n>` rows and shifted ordinals on such vessels.
+- **Radiation shielding (5666):** the stock capsule gains a 500 kg polyethylene `RadiationShield`
+  (an `IInertMass`), shifting `mass/dry`, `mass/total`, TWR, Δv, CoM and MoI.
+- **Bodies (5644/5647/5648/5649):** Io, Ganymede, Triton and Pluto load from the shared library as
+  `AtmosphericBody` (`bodies/<id>/class` changes; Triton was `MinorBody`) and gain `atmosphere/`. Io and
+  Ganymede are thinner than the flight cutoff, so `atmosphere/height` clamps to 0
+  (`PhysicalAtmosphereReference.cs:51`) and flight treats them as vacuum; Triton ≈170 km and Pluto
+  ≈517 km produce non-zero `environment/*` nearby. Pluto now rotates (`LockRotationTo` Charon,
+  `rotation_rate` ≈1.14e-5 rad/s, 112.8° tilt), which also moves its moons' ecliptic state. Ids, order
+  and parents are unchanged in both Sol systems.
+- **Forced warp and step clamp (5669/5688/5697):** the game itself calls `AutoWarpStop` +
+  `SetSimulationSpeed(1)` when a crew member reaches 1 Sv acute dose (`Vehicle.cs:3166`) or a major
+  space-weather alert fires (`SpaceWeatherAlerts.cs:190`), so `time/warp` can drop to 1 and
+  `time/auto_warp_active` to 0 without a command. `Universe.LimitNextStep` (`:2648`) clips a step so it
+  lands just past a dose threshold — a third reason `time/sim_dt` < warp × dt. The 5694 step shortening
+  was reverted in 5700.
+- **Radiation deaths (5669):** `Vehicle.KillLethallyDosedCrew` destroys an EVA kitten at 4 Sv
+  (`Universe.DestroyVehicle(…, Kill)`), so its `vessels/<id>/` disappears (the existing despawn prunes
+  cover it); a crewed vessel only loses the seat.
+- **Solar (5674):** panels and trackers follow `Universe.BrightestStar` and scale by
+  `StellarBody.ComputeSunlight` (L/d²) instead of the nearest star at 1/d². No change in the default Sol
+  system (one star, luminosity 1); multi-star systems change `solar/<n>/*` and `power/produced`.
+- **Clouds (5663, multi-viewport):** `CloudRenderer` moved its targets and pipelines into per-viewport
+  `ViewportResources`; `_renderer`/`_cloudShadowsRenderer`/`_worleyNoise3dTarget` keep names and types,
+  `UpdateStaticData` still writes the single shared static layer buffer, and the stock editor block is
+  byte-identical (moved to `:2015-2223`).
+- **Clutter in the depth-normal pre-pass (5676–5678, 5689):** the main viewport's opaque pre-pass now
+  draws terrain and ground clutter, and the main passes depth-test `Equal` against it, so the resolved
+  scene depth stickers test still contains both. Clutter material bindless handles are also sampled by
+  the pre-pass alpha test, so a clutter-texture override now shapes clutter depth/AO too.
+- **HDR (5645, experimental, `GameSettings.Hdr` off by default):** `RenderHdrSceneComposite` precedes
+  `RenderFinalComposite`, which is skipped while HDR is active; the main viewport's composite target is
+  now `Program.HdrPresent`. The capture still reads the linear `R16G16B16A16SFloat` offscreen colour.
+- **Misc:** `PartModel{,Dynamic,Glass}.Get` index by template id hash (same shared-per-template model);
+  `PartTreeRenderData` caches full-part matrices but `WriteState`/`WriteDynamicState` bodies are
+  byte-identical; `KittenRenderable` lean sign fix (5671); `ViewportOptionFlags.RenderClouds`;
+  `Watts`/`Joules.Equals(object)` fixed (5667).
+- **New, not exposed (coverage gaps):** per-kitten radiation (`KittenRosterEntryData.{AcuteDose,
+  LifetimeDose,DoseRate,Retired}`, thresholds in `Radiation.cs:63-69`), environment and orbit dose rates
+  (`Radiation.ComputeDoseRates`, `TryComputeOrbitDoseRates`), part shielding
+  (`RadiationShield.GetTransmission`), star space weather and alerts (`SpaceWeather`,
+  `SpaceWeatherAlerts`, `ParticleEvents`), gas tank pressure (`Mole.ContainerPressure`,
+  `Tank.RatedPressure`), the HDR settings.
+
+### Compiler-blind and render verification
+
+- **Metadata survey** (System.Reflection.Metadata, exact signature comparison incl. base-type walk) of the
+  rebuilt mod against the shipped 5707 DLLs: **480/480 TypeRefs and 1104/1104 MemberRefs** (+2: the
+  public `PlanetRenderer.{TessellationRange,ComputeTessellationEnabled}` getters, new at 5707). The same
+  survey of an unmodified 5638 build reports exactly two misses: `SimpleVkTexture.get_ImageView` and the
+  `Part.SubtreeModules` field. A declared-member surface diff found 43 of 480 referenced types changed
+  shape; each was reviewed above or is additive.
+- **Reflection/Harmony checklist** (39 lookups): every name, type and signature is identical in 5638 and
+  5707. Changed IL sizes only: `Program.RenderGame` 4104 → 4036 B, `PartModel..ctor(Template)` 77 → 100 B
+  (adds the template-id registry; `always_render_iva`'s postfix only flips `Template.Internal`),
+  `CloudRenderer.RecreateLayerPipelines` 1720 → 164 B (gatOS never calls it).
+  `VolumetricTrailRenderer` gained `OnCloudTargetsRecreated()`; `RebuildTrail` resolves the
+  zero-argument overload by `Type.EmptyTypes`, so it stays unambiguous.
+- **JIT state:** `DebuggableAttribute` is still `0x002` on every game assembly and none is ReadyToRun; no
+  new lazily patched target, so `InlineGuard.Targets()` is unchanged.
+- **Display transpiler** re-verified on the shipped IL: tail still `ldloc.1; call
+  VkDeviceExtensions::End<CommandBuffer>(!!0); ret`, the body's only 1-arg `End` in `Brutal.VulkanApi`.
+- **Shaders:** `Content/Core/Shaders/Mesh/` (paint's `MeshIndirect*.frag`, thug_life's `UnlitMesh.*`)
+  and `Common/{Camera,TextureSet,Global}.glsl` (sticker includes) are byte-identical; `GridPass.cs`,
+  `GlobalShaderBindings.cs`, `KSA.Rendering/{RenderTarget,BarrierBatch,ImageBarrierInfo}.cs` too.
+  `ColorFormat` (R16G16B16A16SFloat) and `MaxFramesInFlight` (2) are unchanged.
+- **Terrain UBO:** `PlanetUbo`/`MeshUbo` field sets unchanged; the per-frame refresh moved into
+  `UpdateRenderUbo` and still touches only camera/texture/ocean/ring fields.
+- **Ecosystem note (not fixed here):** `../purrtty/purrTTY.Display/Ghostty/ImageTextureCache.cs:168`
+  binds the same removed `SimpleVkTexture.ImageView`; purrTTY must be rebuilt for 5707 before any
+  in-game check (kitty graphics, `/sim/display` viewing).
+
+### Validation and remaining work
+
+Full solution build: **0 warnings / 0 errors**. Full suite: **1648 passed / 12 VM-gated skips /
+0 failures**; `tools/check_runtime_bootstrap.py` passes. The audit scripts (metadata survey, shape diff,
+reflection checklist, IL dumps) lived in the session scratchpad and are not shipped. Use
+[the 5707 live checklist](../docs/VALIDATION.md#ksa-5707-upgrade) before declaring flight/render
+behavior validated.
 
 ## 5554 → 5638 upgrade pass (2026-10-23) {#5638-pass}
 
@@ -1194,7 +1302,7 @@ When a changelog line mentions a subsystem, open these. (Decomp paths relative t
 | Celestials / system / atmosphere / ocean | `KSA/Celestial.cs`, `KSA/StellarBody.cs`, `KSA/CelestialSystem.cs`, `KSA/IParentBody.cs`, `KSA/AtmosphereReference.cs`, `KSA/OceanReference.cs` | `Planets/…` | reads |
 | Time / warp / universe / solver hook | `KSA/Universe.cs` | — | reads, runtime |
 | Engines | `KSA/EngineController.cs`, `KSA/EngineControllerState.cs` | `Core/CorePropulsion*GameData.xml` | reads, writes |
-| Tanks / resources | `KSA/Tank.cs`, `KSA/Mole.cs` | `Core/…` | reads |
+| Tanks / resources | `KSA/Tank.cs`, `KSA/Mole.cs` (gas branch + `ContainerPressure` since 5707), `KSA/TankGeometry.cs` (`RatedPressure`), `KSA/PartTree.cs` (`GetCandidateMixes`, fuel-line donors) | `Core/…`, `Core/Materials.xml` (wall strength → rated pressure) | reads |
 | **Electrical (power/battery/solar/gen)** | `KSA/Battery.cs`, `KSA/SolarPanel*.cs`, `KSA/Generator*.cs`, `KSA/PowerConsumerState.cs`, **`KSA/Joules.cs`, `KSA/Watts.cs`, `KSA/EnergyReference.cs`, `KSA/PowerReference.cs`** | `Core/CoreElectricalAGameData.xml` | reads ✅ (G2: now W) |
 | **Docking** | `KSA/DockingPort.cs`, `KSA/InputEvents.cs` | `Core/CoreCouplingAGameData.xml` | reads ✅, writes ✅ (G1 fixed) |
 | Flight computer / attitude / burn | `KSA/FlightComputer.cs`, `KSA/BurnTarget.cs`, `KSA/NavBallData.cs` | — | writes |
@@ -1208,6 +1316,7 @@ When a changelog line mentions a subsystem, open these. (Decomp paths relative t
 | **Render internals (`thug_life` quad)** | `KSA/SuperMeshRenderSystem.cs`, `KSA/Program.cs` (`GetRenderer`/`OffScreenPass`/`SetViewport`), `KSA/Camera.cs`, `KSA/Part.cs` (ego transforms); **Planet.Render.Core**, **Brutal.Vulkan(.Abstractions/.Vma)**, **Brutal.Core.Memory** | `Core/Shaders/Mesh/UnlitMesh.{vert,frag}` | reads (anchor math), writes (actions), runtime (render postfix) — **deepest / highest-churn coupling**; see [render refs](#render-refs) |
 | **Render internals (sticker decals — `/sim/paint/stickers`)** | `KSA.Rendering/RenderTarget.cs` (`ResolveAttachments`, `DepthImage`, `ColorImage`, `Extent`), `KSA/GridPass.cs` (the pass this is a port of), `KSA/Program.cs` (`OffscreenTarget`/`RenderedViewport`/`MainViewport`/`SetViewport`/`ResourceFrameIndex`/`PointClampedSampler`/`ColorFormat`/`GetRenderer`), `KSA/GlobalShaderBindings.cs`, `KSA.Rendering/{BarrierBatch,ImageBarrierInfo}.cs`, `RenderCore.Systems/BindlessTextureLibrary.cs`, `RenderCore/{ShaderModuleUtils,VkUtils}.cs`, `KSA/{Celestial,Vehicle,Part,Camera,Cursor,Ray}.cs` (anchors + picking) | `Core/DefaultAssets.xml` (`GridFrag`, for the include directory only), `Core/Shaders/Common/{Camera,Global,TextureSet}.glsl` | reads ([`ksa-read-surface.md`](ksa-read-surface.md)), writes ([`ksa-write-surface.md#stickers`](ksa-write-surface.md#stickers)), runtime ([`ksa-runtime-coupling.md#stickers-patch`](ksa-runtime-coupling.md#stickers-patch)) — gatOS's **second** render-thread draw injection; see [sticker assets](#sticker-assets) |
 | **IVA cabin physics (`/sim/debug/iva`)** | `KSA/Part.cs` (SubPart transforms + `MatrixAsmb2VehicleAsmb`), `KSA/PartModelModule.cs` + `KSA/PartModel.cs` (the `Internal` interior classifier), `KSA/MeshReference.cs` (`PositionCompare` triangle soup), `KSA/Vehicle.cs` (accelerometer/rates/CoM), `KSA/IVASeat.cs`, `KSA/Viewport.cs`; **BepuPhysics + BepuUtilities** (gatOS's own `Simulation`, never `ConstraintSim`). Context for *why* not the game's solver: `KSA/ConstraintSim.cs`, `KSA/NarrowPhaseCallbacks.cs`, `KSA/VehicleUpdateTask.cs` | `Core/CoreIVASpaceAGameData.xml`, `Core/CoreIVAPropAAssets.xml`, `Core/CoreCommandAGameData.xml` (the collider blob that rules out the game's sim), `Core/defaultvehicles/Gemini7/vehicle.xml` (the shipped prop set) | reads ([`ksa-read-surface.md#iva-physics`](ksa-read-surface.md#iva-physics)), writes ([`ksa-write-surface.md#iva-physics`](ksa-write-surface.md#iva-physics)), runtime ([`ksa-runtime-coupling.md#iva-cabin-sim`](ksa-runtime-coupling.md#iva-cabin-sim)) — **no Harmony patch, no game-solver mutation** |
+| **FX editors — terrain / clouds (`/sim/debug/{terrain,clouds}`)** | `KSA/PlanetRenderer.cs` (`PlanetUbo`/`MeshUbo`, `_renderUboMap`/`_meshUboMap`, `_tessellationRange`, the Terrain Editor UI), `KSA.Rendering.Planet/PlanetTessellation.cs` (compute tessellation, new at 5707), `KSA/PlanetFrustumCulling.cs`; `KSA.Atmosphere.Rendering/{CloudRenderer,CloudLayerRenderData,CloudShadowsRenderer}.cs` | `Core/Shaders/Planet/{ComputeTessellation.comp,PlanetTessEvaluation.tese}`, `Core/Shaders/Common/Planet.glsl` | writes, runtime |
 | Numerics | `Brutal.Numerics/` (decomp), `Brutal.Numerics.dll` (was `Brutal.Core.Numerics.dll` before 5638) | — | runtime |
 
 ---

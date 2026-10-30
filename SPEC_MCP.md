@@ -231,6 +231,15 @@ on completion. FX `render/expansion_time` delays grouped-trail lifetime fading, 
 uses exhaust entrainment; terrain `slope_roughness_deg` remains degrees with tan/atan conversion.
 No tool names, argument shapes, ranges or command phases changed.
 
+**KSA 5707 behavior notes:** `render_fx_control` terrain `tessellation/range_m` is renderer-wide under
+KSA's default compute tessellation: a `set` on any body changes the range every body is drawn with,
+read-back returns that shared value, and `reset` of a body that changed it restores the shared range
+(a degraded `fx.terrain_tess_range` returns `EOPNOTSUPP` after storing the per-body value). The game can
+now reset time warp to `1` by itself (crew radiation sickness, space-weather alerts) and end a step early
+at a crew dose threshold. Io, Ganymede, Triton and Pluto are atmospheric bodies (Io/Ganymede with atmosphere
+height `0`, vacuum for flight); Pluto rotates. A gas tank's `capacity` is the gas mass at its rated
+pressure. Tool names, argument shapes, ranges and command phases are unchanged.
+
 The fields above define the outer v1 wire envelopes; the discriminator branches in §5.1 define the
 legal operation-specific payloads. There is no untyped `control` patch object or `/sim` path payload.
 The action catalog validates field arity, range, unit, gate, and phase. CCI vectors/quaternions retain

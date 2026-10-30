@@ -45,11 +45,16 @@ internal static class AnimationLinks
 
     [KsaAnchor("KeyframeAnimationModule.Parent.SubtreeModules.HasAny<SolarPanel>(); SolarPanel.KeyframeAnimationModule; "
             + "LightModule.Parent.FullPart.SubtreeModules.Get<KeyframeAnimationModule>()",
-        SourceFile = "KSA/KeyframeAnimationModule.cs / KSA/SolarPanel.cs / KSA/LightModule.cs",
-        Verified = "2026-06-12", Risk = ChurnRisk.Medium,
+        SourceFile = "KSA/KeyframeAnimationModule.cs / KSA/SolarPanel.cs / KSA/LightModule.cs / KSA/Part.cs:672,1187",
+        Verified = "2026-10-29", GameVersion = "2026.10.25.5707", Risk = ChurnRisk.Medium,
         Notes = "The structural animation↔module links (IsSolar flag + solar/light AnimationIndex), moved "
             + "here from the per-tick reader passes (GP3): cached per vehicle, rebuilt on module-count "
-            + "change or every 10 s. Same subtree scans SolarPanel.OnPartCreated uses.")]
+            + "change or every 10 s. Same subtree scans SolarPanel.OnPartCreated uses. "
+            + "5707 (rev 5643, part memory): Part.SubtreeModules changed from a public FIELD to a get-only "
+            + "PROPERTY returning _subtreeModules ?? Modules — a part with no subparts no longer allocates its "
+            + "own subtree list. Same contents as before (it used to be Modules plus every subpart's modules), "
+            + "so the scans are unchanged; source-compatible but binary-incompatible, so a mod built against "
+            + "5638 throws MissingFieldException here on 5707.")]
     public static Entry Get(Vehicle vehicle, double utSeconds)
     {
         var entry = Cache.GetOrCreateValue(vehicle);

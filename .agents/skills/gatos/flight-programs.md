@@ -76,7 +76,7 @@ Hold control (stop writing, keep last command, show a banner) when any of these 
 | Condition | Read | Why |
 |---|---|---|
 | **Paused** | `time/sim_dt == 0` | no physics advancing; integrating a Δt of 0 is meaningless |
-| **Time-warp** | `time/warp > 1` (or `telemetry.warp`) | on-rails / fast physics; closed-loop control is only sound near 1× |
+| **Time-warp** | `time/warp > 1` (or `telemetry.warp`) | on-rails / fast physics; closed-loop control is only sound near 1×. Since KSA 5707 the game can also force warp back to 1× by itself (crew radiation sickness, space-weather alerts) — re-check it, don't assume a warp you set held |
 | **Stale telemetry** | `telemetry.seq` unchanged since last tick | the host sampler hasn't published a new frame |
 | **Non-finite / missing** | `!isFinite(x)` or empty | a closed gate / absent module yields `0`/empty |
 

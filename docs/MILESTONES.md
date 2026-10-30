@@ -706,6 +706,14 @@ self-shadow pipeline rebuild. 0 warnings/errors; 1648 passed / 12 skipped. See t
 [5638 pass](../scope/ksa-assets-and-versions.md#5638-pass) and
 [pending live checks](VALIDATION.md#ksa-5638-upgrade).
 
+KSA 5707 pass (2026-10-29): the assemblies `main` moved to `2026.10.25.5707`. Rev 5652 renamed
+`SimpleVkTexture.ImageView` → `VkImageView` (three call sites), and the new default compute terrain
+tessellation reads a renderer-wide `PlanetRenderer._tessellationRange`, so `tessellation/range_m` now also
+writes that field by reflection (`FxReflect.SetTessellationRange`, latch `fx.terrain_tess_range`) and is
+renderer-wide. 0 warnings/errors; 1648 passed / 12 skipped. See the
+[5707 pass](../scope/ksa-assets-and-versions.md#5707-pass) and
+[pending live checks](VALIDATION.md#ksa-5707-upgrade).
+
 ---
 
 ## Welds + `always_render_iva` + parts listing + `thug_life` (ex-`unscience`): Code DONE; in-game pass pending

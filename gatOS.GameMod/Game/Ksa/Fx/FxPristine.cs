@@ -68,6 +68,24 @@ internal static class FxPristine
         return restored;
     }
 
+    /// <summary>Whether one field of one entity currently holds a pristine capture.</summary>
+    internal static bool Has(FxFamily family, string entity, string field)
+        => Captures.TryGetValue((family, entity), out var fields) && fields.ContainsKey(field);
+
+    /// <summary>
+    ///     Replays one captured field and drops just that capture, leaving the entity's other
+    ///     captures in place. False when nothing was captured or the replay did not apply.
+    /// </summary>
+    internal static bool RestoreField(FxFamily family, string entity, string field)
+    {
+        var key = (family, entity);
+        if (!Captures.TryGetValue(key, out var fields) || !fields.Remove(field, out var values))
+            return false;
+        if (fields.Count == 0)
+            Captures.Remove(key);
+        return Apply(family, entity, field, values);
+    }
+
     /// <summary>
     ///     Unload teardown: replays every capture of every family (best-effort — one entity that has
     ///     gone away must not stop the rest) and empties the registry.

@@ -9,6 +9,31 @@
 Manual pass results live here. Record machine, date, purrTTY/gatOS versions and the outcome of
 each item; failures get a short note plus the relevant `logs/qemu-*.log` excerpt.
 
+## KSA 5707 upgrade — live pass pending {#ksa-5707-upgrade}
+
+Static upgrade: 2026-10-29, `2026.10.19.5638` → `2026.10.25.5707` (changelog 5639–5703; 5704–5707
+from the decomp diff). Build, metadata survey, IL and shader checks are in the
+[pass record](../scope/ksa-assets-and-versions.md#5707-pass). **No live game check below was run.**
+Record game/mod/purrTTY versions, platform and `/sim/status/accessors`. **purrTTY must be rebuilt
+against 5707 first** — `purrTTY.Display/Ghostty/ImageTextureCache.cs` binds the removed
+`SimpleVkTexture.ImageView`, so an unrebuilt purrTTY fails on its first kitty-graphics image (and a
+5638-built gatOS fails on `Part.SubtreeModules`); neither is a fault in the rebuilt gatOS.
+
+| Check | Result |
+|---|---|
+| **Terrain range (the fix):** with tessellation on and the Terrain Editor's "Compute Tessellation" ticked (the default), write `debug/terrain/bodies/<id>/tessellation/range_m` 50 → 2000 near the surface: displaced detail visibly extends farther, the stock editor's "Range (m)" slider shows 2000, and `range_m` on a *second* body reads 2000 too. `reset` on the first body returns both to 50. Untick "Compute Tessellation" (hardware path) and repeat on one body. No `fx.terrain_tess_range` latch. | ☐ |
+| Terrain `edge_length_px`/`factor` still change tessellation density per body on both paths; `wireframe` still works with the new terrain pre-pass. | ☐ |
+| Clutter textures: bind/unbind a ground-clutter override — the user image shows in colour **and** in the clutter's depth/AO (new depth-normal pre-pass); no flicker or stale stock image. | ☐ |
+| Stickers on terrain and on ground clutter occlude/conform as before (the pre-pass now draws both); thug_life quad draws; paint on a vehicle and an EVA kitten. | ☐ |
+| `/sim/display`: complete frames with HDR **off** and, on an HDR monitor, **on** (`Settings → Display → HDR`); the stream is unaffected by HDR (it captures the linear scene). | ☐ |
+| Clouds FX: write a cloud layer field with a secondary viewport open (multi-viewport clouds, rev 5663) — the change shows in both views; `reset` restores. | ☐ |
+| `animations/<n>` on solar panels and lights (the `SubtreeModules` property change): solar/light animation links still resolve on a mixed vessel. | ☐ |
+| Time warp under radiation (crew in Jupiter's belts or a space-weather alert): `time/warp` drops to 1 and `time/auto_warp` to 0 without a gatOS command; `debug/time/warp` re-warps; welds and scheduled timelines survive the forced drop. | ☐ |
+| Bodies: `bodies/io/atmosphere/{present,height}` = `1`/`0`; Triton/Pluto report an atmosphere and Pluto a non-zero `rotation_rate`; a fuel-line-fed tank appears under `tanks/` and fills. | ☐ |
+
+The [5638 checklist](#ksa-5638-upgrade) and [5554 checklist](#ksa-5554-upgrade) are still outstanding
+and should be run on 5707.
+
 ## KSA 5638 upgrade — live pass pending {#ksa-5638-upgrade}
 
 Static upgrade: 2026-10-23, `2026.10.10.5554` → `2026.10.19.5638` (changelog 5603–5637 only;

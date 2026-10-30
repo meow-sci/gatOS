@@ -78,7 +78,24 @@ cut.
 > solar link intact) + the pass record live in [`scope/FULL_SCOPE.md`](scope/FULL_SCOPE.md) §0 / the scope
 > pages; live re-check items appended to [`docs/VALIDATION.md`](docs/VALIDATION.md).
 >
-> **Current KSA upgrade → `2026.10.19.5638`** (2026-10-23, from audited 5554; changelog covers only
+> **Current KSA upgrade → `2026.10.25.5707`** (2026-10-29, from audited 5638; gapless, changelog covers
+> 5639–5703 and the unlogged 5704–5707 tail was reviewed from the full decomp diff; remote `main` verified
+> at `4b3e9e2`). **One compile break:** rev 5652's Brutal update renamed `SimpleVkTexture.Image/ImageView`
+> → `VkImage/VkImageView` (clutter textures, stickers, thug_life). **One compiler-invisible break, fixed:**
+> KSA now tessellates terrain in a compute pass by default (revs 5654–5656), which reads a renderer-wide
+> private `PlanetRenderer._tessellationRange` instead of the per-body UBO field gatOS wrote, so
+> `debug/terrain/bodies/<id>/tessellation/range_m` was a silent no-op; it now writes both (new reflection
+> handle `FxReflect.SetTessellationRange`, latch `fx.terrain_tess_range`) and is documented as
+> renderer-wide. `Part.SubtreeModules` became a property (binary-only — a 5638-built gatOS, and an
+> unrebuilt purrTTY, fail on 5707). Inherited drift documented (no API change): gas tanks, fuel-line tank
+> auto-fill, capsule shielding mass, Io/Ganymede/Triton/Pluto atmospheres and Pluto's rotation, the game
+> forcing warp to 1× and clamping steps at crew radiation thresholds, EVA radiation deaths, brightest-star
+> solar power, per-viewport clouds, clutter in the depth-normal pre-pass, experimental HDR. **182 anchors**
+> (+1). Full build 0 warnings/errors; suite 1648 passed / 12 skipped; 480/480 TypeRefs and 1104/1104
+> MemberRefs resolve. [5707 pass](scope/ksa-assets-and-versions.md#5707-pass); live checks:
+> [5707 checklist](docs/VALIDATION.md#ksa-5707-upgrade).
+>
+> **Prior KSA upgrade → `2026.10.19.5638`** (2026-10-23, from audited 5554; changelog covers only
 > 5603–5637, so 5555–5602 were reviewed from the full decomp diff; remote `main` verified at `edda844`).
 > **One compile break:** rev 5618 renamed the Brutal assemblies (`Brutal.Core.Common` → `Brutal.Core`,
 > `Brutal.Core.{Logging,Numerics,Strings,Memory}` → `Brutal.{…}`, namespaces unchanged) — csproj

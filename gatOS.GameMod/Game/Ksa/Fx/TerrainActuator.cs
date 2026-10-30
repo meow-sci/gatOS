@@ -26,6 +26,9 @@ internal static class TerrainActuator
     /// <summary>The one field addressed with the empty entity token.</summary>
     private const string WireframeKey = "wireframe";
 
+    /// <summary>The per-body field that is also mirrored into the renderer-wide tessellation range.</summary>
+    private const string TessellationRangeKey = "tessellation/range_m";
+
     /// <summary>
     ///     Sets one terrain field, capturing its pristine value on the first write.
     ///     <c>NotFound</c> for an unknown body or a body with no live render slot; <c>Invalid</c> when
@@ -58,23 +61,39 @@ internal static class TerrainActuator
             return FxReflect.Degrade(health, FxReflect.TerrainUboAccessor, uboError);
         FxReflect.Healthy(health, FxReflect.TerrainUboAccessor);
 
+        // The body's own capture is always its UBO value. The renderer-wide tessellation range is
+        // shared by every body, so it gets one capture of its own under the global entity, taken
+        // before the first range write to any body.
         var pristine = new double[match.Spec.Arity];
-        if (Read(renderer, maps, body, match.Spec, pristine))
+        if (Read(renderer, maps, body, match.Spec, pristine, perBodyUbo: true))
             FxPristine.Capture(FxFamily.Terrain, id, field, pristine);
-        if (!Write(renderer, maps, body, match.Spec, values))
+        if (match.Spec.Key == TessellationRangeKey)
+            FxPristine.Capture(FxFamily.Terrain, GlobalEntity, TessellationRangeKey, [renderer.TessellationRange]);
+        if (!Write(renderer, maps, body, match.Spec, values, rendererWideRange: true, out var rangeError))
             return new CommandResult(CommandOutcome.Invalid, $"'{field}' is not bound in this game build");
 
         FxEditorReader.Invalidate();
+        if (rangeError is not null)
+            return FxReflect.Degrade(health, FxReflect.TerrainTessRangeAccessor, rangeError);
+        if (match.Spec.Key == TessellationRangeKey)
+            FxReflect.Healthy(health, FxReflect.TerrainTessRangeAccessor);
         return CommandResult.Ok;
     }
 
-    /// <summary>Restores one entity's pristine terrain values (a no-op when nothing was captured).</summary>
+    /// <summary>
+    ///     Restores one entity's pristine terrain values (a no-op when nothing was captured). A body
+    ///     whose <c>tessellation/range_m</c> gatOS changed also puts the shared renderer-wide range
+    ///     back, since that range is what compute tessellation draws every body with.
+    /// </summary>
     internal static CommandResult Reset(KsaHealth health, string id)
     {
         if (FxReflect.Terrain(out var rendererError) is null)
             return FxReflect.Degrade(health, FxReflect.TerrainRendererAccessor, rendererError);
         FxReflect.Healthy(health, FxReflect.TerrainRendererAccessor);
+        var touchedRange = id.Length != 0 && FxPristine.Has(FxFamily.Terrain, id, TessellationRangeKey);
         FxPristine.Restore(FxFamily.Terrain, id);
+        if (touchedRange)
+            FxPristine.RestoreField(FxFamily.Terrain, GlobalEntity, TessellationRangeKey);
         FxEditorReader.Invalidate();
         return CommandResult.Ok;
     }
@@ -93,9 +112,19 @@ internal static class TerrainActuator
             return true;
         }
 
+        if (id.Length == 0)
+        {
+            // The only other global capture: the renderer-wide tessellation range.
+            if (match.Spec.Key != TessellationRangeKey
+                || !FxReflect.SetTessellationRange(renderer, (float)values[0], out _))
+                return false;
+            FxEditorReader.Invalidate();
+            return true;
+        }
+
         if (Resolve(renderer, id) is not { } body || FxReflect.TerrainUbo(renderer, out _) is not { } maps)
             return false;
-        var applied = Write(renderer, maps, body, match.Spec, values);
+        var applied = Write(renderer, maps, body, match.Spec, values, rendererWideRange: false, out _);
         if (applied)
             FxEditorReader.Invalidate();
         return applied;
@@ -128,18 +157,24 @@ internal static class TerrainActuator
     /// <summary>
     ///     Reads one per-body terrain field into <paramref name="dst"/>. Values are read out of the
     ///     UBO — the struct the GPU actually samples — so read-back is the live truth and a written
-    ///     value round-trips exactly.
+    ///     value round-trips exactly. The one exception is <c>tessellation/range_m</c> under compute
+    ///     tessellation, which reads the renderer-wide range that path actually uses.
     /// </summary>
     [KsaAnchor("PlanetRenderer.PlanetUbo.{TanMeanSlopeRoughness,HapkeMeanAlbedo,BiomeBlendStrength,"
             + "DetailFadeStartMeters,DetailFadeEndMeters,TessellationEdgeLengthPixels,TessellationFactor,"
-            + "TessellationRangeMeters}; PlanetRenderer.MeshUbo.{MinHeight,MaxHeight} (public struct fields)",
-        SourceFile = "KSA/PlanetRenderer.cs:29-116,2272-2275", Verified = "2026-10-11",
-        GameVersion = "2026.10.10.5554", Risk = ChurnRisk.High,
+            + "TessellationRangeMeters}; PlanetRenderer.MeshUbo.{MinHeight,MaxHeight} (public struct fields); "
+            + "PlanetRenderer.{ComputeTessellationEnabled,TessellationRange} (public getters)",
+        SourceFile = "KSA/PlanetRenderer.cs:29-116,376-392,2638-2646", Verified = "2026-10-29",
+        GameVersion = "2026.10.25.5707", Risk = ChurnRisk.High,
         Notes = "Read through the reflected MappedMemory rings at the body's slot, frame 0. "
             + "5554: TanMeanSlopeRoughness stores TAN(angle), matching the corrected stock editor. "
-            + "The degree-based leaf uses atan on read and tan on write; a field rename alone changes its meaning.")]
+            + "The degree-based leaf uses atan on read and tan on write; a field rename alone changes its meaning. "
+            + "5707: while ComputeTessellationEnabled (the default: tessellation setting on, "
+            + "PlanetTessellation.UseCompute = true) the drawn range is the renderer-wide TessellationRange, "
+            + "not the UBO field, so range_m reads that — the same value for every body. With hardware "
+            + "tessellation (or tessellation off) it reads the per-body UBO field as before.")]
     internal static bool Read(PlanetRenderer renderer, FxReflect.TerrainUboMaps maps, Celestial body,
-        FxFieldSpec spec, double[] dst)
+        FxFieldSpec spec, double[] dst, bool perBodyUbo = false)
     {
         ref var planet = ref PlanetUbo(renderer, maps, renderer.RenderUboSlot(body));
         ref var mesh = ref MeshUbo(renderer, maps, renderer.MeshUboSlot(body));
@@ -154,7 +189,11 @@ internal static class TerrainActuator
             case "biomes/detail_fade_end_km": dst[0] = planet.DetailFadeEndMeters / 1000.0; return true;
             case "tessellation/edge_length_px": dst[0] = planet.TessellationEdgeLengthPixels; return true;
             case "tessellation/factor": dst[0] = planet.TessellationFactor; return true;
-            case "tessellation/range_m": dst[0] = planet.TessellationRangeMeters; return true;
+            case TessellationRangeKey:
+                dst[0] = !perBodyUbo && renderer.ComputeTessellationEnabled
+                    ? renderer.TessellationRange
+                    : planet.TessellationRangeMeters;
+                return true;
             default: return false;
         }
     }
@@ -162,6 +201,10 @@ internal static class TerrainActuator
     /// <summary>
     ///     Applies one validated payload: the reference object (where the field has one) plus the UBO
     ///     struct at the body's slot, then the frame-in-flight mirror copy. False ⇒ not bound here.
+    ///     A <c>tessellation/range_m</c> write also sets the renderer-wide range when
+    ///     <paramref name="rendererWideRange"/> is true (a player write; restores replay the two
+    ///     captures separately). <paramref name="rangeError"/> is non-null when the value landed in
+    ///     the UBO but the renderer-wide range could not be written.
     /// </summary>
     [KsaAnchor("Celestial.BodyTemplate.HeightReference.{Minimum,Maximum}; "
             + "BodyTemplate.TerrainReference.BiomeMaterials.{BlendStrength.Value,DetailFadeInStart,"
@@ -169,7 +212,7 @@ internal static class TerrainActuator
             + "over the reflected _renderUboMap/_meshUboMap",
         SourceFile = "KSA/PlanetRenderer.cs:2155-2530 (the in-game Terrain Editor's write + mirror loop) / "
             + "KSA/AstronomicalTemplate.cs:27,51 / KSA/BiomeMaterialsReference.cs / KSA/DistantSphereRenderer.cs:99-105",
-        Verified = "2026-10-11", GameVersion = "2026.10.10.5554", Risk = ChurnRisk.High,
+        Verified = "2026-10-29", GameVersion = "2026.10.25.5707", Risk = ChurnRisk.High,
         Notes = "INVESTIGATION (plan §5 directive): PlanetRenderer has NO public repopulate/invalidate that "
             + "would re-derive a body's UBO from its reference objects — the two population loops the plan "
             + "pointed at (:684-720 for PlanetUbo, :1086-1114 for MeshUbo) are inline CONSTRUCTOR code, not "
@@ -186,10 +229,17 @@ internal static class TerrainActuator
             + "max_height writes therefore reach near terrain immediately but not the distant-sphere view "
             + "until KSA rebuilds that renderer. 5554: roughness is tan(degrees * PI/180). Rev 5534 "
             + "moved viewport-dependent mesh anchors into PlanetViewportData.MeshViewportUbo; the two "
-            + "reflected per-body rings, slot arithmetic and field-wise mirror remain valid.")]
+            + "reflected per-body rings, slot arithmetic and field-wise mirror remain valid. "
+            + "5707 (compute tessellation, revs 5654-5656/5680): the stock editor's Range slider now edits the "
+            + "renderer-wide PlanetRenderer._tessellationRange and mirrors it into the nearby body's UBO "
+            + "(PlanetRenderer.cs:2644-2646); compute tessellation and frustum culling read only the "
+            + "renderer-wide value. range_m therefore writes both, like the editor — so under compute "
+            + "tessellation the last write applies to every body. Edge length and factor are still read "
+            + "per body from the UBO by both paths.")]
     private static bool Write(PlanetRenderer renderer, FxReflect.TerrainUboMaps maps, Celestial body,
-        FxFieldSpec spec, IReadOnlyList<double> v)
+        FxFieldSpec spec, IReadOnlyList<double> v, bool rendererWideRange, out string? rangeError)
     {
+        rangeError = null;
         var renderSlot = renderer.RenderUboSlot(body);
         var meshSlot = renderer.MeshUboSlot(body);
         ref var planet = ref PlanetUbo(renderer, maps, renderSlot);
@@ -237,8 +287,10 @@ internal static class TerrainActuator
             case "tessellation/factor":
                 planet.TessellationFactor = (float)v[0];
                 break;
-            case "tessellation/range_m":
+            case TessellationRangeKey:
                 planet.TessellationRangeMeters = (float)v[0];
+                if (rendererWideRange && !FxReflect.SetTessellationRange(renderer, (float)v[0], out var error))
+                    rangeError = error;
                 break;
             default:
                 return false;

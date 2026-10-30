@@ -10,8 +10,8 @@ sidebar:
 | Path               | Format               | Meaning                                            |
 | ------------------ | -------------------- | -------------------------------------------------- |
 | `time/ut`          | seconds              | universal simulation time                          |
-| `time/warp`        | scalar               | requested warp factor; `1` is realtime (5638+: the achieved rate ramps up — compare `time/sim_dt`) |
-| `time/sim_dt`      | seconds              | last simulation advance; `0` is effectively paused |
+| `time/warp`        | scalar               | requested warp factor; `1` is realtime (5638+: the achieved rate ramps up — compare `time/sim_dt`; 5707+: the game can reset it to `1` on radiation sickness or a space-weather alert) |
+| `time/sim_dt`      | seconds              | last simulation advance; `0` is effectively paused (5707+: can end early at a crew radiation-dose threshold) |
 | `time/warp_speeds` | `f f …`              | discrete game warp factors                         |
 | `time/auto_warp`   | `0` or `1 target-ut` | automatic warp state and target                    |
 | `time/alarm`       | seconds              | write a target UT; its read blocks until that time |
@@ -38,7 +38,7 @@ speeds up to 100 years per second.
 | physical   | `mass`, `radius`, `mu`, `soi`, `rotation_rate`                                 | kg, m, m³/s², m, rad/s                      |
 | motion     | `position/ecl`, `velocity/ecl`                                                 | ECL m and m/s                               |
 | orbit      | `apoapsis`, `periapsis`, `ecc`, `inc`, `lan`, `argpe`, `sma`, `period`         | apses are altitude in m (`apoapsis` is `0` when unbound); angles are degrees |
-| atmosphere | `present`, `height`, `scale_height`, `sea_level_pressure`, `sea_level_density` | absent for airless bodies                   |
+| atmosphere | `present`, `height`, `scale_height`, `sea_level_pressure`, `sea_level_density` | absent for airless bodies; `height` `0` means too thin to fly in (Io, Ganymede since 5707) |
 | ocean      | `present`, `density`                                                           | absent without an ocean                     |
 
 `bodies/<id>/focus` is a trigger: write `1` to move the main camera to the body. It is view-only and

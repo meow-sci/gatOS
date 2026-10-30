@@ -196,8 +196,8 @@ vessel). Directories marked *(detail)* require `telemetry_vessel_detail=true`; *
 | Path | A | Format | Meaning |
 |---|---|---|---|
 | `time/ut` | S | scalar | Universal sim time, seconds. |
-| `time/warp` | S | scalar | Current (requested) time-warp factor (1 = realtime). Since KSA `2026.10.19.5638` the achieved rate ramps toward it (the sim step grows at most ~2× per frame and is limited by solver cost), so right after a large warp change `time/sim_dt` — the step actually taken — lags this value for ~15–20 frames. |
-| `time/sim_dt` | S | scalar | Sim seconds advanced by the last tick; `0` ⇒ effectively paused. |
+| `time/warp` | S | scalar | Current (requested) time-warp factor (1 = realtime). Since KSA `2026.10.19.5638` the achieved rate ramps toward it (the sim step grows at most ~2× per frame and is limited by solver cost), so right after a large warp change `time/sim_dt` — the step actually taken — lags this value for ~15–20 frames. Since KSA `2026.10.25.5707` the **game itself** can drop this to `1` (and clear `time/auto_warp`) with no command: when a crew member reaches radiation sickness (1 Sv acute dose) or a major space-weather alert fires near a crewed vessel. |
+| `time/sim_dt` | S | scalar | Sim seconds advanced by the last tick; `0` ⇒ effectively paused. Can be smaller than warp × frame time: the growth cap (above), solver cost, and — since KSA `2026.10.25.5707` — a clamp that ends a step just past the moment a crew member's radiation dose crosses a threshold. |
 | `time/warp_speeds` | S | `f f f …` | The discrete warp factors the game offers. |
 | `time/auto_warp` | S | `0` or `1 <ut>` | Auto-warp-to-time active flag + target ut. |
 | `time/alarm` | St | scalar | **Blocking**: write a target `ut`; the read parks until sim time reaches it, then returns the reached ut. The warp-correct "sleep until". |
@@ -221,7 +221,7 @@ Unbounded sphere-of-influence radii use the normal finite-number sentinel `0`.
 | Path | A | Format | Meaning / units |
 |---|---|---|---|
 | `bodies/<id>/id` | S | string | Body id. |
-| `bodies/<id>/class` | S | string | `Planet`, `Moon`, `Star`, `Barycenter`, … |
+| `bodies/<id>/class` | S | string | `Planet`, `Moon`, `Star`, `Barycenter`, … Since KSA `2026.10.25.5707` Io, Ganymede, Triton and Pluto are atmospheric bodies (they gain `atmosphere/`), so their class changes. |
 | `bodies/<id>/parent` | S | string | Parent body id (empty for an independent root). |
 | `bodies/<id>/children` | S | list | Ids of orbiting bodies (newline-separated). |
 | `bodies/<id>/mass` | S | scalar | Mass, kg. |
@@ -240,7 +240,7 @@ Unbounded sphere-of-influence radii use the normal finite-number sentinel `0`.
 | `bodies/<id>/orbit/sma` | S | scalar | Semi-major axis, meters. |
 | `bodies/<id>/orbit/period` | S | scalar | Orbital period, seconds. |
 | `bodies/<id>/atmosphere/present` | S | `1` | Present only when the body has atmosphere. |
-| `bodies/<id>/atmosphere/height` | S | scalar | Atmosphere top above surface, meters. |
+| `bodies/<id>/atmosphere/height` | S | scalar | Atmosphere top above surface, meters. `0` with `present=1` means the atmosphere exists but is thinner than the flight cutoff, so flight treats the body as vacuum (Io and Ganymede since KSA `2026.10.25.5707`). |
 | `bodies/<id>/atmosphere/scale_height` | S | scalar | Scale height, meters. |
 | `bodies/<id>/atmosphere/sea_level_pressure` | S | scalar | Sea-level pressure, Pa. |
 | `bodies/<id>/atmosphere/sea_level_density` | S | scalar | Sea-level density, kg/m³. |
@@ -362,7 +362,7 @@ The `orbit/` and `atmosphere/` dirs are absent for the root star / airless bodie
 | Path | A | Format | Meaning |
 |---|---|---|---|
 | `tanks/<r>/amount` | S | scalar | Current amount, kg. |
-| `tanks/<r>/capacity` | S | scalar | Capacity, kg. |
+| `tanks/<r>/capacity` | S | scalar | Capacity, kg. For a gas (KSA `2026.10.25.5707`+, tanks with a rated pressure) this is the gas mass the tank holds at its rated pressure. |
 | `tanks/<r>/fraction` | S | scalar | Fill fraction 0..1. |
 
 > **Liquids only — solid rocket motors live under `srb/` (§3.4.8), not here (KSA `2026.7.9.5018`+).**
@@ -657,7 +657,7 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/vessels/<id>/refill_fuel` | T | `1` | `debug.refill_fuel` | **Solver** | Refill all consumables. Since KSA `2026.9.22.5482` (rev 5478) the game also flags the tank contents as changed, so an engine that had run dry re-lights after a refill (before, it could stay starved). |
 | `debug/vessels/<id>/refill_battery` | T | `1` | `debug.refill_battery` | **Solver** | Refill all batteries. |
 | `debug/vessels/<id>/docking/<n>/pushoff_impulse` | **St** | number (N·s ≥0) | `debug.docking_pushoff` | Frame | Override a docking port's undock separation impulse (`DockingPort.PushoffImpulse`). |
-| `debug/time/warp` | **St** | factor | `debug.warp` | Frame | Set the time-warp factor directly (`Universe.SetSimulationSpeed`). |
+| `debug/time/warp` | **St** | factor | `debug.warp` | Frame | Set the time-warp factor directly (`Universe.SetSimulationSpeed`). Since KSA `2026.10.25.5707` the game can reset warp to `1` on its own (radiation sickness, space-weather alerts); writing here re-warps. |
 | `debug/focus` | **St** | vehicle/body id | `camera.focus` | Frame | Move the camera to any astronomical by id (view-only). |
 | `debug/control_vessel` | **St** | vehicle id | `debug.control_vessel` | Frame | Focus **and** take control of a vehicle by id. (4750: KSA may refuse a target that isn't `controllable` — pre-check the `controllable` read; outcome to be confirmed in a live flight.) |
 | `debug/always_render_iva` | **St** | `0`/`1` | `debug.always_render_iva` | Frame | Global render cheat: force interior (IVA) part meshes to render outside the IVA camera. Vessel-agnostic. |
@@ -757,7 +757,7 @@ The cheat surface. Exempt from the `control_all_vessels` authority gate (it is i
 | `debug/terrain/bodies/<id>/hapke_albedo` | **St** | number (`0.0001..0.99999`) | `debug.terrain_set` | Frame | Mean single-scattering albedo of the Hapke surface model. |
 | `debug/terrain/bodies/<id>/biomes/blend_strength` | **St** | number (`1..10`) | `debug.terrain_set` | Frame | Sharpness of the blend between neighbouring biome materials. |
 | `debug/terrain/bodies/<id>/biomes/{detail_fade_start_km,detail_fade_end_km}` | **St** | number, km (`≥0`) | `debug.terrain_set` | Frame | Altitudes where biome detail textures start / finish fading in. |
-| `debug/terrain/bodies/<id>/tessellation/{edge_length_px,factor,range_m}` | **St** | number (`0.1..20` px, `0..1`, `1..20000` m) | `debug.terrain_set` | Frame | Target screen-space edge length, the global tessellation-factor scale, and the camera distance over which tessellation falls off. ⚠ **`range_m` re-baselined in KSA `2026.8.22.5348`:** the engine default moved **220 → 50 m**, and the shader's displacement falloff window moved from `range×0.1 … range×0.95` to `range×0.75 … range×0.975` — the same `range_m` now fades much later and much more abruptly. gatOS's `1..20000` clamp is unchanged and still admits the new default, but any value tuned against the old 220 m default is now misleading; read the live value before writing. |
+| `debug/terrain/bodies/<id>/tessellation/{edge_length_px,factor,range_m}` | **St** | number (`0.1..20` px, `0..1`, `1..20000` m) | `debug.terrain_set` | Frame | Target screen-space edge length, the global tessellation-factor scale, and the camera distance over which tessellation falls off. ⚠ **`range_m` re-baselined in KSA `2026.8.22.5348`:** the engine default moved **220 → 50 m**, and the shader's displacement falloff window moved from `range×0.1 … range×0.95` to `range×0.75 … range×0.975` — the same `range_m` now fades much later and much more abruptly. gatOS's `1..20000` clamp is unchanged and still admits the new default, but any value tuned against the old 220 m default is now misleading; read the live value before writing. ⚠ **`range_m` is renderer-wide since KSA `2026.10.25.5707`:** with tessellation on, the game tessellates terrain in a compute pass by default, and that pass (plus terrain culling) uses **one** range for every body. A write to any body therefore sets the range for all of them (gatOS also stores it in the body's own slot, which only the hardware-tessellation path reads), and read-back returns that shared value while compute tessellation is active. `edge_length_px` and `factor` stay per body. `bodies/<id>/reset` on a body whose `range_m` you changed also restores the shared range. |
 | `debug/terrain/bodies/<id>/json` | S | JSON object | — | — | Every terrain field of the body in one line. |
 | `debug/terrain/bodies/<id>/reset` | T | `1` | `debug.terrain_reset` | Frame | Restore that body's pristine terrain values. |
 
@@ -850,8 +850,10 @@ render editors exposed as filesystems). Shared rules for all four:
   vanished template/body (also on a read of a leaf whose entity went away, or an out-of-range
   layer/cloud-type index); `EOPNOTSUPP` the family's game-side accessor is latched degraded (it also
   shows in `status/accessors`) — except `clouds`, whose degraded `fx.cloud_renderer`/`fx.cloud_apply`
-  still applies the data write and returns OK (only the immediate GPU re-upload is skipped); `EIO` a KSA
-  call threw.
+  still applies the data write and returns OK (only the immediate GPU re-upload is skipped). A
+  `tessellation/range_m` write with `fx.terrain_tess_range` degraded still stores the per-body value but
+  returns `EOPNOTSUPP`, because the shared range that compute tessellation draws with did not change;
+  `EIO` a KSA call threw.
 - The whole surface is gated by `debug_namespace` like the rest of `/sim/debug`, is mirrored leaf-by-leaf
   over HTTP `/v1/fs/debug/…` and MQTT `gatos/sim/debug/…`, and rides `GET /v1/snapshot` as `fxEditors`.
 

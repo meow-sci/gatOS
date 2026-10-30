@@ -45,14 +45,17 @@ internal static class UserTextureGpu
             + "new SimpleVkTexture(Allocator, StagingPool, TextureAsset, CreateOptions); "
             + "Renderer.Allocator.CreateStagingPool(Renderer.Graphics, 1)",
         SourceFile = "Brutal.TextureApi/TextureLoader.cs:130 / RenderCore/TextureAsset.cs:35 / "
-            + "RenderCore/SimpleVkTexture.cs:245 / Core/Renderer.cs",
-        Verified = "2026-08-22", GameVersion = "2026.8.19.5261", Risk = ChurnRisk.High,
+            + "RenderCore/SimpleVkTexture.cs:239 / Core/Renderer.cs",
+        Verified = "2026-10-29", GameVersion = "2026.10.25.5707", Risk = ChurnRisk.High,
         Notes = "All public; no reflection. Three non-obvious contracts: TextureAsset.FilePath must be "
             + "non-empty or the SimpleVkTexture ctor throws ArgumentException; LoadOptions' stb format "
             + "forces 4 channels (a 3-channel PNG would otherwise decode to the widely unsupported "
             + "R8G8B8_UNorm); and the decoded ITexture is neither IDisposable nor finalized, so its "
             + "public Destroy() must be called or the native buffer leaks. Mips are generated "
-            + "automatically when the source has one level and FillMipChain is set.")]
+            + "automatically when the source has one level and FillMipChain is set. "
+            + "5707 (rev 5652): the ctor is unchanged (line move only), but the returned texture's "
+            + "Image/ImageView getters are now VkImage/VkImageView — callers that bind the view use the "
+            + "new name.")]
     internal static SimpleVkTexture Upload(
         Core.Renderer renderer, TextureFile file, int maxDimension, bool faithful, string debugNamePrefix)
     {

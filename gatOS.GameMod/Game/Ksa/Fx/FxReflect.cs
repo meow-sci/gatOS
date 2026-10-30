@@ -47,6 +47,9 @@ internal static class FxReflect
     /// <summary>Health-latch key: the terrain UBO mapped-memory handles (the live-apply half).</summary>
     internal const string TerrainUboAccessor = "fx.terrain_ubo";
 
+    /// <summary>Health-latch key: the planet renderer's private, renderer-wide tessellation range.</summary>
+    internal const string TerrainTessRangeAccessor = "fx.terrain_tess_range";
+
     private const BindingFlags AnyInstance =
         BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
 
@@ -63,6 +66,7 @@ internal static class FxReflect
     private static FieldInfo? _worleyField;
     private static FieldInfo? _renderUboMapField;
     private static FieldInfo? _meshUboMapField;
+    private static FieldInfo? _tessellationRangeField;
     private static MethodInfo? _trailRebuildMethod;
     private static bool _trailResolved;
     private static bool _trailSettingsResolved;
@@ -71,6 +75,7 @@ internal static class FxReflect
     private static bool _templateReferencesResolved;
     private static bool _cloudApplyResolved;
     private static bool _terrainUboResolved;
+    private static bool _tessellationRangeResolved;
 
     /// <summary>The cloud renderer's private handles the layer-apply path needs.</summary>
     /// <param name="Renderer">The engine renderer <c>UpdateStaticData</c> takes.</param>
@@ -278,8 +283,8 @@ internal static class FxReflect
     ///     repopulate picks up.
     /// </summary>
     [KsaAnchor("CloudRenderer._renderer/_cloudShadowsRenderer/_worleyNoise3dTarget (private fields)",
-        SourceFile = "KSA.Atmosphere.Rendering/CloudRenderer.cs:109,165,245",
-        Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.High,
+        SourceFile = "KSA.Atmosphere.Rendering/CloudRenderer.cs:232,264,322",
+        Verified = "2026-10-29", GameVersion = "2026.10.25.5707", Risk = ChurnRisk.High,
         Notes = "The three arguments CloudLayerRenderData.UpdateStaticData + CloudShadowsRenderer."
             + "PopulatePlanets need; the render-data map itself (_planetToCloudRenderData) is public. "
             + "_worleyNoise3dTarget was KSA.RenderTarget up to 2026.8.3.5117; rev 5154's dynamic-rendering "
@@ -287,7 +292,9 @@ internal static class FxReflect
             + "The old KSA.RenderTarget/KSA.OffscreenTarget classes are gone; the NEW KSA.Rendering."
             + "RenderTarget is an unrelated type, so do not re-bind this to the name alone. "
             + "5482: line moves only (:105/:161/:233 -> :109/:165/:245); names and types unchanged "
-            + "(Renderer, RenderImage, CloudShadowsRenderer).")]
+            + "(Renderer, RenderImage, CloudShadowsRenderer). 5707 (rev 5663 per-viewport refactor): all three "
+            + "keep their names and types (line moves :232/:264/:322); the worley target stays one shared "
+            + "image (created once in BuildRenderTargets, :881), not part of the per-viewport ViewportResources.")]
     internal static CloudApplyHandles? CloudApply(CloudRenderer renderer, out string error)
     {
         error = "";
@@ -335,12 +342,17 @@ internal static class FxReflect
     ///     the next renderer rebuild.
     /// </summary>
     [KsaAnchor("PlanetRenderer._renderUboMap/_meshUboMap (private readonly MappedMemory fields)",
-        SourceFile = "KSA/PlanetRenderer.cs:263,265", Verified = "2026-09-02",
-        GameVersion = "2026.9.7.5402", Risk = ChurnRisk.High,
+        SourceFile = "KSA/PlanetRenderer.cs:260,262", Verified = "2026-10-29",
+        GameVersion = "2026.10.25.5707", Risk = ChurnRisk.High,
         Notes = "Host-visible coherent UBO rings, indexed (NumCelestials*frame + slot)*Stride with the "
             + "public PlanetUboStride/MeshUboStride/NumCelestials and the public RenderUboSlot/MeshUboSlot "
             + "helpers. gatOS writes frame slot 0 and mirrors into the other MaxFramesInFlight copies, "
-            + "exactly as the in-game Terrain Editor does (PlanetRenderer.cs:2388-2398).")]
+            + "exactly as the in-game Terrain Editor does (CopyUiFields, PlanetRenderer.cs:2316-2349, called :2691-2692). "
+            + "5707: same names and types (line moves only). The per-frame render-UBO refresh moved into "
+            + "UpdateRenderUbo and still rewrites only camera/texture/ocean/ring fields, never the "
+            + "editor-tuned ones gatOS writes; the new public GetRenderUbo(celestial, frame) uses the same "
+            + "slot arithmetic. The tessellation range additionally lives in a renderer-wide field — see "
+            + "SetTessellationRange.")]
     internal static TerrainUboMaps? TerrainUbo(PlanetRenderer renderer, out string error)
     {
         error = "";
@@ -358,6 +370,48 @@ internal static class FxReflect
 
         error = "PlanetRenderer._renderUboMap/_meshUboMap are missing in this build";
         return null;
+    }
+
+    /// <summary>
+    ///     Writes the planet renderer's renderer-wide tessellation range, exactly as the stock Terrain
+    ///     Editor's "Range (m)" slider does. False with a reason when the private field is gone.
+    /// </summary>
+    /// <remarks>
+    ///     Needed since 2026.10.25.5707: compute tessellation (the new default) and the planet frustum
+    ///     culling read this field through the public <c>TessellationRange</c> getter, not the
+    ///     per-body <c>PlanetUbo.TessellationRangeMeters</c>. The field has no setter, hence the
+    ///     reflection. Game thread only.
+    /// </remarks>
+    [KsaAnchor("PlanetRenderer._tessellationRange (private float field; public read-only TessellationRange getter)",
+        SourceFile = "KSA/PlanetRenderer.cs:326,376,844,2644-2646 / "
+            + "KSA.Rendering.Planet/PlanetTessellation.cs:61,289 / KSA/PlanetFrustumCulling.cs:233",
+        Verified = "2026-10-29", GameVersion = "2026.10.25.5707", Risk = ChurnRisk.High,
+        Notes = "Born at 5707 (revs 5654-5656, 5680): PlanetTessellation.UseCompute defaults to true, and "
+            + "PerformTessellation takes TessellationEdgeLengthPixels/TessellationFactor from the body's "
+            + "render UBO but TessellationRange from this renderer-wide field (default 50 m). The stock "
+            + "editor now edits _tessellationRange and mirrors it into the nearby body's UBO; before 5707 it "
+            + "edited the UBO field directly. The hardware tessellation shaders (PlanetTessEvaluation.tese, "
+            + "PlanetDepthTessEvaluation.tese) still read the UBO field. Reflection, so compiler-blind: a miss "
+            + "latches fx.terrain_tess_range degraded; the per-body UBO write still lands.")]
+    internal static bool SetTessellationRange(PlanetRenderer renderer, float meters, out string error)
+    {
+        error = "";
+        if (!_tessellationRangeResolved)
+        {
+            _tessellationRangeResolved = true;
+            _tessellationRangeField = typeof(PlanetRenderer).GetField("_tessellationRange", AnyInstance);
+            if (_tessellationRangeField is { } field && field.FieldType != typeof(float))
+                _tessellationRangeField = null;
+        }
+
+        if (_tessellationRangeField is null)
+        {
+            error = "PlanetRenderer._tessellationRange (float) is missing in this build";
+            return false;
+        }
+
+        _tessellationRangeField.SetValue(renderer, meters);
+        return true;
     }
 
     /// <summary>Latches one FX capability degraded (logged once) and returns the EOPNOTSUPP result.</summary>

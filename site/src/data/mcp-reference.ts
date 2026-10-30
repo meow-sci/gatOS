@@ -1308,7 +1308,7 @@ export const mcpReference: Record<string, McpReferenceEntry> = {
         example:
           '{"family":"engine_plume","operation":"set","entity":"MethaloxVac","field":"emission/brightness","value":35}',
         description:
-          "Validate and set one declared FxCatalog field. engine_plume entity is a template id; plume_trail entity is omitted and global raymarch controls also affect explosion volumes (which, since KSA 2026.9.22.5482, also draw on airless bodies and with clouds off); clouds entity is a body id (with clouds disabled in game settings a write applies but draws nothing); terrain uses a body id or an empty entity for wireframe (min_height/max_height reach the distant-planet sphere only when it is rebuilt). Since KSA 5554, plume_trail render/expansion_time delays grouped-trail lifetime fading; terrain slope_roughness_deg stays in degrees.",
+          "Validate and set one declared FxCatalog field. engine_plume entity is a template id; plume_trail entity is omitted and global raymarch controls also affect explosion volumes (which, since KSA 2026.9.22.5482, also draw on airless bodies and with clouds off); clouds entity is a body id (with clouds disabled in game settings a write applies but draws nothing); terrain uses a body id or an empty entity for wireframe (min_height/max_height reach the distant-planet sphere only when it is rebuilt). Since KSA 5554, plume_trail render/expansion_time delays grouped-trail lifetime fading; terrain slope_roughness_deg stays in degrees. Since KSA 5707, terrain tessellation/range_m is renderer-wide under the default compute tessellation: a set on any body changes the shared range and read-back returns it.",
       },
       {
         name: "reset",

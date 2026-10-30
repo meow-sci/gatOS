@@ -429,7 +429,9 @@ Tutorials often need to *place* a vessel before demonstrating control. `debug/**
   Full semantics: [SPEC §6](../SPEC_9P_FILESYSTEM.md).
 - **Refuel / batteries** — `echo 1 > /sim/debug/vessels/<id>/refill_fuel` (and `refill_battery`). Since KSA
   2026.9.22.5482 a refill also re-lights an engine that had run dry.
-- **Set time-warp** — `echo 100 > /sim/debug/time/warp`.
+- **Set time-warp** — `echo 100 > /sim/debug/time/warp`. Since KSA 2026.10.25.5707 the game itself can drop
+  warp back to 1× (crew radiation sickness, space-weather alerts), so a program that warps to an event should
+  re-check `time/warp` rather than assume it held.
 - **Switch controlled vessel** — `echo Polaris > /sim/debug/control_vessel` (focuses + takes control).
 
 Other `debug/**` surface (welds, thug_life, always_render_iva) is cosmetic/advanced and cataloged in

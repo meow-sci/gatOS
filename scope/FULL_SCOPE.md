@@ -97,7 +97,22 @@ update's blast radius is small and discoverable. The procedure:
    (`EOPNOTSUPP`), logs once, and shows up in `/sim/status/accessors`. The guest sees a failed sensor,
    not a crashed mod. This is the safety net for the things steps 2–3 miss.
 
-> **Current upgrade: 2026.10.10.5554 → 2026.10.19.5638**, audited 2026-10-23.
+> **Current upgrade: 2026.10.19.5638 → 2026.10.25.5707**, audited 2026-10-29.
+> The drops chain with no gap; the changelog logs 5639–5703 and the unlogged 5704–5707 tail was covered
+> by the full decomp diff. One compile break: rev 5652 renamed `SimpleVkTexture.ImageView` →
+> `VkImageView` (three call sites). One compiler-invisible break, fixed: compute tessellation (the new
+> default, revs 5654–5656) reads a renderer-wide `PlanetRenderer._tessellationRange`, so
+> `debug/terrain/bodies/<id>/tessellation/range_m` wrote the per-body UBO and changed nothing on screen —
+> it now writes both (new reflection anchor, latch `fx.terrain_tess_range`) and is documented as
+> renderer-wide. `Part.SubtreeModules` became a property (binary-only; a 5638-built mod must be rebuilt).
+> Inherited drift documented: gas tanks, fuel-line tank auto-fill, capsule shielding mass, four newly
+> atmospheric bodies and Pluto's rotation, game-forced 1× warp and dose step clamps, EVA radiation
+> deaths, brightest-star solar power, per-viewport clouds, clutter in the depth-normal pre-pass, HDR.
+> Build 0 warnings/errors; 1648 passed / 12 skipped; 480/480 TypeRefs and 1104/1104 MemberRefs
+> resolve; 182 anchors. [5707 pass](ksa-assets-and-versions.md#5707-pass); live checks in the
+> [5707 checklist](../docs/VALIDATION.md#ksa-5707-upgrade).
+>
+> **Prior upgrade: 2026.10.10.5554 → 2026.10.19.5638**, audited 2026-10-23.
 > The changelog logs only 5603–5637; 5555–5602 were reviewed from the full decomp diff. One compile
 > break: rev 5618 renamed the `Brutal.Core.*` assemblies to `Brutal.*` (csproj `HintPath`s only).
 > Two compiler-invisible breaks, both fixed: KSA now ships **JIT-optimised** (rev 5630), so lazily
@@ -538,7 +553,7 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/Ksa/Paint/Stickers/StickerAnchors.cs` | 2 `[KsaAnchor]` (per-frame geodetic→ego and part-local→ego decal composition) | returns false → that sticker is dormant for the frame rather than drawing garbage |
 | `Game/Ksa/Paint/Stickers/StickerPicker.cs` | 3 `[KsaAnchor]` (the aim ray, KSA's own watertight part raycast sweep, the terrain march+bisect) | no hit → `ENOENT`, nothing placed |
 | `Game/Ksa/Paint/Stickers/StickerManager.cs` | 3 `[KsaAnchor]` (per-frame anchor re-resolution, lazy `Program.GetRenderer()` init, the teardown `WaitIdle`) | a despawned target yields null → dormant, never pruned; `paint.sticker_renderer` health latch |
-| `Game/Ksa/Fx/*.cs` (`FxReflect`×8 incl. the 5638 `RebuildTrail` method handle, `PlumeActuator`×4, `TrailActuator`×2, `CloudActuator`×4, `TerrainActuator`×3, `FxEditorReader`×4, **`FaceFxManager`×1**; `FxPristine` has none — no KSA types) | 27 `[KsaAnchor]` (the four FX editors: the reflective handles in `FxReflect` incl. the terrain UBO rings, the per-family read/write/apply pairs, the plume propagation loop, the sampler's rosters) — **plus `FaceFxManager`**, the `/sim/debug/fx` face-burst emitter (`Program.Instance.ParticleSystem.{EmitterPool.Get,InitializeEmitter}`, `ParticleEmitterReference`, `ParticleEmitter.{LocalOffset,Context,Origin,CreateHandle,ForceSpawningComplete}`, `Vehicle.{AddEmitter,BubbleOrigin}`, `GameSettings.Current.Graphics.Particles`), which also **mirrors** `CrewPortraitPanel.FACE_HEIGHT_OFFSET_EVA` — retuned 0.85 → 0.70 at 5348 (rev 5270) | per-command try/catch in `KsaCatalog`; per-capability `KsaHealth` latches (`fx.*` keys) → `EOPNOTSUPP`; sampler-level try/catch (logged once); pristine restore at unload |
+| `Game/Ksa/Fx/*.cs` (`FxReflect`×9 incl. the 5638 `RebuildTrail` method handle and the 5707 `SetTessellationRange` field write, `PlumeActuator`×4, `TrailActuator`×2, `CloudActuator`×4, `TerrainActuator`×3, `FxEditorReader`×4, **`FaceFxManager`×1**; `FxPristine` has none — no KSA types) | 28 `[KsaAnchor]` (the four FX editors: the reflective handles in `FxReflect` incl. the terrain UBO rings and the renderer-wide tessellation range, the per-family read/write/apply pairs, the plume propagation loop, the sampler's rosters) — **plus `FaceFxManager`**, the `/sim/debug/fx` face-burst emitter (`Program.Instance.ParticleSystem.{EmitterPool.Get,InitializeEmitter}`, `ParticleEmitterReference`, `ParticleEmitter.{LocalOffset,Context,Origin,CreateHandle,ForceSpawningComplete}`, `Vehicle.{AddEmitter,BubbleOrigin}`, `GameSettings.Current.Graphics.Particles`), which also **mirrors** `CrewPortraitPanel.FACE_HEIGHT_OFFSET_EVA` — retuned 0.85 → 0.70 at 5348 (rev 5270) | per-command try/catch in `KsaCatalog`; per-capability `KsaHealth` latches (`fx.*` keys) → `EOPNOTSUPP`; sampler-level try/catch (logged once); pristine restore at unload |
 | `Game/Ksa/Camera/*.cs` (`CameraDirector`×9, `CameraTargets`×7, `CameraFrames`×3, `CameraReader`×2, `ViewportSeam`×2 **(new at 5402 — reflection on the protected `GameViewport.FixedController` / `ViewportBase.Mode` setters)**, `CameraFollowable`×1, `CameraPoseController`×1, `CameraViewportPatch`×1) | **26** `[KsaAnchor]` — programmable-camera anchors plus `CameraViewportPatch`'s `GameViewport.OnFrame(double)` prefix/postfix, and the mod-side `IFollowable` + `FixedController` subclass the pose controller drives through (offsets only — never an absolute camera transform). Main viewport is selected by identity; the controller's public `Camera`/viewport camera is used, never unscience's obsolete `___Transform` injector | idle director is one branch; hook faults latch once; driver fault restores camera; unresolvable frames hold last good pose |
 | `Game/Ksa/{DisplayRenderPatch,FrameCapture}.cs` | 3 `[KsaAnchor]` (the `/sim/display` capture: the `Program.RenderGame` transpiler + the in-band Vulkan blit/readback, **plus the 5348-new `GameSettings.UiPixelCulling()` prefix** that suppresses rev 5283's UI coverage mask while the stream is live) | transpiler degrades to **no injection**; the culling prefix is best-effort (a missing target costs capture fidelity, never the stream); a capture-time fault latches the feature off for the session (`_faulted`) |
 | `Game/Ksa/KsaCatalog.cs` | 2 `[KsaAnchor]` (vehicle/astronomical resolution) | self |
@@ -549,8 +564,8 @@ confined to `Game/Ksa/**`. The full census — the only files a KSA update can t
 | `Game/BrutalModLogger.cs` | `Brutal.Logging` sink | try/catch at install |
 | `Mod.cs`, `ModAssets.cs` | StarMap.API attributes, purrTTY contract — **no KSA game types** | n/a (mod-ecosystem ABI, not KSA) |
 
-Detail and per-member break-impact: the four `ksa-*.md` pages. **The census totals 181 `[KsaAnchor]`s**
-at 5638 (new: `InlineGuard.Install` and `FxReflect.RebuildTrail`); 179 at 5554 (one new
+Detail and per-member break-impact: the four `ksa-*.md` pages. **The census totals 182 `[KsaAnchor]`s**
+at 5707 (new: `FxReflect.SetTessellationRange`); 181 at 5638 (new: `InlineGuard.Install` and `FxReflect.RebuildTrail`); 179 at 5554 (one new
 `BodyReader.FromBarycenter` anchor); 178
 at 5482 (176 before the pass; the one further occurrence in `Game/Ksa/KsaAnchor.cs` is the attribute's own
 doc comment, not a binding). The **5482** pass added two, both in part paint — the compiler-blind

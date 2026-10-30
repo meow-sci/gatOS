@@ -189,7 +189,7 @@ internal static class DisplayRenderPatch
     ///     unchanged (the feature simply stays dark) rather than corrupting the method.
     /// </summary>
     [KsaAnchor("Program.RenderGame (Harmony transpiler) + Brutal.VulkanApi.VkDeviceExtensions.End",
-        SourceFile = "KSA/Program.cs:4826-5149 (End :5149)", Verified = "2026-10-23", GameVersion = "2026.10.19.5638",
+        SourceFile = "KSA/Program.cs:4948-5270 (End :5270)", Verified = "2026-10-29", GameVersion = "2026.10.25.5707",
         Risk = ChurnRisk.Medium,
         Notes = "Injects the capture call before the frame's final commandBuffer.End() (Program.cs:4764), where the "
                 + "offscreen ColorImage is ShaderReadOnlyOptimal and recording is outside any render pass. Matches the "
@@ -212,7 +212,15 @@ internal static class DisplayRenderPatch
                 + "the final End first anyway. RenderEditor's End is now :4995. Rev 5443's present-wait frame pacing "
                 + "(Renderer.WaitForPreviousPresent in PrepareFrame, FrameQueueLimit.OneFrame default) is CPU-side; "
                 + "MaxFramesInFlight is still 2, so the deferred-readback slot ring is unchanged."
-                + " 5638 (rev 5630, KSA now compiled with optimisations): re-verified against the shipped IL, not the decomp — the nops are gone but the tail is still ldloc.1; call VkDeviceExtensions::End<CommandBuffer>(!!0); ret, so codes[callIdx-1] is still the commandBuffer2 load. Tail order unchanged: SampledReadVfc barrier :5140, RenderFinalComposite :5144, OnRenderGameSwapchainGrab :5147, Profiler.Gpu.EndFrame :5148, End :5149; ClutterPrePass.End (:4978) is still rejected by the namespace filter; RenderEditor's End is :5273. MaxFramesInFlight is still 2. InlineGuard installs before this patch so the recompiled RenderGame cannot inline RenderMainPass/ResolveAttachments past the thug_life/sticker patches.")]
+                + " 5638 (rev 5630, KSA now compiled with optimisations): re-verified against the shipped IL, not the decomp — the nops are gone but the tail is still ldloc.1; call VkDeviceExtensions::End<CommandBuffer>(!!0); ret, so codes[callIdx-1] is still the commandBuffer2 load. Tail order unchanged: SampledReadVfc barrier :5140, RenderFinalComposite :5144, OnRenderGameSwapchainGrab :5147, Profiler.Gpu.EndFrame :5148, End :5149; ClutterPrePass.End (:4978) is still rejected by the namespace filter; RenderEditor's End is :5273. MaxFramesInFlight is still 2. InlineGuard installs before this patch so the recompiled RenderGame cannot inline RenderMainPass/ResolveAttachments past the thug_life/sticker patches."
+                + " 5707 (rev 5645, experimental HDR): re-verified on the shipped IL. RenderGame shrank 4104 -> 4036 B and its "
+                + "tail is still ldloc.1; call VkDeviceExtensions::End<CommandBuffer>(!!0); ret, the only 1-arg End declared in "
+                + "Brutal.VulkanApi in the body. New tail: SampledReadVfc barrier :5256, RenderAaPreparePasses(…, toSwapchain) "
+                + ":5258, RenderHdrSceneComposite :5259 (HdrOutput.Active only — composites into HdrPresentPass's scene "
+                + "target), RenderFinalComposite :5263 (now skipped when HDR is active), OnRenderGameSwapchainGrab :5268, "
+                + "Profiler.Gpu.EndFrame :5269, End :5270; RenderEditor's End is :5399. The capture still reads the linear "
+                + "R16G16B16A16SFloat offscreen colour before any tonemap/composite, so HDR (GameSettings.Hdr, off by "
+                + "default) does not change what the stream ships.")]
     private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
     {
         var codes = new List<CodeInstruction>(instructions);

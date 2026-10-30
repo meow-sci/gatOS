@@ -1071,6 +1071,7 @@ through those handles is public API. The write/read rows are on
 | `fx.cloud_apply` | `FxReflect.CloudApply` | `CloudRenderer._renderer` / `_cloudShadowsRenderer` / `_worleyNoise3dTarget` (private) — the three arguments the layer re-upload needs (`_planetToCloudRenderData` itself is public) | ✅ present (`CloudRenderer.cs:95,151,235`) |
 | `fx.terrain_renderer` | `FxReflect.Terrain` | *(none — `Program.GetPlanetRenderer()` is public)*; the latch exists so a missing renderer degrades terrain alone | ✅ present (`Program.cs:491`) |
 | `fx.terrain_ubo` | `FxReflect.TerrainUbo` | `PlanetRenderer._renderUboMap` / `_meshUboMap` (private readonly `MappedMemory`, host-visible + coherent); strides/counts from the public `PlanetUboStride`/`MeshUboStride`/`NumCelestials`, frames from `Program.GetRenderer().MaxFramesInFlight` | ✅ present (`PlanetRenderer.cs:250-252`) |
+| `fx.terrain_tess_range` | `FxReflect.SetTessellationRange` | `PlanetRenderer._tessellationRange` (private `float`, **write only** — reads use the public `TessellationRange` getter); the range compute tessellation and planet frustum culling use | ✅ born at 5707 (`PlanetRenderer.cs:326`); type-checked as `float` at resolve |
 
 **Lifecycle.** Each `FieldInfo` is resolved **lazily on first use, once, and cached** in a plain static
 (resolution is idempotent, so a torn read at worst re-resolves); every accessor is **null-tolerant** —
@@ -1114,6 +1115,16 @@ trail raymarch pipeline (specialization constant 6, `VolumetricTrailRenderer.cs:
 crosses zero. `TrailActuator` does the same through `fx.trail_rebuild` on both the write and the
 pristine-restore paths, so `0 = off` and every `N > 0` keep working; without it a write of N after a
 rebuild at 0 would read back N and draw no self-shadowing.
+
+**5707 compute tessellation range:** with the tessellation setting on, KSA now tessellates terrain in a
+compute pass by default (`PlanetTessellation.UseCompute = true`). That pass and the planet frustum
+culling read the renderer-wide `PlanetRenderer._tessellationRange`, not the per-body
+`PlanetUbo.TessellationRangeMeters`, which only the hardware `.tese` path still reads. The stock editor
+edits the field and mirrors it into the nearby body's UBO. `TerrainActuator` now does both through
+`fx.terrain_tess_range`, reads the active path's value, and keeps the shared range's pristine value as
+its own capture under the global terrain entity, so teardown and per-body resets restore it exactly. All
+other reflected FX names resolve with identical types at 5707 (`CloudRenderer` fields now `:232/:264/:322`
+after the per-viewport refactor; `_renderUboMap`/`_meshUboMap` `:260/:262`).
 
 ---
 
@@ -1204,6 +1215,30 @@ reasoning, not evidence, and needs a live check. See
 still reused, and the deferred retire queue still keeps the custom image alive across in-flight
 frames. `GroundClutterRenderer` changed multi-viewport culling internals, while the clutter
 catalog fields and stock texture references used here remain stable.
+
+## 5707 runtime findings {#5707-findings}
+
+- **No new hook, patch target or lazy patch.** All 39 reflection/Harmony lookups resolve with identical
+  names, types and signatures in 5638 and 5707; `DebuggableAttribute` is still `0x002` with no
+  ReadyToRun, so `InlineGuard.Targets()` is unchanged. IL size changes only: `Program.RenderGame`
+  4104 → 4036 B, `PartModel..ctor(Template)` 77 → 100 B, `CloudRenderer.RecreateLayerPipelines`
+  1720 → 164 B (not called by gatOS).
+- **Display transpiler** re-verified on the shipped IL — tail still `ldloc.1; call
+  VkDeviceExtensions::End<CommandBuffer>(!!0); ret`. Experimental HDR (rev 5645, `GameSettings.Hdr`, off by
+  default) inserts `RenderHdrSceneComposite` before `RenderFinalComposite` (skipped while HDR is active)
+  and makes `Program.HdrPresent` the main viewport's composite target; the capture still reads the linear
+  `R16G16B16A16SFloat` offscreen colour before any tonemap. The UI coverage stamp now records inside the
+  opaque pre-pass, which also draws terrain and ground clutter (revs 5657, 5678) — `UiPixelCulling()`
+  (`GameSettings.cs:3588`, one caller) still gates it.
+- **Step limit at dose thresholds (rev 5688).** `GetJobSimStep` now also clamps to
+  `Universe._stepLimitTime`, set by `LimitNextStep` during crew-dose crediting and reset in
+  `ApplyVehicleSolvers`. Nothing changes it between the frame's two `GetJobSimStep` calls, so the weld
+  driver's second call stays idempotent.
+- **New reflection accessor** `fx.terrain_tess_range` — see [the FX table](#reflection-accessors).
+- **Binary break for pre-built mods.** `Part.SubtreeModules` (field → property) and
+  `SimpleVkTexture.ImageView` (→ `VkImageView`) make a 5638-built `gatOS.GameMod.dll` throw on 5707; and
+  `../purrtty` (`ImageTextureCache.cs:168`) binds the same removed `ImageView`, so rebuild purrTTY too
+  before in-game checks.
 
 ## 5638 runtime findings {#5638-findings}
 

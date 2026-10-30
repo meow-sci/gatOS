@@ -43,14 +43,18 @@ internal sealed class ThugLifeTextureFactory : IDisposable
 
     public SimpleVkTexture Texture { get; }
     public VkSampler Sampler { get; }
-    public VkImageView ImageView => Texture.ImageView;
+    public VkImageView ImageView => Texture.VkImageView;
 
     [KsaAnchor("SimpleVkTexture(name, Renderer.Allocator, …, VkFormat.R8G8B8A8UNorm, …); "
+            + "SimpleVkTexture.VkImageView; "
             + "Renderer.Allocator.CreateStagingPool/AddStagingBuffer; VkUtils.UploadBufferToImage; "
             + "DeviceEx.CreateSampler (nearest, ClampToEdge)",
-        SourceFile = "RenderCore/SimpleVkTexture.cs / RenderCore/VkUtils.cs / Brutal.VulkanApi.Abstractions",
-        Verified = "2026-06-28", GameVersion = "2026.6.9.4750", Risk = ChurnRisk.High,
-        Notes = "GPU texture for the thug-life cheat (Planet.Render.Core + Brutal.Vulkan). Render-internals churn.")]
+        SourceFile = "RenderCore/SimpleVkTexture.cs:75-77,164 / RenderCore/VkUtils.cs / Brutal.VulkanApi.Abstractions",
+        Verified = "2026-10-29", GameVersion = "2026.10.25.5707", Risk = ChurnRisk.High,
+        Notes = "GPU texture for the thug-life cheat (Planet.Render.Core + Brutal.Vulkan). Render-internals churn. "
+            + "5707 (rev 5652, Brutal package update): SimpleVkTexture.Image/ImageView were renamed "
+            + "VkImage/VkImageView to implement the interfaces that moved into Brutal.VulkanApi.Abstractions; "
+            + "same values, compile break only. A mod built against 5638 fails at JIT on this getter.")]
     private unsafe void UploadPixels(Renderer renderer)
     {
         var pixels = BuildPixelBytes();

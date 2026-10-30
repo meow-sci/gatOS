@@ -565,7 +565,8 @@ renderer re-reads every frame, so a write needs **no apply call**:
 | `debug/terrain/bodies/<id>/**` | `debug.terrain_set` | Frame | `TerrainActuator.Write` → `Celestial.BodyTemplate.HeightReference.{Minimum,Maximum}` and `BodyTemplate.TerrainReference.BiomeMaterials.{BlendStrength.Value,DetailFadeInStart,DetailFadeInEnd}` (construct-new `DistanceReference`) **plus** the `PlanetUbo`/`MeshUbo` structs at `(NumCelestials*frame + slot)*Stride`, then the frame-in-flight mirror copy | `KSA/PlanetRenderer.cs`, `KSA/AstronomicalTemplate.cs`, `KSA/BiomeMaterialsReference.cs` | **High** | ✅⁴ · ⚠️ **5348: the frame-in-flight mirror is now field-wise** (revs 5319–5325 added per-frame `MeshUbo` anchor fields) — see [5348 findings](#5348-findings) · ⚠️ **5482 (rev 5457): distant spheres now displace too, but `DistantSphereRenderer` copies `HeightReference.Minimum/Maximum` into its own material once at construction** (`DistantSphereRenderer.cs:99-105`) — a live `min_height`/`max_height` write reaches near terrain immediately and the distant-sphere view only when that renderer is rebuilt · ✅ **5554:** slope roughness writes now apply `tan(deg × π/180)` to the tangent-valued UBO field |
 | (slot resolution) | — | — | `PlanetRenderer.RenderUboSlot(Celestial)` / `MeshUboSlot(Celestial)` (public; `-1` ⇒ no slot ⇒ the body is absent from the tree) | `KSA/PlanetRenderer.cs:374,379` | Medium | ✅ |
 | (UBO handles) | — | — | `FxReflect.TerrainUbo` → reflected `PlanetRenderer._renderUboMap` / `_meshUboMap` (`MappedMemory`, host-visible + coherent) with the public `PlanetUboStride`/`MeshUboStride`/`NumCelestials` and `Program.GetRenderer().MaxFramesInFlight` — latch `fx.terrain_ubo` | `KSA/PlanetRenderer.cs:250-252` | **High** | ✅ |
-| `debug/terrain/bodies/<id>/reset` | `debug.terrain_reset` | Frame | `FxPristine.Restore` replays through the same paired write | — | **High** | ✅ |
+| `debug/terrain/bodies/<id>/tessellation/range_m` (renderer-wide half) | `debug.terrain_set` | Frame | `FxReflect.SetTessellationRange` → reflected private `PlanetRenderer._tessellationRange` (float, no setter), written **in addition to** the per-body UBO field; read back through the public `TessellationRange` getter while `ComputeTessellationEnabled` — latch `fx.terrain_tess_range` | `KSA/PlanetRenderer.cs:326,376-392,2644-2646`, `KSA.Rendering.Planet/PlanetTessellation.cs:61,289`, `KSA/PlanetFrustumCulling.cs:233` | **High** | 🆕 5707 — [5707 findings](#5707-findings) |
+| `debug/terrain/bodies/<id>/reset` | `debug.terrain_reset` | Frame | `FxPristine.Restore` replays the body's UBO captures through the same paired write; a body whose `range_m` gatOS changed also replays the separate renderer-wide range capture (global entity) | — | **High** | ✅ |
 
 **Discrepancies found while implementing (the things a future break-check must not re-assume).** The
 design plan (`plans/FX_EDITORS_PLAN.md`) was written from a first read of the decomp; the code below is
@@ -594,8 +595,9 @@ objects — the two population loops the plan pointed at (`:684-720`, `:1086-111
 appearing only on frames that sample slot 0.
 
 **Degraded behavior (per-capability health latches).** Latch keys: `fx.trail_renderer`,
-`fx.plume_templates`, `fx.cloud_renderer`, `fx.cloud_apply`, `fx.terrain_renderer`, `fx.terrain_ubo` (all
-surfaced in `/sim/status/accessors`). A degraded `fx.trail_renderer`/`fx.terrain_renderer` answers
+`fx.plume_templates`, `fx.cloud_renderer`, `fx.cloud_apply`, `fx.terrain_renderer`, `fx.terrain_ubo`,
+`fx.terrain_tess_range` (all surfaced in `/sim/status/accessors`). A degraded `fx.terrain_tess_range` still
+lands the per-body UBO write (effective only under hardware tessellation) and answers `EOPNOTSUPP`. A degraded `fx.trail_renderer`/`fx.terrain_renderer` answers
 `EOPNOTSUPP`; a degraded `fx.cloud_apply`/`fx.cloud_renderer` **still performs the data write and still
 returns `Ok`** (only the immediate GPU re-upload is skipped — the next natural repopulate picks it up); a
 degraded `fx.terrain_ubo` **empties the per-body terrain roster** (values are read out of the UBO) while
@@ -1696,6 +1698,39 @@ part bounds (see [5482 findings](#5482-findings)).
 **The live draw is unvalidated** — see the stickers card in `docs/VALIDATION.md`.
 Pipeline, shader and GLSL-layout assumptions:
 [`ksa-assets-and-versions.md`](ksa-assets-and-versions.md).
+
+## 5707 write findings {#5707-findings}
+
+Playbook pass 2026-10-29, `2026.10.19.5638` → `2026.10.25.5707`. Action keys, phases and the authority
+model are unchanged.
+
+- 🔴 **`debug/terrain/bodies/<id>/tessellation/range_m` — fixed silent no-op.** Compute tessellation
+  (revs 5654–5656; `PlanetTessellation.UseCompute = true`, the default whenever the tessellation setting
+  is on) and planet frustum culling take the range from the renderer-wide private
+  `PlanetRenderer._tessellationRange` (`PlanetTessellation.cs:289`, `PlanetFrustumCulling.cs:233`); only
+  the hardware `.tese` shaders still read `PlanetUbo.TessellationRangeMeters`. The stock editor now edits
+  the field and mirrors it into the nearby body's UBO (`PlanetRenderer.cs:2644-2646`). gatOS wrote only
+  the UBO, so the value read back but drew nothing. `TerrainActuator` now writes both (new reflection
+  handle `FxReflect.SetTessellationRange`, latch `fx.terrain_tess_range`), reads `TessellationRange` while
+  `ComputeTessellationEnabled`, and keeps a separate pristine capture of the shared range. **The range is
+  renderer-wide under compute tessellation** — a write to any body applies to every body; edge length and
+  factor stay per body on both paths.
+- 🔴 **Texture views — fixed compile break.** `SimpleVkTexture.ImageView` → `VkImageView` (rev 5652);
+  clutter-texture overrides, sticker uploads and the thug_life texture bind the new name. Same value.
+- ⚠️ **Time warp can be forced by the game.** Radiation sickness (1 Sv acute, `Vehicle.cs:3166`) and major
+  space-weather alerts (`SpaceWeatherAlerts.cs:190`) call `AutoWarpStop` + `SetSimulationSpeed(1)`; a
+  `debug/time/warp`, a scheduled warp or the camera `time` channel can re-warp immediately.
+  `Universe.LimitNextStep` also clips steps at dose thresholds.
+- ⚠️ **Clutter textures reach the depth-normal pre-pass.** Since revs 5676–5678 the pre-pass samples the
+  same clutter material handles for its alpha test, so an override also shapes clutter depth/AO.
+- ⚠️ **Refill and gas.** `debug/refill_fuel` fills a gas mole to the tank's rated pressure through the
+  unchanged `Mole.Refill` (rev 5701); stock content has no gas reactants.
+- ✅ **Clouds, paint, stickers, thug_life, IVA, welds, scale, camera.** The cloud editor block is
+  byte-identical and the static layer data is still shared across the new per-viewport resources;
+  `WriteState`/`WriteDynamicState` bodies, mesh shaders, sticker includes, `GridPass`, `RenderTarget` and
+  barrier presets are byte-identical; `PartModel..ctor` only adds a template-id registry; Part pose caches
+  still invalidate through `ResetCachedPosMatrixValues`; `GameViewport.OnFrame(double)` unchanged. See the
+  [pass record](ksa-assets-and-versions.md#5707-pass).
 
 ## 5638 write findings {#5638-findings}
 

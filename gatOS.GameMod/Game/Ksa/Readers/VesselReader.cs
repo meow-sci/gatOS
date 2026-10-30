@@ -496,7 +496,7 @@ internal static class VesselReader
 
     [KsaAnchor("vehicle.Parts.Modules.Get<Tank>().Moles; vehicle.Parts.Moles.GetState(mole).Mass; "
             + "Mole.FilledFraction; Mole.GetStoredMass(ContainerVolume) (capacity; 5018/rev 4992: renamed from GetLiquidMass)",
-        SourceFile = "KSA/Tank.cs / KSA/Mole.cs / Content/Core/CoreFairingAGameData.xml", Verified = "2026-09-25", GameVersion = "2026.9.22.5482", Risk = ChurnRisk.Low,
+        SourceFile = "KSA/Tank.cs / KSA/Mole.cs / Content/Core/CoreFairingAGameData.xml", Verified = "2026-10-29", GameVersion = "2026.10.25.5707", Risk = ChurnRisk.Low,
         Notes = "A Tank holds one Mole per substance; amounts live in the SoA Moles state list. "
             + "4892: the rev-4884 combustion->Reactions refactor is additive here (Tank gains "
             + "RoleAffinity/AssignedMix; Moles/MoleState/FilledFraction untouched) - tanks now "
@@ -504,7 +504,7 @@ internal static class VesselReader
             + "resource names on new vehicles differ from the 4826 era. "
             + "5018/rev 4992 (solid rocket motors): Mole.GetLiquidMass -> GetStoredMass (and "
             + "GetLiquidVolume -> GetStoredVolume) - a rename that generalizes Liquid to "
-            + "Liquid|Solid. Tank moles are liquids, so the value is unchanged here. Solid "
+            + "Liquid|Solid. Tank moles were liquids then, so the value was unchanged. Solid "
             + "propellant lives on the NEW SolidGrainSegment module (ISubstanceStore, not a Tank) "
             + "and is therefore NOT listed in tanks/ - but it IS counted in Vehicle.PropellantMass, "
             + "so on SRB vehicles mass/propellant > sum(tanks). Solid propellant is surfaced "
@@ -512,7 +512,14 @@ internal static class VesselReader
             + "5482 CONTENT DRIFT (rev 5475): seven nosecone/adapter parts (NoseconeC/E/F/G/H, "
             + "InterstageBridge2W1WB/3W2WB) gained a <Tank> (Cylindrical or the new ConicalTank template), so "
             + "vessels carrying them gain tanks/<n> rows and later tank ordinals shift. Cylindrical capacity math "
-            + "now delegates to the conical path with equal radii — analytically unchanged.")]
+            + "now delegates to the conical path with equal radii — analytically unchanged. "
+            + "5707 GAS STORAGE (rev 5701): a tank may now hold a gas. Tank.CanHold admits one only when the "
+            + "tank's RatedPressure (from wall material strength + thickness) is > 0 and the gas is the mix's "
+            + "only reactant; the gas Mole gets ContainerPressure = RatedPressure, and GetStoredMass/"
+            + "GetStoredVolume branch on IsGas (Mole.IsStorable was removed). So capacity is the gas mass "
+            + "at rated pressure and fraction = mass/capacity — both still correct. Stock content has no gas "
+            + "reactants. Rev 5651: a tank fed only by a fuel line now auto-fills with the donor's propellant, "
+            + "so such vessels gain tanks/<n> rows. Pressure itself is not exposed (coverage gap).")]
     private static List<TankSnapshot> SampleTanks(Vehicle vehicle)
     {
         var tanks = new List<TankSnapshot>();
